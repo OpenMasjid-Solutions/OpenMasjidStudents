@@ -431,6 +431,27 @@
 
 /* Print: a clean week handout — hide the chrome, drop glass to plain boxes. */
 @media print {
+  /* The page itself must be WHITE. `.scene-bg` is hidden below, but the shell's wallpaper also lives
+     on `body` as `--scene-base` — a soft gradient — and that kept printing as a grey vignette around
+     the sheet. Reset every layer that can carry it, and force dark-on-white text since the shell's
+     default ink is light (it is designed against a dark wallpaper). */
+  html,
+  body,
+  #root,
+  .app-shell,
+  .app-main,
+  .page {
+    background: #fff !important;
+    background-image: none !important;
+    color: #000 !important;
+    box-shadow: none !important;
+  }
+  /* Chrome/Safari otherwise "helpfully" re-add backgrounds inside the printed area. */
+  * {
+    -webkit-print-color-adjust: economy;
+    print-color-adjust: economy;
+  }
+
   /* A printed sheet has no scroll — let the grid lay out in full and shrink to fit. */
   .year-scroll { overflow: visible !important; }
   .year-grid { min-width: 0 !important; font-size: 0.7rem; }
@@ -451,6 +472,36 @@
     backdrop-filter: none !important;
   }
   .week-day-name { color: #000 !important; }
+
+  /* The year grid is wide; landscape with narrow margins is what makes twelve months fit. */
+  @page { size: landscape; margin: 10mm; }
+
+  /* Table lines must be visible in black and white on a masjid photocopier (§15). */
+  .year-grid th,
+  .year-grid td {
+    border-bottom: 1px solid #bbb !important;
+    color: #000 !important;
+  }
+  /* The card wrapper around the grid shouldn't read as a box on paper. */
+  .print-area {
+    border: 0 !important;
+    padding: 0 !important;
+  }
+  /* Group rows stay legible without their tint. */
+  .year-group td {
+    background: #eee !important;
+    color: #000 !important;
+    font-weight: 700;
+  }
+  /* Paid/part-paid tints become symbols only — the ✓ / ½ / · already carry the meaning, and a colour
+     wash prints as indistinguishable grey. */
+  .year-cell.is-paid .year-cell-btn,
+  .year-cell.is-partial .year-cell-btn,
+  .year-cell.is-open .year-cell-btn,
+  .year-cell.is-void .year-cell-btn {
+    background: none !important;
+    color: #000 !important;
+  }
 }
 
 /* ── On-scene vs in-glass text (light-theme legibility) ──────────────────────
