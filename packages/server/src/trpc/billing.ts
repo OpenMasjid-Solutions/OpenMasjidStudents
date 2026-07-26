@@ -19,7 +19,8 @@ import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } f
 import { schoolYearMonths } from '../billing/schoolYear';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
-import { getCurrency, getYearViewColumns, setYearViewColumns, YEAR_VIEW_COLUMNS } from '../settings';
+import { getCurrency, getYearViewColumns, setYearViewColumns, YEAR_VIEW_COLUMNS, getAutoInvoice, setAutoInvoice, getAutoInvoiceLast } from '../settings';
+import { runAutoInvoice } from '../billing/autoInvoice';
 
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
@@ -237,6 +238,27 @@ export const billingRouter = router({
       audit(auditActor(ctx), 'invoice.generateFamily', { entity: 'family', entityId: input.familyId, detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
     }),
+
+  /** The auto-generate schedule, and when it last ran. */
+  autoInvoiceGet: adminOrFinanceProcedure.query(() => ({ ...getAutoInvoice(), lastPeriodKey: getAutoInvoiceLast() })),
+
+  /** Turn monthly auto-generation on/off and choose the day. Admin-only: it starts billing every
+   *  family on its own, which is a policy decision, not a day-to-day finance action. */
+  autoInvoiceSet: adminProcedure
+    .input(z.object({ enabled: z.boolean().optional(), day: z.number().int().min(1).max(31).optional(), dueDay: z.number().int().min(1).max(31).nullable().optional() }))
+    .mutation(({ ctx, input }) => {
+      setAutoInvoice(input);
+      audit(auditActor(ctx), 'billing.autoInvoice', { entity: 'settings', detail: { ...input } });
+      return { ok: true as const };
+    }),
+
+  /** Run the scheduled generation right now — the same code path the cron uses, so "Run now" can
+   *  never behave differently from the nightly job. Reports why it did nothing, if it did nothing. */
+  autoInvoiceRunNow: adminOrFinanceProcedure.mutation(({ ctx }) => {
+    const r = runAutoInvoice();
+    audit(auditActor(ctx), 'billing.autoInvoice.run', { entity: 'billing', detail: { ran: r.ran, reason: r.reason ?? null, periodKey: r.periodKey ?? null, created: r.created ?? 0 } });
+    return r;
+  }),
 
   voidInvoice: adminOrFinanceProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
     const inv = db.select({ id: invoices.id, status: invoices.status }).from(invoices).where(eq(invoices.id, input.id)).get();

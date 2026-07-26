@@ -13,6 +13,7 @@ import { runAutopay } from './autopay';
 import { reconcile } from './reconcile';
 import { refreshSiteInfo } from '../fabric/platform';
 import { writeSnapshot } from '../db/snapshot';
+import { runAutoInvoice } from '../billing/autoInvoice';
 
 const log = makeLog('scheduler');
 let started = false;
@@ -38,9 +39,22 @@ export function startSchedulers(): void {
   const first = writeSnapshot();
   if (!first.ok) log.warn('initial db snapshot failed', { error: first.error });
 
+  // Invoice auto-generation, also OUTSIDE the fabricConfigured() guard: it is pure local billing and
+  // needs no platform at all, so a standalone install gets it too. Daily at 02:00, and the job itself
+  // decides whether today is the configured day, whether the month is inside the school year, and
+  // whether it has already run for this period — so a missed day is caught up rather than skipped.
+  new Cron('0 2 * * *', () => {
+    try {
+      const r = runAutoInvoice();
+      if (r.ran) log.info('auto invoice run', { periodKey: r.periodKey, created: r.created });
+    } catch (e) {
+      log.error('auto invoice run failed', { error: (e as Error).message });
+    }
+  });
+
   if (!fabricConfigured()) {
     started = true;
-    log.info('schedulers started (standalone — snapshot only)');
+    log.info('schedulers started (standalone — snapshot + auto invoicing only)');
     return;
   }
   started = true;

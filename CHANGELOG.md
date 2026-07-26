@@ -9,6 +9,70 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.38.0]
+
+### Added
+
+- **A Student ID for every child** — `YUS1234`: the first three letters of their first name plus four
+  digits. At the kiosk a parent types the ID, the screen shows the name back and asks whether it's the
+  right child, then they enter the PIN — and can pay for **any of their children from that one
+  screen**, without typing a second ID. The ID is printed on the statement, shown on the student
+  record, offered as a year-view column, and visible in the parent portal.
+  - Generated here, always: never chosen by a caller and never importable from a spreadsheet, since an
+    imported ID could collide with a real one or be picked to impersonate another child.
+  - Awkward names are handled deliberately: diacritics stripped (*Yūsuf* → `YUS`), a one- or
+    two-letter name padded (*Bo* → `BOX`), and a name with no Latin letters falls back to `STU`
+    rather than guessing a transliteration. Unique in the database, so a clash is an error, not two
+    children sharing a payment code.
+  - Existing students get one automatically on the next start-up.
+- **Staff roles** — create a user as **admin or finance** (it was hardcoded to finance), see admins in
+  the list at all, and **change someone's role**, which takes effect immediately without them signing
+  out. Password reset is reachable from the same screen.
+- **Delete a student**, not only withdraw them — for a duplicate, a typo, or a child who never
+  enrolled. A student who has ever been billed can't be deleted, because they appear on invoices you've
+  already raised; the app checks first and says so, pointing at withdrawal instead.
+- **Automatic monthly invoices** — switch it on, pick the day, and optionally a due day. It runs
+  overnight, bills only months inside your current school year, only once per month, and **catches up
+  if the app was switched off on the day** rather than skipping the month. "Run now" uses the identical
+  code path, and says plainly why it did nothing when it did nothing. Off by default.
+- **CSV export** (admin + finance) — payments, invoices, family balances, and students with their fees
+  and guardian contacts. The app had no export at all before this.
+- **Bank transfer / ACH** as a way to record an offline payment, alongside cash, check and Zelle.
+
+### Fixed
+
+- **A negative charge couldn't be entered.** The amount field used the owed-amount parser, which
+  rejects negatives, so the credit / scholarship / correction path documented in 0.36.0 silently never
+  submitted. Charges and charge items now use a signed parser; payments, fee-plan prices, overrides and
+  discounts still refuse a minus sign, where it is a typo.
+
+### Security
+
+- The CSV export escapes **spreadsheet formula injection** (§14). Guardian names, family names and
+  payment memos are free text a parent can influence, and a cell beginning `=`, `+`, `-`, `@`, tab or
+  CR is executed by a spreadsheet — so opening an export could otherwise run whatever was typed. Every
+  cell is defused before the structural quoting. Tested with a family literally named `=cmd|/c calc`.
+- **A student ID is not a secret, and is not treated as one.** Its letters come from the child's first
+  name and it is printed on statements, so it establishes *who* while the PIN still establishes *may
+  you*. The new `identify` Fabric method returns a first name and last initial and **nothing else** —
+  no balance, no invoices, no sibling list, not even the family id — and a test fails if that ever
+  widens. Because a code is much more guessable than a PIN it is locked harder: 6 failed attempts per
+  code per hour against the PIN's 10, with an admin alert on lockout.
+- The CSV student sheet includes the Student ID but **never PINs**: a spreadsheet of every child's
+  payment PIN is a far wider exposure than the per-family statement it belongs on.
+- Staff role changes refuse the two lockout paths: removing the **last active admin** (by demotion or
+  by disabling — admin is the only role that reaches settings, and admin sign-in is LAN-only, so there
+  would be no way back in) and acting on **your own** account. A parent's portal account is out of
+  reach from the staff screen entirely, guarded by role *and* by a guardian link.
+
+### Contract
+
+- `students/billing` stays at **`v: 1`** — both additions are additive, so Donations and Kiosk keep
+  working untouched. New method **`identify`**; `lookup` now accepts `studentCode` + PIN as well as
+  `name` + PIN; and `lookup`'s sibling list gained `studentId` + `studentCode` per child, which is what
+  lets a kiosk pay for a sibling without a second ID. Documented in
+  `docs/FABRIC_BILLING_CONTRACT.md`, including the not-a-secret rule.
+
 ## [0.37.0]
 
 The office can now reach everything v0.36.0 built. That release shipped the school year, terms,

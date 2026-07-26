@@ -39,6 +39,9 @@ export function Billing() {
   const chargesQ = trpc.billing.chargeList.useQuery({});
   const chargeVoid = trpc.billing.chargeVoid.useMutation();
   const exportCsv = trpc.billing.exportCsv.useMutation();
+  const auto = trpc.billing.autoInvoiceGet.useQuery();
+  const setAuto = trpc.billing.autoInvoiceSet.useMutation();
+  const runAuto = trpc.billing.autoInvoiceRunNow.useMutation();
 
   const [plan, setPlan] = useState({ name: '', amount: '', cadence: 'monthly' });
   const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
@@ -47,6 +50,7 @@ export function Billing() {
   const [item, setItem] = useState({ name: '', amount: '' });
   const [itemEdit, setItemEdit] = useState<{ id: string; name: string; amount: string } | null>(null);
   const [chargeErr, setChargeErr] = useState<string | null>(null);
+  const [autoMsg, setAutoMsg] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
 
   async function addPlan(e: FormEvent) {
@@ -90,6 +94,21 @@ export function Billing() {
     setItemEdit(null);
     await utils.billing.chargeItemList.invalidate();
   }
+  async function saveAuto(patch: { enabled?: boolean; day?: number; dueDay?: number | null }) {
+    setAutoMsg(null);
+    await setAuto.mutateAsync(patch);
+    await utils.billing.autoInvoiceGet.invalidate();
+  }
+
+  /** Run the scheduled generation now, and say plainly why it did nothing when it did nothing —
+   *  "outside the school year" and "already done this month" are both normal, not errors. */
+  async function runAutoNow() {
+    setAutoMsg(null);
+    const r = await runAuto.mutateAsync();
+    setAutoMsg(r.ran ? t('billing.autoRan', { period: r.periodKey, n: r.created ?? 0 }) : t(`billing.autoWhy_${r.reason ?? 'disabled'}`));
+    await Promise.all([utils.billing.autoInvoiceGet.invalidate(), utils.billing.familiesOverview.invalidate()]);
+  }
+
   /** Save the server-built CSV. A Blob + object URL keeps it a plain download with no extra route,
    *  and the BOM makes Excel open UTF-8 names correctly instead of mangling them. */
   async function download(dataset: CsvDataset) {
@@ -249,6 +268,31 @@ export function Billing() {
         <div className="section-head"><h2>{t('billing.generateInvoices')}</h2></div>
         <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('billing.generateHint')}</p>
         {genMsg && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{genMsg}</div>}
+        {/* Automatic generation — off until an admin turns it on, since it starts billing every
+            family on its own. "Run now" uses the very same code path as the nightly job. */}
+        {auto.data && (
+          <div className="glass-inset" style={{ padding: '0.7rem 0.85rem', borderRadius: 'var(--radius-card)', marginBlockEnd: '0.6rem' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', cursor: 'pointer' }}>
+              <input type="checkbox" checked={auto.data.enabled} onChange={(e) => void saveAuto({ enabled: e.target.checked })} />
+              <span className="label" style={{ margin: 0 }}>{t('billing.autoOn')}</span>
+            </label>
+            <div className="inline-form" style={{ marginBlockStart: '0.5rem' }}>
+              <div className="field" style={{ flex: '0 1 8rem' }}>
+                <label className="label">{t('billing.autoDay')}</label>
+                <input type="number" min={1} max={31} className="input glass-inset" value={String(auto.data.day)} onChange={(e) => void saveAuto({ day: Number(e.target.value) })} />
+              </div>
+              <div className="field" style={{ flex: '0 1 8rem' }}>
+                <label className="label">{t('billing.autoDueDay')}</label>
+                <input type="number" min={1} max={31} className="input glass-inset" value={auto.data.dueDay === null ? '' : String(auto.data.dueDay)} onChange={(e) => void saveAuto({ dueDay: e.target.value ? Number(e.target.value) : null })} />
+              </div>
+              <button type="button" className="btn btn--ghost" disabled={runAuto.isPending} onClick={runAutoNow}>{runAuto.isPending ? t('billing.autoRunning') : t('billing.autoRunNow')}</button>
+            </div>
+            <p className="hint">{t('billing.autoHint')}</p>
+            {auto.data.lastPeriodKey && <p className="hint">{t('billing.autoLast', { period: auto.data.lastPeriodKey })}</p>}
+            {autoMsg && <div className="notice" style={{ marginBlockStart: '0.5rem' }}>{autoMsg}</div>}
+          </div>
+        )}
+
         <form className="inline-form glass-inset" onSubmit={runGenerate} style={{ marginBlockStart: 0 }}>
           <div className="field"><label className="label">{t('billing.periodKey')}</label><input className="input glass-inset" value={gen.periodKey} onChange={(e) => setGen({ ...gen, periodKey: e.target.value })} placeholder="2026-07" /></div>
           <div className="field"><label className="label">{t('billing.label')}</label><input className="input glass-inset" value={gen.label} onChange={(e) => setGen({ ...gen, label: e.target.value })} placeholder={t('billing.labelHint')} /></div>

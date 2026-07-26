@@ -21,7 +21,42 @@ export const SETTING_KEYS = {
   // Empty → fall back to the STRIPE_ACCOUNT manifest default (resolved in payments/stripe.ts).
   selfRegistration: 'self_registration', // parent self-registration door on/off (§12, default ON).
   yearViewColumns: 'year_view_columns', // JSON string[] — optional columns on the year grid.
+  autoInvoice: 'auto_invoice', // '1' → generate each month's invoices on a schedule (default OFF).
+  autoInvoiceDay: 'auto_invoice_day', // day of month (1-28+) to generate on; clamped to the month.
+  autoInvoiceDueDay: 'auto_invoice_due_day', // optional day of month to set as the invoice due date.
+  autoInvoiceLast: 'auto_invoice_last', // the last periodKey generated — the job's own idempotency.
 } as const;
+
+export interface AutoInvoiceConfig {
+  enabled: boolean;
+  /** Day of the month to generate on. Clamped to the month's length at run time. */
+  day: number;
+  /** Optional day of the month to stamp as the due date; 0/absent = no due date. */
+  dueDay: number | null;
+}
+
+/** The auto-invoice schedule. OFF by default — billing every family is not something to start
+ *  happening on its own after an upgrade; an admin turns it on deliberately. */
+export function getAutoInvoice(): AutoInvoiceConfig {
+  const day = Number(getSetting(SETTING_KEYS.autoInvoiceDay) ?? '1');
+  const dueDay = Number(getSetting(SETTING_KEYS.autoInvoiceDueDay) ?? '0');
+  return {
+    enabled: getSetting(SETTING_KEYS.autoInvoice) === '1',
+    day: Number.isFinite(day) && day >= 1 && day <= 31 ? Math.trunc(day) : 1,
+    dueDay: Number.isFinite(dueDay) && dueDay >= 1 && dueDay <= 31 ? Math.trunc(dueDay) : null,
+  };
+}
+
+export function setAutoInvoice(cfg: { enabled?: boolean; day?: number; dueDay?: number | null }): void {
+  if (cfg.enabled !== undefined) setSetting(SETTING_KEYS.autoInvoice, cfg.enabled ? '1' : '0');
+  if (cfg.day !== undefined) setSetting(SETTING_KEYS.autoInvoiceDay, String(cfg.day));
+  if (cfg.dueDay !== undefined) setSetting(SETTING_KEYS.autoInvoiceDueDay, cfg.dueDay === null ? '' : String(cfg.dueDay));
+}
+
+/** The last period the job generated, for the UI to show. */
+export function getAutoInvoiceLast(): string | null {
+  return getSetting(SETTING_KEYS.autoInvoiceLast);
+}
 
 /** Optional columns the admin can switch on in the year view, beyond the fixed
  *  name / paying / month grid. */
