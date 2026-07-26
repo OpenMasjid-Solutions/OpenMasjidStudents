@@ -4,7 +4,7 @@ id: students
 name: OpenMasjid Students
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
-version: 0.36.0
+version: 0.37.0
 author: OpenMasjid-Solutions
 license: AGPL-3.0-only
 icon: icon.svg
@@ -30,7 +30,32 @@ sso: true                # platform admin opens it signed-in on the LAN
 notifications: true      # payment / autopay / admissions alerts to the masjid webhook
 stripe: true             # keys via GET /api/fabric/stripe — used for real charges (§13)
 https: true              # REQUIRED: the parent portal embeds Stripe Elements (secure context)
-tunnel: true             # request a public HTTPS uplink for parents/teachers/finance + webhooks
+tunnel: true             # request a public HTTPS uplink for parents + finance
+# Learn our own public address at runtime (GET /api/fabric/site). OPENMASJID_PUBLIC_URL is only a
+# mirror the platform writes at install, and it is EMPTY until an admin turns on Remote access — so
+# without this an invite or password-reset link has no absolute URL and cannot be emailed at all.
+domain: true
+# Send transactional mail through the masjid's OpenMasjidOS provider (POST /api/fabric/email). This
+# makes our own SMTP settings OPTIONAL rather than the only way to reach a parent; the OS owns the
+# credentials and the From address. Local SMTP is still tried first so a standalone install works.
+email: true
+# Admin alerts (POST /api/fabric/alert). Declaring an id here IS the authorization, and the admin
+# picks email / webhook / off per alert in OpenMasjidOS → Settings → Alerts. These are the events
+# where a dropped webhook actually costs money or hides an attack — routine payments stay on
+# `notifications` so a busy invoice day can't flood the alert channel.
+alerts:
+  - id: autopay-disabled
+    label: Autopay switched off after repeated failures
+    description: A family's card failed three times, so autopay was turned off. They will not be charged again until someone follows up.
+  - id: pin-lockout
+    label: Tuition name + PIN lookup locked
+    description: One student's PIN was locked after repeated failed attempts at the kiosk, the donation site, or parent sign-up — possibly someone guessing.
+  - id: reconcile-recovered
+    label: A payment was recovered by reconciliation
+    description: A card payment reached Stripe but never reached the ledger directly; the daily reconciliation found and recorded it. Worth a look.
+  - id: test
+    label: Test message
+    description: A test you trigger from Settings to confirm OpenMasjidOS is reaching you by email or webhook.
 fabric:                  # app-to-app broker: we PROVIDE students/billing (Donations/Kiosk consume it)
   provides:
     - capability: billing

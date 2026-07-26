@@ -20,7 +20,36 @@ export const SETTING_KEYS = {
   stripeAccount: 'stripe_account', // the OS-vault Stripe account id the admin picked for tuition (§10).
   // Empty → fall back to the STRIPE_ACCOUNT manifest default (resolved in payments/stripe.ts).
   selfRegistration: 'self_registration', // parent self-registration door on/off (§12, default ON).
+  yearViewColumns: 'year_view_columns', // JSON string[] — optional columns on the year grid.
 } as const;
+
+/** Optional columns the admin can switch on in the year view, beyond the fixed
+ *  name / paying / month grid. */
+export const YEAR_VIEW_COLUMNS = ['dob', 'guardianNames', 'guardianPhones', 'guardianEmails', 'balance', 'pin'] as const;
+export type YearViewColumn = (typeof YEAR_VIEW_COLUMNS)[number];
+
+/** Which optional columns the year view shows. Defaults to guardian phone numbers — the column an
+ *  office actually keeps beside a payment grid.
+ *
+ *  `pin` is available but OFF by default on purpose: a PIN is a capability token that pays tuition,
+ *  and a whole-school grid carrying every child's PIN is a much broader exposure than the per-family
+ *  statement that is meant to (§14). The admin opts in knowingly. */
+export function getYearViewColumns(): YearViewColumn[] {
+  const raw = getSetting(SETTING_KEYS.yearViewColumns);
+  if (!raw) return ['guardianPhones'];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return ['guardianPhones'];
+    // Filter against the allow-list so a stale/hand-edited row can never widen what is exposed.
+    return parsed.filter((c): c is YearViewColumn => (YEAR_VIEW_COLUMNS as readonly unknown[]).includes(c));
+  } catch {
+    return ['guardianPhones'];
+  }
+}
+
+export function setYearViewColumns(cols: YearViewColumn[]): void {
+  setSetting(SETTING_KEYS.yearViewColumns, JSON.stringify([...new Set(cols)]));
+}
 
 export function getSetting(key: string): string | null {
   return db.select({ value: settings.value }).from(settings).where(eq(settings.key, key)).get()?.value ?? null;

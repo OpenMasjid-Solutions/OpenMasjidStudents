@@ -10,6 +10,8 @@ import { ADMIN_ITEMS, type Section } from '../../components/Dock';
 import { trpc } from '../../lib/trpc';
 import { Dashboard } from './Dashboard';
 import { Students } from './Students';
+import { YearView } from './YearView';
+import { Structure } from './Structure';
 import { Billing } from './Billing';
 import { Staff } from './Staff';
 import { Settings } from './Settings';
@@ -26,6 +28,10 @@ export function AdminApp() {
           <Dashboard onNavigate={setSection} />
         ) : section === 'students' ? (
           <Students />
+        ) : section === 'year' ? (
+          <YearView canConfigure />
+        ) : section === 'structure' ? (
+          <Structure />
         ) : section === 'billing' ? (
           <Billing />
         ) : section === 'staff' ? (

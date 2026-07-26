@@ -69,14 +69,19 @@ export type Session = typeof sessions.$inferSelect;
 // ── Structure (school year, terms, courses, classes) ─────────────────────────
 
 /** A school year — the billing calendar (e.g. "1447–1448 / 2026–2027" running Apr→Mar).
- *  `startMonth`/`endMonth` are 1-12; an `endMonth` <= `startMonth` means the year wraps into
- *  the next calendar year. At most one row is `isCurrent` (the router clears the flag on the
- *  others). Archived, never hard-deleted — generated invoice periods derive from it. */
+ *  `startMonth`/`endMonth` are 1-12 and `startYear` is the calendar year the FIRST month falls in;
+ *  when `endMonth` < `startMonth` the year wraps into `startYear + 1`. Together these produce the
+ *  concrete billing periods the year view is built from (billing/schoolYear.ts).
+ *  `startYear` is nullable only because the column was added after `school_years` shipped in
+ *  0022; it is required on create from 0.37.0 on, and the year view asks for it when absent.
+ *  At most one row is `isCurrent` (the router clears the flag on the others). Archived, never
+ *  hard-deleted — generated invoice periods derive from it. */
 export const schoolYears = sqliteTable(
   'school_years',
   {
     id: text('id').primaryKey(),
     label: text('label').notNull(),
+    startYear: integer('start_year'),
     startMonth: integer('start_month').notNull(),
     endMonth: integer('end_month').notNull(),
     isCurrent: integer('is_current', { mode: 'boolean' }).notNull().default(false),
@@ -321,7 +326,19 @@ export type AuditEntry = typeof auditLog.$inferSelect;
 
 export type FeeCadence = 'monthly' | 'per_term' | 'one_time';
 export type InvoiceStatus = 'open' | 'partially_paid' | 'paid' | 'void';
-export type PaymentChannel = 'donations-web' | 'kiosk' | 'portal' | 'autopay' | 'cash' | 'zelle' | 'check' | 'other';
+/** How the money arrived. The first four are card/external and are set by the code that records
+ *  them; the rest are what the office picks when marking an offline payment as received.
+ *
+ *  `ach` is a bank transfer the masjid received directly (a parent's online bill-pay, a wire) — it
+ *  is NOT the Stripe ACH debit that §4 defers, and nothing charges it. Stored as plain text with no
+ *  CHECK constraint, so adding a value needs no migration; existing rows are unaffected. */
+export type PaymentChannel = 'donations-web' | 'kiosk' | 'portal' | 'autopay' | 'cash' | 'zelle' | 'check' | 'ach' | 'other';
+
+/** The channels the office may record by hand — the card ones are never chosen in the UI, they are
+ *  written by the portal, autopay, and the Fabric provider. Shared so the router's zod enum and the
+ *  UI's dropdown can never drift apart. */
+export const MANUAL_PAYMENT_CHANNELS = ['cash', 'check', 'ach', 'zelle', 'other'] as const;
+export type ManualPaymentChannel = (typeof MANUAL_PAYMENT_CHANNELS)[number];
 
 /** A reusable fee plan — an amount (integer cents) + cadence — assigned per student (§4). */
 export const feePlans = sqliteTable('fee_plans', {

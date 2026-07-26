@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { freshApp, makeCtx } from './harness';
-import { guardians, guardianFamilies, families, students, settings } from '../src/db/schema';
+import { guardians, guardianFamilies, families, students, settings, auditLog, invites, studentFees, feePlans } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
@@ -27,7 +27,7 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   const { db } = app.dbmod;
-  for (const t of [guardianFamilies, guardians, students, families, settings]) db.delete(t).run();
+  for (const t of [invites, guardianFamilies, guardians, studentFees, feePlans, students, families, settings, auditLog]) db.delete(t).run();
 });
 
 describe('SMTP config round-trip', () => {
@@ -80,21 +80,42 @@ describe('guardianEmailsForFamily', () => {
   });
 });
 
-describe('senders degrade gracefully when SMTP is off', () => {
-  it('sendReceipt/sendInvite/sendAutopayFailure no-op (0/false) without SMTP', async () => {
+describe('senders degrade gracefully, and say WHY', () => {
+  it('no-op with no transport at all, reporting no_transport rather than failing silently', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'X' });
     await admin.people.guardianCreate({ familyId: fam.id, name: 'A', email: 'a@test.org' });
+    // No SMTP and no Fabric in this harness → mailAvailable() is false.
+    expect(notify.mailAvailable()).toBe(false);
     expect(await notify.sendReceipt(fam.id, '$50.00')).toBe(0);
-    expect(await notify.sendInvite('a@test.org', 'https://x/family/invite?token=t', 'A')).toBe(false);
     expect(await notify.sendAutopayFailure(fam.id, true)).toBe(0);
+    // An absolute URL is supplied here, so the ONLY thing missing is a transport.
+    expect(await notify.sendInvite('a@test.org', 'https://x/family/invite?token=t', 'A')).toEqual({ sent: false, skipped: 'no_transport' });
   });
 
-  it('does not email an invite when there is no absolute base URL (relative link would be dead)', async () => {
-    // SMTP configured, but the test env sets no OPENMASJID_PUBLIC_URL → portalBase() is '' → skip the
-    // send so the office falls back to the copy/print link instead of a dead relative link.
+  it('does not email an invite when there is no absolute base URL, reporting no_public_url', async () => {
+    // SMTP configured, but the test env sets no OPENMASJID_PUBLIC_URL and there is no Fabric to ask
+    // for a live one → portalBase() is '' → skip the send. Emailing a parent a relative or LAN-only
+    // link is worse than not emailing: the office falls back to the copy/print link instead.
     settingsMod.setSmtp({ host: 'smtp.test', port: 587, secure: false, user: 'u', pass: 'p', from: 'S <o@test.org>' });
     expect(smtp.smtpConfigured()).toBe(true);
-    expect(await notify.sendInvite('a@test.org', '/family/invite?token=t', 'A')).toBe(false);
+    expect(notify.mailAvailable()).toBe(true); // a transport EXISTS — the URL is what's missing
+    expect(await notify.sendInvite('a@test.org', '/family/invite?token=t', 'A')).toEqual({ sent: false, skipped: 'no_public_url' });
+    expect(await notify.sendReset('a@test.org', '/family/reset?token=t')).toEqual({ sent: false, skipped: 'no_public_url' });
+  });
+
+  it('records WHY an invite was not emailed, so a suppressed send leaves a trail', async () => {
+    const admin = caller('admin');
+    const fam = await admin.people.familyCreate({ name: 'Ismail' });
+    const g = await admin.people.guardianCreate({ familyId: fam.id, name: 'Abu Yusuf', email: 'abu@test.org' });
+    const r = await admin.auth.inviteCreate({ guardianId: g.id });
+    // The invite itself still works — the office copies the link.
+    expect(r.url).toContain('/family/invite?token=');
+    expect(r.emailed).toBe(false);
+    expect(r.mailSkipped).toBeTruthy();
+    const entry = app.dbmod.db.select().from(auditLog).all().find((e) => e.action === 'invite.mail')!;
+    expect(entry).toBeTruthy();
+    expect(JSON.stringify(entry.detail)).toContain('"emailed":false');
+    expect(JSON.stringify(entry.detail)).toContain(String(r.mailSkipped));
   });
 });

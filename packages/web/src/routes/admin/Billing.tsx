@@ -5,12 +5,13 @@
 import { useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { Wallet } from 'lucide-react';
+import { Wallet, Users2, Pencil } from 'lucide-react';
 import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { useWindows } from '../../components/Windows';
 import { FamilyBilling } from '../../components/FamilyBilling';
-import { formatMoney, parseCents } from '../../lib/money';
+import { MassApply } from '../../components/MassApply';
+import { formatMoney, parseCents, parseSignedCents } from '../../lib/money';
 
 export function Billing() {
   const { t } = useTranslation();
@@ -26,10 +27,22 @@ export function Billing() {
   const reconcileStatusQ = trpc.billing.reconcileStatus.useQuery();
   const reconcileNow = trpc.billing.reconcileNow.useMutation();
 
+  // Charge items: the catalogue the one-off charges are applied from. A charge snapshots its label
+  // and amount when applied, so editing an item here never rewrites a charge already raised.
+  const items = trpc.billing.chargeItemList.useQuery();
+  const itemCreate = trpc.billing.chargeItemCreate.useMutation();
+  const itemUpdate = trpc.billing.chargeItemUpdate.useMutation();
+  const itemArchive = trpc.billing.chargeItemArchive.useMutation();
+  const chargesQ = trpc.billing.chargeList.useQuery({});
+  const chargeVoid = trpc.billing.chargeVoid.useMutation();
+
   const [plan, setPlan] = useState({ name: '', amount: '', cadence: 'monthly' });
   const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
   const [genMsg, setGenMsg] = useState<string | null>(null);
   const [reconcileMsg, setReconcileMsg] = useState<string | null>(null);
+  const [item, setItem] = useState({ name: '', amount: '' });
+  const [itemEdit, setItemEdit] = useState<{ id: string; name: string; amount: string } | null>(null);
+  const [chargeErr, setChargeErr] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
 
   async function addPlan(e: FormEvent) {
@@ -51,6 +64,38 @@ export function Billing() {
   function openFamily(id: string, name: string) {
     open({ title: name, wide: true, dedupeKey: `billing:${id}`, icon: <Wallet size={15} />, node: <FamilyBilling familyId={id} currency={currency} /> });
   }
+  function openMassApply() {
+    open({ title: t('mass.title'), wide: true, dedupeKey: 'mass-apply', icon: <Users2 size={15} />, node: <MassApply currency={currency} /> });
+  }
+
+  async function addItem(e: FormEvent) {
+    e.preventDefault();
+    // An item may be priced negative (a standing credit, e.g. a bursary line).
+    const cents = parseSignedCents(item.amount);
+    if (!item.name.trim() || cents === null || cents === 0) return;
+    await itemCreate.mutateAsync({ name: item.name.trim(), defaultAmountCents: cents });
+    setItem({ name: '', amount: '' });
+    await utils.billing.chargeItemList.invalidate();
+  }
+  async function saveItem(e: FormEvent) {
+    e.preventDefault();
+    if (!itemEdit) return;
+    const cents = parseSignedCents(itemEdit.amount);
+    if (!itemEdit.name.trim() || cents === null || cents === 0) return;
+    await itemUpdate.mutateAsync({ id: itemEdit.id, name: itemEdit.name.trim(), defaultAmountCents: cents });
+    setItemEdit(null);
+    await utils.billing.chargeItemList.invalidate();
+  }
+  async function doChargeVoid(id: string) {
+    setChargeErr(null);
+    try {
+      await chargeVoid.mutateAsync({ id });
+      await Promise.all([utils.billing.chargeList.invalidate(), utils.billing.familiesOverview.invalidate()]);
+    } catch (e) {
+      // The useful case: it is already on an invoice, so the fix is a negative charge, not an edit.
+      setChargeErr((e as Error).message);
+    }
+  }
   async function runReconcile() {
     const r = await reconcileNow.mutateAsync();
     setReconcileMsg(r.ok ? t('billing.reconcileDone', { scanned: r.scanned, recorded: r.recorded }) : t('billing.reconcileUnavailable'));
@@ -60,7 +105,11 @@ export function Billing() {
 
   return (
     <motion.div className="page" variants={fadeRise} initial="initial" animate="animate">
-      <div className="admin-header"><h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('nav.billing')}</h1></div>
+      <div className="admin-header">
+        <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('nav.billing')}</h1>
+        <span className="spacer" />
+        <button type="button" className="btn btn--ghost" onClick={openMassApply}><Users2 size={15} /> {t('mass.title')}</button>
+      </div>
 
       {/* Fee plans */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
@@ -86,6 +135,80 @@ export function Billing() {
           </div>
           <button type="submit" className="btn btn--primary" disabled={planCreate.isPending}>{t('billing.addPlan')}</button>
         </form>
+      </section>
+
+      {/* Charge items — the catalogue one-off charges are applied from (uniform, exam fee, trip…). */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head"><h2>{t('billing.items')}</h2></div>
+        <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('billing.itemsHint')}</p>
+        {(items.data ?? []).length === 0 ? (
+          <p className="muted" style={{ fontSize: '0.9rem' }}>{t('billing.noItems')}</p>
+        ) : (
+          <div className="chip-row">
+            {items.data?.map((i) => (
+              <span key={i.id} className="chip">
+                {i.name} · {money(i.defaultAmountCents)}
+                <button type="button" className="link-btn" style={{ marginInlineStart: '0.4rem' }} aria-label={t('common.edit')} onClick={() => setItemEdit({ id: i.id, name: i.name, amount: (i.defaultAmountCents / 100).toFixed(2) })}><Pencil size={12} /></button>
+                <button type="button" className="link-btn" style={{ marginInlineStart: '0.3rem' }} aria-label={t('structure.archive')} onClick={async () => { await itemArchive.mutateAsync({ id: i.id }); await utils.billing.chargeItemList.invalidate(); }}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
+        {itemEdit && (
+          <form className="inline-form glass-inset" onSubmit={saveItem}>
+            <div className="field"><label className="label">{t('billing.itemName')}</label><input className="input glass-inset" value={itemEdit.name} onChange={(e) => setItemEdit({ ...itemEdit, name: e.target.value })} autoFocus /></div>
+            <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" className="input glass-inset" value={itemEdit.amount} onChange={(e) => setItemEdit({ ...itemEdit, amount: e.target.value })} /></div>
+            <button type="submit" className="btn btn--primary" disabled={itemUpdate.isPending}>{t('common.save')}</button>
+            <button type="button" className="btn btn--ghost" onClick={() => setItemEdit(null)}>{t('common.cancel')}</button>
+            <p className="hint">{t('billing.itemEditHint')}</p>
+          </form>
+        )}
+        <form className="inline-form glass-inset" onSubmit={addItem}>
+          <div className="field"><label className="label">{t('billing.itemName')}</label><input className="input glass-inset" value={item.name} onChange={(e) => setItem({ ...item, name: e.target.value })} placeholder={t('billing.itemPlaceholder')} /></div>
+          <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" className="input glass-inset" value={item.amount} onChange={(e) => setItem({ ...item, amount: e.target.value })} /></div>
+          <button type="submit" className="btn btn--primary" disabled={itemCreate.isPending}>{t('billing.addItem')}</button>
+        </form>
+      </section>
+
+      {/* Charges raised — pending ones can still be voided; invoiced ones are immutable (§9). */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head"><h2>{t('billing.charges')}</h2></div>
+        {chargeErr && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{chargeErr}</div>}
+        {(chargesQ.data ?? []).length === 0 ? (
+          <p className="muted" style={{ fontSize: '0.9rem' }}>{t('billing.noCharges')}</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>{t('students.name')}</th>
+                  <th>{t('billing.chargeLabel')}</th>
+                  <th>{t('billing.amount')}</th>
+                  <th>{t('billing.periodKey')}</th>
+                  <th>{t('billing.status')}</th>
+                  <th className="actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {chargesQ.data?.slice(0, 60).map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.firstName} {c.lastName}</td>
+                    <td>{c.label}{c.note && <span className="muted"> · {c.note}</span>}</td>
+                    <td className={c.amountCents < 0 ? 'merit-total is-pos' : ''}>{money(c.amountCents)}</td>
+                    <td>{c.periodKey ?? '—'}</td>
+                    <td><span className={`chip ${c.status === 'invoiced' ? 'is-accent' : c.status === 'void' ? 'is-muted' : ''}`}>{t(`billing.cs_${c.status}`)}</span></td>
+                    <td className="actions">
+                      {c.status === 'pending' && (
+                        <button type="button" className="btn btn--ghost btn--sm" disabled={chargeVoid.isPending} onClick={() => doChargeVoid(c.id)}>{t('billing.void')}</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {(chargesQ.data ?? []).length > 60 && <p className="hint">{t('billing.chargesTruncated', { shown: 60, total: chargesQ.data?.length ?? 0 })}</p>}
+          </div>
+        )}
       </section>
 
       {/* Generate invoices for a period */}

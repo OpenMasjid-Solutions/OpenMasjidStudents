@@ -328,8 +328,114 @@
   border: 1px solid color-mix(in srgb, var(--color-gold) 35%, transparent);
 }
 
+/* ── Year view: students × months payment grid ─────────────────────────────────
+   Twelve month columns never fit a phone, so the grid scrolls horizontally with the
+   name column pinned — the one treatment that keeps a row readable while scrolling.
+   Tap targets on the cells are sized for a thumb (44px), not a mouse. */
+.year-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.year-grid { min-width: max-content; }
+.year-grid th,
+.year-grid td { white-space: nowrap; }
+
+.year-sticky {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 2;
+  /* Opaque so rows scrolling underneath don't show through the pinned column. */
+  background: var(--color-surface-raised);
+}
+.year-grid thead .year-sticky { z-index: 3; }
+
+.year-month {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--color-ink-muted);
+}
+
+.year-group td {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-ink-muted);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+.year-cell { text-align: center; padding: 0.15rem; }
+.year-cell-btn {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  border: 0;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--color-ink-muted);
+  font-size: 1rem;
+  cursor: pointer;
+}
+.year-cell-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.year-cell.is-paid .year-cell-btn { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 16%, transparent); }
+.year-cell.is-partial .year-cell-btn { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 16%, transparent); }
+.year-cell.is-open .year-cell-btn { color: var(--color-ink-faint); }
+.year-cell.is-void .year-cell-btn { color: var(--color-ink-faint); text-decoration: line-through; }
+
+/* Tabular figures so money columns line up down the page. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ── Phone layout for the surfaces a volunteer actually uses on a phone ────────
+   Scope: the Students list, the Year view and Billing — the things finance and the
+   office check on the move (a balance, an invoice, a student's PIN, a printout).
+   The deep admin settings forms are deliberately left alone; they are desk work.
+
+   Two problems to fix on a small screen: headers/forms that assume a wide row, and
+   mouse-sized hit targets. Everything else already scrolls. */
+@media (max-width: 700px) {
+  .app-main { padding: 0.6rem !important; }
+
+  /* Headers and inline forms stop being single rows and stack instead. */
+  .admin-header,
+  .section-head,
+  .inline-form {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  /* The spacer's job is to push things apart on a wide row; on a stacked one it
+     would force a pointless line break. */
+  .admin-header .spacer,
+  .section-head .spacer { display: none; }
+  .admin-header .page-title { font-size: 1.25rem !important; }
+
+  .inline-form .field { min-width: 0; flex: 1 1 100%; }
+
+  /* Thumb-sized targets (WCAG 2.5.8 / 44px) on these surfaces only. */
+  .page .btn,
+  .page .input,
+  .page select.input { min-height: 2.75rem; }
+  .page .btn--sm { min-height: 2.5rem; }
+
+  /* Tables keep their own horizontal scroll; just stop them shrinking text away. */
+  .data-table { font-size: 0.9rem; }
+  .data-table td,
+  .data-table th { padding-inline: 0.5rem; }
+
+  /* An actions cell full of buttons wraps rather than forcing a very wide row. */
+  .data-table td.actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  /* Leave room for the dock so the last row isn't trapped underneath it. */
+  .page { padding-bottom: 5.5rem; }
+}
+
 /* Print: a clean week handout — hide the chrome, drop glass to plain boxes. */
 @media print {
+  /* A printed sheet has no scroll — let the grid lay out in full and shrink to fit. */
+  .year-scroll { overflow: visible !important; }
+  .year-grid { min-width: 0 !important; font-size: 0.7rem; }
+  .year-sticky { position: static !important; background: transparent !important; }
+  .year-cell-btn { min-width: 0 !important; min-height: 0 !important; background: none !important; }
   .no-print,
   .topbar,
   .dock,

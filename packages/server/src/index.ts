@@ -21,6 +21,7 @@ import { appRouter, type AppRouter } from './trpc/router';
 import { createContext } from './trpc/trpc';
 import { registerStatementRoutes } from './billing/statementRoutes';
 import { registerFabricProvider } from './fabric/provider';
+import { refreshSiteInfo } from './fabric/platform';
 import { loadStripeKeys } from './payments/stripe';
 import { startSchedulers } from './payments/scheduler';
 import { stripBasePath } from './http/basePath';
@@ -38,7 +39,12 @@ async function main(): Promise<void> {
   // NO Stripe webhook — payments record via the Fabric record-payment calls, the portal's
   // confirm-on-return, autopay's synchronous confirm, and the daily reconciliation (§11.4).
   void loadStripeKeys();
-  startSchedulers(); // daily autopay run + reconciliation (no-op standalone)
+  // Learn our public URL from the platform (manifest `domain: true`). Best-effort and never blocks:
+  // invite/reset links need an absolute, off-network base, and OPENMASJID_PUBLIC_URL is empty until
+  // an admin turns on Remote access — so asking is the difference between an invite that sends and
+  // one that silently doesn't. The scheduler keeps it fresh.
+  void refreshSiteInfo();
+  startSchedulers(); // daily autopay run + reconciliation + public-URL refresh (no-op standalone)
 
   // The tunnel mount prefix (e.g. "/students"); "" when standalone / served at the root.
   const BASE = config.basePath;

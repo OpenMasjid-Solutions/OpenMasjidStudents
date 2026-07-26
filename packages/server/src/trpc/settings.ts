@@ -5,12 +5,16 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { isNotNull } from 'drizzle-orm';
-import { router, adminProcedure, auditActor } from './trpc';
+import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
 import { families, paymentMethods, autopayEnrollments } from '../db/schema';
 import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getSmtp, setSmtp, getChosenStripeAccount, setChosenStripeAccount } from '../settings';
 import { audit } from '../audit';
-import { verifySmtp, sendMail } from '../mail/smtp';
+import { verifySmtp, sendMail, smtpConfigured } from '../mail/smtp';
+import { mailAvailable } from '../mail/notify';
+import { portalBase } from '../auth/invites';
+import { cachedPublicUrl } from '../fabric/platform';
+import { fabricConfigured, config } from '../config';
 import { testEmail } from '../mail/templates';
 import { stripeReady, stripeAccountId, loadStripeKeys } from '../payments/stripe';
 import { fetchStripeAccounts } from '../fabric/platform';
@@ -33,6 +37,32 @@ export const settingsRouter = router({
       audit(auditActor(ctx), 'settings.update', { entity: 'settings', detail: { keys: Object.keys(input) } });
       return { ok: true as const };
     }),
+
+  /**
+   * Can this install actually reach a parent? Every "invite/reset didn't arrive" report comes down to
+   * one of these three, and until now all three failed SILENTLY:
+   *   - no absolute public URL  → invite/reset links are un-emailable (Remote access is off)
+   *   - no mail transport       → nothing can be sent at all
+   *   - no notification webhook → staff alerts go nowhere
+   * Read-only diagnostics; admin OR finance, because finance is who sends invites.
+   */
+  linkStatus: adminOrFinanceProcedure.query(() => {
+    const base = portalBase();
+    const live = cachedPublicUrl();
+    return {
+      fabric: fabricConfigured(),
+      publicUrl: base,
+      /** Where the URL came from — `platform` is authoritative, `env` is the install-time mirror. */
+      publicUrlSource: live ? ('platform' as const) : config.omosPublicUrl ? ('env' as const) : ('none' as const),
+      smtp: smtpConfigured(),
+      /** We declare `email: true`, so the platform can send for us whenever the Fabric is wired up. */
+      platformMail: fabricConfigured(),
+      mailAvailable: mailAvailable(),
+      selfRegistrationOn: getSelfRegistrationEnabled(),
+      /** The toggle being on is not enough — the verify link is emailed. */
+      selfRegistrationAvailable: getSelfRegistrationEnabled() && mailAvailable() && !!base,
+    };
+  }),
 
   // ── Email (SMTP) — the password is WRITE-ONLY: never returned to the client, never audited (§10/§14).
   smtpGet: adminProcedure.query(() => {

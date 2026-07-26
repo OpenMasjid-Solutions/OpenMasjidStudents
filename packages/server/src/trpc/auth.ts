@@ -18,15 +18,14 @@ import { users, guardians, guardianUsers, guardianFamilies, students, invites, p
 import { rid } from '../db/ids';
 import { hashPassword, verifyPassword, dummyHash, MIN_PASSWORD_LENGTH } from '../auth/passwords';
 import { createSession, destroySession, cookieOptions, COOKIE, COOKIE_PATH, SSO_SESSION_TTL_MS, hashToken } from '../auth/sessions';
-import { probePlatformSession, notifyPlatform } from '../fabric/platform';
+import { probePlatformSession, raiseAlert } from '../fabric/platform';
 import { fabricConfigured, config } from '../config';
 import { clientIp } from '../security/origin';
 import { loginLimiter, inviteAcceptLimiter, resetRequestLimiter, resetConfirmLimiter, registerLimiter, pinLookupLimiter } from '../security/rateLimit';
 import { audit } from '../audit';
 import { mintInvite, portalBase } from '../auth/invites';
 import { nameMatches } from '../people/match';
-import { sendInvite, sendReset } from '../mail/notify';
-import { smtpConfigured } from '../mail/smtp';
+import { sendInvite, sendReset, mailAvailable } from '../mail/notify';
 import { getSelfRegistrationEnabled } from '../settings';
 
 const USERNAME = z.string().trim().min(1).max(254); // fits a full email (parent portal logins)
@@ -188,10 +187,39 @@ export const authRouter = router({
       throw new TRPCError({ code: r.reason === 'guardian_not_found' ? 'NOT_FOUND' : r.reason === 'no_email' ? 'BAD_REQUEST' : 'CONFLICT', message: msg });
     }
     audit(auditActor(ctx), 'invite.create', { entity: 'guardian', entityId: input.guardianId });
-    // Email the link when SMTP is set up; ALWAYS return the link too, so the office can copy/print it
-    // (and so a failed send never blocks the invite) — graceful degradation, §4/§12.
-    const emailed = await sendInvite(r.email, r.url, r.guardianName);
-    return { token: r.token, url: r.url, email: r.email, guardianName: r.guardianName, emailed };
+    // Email the link when we can; ALWAYS return the link too, so the office can copy/print it (and so
+    // a failed send never blocks the invite) — graceful degradation, §4/§12. `mailSkipped` tells the
+    // UI *why* nothing was sent, so "no public URL yet" stops being an invisible failure.
+    const mail = await sendInvite(r.email, r.url, r.guardianName);
+    audit(auditActor(ctx), 'invite.mail', { entity: 'guardian', entityId: input.guardianId, detail: { emailed: mail.sent, skipped: mail.skipped ?? null } });
+    return { token: r.token, url: r.url, email: r.email, guardianName: r.guardianName, emailed: mail.sent, mailSkipped: mail.skipped ?? null };
+  }),
+
+  /**
+   * Send a password reset to a guardian who already HAS a portal account — the office-initiated
+   * counterpart to the parent-initiated `resetRequest`.
+   *
+   * Unlike `resetRequest` this is deliberately NOT generic: the caller is authenticated staff looking
+   * at that guardian's record, so there is no account to enumerate, and a real error ("they have no
+   * account yet — send an invite instead") is far more useful than a silent success. Also returns the
+   * link so the office can read it out when mail isn't working.
+   */
+  sendGuardianReset: adminOrFinanceProcedure.input(z.object({ guardianId: ID })).mutation(async ({ ctx, input }) => {
+    const g = db.select({ id: guardians.id, name: guardians.name, email: guardians.email }).from(guardians).where(eq(guardians.id, input.guardianId)).get();
+    if (!g) throw new TRPCError({ code: 'NOT_FOUND', message: 'Guardian not found.' });
+    const link = db.select({ userId: guardianUsers.userId }).from(guardianUsers).where(eq(guardianUsers.guardianId, g.id)).get();
+    if (!link) throw new TRPCError({ code: 'BAD_REQUEST', message: 'This guardian has no portal account yet — send them an invite instead.' });
+    const user = db.select({ id: users.id, username: users.username, email: users.email, status: users.status }).from(users).where(eq(users.id, link.userId)).get();
+    if (!user || user.status !== 'active') throw new TRPCError({ code: 'BAD_REQUEST', message: 'That portal account is disabled.' });
+
+    const token = randomBytes(32).toString('base64url');
+    const ts = new Date();
+    db.insert(passwordResets).values({ id: rid('pwr'), tokenHash: hashToken(token), userId: user.id, createdAt: ts, expiresAt: new Date(ts.getTime() + RESET_TTL_MS) }).run();
+    const url = `${portalBase()}/family/reset?token=${token}`;
+    const to = user.email && user.email.includes('@') ? user.email : user.username;
+    const mail = await sendReset(to, url);
+    audit(auditActor(ctx), 'password.reset.staff', { entity: 'user', entityId: user.id, detail: { guardianId: g.id, emailed: mail.sent, skipped: mail.skipped ?? null } });
+    return { url, email: to, guardianName: g.name, emailed: mail.sent, mailSkipped: mail.skipped ?? null };
   }),
 
   /** Look up a pending invite (for the accept page to greet the guardian). Uniform invalid
@@ -278,14 +306,21 @@ export const authRouter = router({
         .all();
       if (byEmail.length === 1) user = byEmail[0];
     }
-    // Only mint a token when we can actually deliver it (SMTP + an absolute link) — otherwise the
-    // office handles the reset and no un-deliverable token is left stranded. Response stays generic.
-    if (user && smtpConfigured() && portalBase()) {
+    // Only mint a token when we can actually deliver it (some mail transport + an absolute link) —
+    // otherwise the office handles the reset and no un-deliverable token is left stranded. Response
+    // stays generic either way.
+    if (user && mailAvailable() && portalBase()) {
       const token = randomBytes(32).toString('base64url');
       const ts = new Date();
       db.insert(passwordResets).values({ id: rid('pwr'), tokenHash: hashToken(token), userId: user.id, createdAt: ts, expiresAt: new Date(ts.getTime() + RESET_TTL_MS) }).run();
       const to = user.email && user.email.includes('@') ? user.email : user.username;
-      void sendReset(to, `${portalBase()}/family/reset?token=${token}`);
+      // Deliberately NOT awaited: the response must take the same time whether or not the account
+      // exists, or it becomes an account-enumeration oracle. The delivery OUTCOME is audited from the
+      // callback instead, so a suppressed reset leaves a trail — on a default install with no public
+      // URL every reset is silently dropped, and that used to be invisible.
+      void sendReset(to, `${portalBase()}/family/reset?token=${token}`).then((mail) => {
+        audit({ userId: user.id, role: null, name: null }, 'password.reset.mail', { entity: 'user', entityId: user.id, detail: { emailed: mail.sent, skipped: mail.skipped ?? null } });
+      });
       audit({ userId: user.id, role: null, name: null }, 'password.reset.request', { entity: 'user', entityId: user.id });
     }
     return { ok: true as const };
@@ -333,7 +368,7 @@ export const authRouter = router({
   /** Whether the self-registration door is open (for the /family/register page to show the form vs a
    *  notice). Public. Requires the admin toggle ON, SMTP configured, and an absolute base (the verify
    *  link is emailed). */
-  registerConfig: publicProcedure.query(() => ({ available: getSelfRegistrationEnabled() && smtpConfigured() && !!portalBase() })),
+  registerConfig: publicProcedure.query(() => ({ available: getSelfRegistrationEnabled() && mailAvailable() && !!portalBase() })),
 
   /** Self-registration door 2 (§12): a parent proves they belong by a child's name + PIN + a guardian
    *  email ALREADY on file — all matching the SAME family (a PIN alone is not enough). On a full match
@@ -344,8 +379,8 @@ export const authRouter = router({
     .input(z.object({ childName: z.string().trim().min(1).max(120), pin: z.string().trim().min(1).max(20), email: USERNAME }))
     .mutation(async ({ ctx, input }) => {
       if (!registerLimiter.allow(clientIp(ctx.req))) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in a little while.' });
-      // Door closed (toggle off / no SMTP / no public URL) → behave exactly like a non-match.
-      if (!getSelfRegistrationEnabled() || !smtpConfigured() || !portalBase()) return { ok: true as const };
+      // Door closed (toggle off / no mail transport / no public URL) → behave exactly like a non-match.
+      if (!getSelfRegistrationEnabled() || !mailAvailable() || !portalBase()) return { ok: true as const };
       const pin = input.pin.trim();
       const email = input.email.trim().toLowerCase();
       // A locked PIN behaves as a non-match (no signal it's otherwise valid).
@@ -364,7 +399,8 @@ export const authRouter = router({
       if (!guardian) {
         const wasLocked = pinLookupLimiter.retryAfterMs(pin) > 0;
         pinLookupLimiter.fail(pin);
-        if (!wasLocked && pinLookupLimiter.retryAfterMs(pin) > 0) void notifyPlatform('A self-registration name+PIN lookup was locked after repeated failed attempts.', { title: 'Signup lookup locked', level: 'warn' });
+        // An alert (email-capable), not a webhook-only notification — see fabric/provider.ts.
+        if (!wasLocked && pinLookupLimiter.retryAfterMs(pin) > 0) void raiseAlert('pin-lockout', 'A self-registration name + PIN lookup was locked after repeated failed attempts.', { title: 'Signup lookup locked' });
         return { ok: true as const }; // generic — no enumeration (§14)
       }
       pinLookupLimiter.succeed(pin);

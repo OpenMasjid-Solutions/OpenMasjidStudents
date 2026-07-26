@@ -13,11 +13,26 @@ import { guardians, guardianUsers, users, invites } from '../db/schema';
 import { rid } from '../db/ids';
 import { hashToken } from './sessions';
 import { config } from '../config';
+import { cachedPublicUrl } from '../fabric/platform';
 
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (§12)
 
-/** The parent-portal invite/signup base — the tunnel public URL when set, else relative. */
+/**
+ * The parent-portal invite/signup base, or '' when we don't have an absolute one.
+ *
+ * TWO sources, in order of trust:
+ *  1. `GET /api/fabric/site` (cached) — the LIVE public URL. Authoritative, and correct even when
+ *     the env mirror below was written before the admin exposed the app.
+ *  2. `OPENMASJID_PUBLIC_URL` — the mirror the platform writes into our .env at install. It is
+ *     EMPTY on a fresh install, because exposure is opt-in, which is exactly why (1) exists.
+ *
+ * Deliberately NOT a third fallback to the request's Host: that yields an RFC1918 LAN URL, and
+ * emailing a parent a link they cannot open from home is worse than not emailing them at all. When
+ * this returns '' the caller degrades to a copy/print link and says so.
+ */
 export function portalBase(): string {
+  const live = cachedPublicUrl();
+  if (live) return live.replace(/\/+$/, '');
   return config.omosPublicUrl ? config.omosPublicUrl.replace(/\/+$/, '') : '';
 }
 

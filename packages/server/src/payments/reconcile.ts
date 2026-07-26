@@ -16,17 +16,85 @@ import { db } from '../db';
 import { payments } from '../db/schema';
 import type { PaymentChannel } from '../db/schema';
 import { recordPayment } from '../billing/ledger';
-import { onAutopaySucceeded } from './autopay';
+import { onAutopaySucceeded, onAutopayFailed, abandonRun, pendingRuns } from './autopay';
 import { stripeClient, loadStripeKeys } from './stripe';
 import { getSetting, setSetting, SETTING_KEYS } from '../settings';
 import { audit, type AuditActor } from '../audit';
-import { notifyPlatform } from '../fabric/platform';
+import { raiseAlert } from '../fabric/platform';
 import { makeLog } from '../logger';
 
 const log = makeLog('reconcile');
 
 /** First-run look-back when no cursor is stored yet (seconds) — a month of history to catch up. */
 const FIRST_RUN_LOOKBACK_SEC = 35 * 24 * 60 * 60;
+
+/** Stripe PaymentIntent statuses that will never change again without a new action from us. */
+const TERMINAL_FAILURE = new Set(['canceled', 'requires_payment_method']);
+/** Still in flight — leave the run pending and look again next pass. */
+const STILL_WORKING = new Set(['processing', 'requires_action', 'requires_confirmation', 'requires_capture']);
+
+/**
+ * Resolve autopay runs stuck at `pending`, which nothing else can do now that there is no webhook.
+ *
+ * For each stuck run, ask Stripe what actually happened:
+ *   - `succeeded`                                → resolve the run + reset the ladder (the main scan
+ *                                                  above books the money; this just unblocks billing)
+ *   - `canceled` / `requires_payment_method`     → a real decline → advance the retry ladder
+ *   - `processing` / `requires_action` / …       → genuinely unresolved, leave it alone
+ *   - no PaymentIntent exists for the run at all → `paymentIntents.create` threw before returning an
+ *                                                  id, so NOTHING was charged. Close the run without
+ *                                                  advancing the ladder (see `abandonRun`).
+ *
+ * The no-id case is found by searching `metadata["students_autopay_run_id"]`, which is exactly why we
+ * stamp the run id onto every autopay PI. Never guesses: if Stripe can't be reached the run is left
+ * pending, because wrongly deciding "no charge happened" is how you double-bill someone.
+ */
+export async function resolveStuckRuns(actor: AuditActor): Promise<{ checked: number; resolved: number }> {
+  const stripe = stripeClient();
+  if (!stripe) return { checked: 0, resolved: 0 };
+  const stuck = pendingRuns();
+  let resolved = 0;
+
+  for (const run of stuck) {
+    try {
+      let pi: { id: string; status: string } | null = null;
+      if (run.stripePaymentIntentId) {
+        const got = await stripe.paymentIntents.retrieve(run.stripePaymentIntentId);
+        pi = { id: got.id, status: got.status };
+      } else {
+        const found = await stripe.paymentIntents.search({ query: `metadata["students_autopay_run_id"]:"${run.id}"`, limit: 1 });
+        const first = found.data[0];
+        pi = first ? { id: first.id, status: first.status } : null;
+      }
+
+      if (!pi) {
+        // Confirmed: Stripe has no PaymentIntent for this run, so no money moved.
+        if (abandonRun(run.id)) {
+          resolved++;
+          audit(actor, 'autopay.run.abandoned', { entity: 'family', entityId: run.familyId, detail: { runId: run.id, runDate: run.runDate } });
+          log.warn('autopay run had no PaymentIntent at Stripe — closed without a strike', { runId: run.id });
+        }
+        continue;
+      }
+      if (STILL_WORKING.has(pi.status)) continue; // genuinely in flight
+      if (pi.status === 'succeeded') {
+        onAutopaySucceeded(pi.id, run.id);
+        resolved++;
+        continue;
+      }
+      if (TERMINAL_FAILURE.has(pi.status)) {
+        onAutopayFailed(pi.id, run.id);
+        resolved++;
+        audit(actor, 'autopay.run.failed', { entity: 'family', entityId: run.familyId, detail: { runId: run.id, stripeStatus: pi.status } });
+        log.warn('autopay run resolved as failed by reconciliation', { runId: run.id, status: pi.status });
+      }
+    } catch (e) {
+      // Leave it pending — an unreachable Stripe must never be read as "no charge happened".
+      log.warn('could not resolve stuck autopay run — will retry next pass', { runId: run.id, error: (e as Error).message });
+    }
+  }
+  return { checked: stuck.length, resolved };
+}
 
 export interface ReconcileResult {
   ok: boolean; // false only when Stripe isn't configured (nothing to do)
@@ -128,7 +196,11 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
             // A recovered autopay success resolves its stuck-'pending' run + resets the retry ladder.
             if (channel === 'autopay') onAutopaySucceeded(pi.id, md.students_autopay_run_id);
             audit(actor, 'payment.reconcile', { entity: 'family', entityId: familyId, detail: { channel, amountCents: amount, stripePaymentIntentId: pi.id } });
-            void notifyPlatform(`A previously-missed tuition payment of ${(amount / 100).toFixed(2)} was recorded (${channel}).`, { title: 'Tuition payment recovered' });
+            // An alert: a payment reaching Stripe but not the ledger directly means a push path
+            // failed, which someone should look at rather than have it vanish into an unset webhook.
+            // `info`, not the default `warning`: the money was recovered, so this is a notice that a
+            // push path needs looking at — not something going wrong right now.
+            void raiseAlert('reconcile-recovered', `A previously-missed tuition payment of ${(amount / 100).toFixed(2)} was recorded (${channel}).`, { title: 'Tuition payment recovered', level: 'info' });
           }
         } catch (e) {
           // A transient write failure on ONE PI must not abort the pass — but must NOT let the cursor
@@ -166,13 +238,20 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
     log.warn('reconcile pending scan failed — cursor not held for pending PIs this run', { error: (e as Error).message });
   }
 
+  // Resolve autopay runs stuck at 'pending'. This scan is SEPARATE from the succeeded-PI scan above
+  // and is not optional: the scan above only ever sees status:"succeeded", so a run whose PI ended in a
+  // TERMINAL FAILURE was never resolved by anything, stayed 'pending' forever, and the pending-run
+  // guard in chargeFamily then blocked that family from ever being charged again. Silent, and it looks
+  // exactly like "autopay stopped working" months later.
+  const stuck = await resolveStuckRuns(actor);
+
   // Never advance the cursor to/past a PI that errored on record OR is still pending — cap it strictly
   // below the earliest such PI so it is re-scanned once it succeeds (money is never silently skipped, §11.4).
   const holdBelow = Math.min(earliestErrored, earliestPending);
   const nextCursor = holdBelow === Infinity ? maxCreated : Math.min(maxCreated, holdBelow - 1);
   setSetting(SETTING_KEYS.reconcileCursor, String(nextCursor));
-  setSetting(SETTING_KEYS.reconcileLast, JSON.stringify({ ranAt, scanned, recorded }));
-  log.info('reconcile complete', { scanned, recorded });
+  setSetting(SETTING_KEYS.reconcileLast, JSON.stringify({ ranAt, scanned, recorded, stuckResolved: stuck.resolved }));
+  log.info('reconcile complete', { scanned, recorded, stuckChecked: stuck.checked, stuckResolved: stuck.resolved });
   return { ok: true, scanned, recorded, ranAt };
 }
 

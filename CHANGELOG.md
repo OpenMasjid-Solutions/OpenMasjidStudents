@@ -9,28 +9,135 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
-## [0.36.0]
+## [0.37.0]
+
+The office can now reach everything v0.36.0 built. That release shipped the school year, terms,
+courses, classes, mass apply, the charge catalogue and per-student fee overrides **on the server
+only** — around 28 procedures with no screen behind them — so on a real install none of it could be
+used, and the v0.36.0 notes below have been corrected to say what actually shipped.
 
 ### Added
 
-- **School year + terms** — configure which month the year runs from and to, and optionally the
-  terms inside it. Terms exist so `per-term` tuition means something; a monthly-only madrasah
-  simply never creates them.
-- **Courses → classes** as an organisational grouping (e.g. Hifz → Hifz 1). Grouping only: no
-  teachers, attendance, grades or capacity — that scope stays out (§4 ❌).
+- **Structure tab** (admin) — the configuration surface those features were missing:
+  - **School years**: create one, **edit an existing one** (name, starting calendar year, from/to
+    months), make another current, or archive it. Previously a year could only be created, and a
+    year saved before `start_year` existed could not be repaired at all.
+  - **Terms**: create, edit and delete the terms inside a year — what `per-term` tuition needs.
+  - **Courses → classes**: create, rename, reorder and archive both. **This is the one that
+    unblocked the rest**: with no class in existence, `courseTree` was empty, so the Students tab's
+    class dropdown had no options, every student stayed unplaced, and the course→class grouping in
+    both the roster and the year view had nothing to group by. Archiving a class unplaces its
+    students first and says how many moved.
+- **Mass apply** (admin + finance) — a fee plan or a one-off charge, applied to **explicit
+  students, a whole class, or a whole course**, with the resolved head-count shown before you
+  commit. Assigning a fee plan is repeat-safe (a student who already has it is skipped); a charge is
+  not, so it confirms first and says so.
+- **Charge items + charges** in Billing — the catalogue (add, rename, re-price, archive) and the
+  charges raised from it, with void for anything not yet invoiced. Re-pricing an item never rewrites
+  a charge already applied.
+- **Per-student fee override** in a family's billing — charge one student a different amount for the
+  same plan, with a note, and clear it back to the plan's price. The overridden amount is shown with
+  the plan's price struck through, and it flows into the year view's *Paying* column.
+- **Per-student one-off charges** in a family's billing, from the catalogue or free-typed.
+- **Edit a guardian** (name, phone, email). Without this there was no way to add an email to a
+  guardian, which silently blocked the password-reset feature added below.
+- **Bank transfer / ACH** as a way to record an offline payment, alongside cash, check and Zelle.
+  Text column, no CHECK constraint, so no migration and existing rows are untouched. This is money
+  the masjid received directly — not the Stripe ACH debit that stays out of scope (§4 ❌).
+- **Year view** (admin + finance) — every student as a row, every billing month as a column, so a
+  year of tuition reads at a glance and prints. A cell is the family's invoice for that month, so
+  siblings share it. Admin chooses the extra columns (guardian phone, email, names, DOB, balance,
+  PIN); the choice is enforced server-side, so a column that is off is never sent to the browser.
+  **PIN is off by default** — a whole-school grid of payment PINs is a far wider exposure than the
+  per-family statement it belongs on (§14).
+- **Guardian portal accounts are visible to the office** — whether each guardian has signed up and
+  whether that account is active — and staff can **send a password reset** to one who has. That
+  distinguishes "never accepted the invite" from "signed up and forgot", which decides whether to
+  re-invite or reset.
+- **Transactional email through OpenMasjidOS** (`email: true` → `POST /api/fabric/email`), so local
+  SMTP is genuinely optional: the OS owns the credentials and the From address. Local SMTP is still
+  tried first, keeping a standalone install fully working.
+- **The app learns its own public URL from the platform** (`domain: true` → `GET /api/fabric/site`,
+  refreshed every 15 minutes). `OPENMASJID_PUBLIC_URL` is only a mirror written at install and is
+  empty until an admin turns on Remote access — so without this, invite and reset links had no
+  absolute base and could not be emailed at all.
+- **Admin alerts** (`alerts:` → `POST /api/fabric/alert`) for the three events where a dropped
+  notification costs money or hides an attack: autopay switched off after repeated failures, a PIN
+  lookup locked, and a payment recovered by reconciliation. Unlike the webhook-only notifications
+  these can reach the admin's email, and the admin gets a per-alert on/off in OpenMasjidOS.
+- **A "reaching parents" panel** in Settings, shown first: whether there is a public web address, a
+  mail transport, and a working self-registration door — because every "the invite never arrived"
+  report comes down to one of those three, and all three used to fail silently.
+- **A suppressed email now says why** — no public URL yet, or no mail set up — in the UI next to the
+  copy/print link, and in the audit log. A reset or invite that could not be sent is no longer
+  invisible.
+- **Database snapshot for backups** — a `VACUUM INTO` copy on the data volume every 30 minutes,
+  verified with `integrity_check` before it is published. The platform tars the volume while the
+  container is running, and SQLite in WAL mode has three files at rest, so a naive capture can be
+  torn in a way nothing downstream can detect. The archive now always contains one restorable copy.
+
+### Fixed
+
+- **Autopay could stop for a family, silently and permanently.** With no webhook, a run whose
+  PaymentIntent ended in a terminal failure was never resolved, stayed `pending` forever, and the
+  pending-run guard then blocked that family from ever being charged again. Reconciliation now asks
+  Stripe what happened to every stuck run and resolves it. A run whose PaymentIntent never existed
+  is closed **without** a retry strike — nothing was presented to the card, so our own network error
+  must not count against the family.
+- **Every admin alert would have failed.** The platform reads the alert id from `alert`; we sent
+  `id`, so all three alerts 400'd — and because they replaced working webhook notifications, this
+  would have made those events *less* reachable than v0.36.0. Alerts now also carry a severity
+  (a recovered payment is `info`, not a warning).
+- **A suppressed platform email was reported as sent.** `POST /api/fabric/email` answers **HTTP 200**
+  with `{ sent: false, reason }` when the masjid has no mail provider configured, so trusting the
+  status code marked an unsent invite as emailed and audited it as delivered. The response body is
+  now the signal, and the reason is logged.
+- A disabled *Send password reset* button explained itself only through a `title` tooltip, which
+  browsers do not show on disabled controls and which never reaches touch or keyboard users. It is
+  real text now, and actionable, since a guardian's email can finally be edited.
+- **A negative charge could not be entered.** The amount field used the owed-amount parser, which
+  rejects negatives, so the credit / scholarship / correction path documented in 0.36.0 silently
+  never submitted. Charges and charge items now use a signed parser; payments, fee-plan prices,
+  overrides and discounts still refuse a minus sign, where it is a typo.
+
+### Notes
+
+- `payment_channels` gains `ach`. The column is plain text with no CHECK constraint, so there is no
+  migration and existing rows are untouched. This deviates from the list in CLAUDE.md §9 by one
+  value, deliberately.
+- `packages/server/src/config.ts`'s `version` is bumped with the release. §19 does not list it, but
+  it feeds the version shown to every user and the `appVersion` stamped into each DB snapshot
+  manifest — worth adding to that runbook.
+
+## [0.36.0]
+
+> **Corrected after release.** The entries below originally described the school year, terms,
+> courses, classes, mass apply, the charge catalogue and the fee-override note as delivered
+> features. They were built on the server but had **no user interface**, so none of them could be
+> reached on a real install. The wording now says what shipped; the screens arrived in 0.37.0.
+
+### Added
+
+- **School year + terms — data model and API only (no UI until 0.37.0).** A year carries the
+  from/to months the billing periods derive from; terms exist so `per-term` tuition means something.
+- **Courses → classes — data model and API only (no UI until 0.37.0).** An organisational grouping
+  (e.g. Hifz → Hifz 1): no teachers, attendance, grades or capacity — that scope stays out (§4 ❌).
+  Because nothing could create a course or class, every student remained unplaced in practice.
 - **Students tab**, replacing the family-first Directory: every student grouped by course and
-  class with a *No class* bucket last, search, a withdrawn filter, and inline class placement.
+  class, search, a withdrawn filter, and inline class placement. (The grouping only became usable in
+  0.37.0, once classes could be created; the *No class* bucket is forced last in the roster view.)
 - **CSV student import** — pick a file, confirm the auto-matched column mapping, review every
   resolved row and its problems, then commit. The commit is all-or-nothing: a file with any bad
   row imports nothing. A blank template is downloadable. Student IDs and PINs are never imported;
   they are always generated here.
 - **One-off charges** (books, uniform, registration, late fees) with a configurable item
-  catalogue. A charge lands on the period's invoice immediately when one is open, otherwise it
-  waits for the next generation. A negative charge is how a credit or scholarship is issued.
+  catalogue — **API only (no UI until 0.37.0)**. A charge lands on the period's invoice immediately
+  when one is open, otherwise it waits for the next generation. A negative charge is how a credit or
+  scholarship is issued.
 - **Mass apply** for both fee plans and charges, targeting explicit students, a class, or a whole
-  course.
+  course — **API only (no UI until 0.37.0)**.
 - **Per-student fee override + note** — charge one student a different amount without minting a
-  parallel plan; the note renders beside the amount.
+  parallel plan. **API only (no UI until 0.37.0);** the note renders beside the amount from 0.37.0.
 - **Move a student to another family**, which is how siblings are linked. Guardians hang off the
   family, so nothing is copied per student. Invoices already raised stay with the family that was
   billed; only future billing redirects.

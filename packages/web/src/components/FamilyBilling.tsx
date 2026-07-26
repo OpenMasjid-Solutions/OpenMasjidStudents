@@ -5,10 +5,17 @@
  *  integer cents end-to-end; the server ledger is the source of truth. RTL-safe. */
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Printer } from 'lucide-react';
+import { Printer, Pencil } from 'lucide-react';
 import { trpc } from '../lib/trpc';
-import { formatMoney, parseCents } from '../lib/money';
+import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
 import { withBase } from '../lib/base';
+
+/** The channels the office can record by hand. Kept in step with the server's
+ *  `MANUAL_PAYMENT_CHANNELS` by the router's own input type — `recordManualPayment` types `channel`
+ *  as its zod enum, so if this list drifts, `tsc` fails here rather than at runtime. Declared in the
+ *  web rather than imported so no server code is pulled into the browser bundle. */
+const MANUAL_CHANNELS = ['cash', 'check', 'ach', 'zelle', 'other'] as const;
+type ManualChannel = (typeof MANUAL_CHANNELS)[number];
 
 export function FamilyBilling({ familyId, currency }: { familyId: string; currency: string }) {
   const { t } = useTranslation();
@@ -18,6 +25,11 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
   const plans = trpc.billing.feePlanList.useQuery();
   const assign = trpc.billing.assignFee.useMutation();
   const unassign = trpc.billing.unassignFee.useMutation();
+  const setOverride = trpc.billing.setFeeOverride.useMutation();
+  const items = trpc.billing.chargeItemList.useQuery();
+  const chargesQ = trpc.billing.chargeList.useQuery({ familyId });
+  const chargeAdd = trpc.billing.chargeAdd.useMutation();
+  const chargeVoid = trpc.billing.chargeVoid.useMutation();
   const setDiscount = trpc.billing.setDiscount.useMutation();
   const generate = trpc.billing.generateFamily.useMutation();
   const voidInv = trpc.billing.voidInvoice.useMutation();
@@ -25,10 +37,20 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
   const reverse = trpc.billing.reversePayment.useMutation();
 
   const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
-  const [payment, setPayment] = useState({ amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
+  const [payment, setPayment] = useState<{ amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({ amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
+  /** Which fee assignment is having its per-student amount edited, if any. */
+  const [override, setOverrideForm] = useState<{ feeId: string; amount: string; note: string } | null>(null);
+  const [charge, setCharge] = useState({ studentId: '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
+  const [chargeErr, setChargeErr] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
 
-  const refresh = async () => { await utils.billing.familyBilling.invalidate({ familyId }); await utils.billing.familyFees.invalidate({ familyId }); };
+  const refresh = async () => {
+    await utils.billing.familyBilling.invalidate({ familyId });
+    await utils.billing.familyFees.invalidate({ familyId });
+    await utils.billing.chargeList.invalidate({ familyId });
+    // The year grid's "Paying" column and month cells both derive from these.
+    await utils.billing.yearGrid.invalidate();
+  };
 
   async function doGenerate(e: FormEvent) {
     e.preventDefault();
@@ -41,9 +63,44 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
     e.preventDefault();
     const cents = parseCents(payment.amount);
     if (!cents || cents < 1) return;
-    await pay.mutateAsync({ familyId, amountCents: cents, channel: payment.channel as 'cash' | 'zelle' | 'check' | 'other', occurredAt: payment.occurredAt, memo: payment.memo.trim() || undefined });
+    await pay.mutateAsync({ familyId, amountCents: cents, channel: payment.channel, occurredAt: payment.occurredAt, memo: payment.memo.trim() || undefined });
     setPayment({ ...payment, amount: '', memo: '' });
     await refresh();
+  }
+
+  /** Save (or clear) one student's own amount for a plan they already carry — the "override instead
+   *  of minting a whole new plan" path. A blank amount clears it back to the plan's price. */
+  async function saveOverride(e: FormEvent) {
+    e.preventDefault();
+    if (!override) return;
+    const cents = override.amount.trim() ? parseCents(override.amount) : null;
+    await setOverride.mutateAsync({ id: override.feeId, overrideAmountCents: cents, note: override.note.trim() });
+    setOverrideForm(null);
+    await refresh();
+  }
+
+  async function addCharge(e: FormEvent) {
+    e.preventDefault();
+    setChargeErr(null);
+    // Signed: a negative charge credits the student (a refund or scholarship), which the
+    // owed-amount parser rejects.
+    const cents = parseSignedCents(charge.amount);
+    if (!charge.studentId || cents === null || cents === 0) return;
+    if (!charge.chargeItemId && !charge.label.trim()) return;
+    try {
+      await chargeAdd.mutateAsync({
+        studentId: charge.studentId,
+        source: charge.chargeItemId
+          ? { kind: 'item', chargeItemId: charge.chargeItemId, amountCents: cents }
+          : { kind: 'custom', label: charge.label.trim(), amountCents: cents },
+        ...(charge.periodKey.trim() ? { periodKey: charge.periodKey.trim() } : {}),
+        ...(charge.note.trim() ? { note: charge.note.trim() } : {}),
+      });
+      setCharge({ studentId: '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
+      await refresh();
+    } catch (err) {
+      setChargeErr((err as Error).message);
+    }
   }
 
   const bal = billing.data?.balance;
@@ -52,10 +109,26 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
   // a null feeId; a student with N plans has N rows. Grouping lets us show every assigned plan AND
   // always offer an "assign another" dropdown (multiple plans per student are allowed).
   const feeGroups = (() => {
-    const m = new Map<string, { name: string; fees: { feeId: string; feePlanId: string; feePlanName: string; amountCents: number }[] }>();
+    const m = new Map<
+      string,
+      {
+        name: string;
+        fees: { feeId: string; feePlanId: string; feePlanName: string; amountCents: number; overrideAmountCents: number | null; effectiveAmountCents: number | null; note: string | null }[];
+      }
+    >();
     for (const r of fees.data ?? []) {
       const g = m.get(r.studentId) ?? { name: `${r.firstName} ${r.lastName}`.trim(), fees: [] };
-      if (r.feeId && r.feePlanId) g.fees.push({ feeId: r.feeId, feePlanId: r.feePlanId, feePlanName: r.feePlanName ?? '', amountCents: r.amountCents ?? 0 });
+      if (r.feeId && r.feePlanId) {
+        g.fees.push({
+          feeId: r.feeId,
+          feePlanId: r.feePlanId,
+          feePlanName: r.feePlanName ?? '',
+          amountCents: r.amountCents ?? 0,
+          overrideAmountCents: r.overrideAmountCents,
+          effectiveAmountCents: r.effectiveAmountCents,
+          note: r.note,
+        });
+      }
       m.set(r.studentId, g);
     }
     return [...m.entries()];
@@ -89,12 +162,34 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
               return (
                 <div key={studentId} className="glass-inset" style={{ padding: '0.5rem 0.7rem', borderRadius: 'var(--radius-button)', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <span style={{ flex: '1 1 10rem' }}>{g.name}</span>
-                  {g.fees.map((f) => (
-                    <span key={f.feeId} className="chip" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                      {f.feePlanName} · {money(f.amountCents)}
-                      <button type="button" className="btn btn--ghost btn--sm" style={{ padding: '0 0.25rem' }} aria-label={t('billing.removeFee')} onClick={async () => { await unassign.mutateAsync({ id: f.feeId }); await refresh(); }}>×</button>
-                    </span>
-                  ))}
+                  {g.fees.map((f) => {
+                    const overridden = f.overrideAmountCents !== null;
+                    return (
+                      <span key={f.feeId} className={`chip ${overridden ? 'is-accent' : ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                        {f.feePlanName} ·{' '}
+                        {overridden ? (
+                          // Show what is actually billed, with the plan's price struck through, so an
+                          // override is visible at a glance rather than looking like a wrong amount.
+                          <>
+                            <s className="muted">{money(f.amountCents)}</s> {money(f.effectiveAmountCents ?? f.amountCents)}
+                          </>
+                        ) : (
+                          money(f.amountCents)
+                        )}
+                        {f.note && <span className="muted" style={{ fontSize: '0.8rem' }}>· {f.note}</span>}
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--sm"
+                          style={{ padding: '0 0.25rem' }}
+                          aria-label={t('billing.editAmount')}
+                          onClick={() => setOverrideForm({ feeId: f.feeId, amount: overridden ? ((f.overrideAmountCents ?? 0) / 100).toFixed(2) : '', note: f.note ?? '' })}
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        <button type="button" className="btn btn--ghost btn--sm" style={{ padding: '0 0.25rem' }} aria-label={t('billing.removeFee')} onClick={async () => { await unassign.mutateAsync({ id: f.feeId }); await refresh(); }}>×</button>
+                      </span>
+                    );
+                  })}
                   {available.length > 0 && (
                     <select className="input glass-inset" style={{ flex: '0 1 12rem' }} value="" onChange={async (e) => { if (e.target.value) { await assign.mutateAsync({ studentId, feePlanId: e.target.value }); await refresh(); } }}>
                       <option value="">{g.fees.length ? t('billing.addFee') : t('billing.assignFee')}</option>
@@ -106,6 +201,98 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
             })}
           </div>
         )}
+
+        {override && (
+          <form className="inline-form glass-inset" onSubmit={saveOverride}>
+            <div className="field" style={{ flex: '0 1 9rem' }}>
+              <label className="label">{t('billing.overrideAmount')}</label>
+              <input type="number" step="0.01" min="0" className="input glass-inset" value={override.amount} onChange={(e) => setOverrideForm({ ...override, amount: e.target.value })} placeholder={t('billing.planPrice')} autoFocus />
+            </div>
+            <div className="field">
+              <label className="label">{t('billing.overrideNote')}</label>
+              <input className="input glass-inset" value={override.note} onChange={(e) => setOverrideForm({ ...override, note: e.target.value })} maxLength={200} placeholder={t('billing.overrideNoteHint')} />
+            </div>
+            <button type="submit" className="btn btn--primary" disabled={setOverride.isPending}>{t('common.save')}</button>
+            <button type="button" className="btn btn--ghost" onClick={() => setOverrideForm(null)}>{t('common.cancel')}</button>
+            <p className="hint">{t('billing.overrideHint')}</p>
+          </form>
+        )}
+      </section>
+
+      {/* One-off charges for this family's students */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head"><h2>{t('billing.charges')}</h2></div>
+        {chargeErr && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{chargeErr}</div>}
+        {(chargesQ.data ?? []).length === 0 ? (
+          <p className="muted" style={{ fontSize: '0.9rem' }}>{t('billing.noCharges')}</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="data-table">
+              <tbody>
+                {chargesQ.data?.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.firstName} {c.lastName}</td>
+                    <td>{c.label}{c.note && <span className="muted"> · {c.note}</span>}</td>
+                    <td className={c.amountCents < 0 ? 'merit-total is-pos' : ''}>{money(c.amountCents)}</td>
+                    <td>{c.periodKey ?? '—'}</td>
+                    <td><span className={`chip ${c.status === 'invoiced' ? 'is-accent' : c.status === 'void' ? 'is-muted' : ''}`}>{t(`billing.cs_${c.status}`)}</span></td>
+                    <td className="actions">
+                      {c.status === 'pending' && (
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--sm"
+                          disabled={chargeVoid.isPending}
+                          onClick={async () => {
+                            setChargeErr(null);
+                            try {
+                              await chargeVoid.mutateAsync({ id: c.id });
+                              await refresh();
+                            } catch (err) {
+                              setChargeErr((err as Error).message);
+                            }
+                          }}
+                        >
+                          {t('billing.void')}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <form className="inline-form glass-inset" onSubmit={addCharge}>
+          <div className="field" style={{ minWidth: '9rem' }}>
+            <label className="label">{t('billing.student')}</label>
+            <select className="input glass-inset" value={charge.studentId} onChange={(e) => setCharge({ ...charge, studentId: e.target.value })}>
+              <option value="">{t('billing.pickStudent')}</option>
+              {feeGroups.map(([id, g]) => <option key={id} value={id}>{g.name}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ minWidth: '9rem' }}>
+            <label className="label">{t('billing.item')}</label>
+            <select
+              className="input glass-inset"
+              value={charge.chargeItemId}
+              onChange={(e) => {
+                const it = (items.data ?? []).find((i) => i.id === e.target.value);
+                setCharge({ ...charge, chargeItemId: e.target.value, amount: it ? (it.defaultAmountCents / 100).toFixed(2) : charge.amount });
+              }}
+            >
+              <option value="">{t('billing.customCharge')}</option>
+              {(items.data ?? []).map((i) => <option key={i.id} value={i.id}>{i.name} · {money(i.defaultAmountCents)}</option>)}
+            </select>
+          </div>
+          {!charge.chargeItemId && (
+            <div className="field"><label className="label">{t('billing.chargeLabel')}</label><input className="input glass-inset" value={charge.label} onChange={(e) => setCharge({ ...charge, label: e.target.value })} maxLength={120} /></div>
+          )}
+          <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" className="input glass-inset" value={charge.amount} onChange={(e) => setCharge({ ...charge, amount: e.target.value })} /></div>
+          <div className="field" style={{ flex: '0 1 7rem' }}><label className="label">{t('billing.periodKey')}</label><input className="input glass-inset" value={charge.periodKey} onChange={(e) => setCharge({ ...charge, periodKey: e.target.value })} placeholder="2026-07" /></div>
+          <div className="field"><label className="label">{t('billing.memo')}</label><input className="input glass-inset" value={charge.note} onChange={(e) => setCharge({ ...charge, note: e.target.value })} maxLength={200} /></div>
+          <button type="submit" className="btn btn--primary" disabled={chargeAdd.isPending}>{t('billing.addCharge')}</button>
+          <p className="hint">{t('billing.chargeHint')}</p>
+        </form>
       </section>
 
       {/* Invoices + generate */}
@@ -146,8 +333,8 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
         <form className="inline-form glass-inset" onSubmit={doPay} style={{ marginBlockStart: 0 }}>
           <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" min="0" className="input glass-inset" value={payment.amount} onChange={(e) => setPayment({ ...payment, amount: e.target.value })} /></div>
           <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.channel')}</label>
-            <select className="input glass-inset" value={payment.channel} onChange={(e) => setPayment({ ...payment, channel: e.target.value })}>
-              {['cash', 'zelle', 'check', 'other'].map((c) => <option key={c} value={c}>{t(`billing.ch_${c}`)}</option>)}
+            <select className="input glass-inset" value={payment.channel} onChange={(e) => setPayment({ ...payment, channel: e.target.value as ManualChannel })}>
+              {MANUAL_CHANNELS.map((c) => <option key={c} value={c}>{t(`billing.ch_${c}`)}</option>)}
             </select>
           </div>
           <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.date')}</label><input type="date" className="input glass-inset" value={payment.occurredAt} onChange={(e) => setPayment({ ...payment, occurredAt: e.target.value })} /></div>

@@ -11,47 +11,89 @@ import { sendMail, sendMailTo, smtpConfigured } from './smtp';
 import { guardianEmailsForFamily } from './recipients';
 import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail } from './templates';
 import { portalBase } from '../auth/invites';
+import { sendPlatformEmail } from '../fabric/platform';
+import { fabricConfigured } from '../config';
 
 function portalHome(): string {
   const b = portalBase();
   return b ? `${b}/family` : '';
 }
 
-/** Email a parent-portal invite to one guardian. Returns true if actually sent. Requires an ABSOLUTE
- *  base (the tunnel public URL): without it the invite link would be relative and dead in a mail
- *  client, so we DON'T email — the caller falls back to the copy/print link (which the web UI
- *  absolute-izes against the current LAN origin). Receipts/autopay notices still send without a base
- *  (they just drop the portal button), but an invite with no working link is useless. */
-export async function sendInvite(email: string, url: string, guardianName: string): Promise<boolean> {
-  if (!smtpConfigured() || !portalBase()) return false;
-  const m = inviteEmail(getSchoolName(), guardianName, url);
-  return sendMail({ to: email, subject: m.subject, text: m.text, html: m.html });
+/** Why a send didn't happen, so a caller can tell the admin something actionable instead of failing
+ *  silently — which is how invites and resets used to disappear. */
+export type MailSkip = 'no_transport' | 'no_public_url' | 'no_recipient';
+
+export interface MailOutcome {
+  sent: boolean;
+  /** Present only when `sent` is false. */
+  skipped?: MailSkip;
 }
 
-/** Email a password-reset link to a user. Requires an absolute base (like invites) so the link is
- *  clickable; returns true if actually sent. */
-export async function sendReset(email: string, url: string): Promise<boolean> {
-  if (!smtpConfigured() || !portalBase()) return false;
+/** Is there ANY way to send mail right now? */
+export function mailAvailable(): boolean {
+  return smtpConfigured() || fabricConfigured();
+}
+
+/**
+ * One email, by whichever transport exists.
+ *
+ * Local SMTP first — it is the app's own config and keeps a STANDALONE install fully working with no
+ * platform at all (§6). The masjid's OpenMasjidOS mail provider is the fallback, which is what makes
+ * SMTP genuinely optional rather than a hard requirement for ever reaching a parent.
+ */
+async function deliver(to: string, subject: string, text: string, html?: string): Promise<boolean> {
+  if (smtpConfigured() && (await sendMail({ to, subject, text, html }))) return true;
+  return sendPlatformEmail(to, subject, text, html);
+}
+
+/**
+ * Email a parent-portal invite to one guardian.
+ *
+ * An invite still requires an ABSOLUTE, off-network base URL: a relative link is dead in a mail
+ * client, and a LAN link is dead for a parent at home. So when there is no public URL we deliberately
+ * DON'T send, and say why (`no_public_url`) so the caller can offer the copy/print link and the admin
+ * knows the tunnel isn't exposed yet — rather than the send vanishing.
+ */
+export async function sendInvite(email: string, url: string, guardianName: string): Promise<MailOutcome> {
+  // Transport first: it is configured INSIDE this app, so it is the reason an admin can act on
+  // immediately. A missing public URL is an OpenMasjidOS Remote-access setting.
+  if (!mailAvailable()) return { sent: false, skipped: 'no_transport' };
+  if (!portalBase()) return { sent: false, skipped: 'no_public_url' };
+  const m = inviteEmail(getSchoolName(), guardianName, url);
+  return { sent: await deliver(email, m.subject, m.text, m.html) };
+}
+
+/** Email a password-reset link. Same absolute-link requirement as invites, same explicit reasons. */
+export async function sendReset(email: string, url: string): Promise<MailOutcome> {
+  if (!mailAvailable()) return { sent: false, skipped: 'no_transport' };
+  if (!portalBase()) return { sent: false, skipped: 'no_public_url' };
   const m = resetEmail(getSchoolName(), url);
-  return sendMail({ to: email, subject: m.subject, text: m.text, html: m.html });
+  return { sent: await deliver(email, m.subject, m.text, m.html) };
 }
 
 /** Email a payment receipt to a family's guardians (§13.2.5 — "payment", never "donation"). Returns
- *  how many were sent. `amountFormatted` is a display string like "$350.00". */
+ *  how many were sent. A receipt is useful WITHOUT a public URL (it just drops the portal button). */
 export async function sendReceipt(familyId: string, amountFormatted: string): Promise<number> {
-  if (!smtpConfigured()) return 0;
+  if (!mailAvailable()) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   const m = receiptEmail(getSchoolName(), amountFormatted, portalHome());
-  return sendMailTo(emails, m.subject, m.text, m.html);
+  if (smtpConfigured()) return sendMailTo(emails, m.subject, m.text, m.html);
+  // The platform endpoint takes one recipient per call.
+  let n = 0;
+  for (const e of emails) if (await sendPlatformEmail(e, m.subject, m.text, m.html)) n++;
+  return n;
 }
 
 /** Email an autopay-failure notice to a family's guardians (§13.3). `final` = the third strike (autopay
  *  now off). Returns how many were sent. */
 export async function sendAutopayFailure(familyId: string, final: boolean): Promise<number> {
-  if (!smtpConfigured()) return 0;
+  if (!mailAvailable()) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   const m = autopayFailureEmail(getSchoolName(), portalHome(), final);
-  return sendMailTo(emails, m.subject, m.text, m.html);
+  if (smtpConfigured()) return sendMailTo(emails, m.subject, m.text, m.html);
+  let n = 0;
+  for (const e of emails) if (await sendPlatformEmail(e, m.subject, m.text, m.html)) n++;
+  return n;
 }

@@ -12,6 +12,10 @@ export function Settings() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
 
+  // Can this install actually reach a parent? Shown first, because every "the invite never arrived"
+  // report resolves to one of these three and all three used to fail silently.
+  const link = trpc.settings.linkStatus.useQuery();
+
   // App settings (school name, currency, self-registration, external tuition)
   const appSettings = trpc.settings.get.useQuery();
   const saveSettings = trpc.settings.set.useMutation();
@@ -82,6 +86,56 @@ export function Settings() {
       <div className="admin-header">
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('settings.title')}</h1>
       </div>
+
+      {/* Reaching parents — shown first because it silently blocks invites and resets. */}
+      {link.data && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head"><h2>{t('settings.reach')}</h2></div>
+          <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.75rem' }}>{t('settings.reachHint')}</p>
+          <table className="data-table">
+            <tbody>
+              <tr>
+                <td>{t('settings.reachUrl')}</td>
+                <td>
+                  {link.data.publicUrl ? (
+                    <>
+                      <span className="chip">{t('settings.reachOk')}</span>
+                      <code style={{ marginInlineStart: '0.5rem', fontSize: '0.82rem' }}>{link.data.publicUrl}</code>
+                    </>
+                  ) : (
+                    <span className="chip is-muted">{t('settings.reachMissing')}</span>
+                  )}
+                  <p className="hint">{link.data.publicUrl ? t(`settings.reachUrlFrom_${link.data.publicUrlSource}`) : t('settings.reachUrlFix')}</p>
+                </td>
+              </tr>
+              <tr>
+                <td>{t('settings.reachMail')}</td>
+                <td>
+                  <span className={`chip ${link.data.mailAvailable ? '' : 'is-muted'}`}>
+                    {link.data.mailAvailable ? t('settings.reachOk') : t('settings.reachMissing')}
+                  </span>
+                  <p className="hint">
+                    {link.data.smtp
+                      ? t('settings.reachMailSmtp')
+                      : link.data.platformMail
+                        ? t('settings.reachMailPlatform')
+                        : t('settings.reachMailFix')}
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td>{t('settings.reachSelfReg')}</td>
+                <td>
+                  <span className={`chip ${link.data.selfRegistrationAvailable ? '' : 'is-muted'}`}>
+                    {link.data.selfRegistrationAvailable ? t('settings.reachOk') : t('settings.reachMissing')}
+                  </span>
+                  {!link.data.selfRegistrationAvailable && link.data.selfRegistrationOn && <p className="hint">{t('settings.reachSelfRegBlocked')}</p>}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      )}
 
       {/* School */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>

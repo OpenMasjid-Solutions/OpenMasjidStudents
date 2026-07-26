@@ -16,7 +16,7 @@ import { formatMoney } from '../db/money';
 import { getCurrency } from '../settings';
 import { rid } from '../db/ids';
 import { makeLog } from '../logger';
-import { notifyPlatform } from '../fabric/platform';
+import { notifyPlatform, raiseAlert } from '../fabric/platform';
 import { sendReceipt, sendAutopayFailure } from '../mail/notify';
 import { stripeClient } from './stripe';
 
@@ -177,12 +177,38 @@ export function onAutopaySucceeded(paymentIntentId: string, runId?: string | nul
   db.update(autopayEnrollments).set({ failureCount: 0, nextAttemptAt: null, updatedAt: new Date() }).where(eq(autopayEnrollments.familyId, run.familyId)).run();
 }
 
-/** Webhook: an autopay PI failed → advance the retry ladder (+2, then +5), disabling after the third. */
+/** An autopay PI reached a TERMINAL failure at Stripe → advance the retry ladder (+2, then +5),
+ *  disabling after the third. Called by reconciliation (`resolveStuckRuns`); there is no webhook. */
 export function onAutopayFailed(paymentIntentId: string, runId?: string | null): void {
   const run = findRun(runId, paymentIntentId);
   if (!run) return;
   if (!run.stripePaymentIntentId) db.update(autopayRuns).set({ stripePaymentIntentId: paymentIntentId, updatedAt: new Date() }).where(eq(autopayRuns.id, run.id)).run();
   markRunFailed(run.id, run.runDate);
+}
+
+/**
+ * Close out a run that never actually reached Stripe — `paymentIntents.create` threw before returning
+ * an id, and a metadata search confirms no PaymentIntent for this run exists.
+ *
+ * Marked `failed` so it stops blocking the family's future charges, but WITHOUT advancing the retry
+ * ladder: nothing was ever presented to the card, so counting it as a strike would penalise the
+ * family for our own network error and could auto-disable autopay on three bad nights of
+ * connectivity. Idempotent, and only ever acts on a still-pending run.
+ */
+export function abandonRun(runId: string): boolean {
+  const run = db.select({ id: autopayRuns.id, status: autopayRuns.status }).from(autopayRuns).where(eq(autopayRuns.id, runId)).get();
+  if (!run || run.status !== 'pending') return false;
+  db.update(autopayRuns).set({ status: 'failed', updatedAt: new Date() }).where(eq(autopayRuns.id, runId)).run();
+  return true;
+}
+
+/** Every run still sitting at `pending` — the ones the guard in `chargeFamily` blocks on. */
+export function pendingRuns(): { id: string; familyId: string; runDate: string; stripePaymentIntentId: string | null }[] {
+  return db
+    .select({ id: autopayRuns.id, familyId: autopayRuns.familyId, runDate: autopayRuns.runDate, stripePaymentIntentId: autopayRuns.stripePaymentIntentId })
+    .from(autopayRuns)
+    .where(eq(autopayRuns.status, 'pending'))
+    .all();
 }
 
 /** Shared failure handling (from a webhook or a synchronous decline): advance the ladder. Acts ONLY on
@@ -199,7 +225,10 @@ function markRunFailed(runId: string, runDate: string): void {
   if (failureCount >= 3) {
     // Third strike — stop trying, turn autopay off, and tell finance + the parent.
     db.update(autopayEnrollments).set({ enabled: false, failureCount, nextAttemptAt: null, updatedAt: ts }).where(eq(autopayEnrollments.familyId, run.familyId)).run();
-    void notifyPlatform('Autopay was turned off for a family after three failed charge attempts.', { title: 'Autopay disabled', level: 'warn' });
+    // An ALERT, not a notification: this family stops being charged until a human intervenes, so it
+    // must be able to reach the admin's email rather than only a webhook nobody configured.
+    // `error`: this family has stopped being charged and will stay that way until a human acts.
+    void raiseAlert('autopay-disabled', 'Autopay was turned off for a family after three failed charge attempts.', { title: 'Autopay disabled', level: 'error' });
     void sendAutopayFailure(run.familyId, true); // parent: autopay is now off — pay now + update card (§13.3)
   } else {
     // Retry on day +2 (after the 1st failure) then day +5 (after the 2nd).

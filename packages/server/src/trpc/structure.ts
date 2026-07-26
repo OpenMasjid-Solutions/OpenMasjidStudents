@@ -23,6 +23,7 @@ import { audit } from '../audit';
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
 const MONTH = z.number().int().min(1).max(12);
+const YEAR = z.number().int().min(2000).max(2200);
 const ISO_DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const SORT = z.number().int().min(0).max(9999);
 const now = () => new Date();
@@ -52,7 +53,7 @@ export const structureRouter = router({
   ),
 
   schoolYearCreate: adminProcedure
-    .input(z.object({ label: NAME, startMonth: MONTH, endMonth: MONTH, makeCurrent: z.boolean().optional() }))
+    .input(z.object({ label: NAME, startYear: YEAR, startMonth: MONTH, endMonth: MONTH, makeCurrent: z.boolean().optional() }))
     .mutation(({ ctx, input }) => {
       const id = rid('syr');
       const ts = now();
@@ -63,19 +64,20 @@ export const structureRouter = router({
         const current = input.makeCurrent ?? first;
         if (current) tx.update(schoolYears).set({ isCurrent: false, updatedAt: ts }).run();
         tx.insert(schoolYears)
-          .values({ id, label: input.label, startMonth: input.startMonth, endMonth: input.endMonth, isCurrent: current, status: 'active', createdAt: ts, updatedAt: ts })
+          .values({ id, label: input.label, startYear: input.startYear, startMonth: input.startMonth, endMonth: input.endMonth, isCurrent: current, status: 'active', createdAt: ts, updatedAt: ts })
           .run();
       });
-      audit(auditActor(ctx), 'schoolYear.create', { entity: 'schoolYear', entityId: id, detail: { startMonth: input.startMonth, endMonth: input.endMonth } });
+      audit(auditActor(ctx), 'schoolYear.create', { entity: 'schoolYear', entityId: id, detail: { startYear: input.startYear, startMonth: input.startMonth, endMonth: input.endMonth } });
       return { id };
     }),
 
   schoolYearUpdate: adminProcedure
-    .input(z.object({ id: ID, label: NAME.optional(), startMonth: MONTH.optional(), endMonth: MONTH.optional() }))
+    .input(z.object({ id: ID, label: NAME.optional(), startYear: YEAR.optional(), startMonth: MONTH.optional(), endMonth: MONTH.optional() }))
     .mutation(({ ctx, input }) => {
       requireSchoolYear(input.id);
       const patch: Partial<typeof schoolYears.$inferInsert> = { updatedAt: now() };
       if (input.label !== undefined) patch.label = input.label;
+      if (input.startYear !== undefined) patch.startYear = input.startYear;
       if (input.startMonth !== undefined) patch.startMonth = input.startMonth;
       if (input.endMonth !== undefined) patch.endMonth = input.endMonth;
       db.update(schoolYears).set(patch).where(eq(schoolYears.id, input.id)).run();

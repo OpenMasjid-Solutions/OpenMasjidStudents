@@ -1,0 +1,1 @@
+ALTER TABLE `school_years` ADD `start_year` integer;

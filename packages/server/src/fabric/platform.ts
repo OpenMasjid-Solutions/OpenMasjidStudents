@@ -7,6 +7,10 @@
  * if the platform is unreachable, the app falls back to local login.
  */
 import { config, fabricConfigured } from '../config';
+import { makeLog } from '../logger';
+
+/** Platform-call outcomes only — never a request/response body, so no PII and no secrets (§14). */
+const log = makeLog('platform');
 
 export interface PlatformProbe {
   /** false only if we tried to reach the platform and could not. */
@@ -84,6 +88,155 @@ export async function fetchStripeAccounts(): Promise<StripeAccountRef[]> {
       .map((a) => ({ id: String(a.id), label: typeof a.label === 'string' && a.label ? a.label.slice(0, 80) : String(a.id) }));
   } catch {
     return [];
+  }
+}
+
+// ── Our public address (manifest `domain: true`) ─────────────────────────────
+/**
+ * `GET /api/fabric/site` is the LIVE source of truth for our public URL; `OPENMASJID_PUBLIC_URL` is
+ * only a convenience mirror the platform writes at install time, and it is empty until an admin
+ * actually exposes the app. Invite and reset links are useless without an absolute, off-network URL,
+ * so we ask the platform rather than trusting the mirror alone.
+ *
+ * Cached, because link minting is synchronous and must not await a network hop.
+ */
+export interface SiteInfo {
+  enabled: boolean;
+  publicUrl: string;
+  basePath: string;
+}
+
+let siteCache: { at: number; info: SiteInfo } | null = null;
+const SITE_TTL_MS = 60_000;
+
+/** Refresh the cached site info. Called on boot and by the scheduler; safe to call any time. */
+export async function refreshSiteInfo(): Promise<SiteInfo | null> {
+  if (!fabricConfigured()) return null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/site`, {
+      headers: { 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    // 403 = we didn't declare `domain: true`, or the platform predates the endpoint. Either way the
+    // env mirror is all we have; don't cache a failure as "no public URL".
+    if (!res.ok) return null;
+    const j = (await res.json().catch(() => null)) as { enabled?: unknown; publicUrl?: unknown; basePath?: unknown } | null;
+    if (!j) return null;
+    const info: SiteInfo = {
+      enabled: j.enabled === true,
+      publicUrl: typeof j.publicUrl === 'string' ? j.publicUrl : '',
+      basePath: typeof j.basePath === 'string' ? j.basePath : '',
+    };
+    siteCache = { at: Date.now(), info };
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+/** The cached public URL, or '' when we've never learned one. Sync — never blocks. */
+export function cachedPublicUrl(): string {
+  if (!siteCache) return '';
+  // A stale value is still far better than none for minting a link; we just stop trusting it as
+  // "definitely current" and let the scheduler refresh it.
+  return siteCache.info.publicUrl;
+}
+
+/** True when the cache is old enough to be worth refreshing. */
+export function siteCacheStale(): boolean {
+  return !siteCache || Date.now() - siteCache.at > SITE_TTL_MS;
+}
+
+// ── Email via the platform (manifest `email: true`) ───────────────────────────
+/**
+ * Send one transactional email through the masjid's OpenMasjidOS mail provider. This is what makes
+ * SMTP OPTIONAL: with no local SMTP configured we can still get an invite or a reset to a parent, and
+ * the OS owns the credentials and the From address (we never see them).
+ *
+ * Fail-soft and never throws — the caller treats `false` as "not sent" and degrades to a copy/print
+ * link. Bodies are never logged.
+ *
+ * A 200 does NOT mean it sent. The platform answers `{ sent: true }` or `{ sent: false, reason }`
+ * — HTTP 200 either way — because "the masjid has not configured a mail provider" is a normal
+ * state, not a transport error. So we MUST read the body: trusting the status code would report a
+ * suppressed invite as delivered, which is the exact silent failure this whole path exists to
+ * remove. `reason` is a fixed enum from the platform (`not_configured`, `bad_recipient`, `empty`,
+ * `rate_limited`, `error`) and carries no message content, so it is safe to log.
+ */
+export async function sendPlatformEmail(to: string, subject: string, text: string, html?: string): Promise<boolean> {
+  if (!fabricConfigured()) return false;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/email`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      body: JSON.stringify({ to, subject, text, ...(html ? { html } : {}) }),
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    // 403 = we don't hold the `email` capability yet (the catalog entry predates it); 4xx/5xx = a
+    // real transport failure. Both are "not sent", with no body worth trusting.
+    if (!res.ok) {
+      log.warn('platform email rejected', { status: res.status });
+      return false;
+    }
+    const j = (await res.json().catch(() => null)) as { sent?: unknown; reason?: unknown } | null;
+    if (j?.sent === true) return true;
+    log.warn('platform email not sent', { reason: typeof j?.reason === 'string' ? j.reason : 'unknown' });
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// ── Admin alerts (manifest `alerts:`) ────────────────────────────────────────
+/** The alert ids we declare in manifest.yaml. Declaring one IS the authorization — the platform
+ *  refuses any id an app didn't declare — and the admin picks email/webhook/off per alert. */
+export type AlertId = 'autopay-disabled' | 'pin-lockout' | 'reconcile-recovered' | 'test';
+
+/** The platform's alert severities. Note these are NOT `notifyPlatform`'s levels — that endpoint
+ *  takes `warn`, this one takes `warning`, and sending the wrong word silently downgrades to the
+ *  platform's default. */
+export type AlertLevel = 'info' | 'success' | 'warning' | 'error';
+
+/**
+ * Raise an admin alert. Unlike `notifyPlatform` (webhook only, and silently dead until an admin
+ * configures one), an alert can reach the admin's EMAIL as well, which is why the security-relevant
+ * events use this. Fail-soft; a muted alert is normal, not an error.
+ *
+ * The id field on the wire is `alert`, NOT `id` — the platform reads `body.alert` and 400s when it
+ * is missing, so getting this wrong makes every alert vanish (fail-soft hides it completely).
+ * The id must also be declared in our manifest `alerts:` list AND present in the CATALOG entry the
+ * platform installed us from: declaring a new id here does nothing until the release + registry
+ * bump lands, and until then the platform answers 400 "Unknown alert".
+ */
+export async function raiseAlert(id: AlertId, text: string, opts: { title?: string; level?: AlertLevel } = {}): Promise<boolean> {
+  if (!fabricConfigured()) return false;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/alert`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      body: JSON.stringify({ alert: id, text, title: opts.title, level: opts.level ?? 'warning' }),
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      // 400 = an id the installed catalog entry doesn't declare; 403 = no secret match.
+      log.warn('platform alert rejected', { alert: id, status: res.status });
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 

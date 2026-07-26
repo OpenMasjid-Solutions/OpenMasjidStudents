@@ -23,6 +23,8 @@ import {
   feePlans,
   studentFees,
   classes,
+  guardianUsers,
+  users,
 } from '../db/schema';
 import { rid } from '../db/ids';
 import { generateUniquePin } from '../billing/pins';
@@ -130,8 +132,29 @@ export const peopleRouter = router({
       .innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId))
       .where(eq(guardianFamilies.familyId, fam.id))
       .all();
+    // Which guardians have actually taken up a portal account, and whether that account is usable.
+    // Without this the office cannot tell "invite never accepted" from "signed up and forgot their
+    // password" — the difference between re-inviting and sending a reset.
+    const accounts = new Map<string, { userId: string; status: string; lastSeen: Date | null }>();
+    for (const a of db
+      .select({ guardianId: guardianUsers.guardianId, userId: users.id, status: users.status, createdAt: users.createdAt })
+      .from(guardianUsers)
+      .innerJoin(users, eq(users.id, guardianUsers.userId))
+      .all()) {
+      accounts.set(a.guardianId, { userId: a.userId, status: a.status, lastSeen: null });
+    }
+    const withAccounts = links.map((g) => {
+      const acc = accounts.get(g.guardianId);
+      return {
+        ...g,
+        hasAccount: !!acc,
+        accountStatus: acc?.status ?? null,
+        /** A reset can only be sent to a guardian who has an account AND an email on file. */
+        canSendReset: !!acc && acc.status === 'active' && !!(g.email ?? '').trim(),
+      };
+    });
     const contacts = db.select().from(emergencyContacts).where(eq(emergencyContacts.familyId, fam.id)).all();
-    return { family: fam, students: studs, guardians: links, emergencyContacts: contacts };
+    return { family: fam, students: studs, guardians: withAccounts, emergencyContacts: contacts };
   }),
 
   // ── Families (admin write) ─────────────────────────────────────────────────

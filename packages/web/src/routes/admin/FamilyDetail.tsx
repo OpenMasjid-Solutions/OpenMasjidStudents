@@ -4,6 +4,7 @@
  *  guardians, emergency contacts. */
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Pencil } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 
 export function FamilyDetail({ familyId }: { familyId: string }) {
@@ -20,10 +21,17 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
   const updateStudent = trpc.people.studentUpdate.useMutation();
   const regen = trpc.people.pinRegenerate.useMutation();
   const addGuardian = trpc.people.guardianCreate.useMutation();
+  const updateGuardian = trpc.people.guardianUpdate.useMutation();
   const addEC = trpc.people.emergencyContactAdd.useMutation();
   const invite = trpc.auth.inviteCreate.useMutation();
+  const guardianReset = trpc.auth.sendGuardianReset.useMutation();
   const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
   const [inviteErr, setInviteErr] = useState<Record<string, string>>({});
+  /** Whether the email actually went out, and why not — so a suppressed send isn't invisible. */
+  const [mailNote, setMailNote] = useState<Record<string, string>>({});
+  /** The guardian being edited. Editing matters beyond tidiness: a reset can only be emailed to a
+   *  guardian who HAS an email, and without this there was no way to add one. */
+  const [guardianEdit, setGuardianEdit] = useState<{ id: string; name: string; phone: string; email: string } | null>(null);
 
   // A student MUST be put on a fee plan at creation — one with no plan is silently skipped by
   // invoice generation, which is how a child stops being billed without anyone noticing.
@@ -76,13 +84,48 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
     await regen.mutateAsync({ studentId: id });
     await refresh();
   }
+  /** Turn the server's reason for not emailing into something the office can act on. */
+  function explainSkip(skipped: string | null | undefined, emailed: boolean): string {
+    if (emailed) return t('directory.mailSent');
+    if (skipped === 'no_public_url') return t('directory.mailNoUrl');
+    if (skipped === 'no_transport') return t('directory.mailNoTransport');
+    return t('directory.mailNotSent');
+  }
+
   async function inviteToPortal(guardianId: string) {
     setInviteErr((e) => ({ ...e, [guardianId]: '' }));
     try {
       const r = await invite.mutateAsync({ guardianId });
-      // No SMTP yet — the office copies this one-time link to the guardian (CLAUDE.md §12).
+      // Always show the link: it works whether or not the email went out (CLAUDE.md §12).
       const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${r.url}`;
       setInviteLinks((m) => ({ ...m, [guardianId]: full }));
+      setMailNote((m) => ({ ...m, [guardianId]: explainSkip(r.mailSkipped, r.emailed) }));
+    } catch (err) {
+      setInviteErr((e) => ({ ...e, [guardianId]: (err as Error).message }));
+    }
+  }
+
+  async function saveGuardian(e: FormEvent) {
+    e.preventDefault();
+    if (!guardianEdit || !guardianEdit.name.trim()) return;
+    await updateGuardian.mutateAsync({
+      id: guardianEdit.id,
+      name: guardianEdit.name.trim(),
+      // '' clears the field server-side (blankToNull), which is how a wrong number is removed.
+      phone: guardianEdit.phone,
+      email: guardianEdit.email.trim(),
+    });
+    setGuardianEdit(null);
+    await refresh();
+  }
+
+  async function sendReset(guardianId: string) {
+    setInviteErr((e) => ({ ...e, [guardianId]: '' }));
+    try {
+      const r = await guardianReset.mutateAsync({ guardianId });
+      const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${r.url}`;
+      setInviteLinks((m) => ({ ...m, [guardianId]: full }));
+      setMailNote((m) => ({ ...m, [guardianId]: explainSkip(r.mailSkipped, r.emailed) }));
     } catch (err) {
       setInviteErr((e) => ({ ...e, [guardianId]: (err as Error).message }));
     }
@@ -176,9 +219,31 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
                 {g.phone && <span className="muted">· {g.phone}</span>}
                 {g.email && <span className="muted">· {g.email}</span>}
                 {g.isEmergencyContact && <span className="chip is-accent">{t('directory.emergency')}</span>}
+                {/* Whether they took up a portal account decides which action is useful: an invite for
+                    someone who never signed up, a reset for someone who did and forgot. */}
+                {g.hasAccount ? (
+                  <span className={`chip ${g.accountStatus === 'active' ? '' : 'is-muted'}`}>
+                    {g.accountStatus === 'active' ? t('directory.hasAccount') : t('directory.accountDisabled')}
+                  </span>
+                ) : (
+                  <span className="chip is-muted">{t('directory.noAccount')}</span>
+                )}
                 <span className="spacer" style={{ marginInlineStart: 'auto' }} />
-                <button type="button" className="btn btn--ghost btn--sm" onClick={() => inviteToPortal(g.guardianId)} disabled={invite.isPending}>{t('directory.inviteToPortal')}</button>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGuardianEdit({ id: g.guardianId, name: g.name, phone: g.phone ?? '', email: g.email ?? '' })}>
+                  <Pencil size={13} /> {t('common.edit')}
+                </button>
+                {g.hasAccount ? (
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => sendReset(g.guardianId)} disabled={guardianReset.isPending || !g.canSendReset}>
+                    {t('directory.sendReset')}
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => inviteToPortal(g.guardianId)} disabled={invite.isPending}>{t('directory.inviteToPortal')}</button>
+                )}
+                {/* A disabled button with only a `title` tooltip is invisible on a phone and to a
+                    keyboard user, so say it as real text — and it is actionable now that Edit exists. */}
+                {g.hasAccount && !g.canSendReset && <p className="hint" style={{ flexBasis: '100%', margin: '0.25rem 0 0' }}>{t('directory.resetNeedsEmail')}</p>}
                 {inviteErr[g.guardianId] && <p className="form-error" style={{ flexBasis: '100%', margin: '0.25rem 0 0' }}>{inviteErr[g.guardianId]}</p>}
+                {mailNote[g.guardianId] && <p className="hint" style={{ flexBasis: '100%', margin: '0.25rem 0 0' }}>{mailNote[g.guardianId]}</p>}
                 {inviteLinks[g.guardianId] && (
                   <div style={{ flexBasis: '100%', display: 'flex', gap: '0.4rem', alignItems: 'center', marginBlockStart: '0.4rem' }}>
                     <input className="input glass-inset" readOnly value={inviteLinks[g.guardianId]} style={{ flex: 1, fontSize: '0.82rem' }} onFocus={(e) => e.currentTarget.select()} />
@@ -189,6 +254,16 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
             ))}
             <p className="hint">{t('directory.inviteHint')}</p>
           </div>
+        )}
+        {guardianEdit && (
+          <form className="inline-form glass-inset" onSubmit={saveGuardian}>
+            <div className="field"><label className="label">{t('directory.name')}</label><input className="input glass-inset" value={guardianEdit.name} onChange={(e) => setGuardianEdit({ ...guardianEdit, name: e.target.value })} autoFocus /></div>
+            <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" value={guardianEdit.phone} onChange={(e) => setGuardianEdit({ ...guardianEdit, phone: e.target.value })} /></div>
+            <div className="field"><label className="label">{t('directory.email')}</label><input className="input glass-inset" type="email" value={guardianEdit.email} onChange={(e) => setGuardianEdit({ ...guardianEdit, email: e.target.value })} /></div>
+            <button type="submit" className="btn btn--primary" disabled={updateGuardian.isPending}>{t('common.save')}</button>
+            <button type="button" className="btn btn--ghost" onClick={() => setGuardianEdit(null)}>{t('common.cancel')}</button>
+            <p className="hint">{t('directory.guardianEditHint')}</p>
+          </form>
         )}
         {showGuardian && (
           <form className="inline-form glass-inset" onSubmit={submitGuardian}>

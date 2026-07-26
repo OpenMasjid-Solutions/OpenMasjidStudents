@@ -8,16 +8,17 @@
  */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { and, eq, asc, desc } from 'drizzle-orm';
-import { router, adminOrFinanceProcedure, auditActor } from './trpc';
+import { and, eq, asc, desc, inArray } from 'drizzle-orm';
+import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
-import { feePlans, studentFees, students, families, invoices, payments, chargeItems, charges, classes } from '../db/schema';
+import { feePlans, studentFees, students, families, invoices, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { recordPayment, reversePayment, familyBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
+import { schoolYearMonths } from '../billing/schoolYear';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
-import { getCurrency } from '../settings';
+import { getCurrency, getYearViewColumns, setYearViewColumns, YEAR_VIEW_COLUMNS } from '../settings';
 
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
@@ -248,6 +249,143 @@ export const billingRouter = router({
     return { ok: true as const };
   }),
 
+  // ── Year view (the students × months payment grid) ───────────────────────────
+  /** Everything the year grid renders: the school year's months, one row per active student with
+   *  their effective monthly amount, and a cell per month.
+   *
+   *  A cell reports the status of the FAMILY's invoice for that period, because that is what is
+   *  actually billed and paid — siblings on one bill therefore show the same cell, which is correct.
+   *  The per-student number in `monthlyAmountCents` is that student's share.
+   *
+   *  Optional columns are admin-configured (settings) and resolved server-side, so a column the
+   *  admin has not switched on is never sent to the browser at all. */
+  yearGrid: adminOrFinanceProcedure
+    .input(z.object({ schoolYearId: ID.optional(), includeWithdrawn: z.boolean().optional() }).optional())
+    .query(({ input }) => {
+      const year = input?.schoolYearId
+        ? db.select().from(schoolYears).where(eq(schoolYears.id, input.schoolYearId)).get()
+        : db.select().from(schoolYears).where(eq(schoolYears.isCurrent, true)).get();
+      if (!year) return { year: null, needsStartYear: false, months: [], columns: [], rows: [], currency: getCurrency() };
+      if (year.startYear == null) {
+        // Configured before start_year existed — the UI asks for it rather than guessing a calendar.
+        return { year: { id: year.id, label: year.label }, needsStartYear: true, months: [], columns: [], rows: [], currency: getCurrency() };
+      }
+
+      const months = schoolYearMonths(year.startYear, year.startMonth, year.endMonth);
+      const columns = getYearViewColumns();
+      const periodKeys = months.map((m) => m.periodKey);
+
+      const studentRows = db
+        .select({
+          id: students.id,
+          firstName: students.firstName,
+          lastName: students.lastName,
+          status: students.status,
+          dob: students.dob,
+          pin: students.pin,
+          familyId: students.familyId,
+          familyName: families.name,
+          classId: students.classId,
+          className: classes.name,
+          courseName: courses.name,
+        })
+        .from(students)
+        .innerJoin(families, eq(families.id, students.familyId))
+        .leftJoin(classes, eq(classes.id, students.classId))
+        .leftJoin(courses, eq(courses.id, classes.courseId))
+        .where(input?.includeWithdrawn ? undefined : eq(students.status, 'active'))
+        .orderBy(asc(courses.sortOrder), asc(courses.name), asc(classes.sortOrder), asc(classes.name), asc(students.firstName))
+        .all();
+
+      // Monthly fee total per student (override wins), so the "Paying" column matches what a month
+      // actually bills. Non-monthly cadences are excluded — they do not recur per month.
+      const monthly = new Map<string, { amountCents: number; note: string | null }>();
+      for (const r of db
+        .select({ studentId: studentFees.studentId, planAmount: feePlans.amountCents, override: studentFees.overrideAmountCents, note: studentFees.note })
+        .from(studentFees)
+        .innerJoin(feePlans, eq(feePlans.id, studentFees.feePlanId))
+        .where(and(eq(feePlans.status, 'active'), eq(feePlans.cadence, 'monthly')))
+        .all()) {
+        const prev = monthly.get(r.studentId);
+        const amt = (prev?.amountCents ?? 0) + (r.override ?? r.planAmount);
+        monthly.set(r.studentId, { amountCents: amt, note: r.note ?? prev?.note ?? null });
+      }
+
+      // One pass over the year's invoices → per (family, period) status.
+      const cellByFamily = new Map<string, Map<string, { status: string; totalCents: number; paidCents: number; invoiceId: string }>>();
+      if (periodKeys.length) {
+        for (const inv of db.select({ id: invoices.id, familyId: invoices.familyId, periodKey: invoices.periodKey, status: invoices.status }).from(invoices).where(inArray(invoices.periodKey, periodKeys)).all()) {
+          const total = invoiceTotal(db, inv.id);
+          const paid = invoicePaid(db, inv.id);
+          if (!cellByFamily.has(inv.familyId)) cellByFamily.set(inv.familyId, new Map());
+          cellByFamily.get(inv.familyId)!.set(inv.periodKey, { status: inv.status, totalCents: total, paidCents: paid, invoiceId: inv.id });
+        }
+      }
+
+      // Guardian contact, only when a guardian column is actually enabled.
+      const wantsGuardians = columns.some((c) => c === 'guardianNames' || c === 'guardianPhones' || c === 'guardianEmails');
+      const guardiansByFamily = new Map<string, { name: string; phone: string | null; email: string | null }[]>();
+      if (wantsGuardians) {
+        for (const g of db
+          .select({ familyId: guardianFamilies.familyId, name: guardians.name, phone: guardians.phone, email: guardians.email })
+          .from(guardianFamilies)
+          .innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId))
+          .all()) {
+          if (!guardiansByFamily.has(g.familyId)) guardiansByFamily.set(g.familyId, []);
+          guardiansByFamily.get(g.familyId)!.push({ name: g.name, phone: g.phone, email: g.email });
+        }
+      }
+
+      const wantsBalance = columns.includes('balance');
+      const balanceByFamily = new Map<string, number>();
+
+      const rows = studentRows.map((s) => {
+        const m = monthly.get(s.id);
+        const fam = cellByFamily.get(s.familyId);
+        if (wantsBalance && !balanceByFamily.has(s.familyId)) balanceByFamily.set(s.familyId, familyBalance(s.familyId).owedCents);
+        const gs = guardiansByFamily.get(s.familyId) ?? [];
+        return {
+          studentId: s.id,
+          firstName: s.firstName,
+          lastName: s.lastName,
+          status: s.status,
+          familyId: s.familyId,
+          familyName: s.familyName,
+          classId: s.classId,
+          className: s.className,
+          courseName: s.courseName,
+          monthlyAmountCents: m?.amountCents ?? 0,
+          feeNote: m?.note ?? null,
+          cells: months.map((mo) => {
+            const c = fam?.get(mo.periodKey);
+            if (!c) return { periodKey: mo.periodKey, status: 'none' as const };
+            const state = c.status === 'void' ? 'void' : c.paidCents >= c.totalCents && c.totalCents > 0 ? 'paid' : c.paidCents > 0 ? 'partial' : 'open';
+            return { periodKey: mo.periodKey, status: state, totalCents: c.totalCents, paidCents: c.paidCents, invoiceId: c.invoiceId };
+          }),
+          // Only enabled columns are populated — a disabled one is absent from the payload entirely.
+          extra: {
+            ...(columns.includes('dob') ? { dob: s.dob } : {}),
+            ...(columns.includes('pin') ? { pin: s.pin } : {}),
+            ...(columns.includes('guardianNames') ? { guardianNames: gs.map((g) => g.name) } : {}),
+            ...(columns.includes('guardianPhones') ? { guardianPhones: gs.map((g) => g.phone).filter((p): p is string => !!p) } : {}),
+            ...(columns.includes('guardianEmails') ? { guardianEmails: gs.map((g) => g.email).filter((e): e is string => !!e) } : {}),
+            ...(wantsBalance ? { balanceCents: balanceByFamily.get(s.familyId) ?? 0 } : {}),
+          },
+        };
+      });
+
+      return { year: { id: year.id, label: year.label }, needsStartYear: false, months, columns, rows, currency: getCurrency() };
+    }),
+
+  /** The optional year-view columns and which are on. Admin-only to change (it can expose PINs). */
+  yearViewColumnsGet: adminOrFinanceProcedure.query(() => ({ available: [...YEAR_VIEW_COLUMNS], enabled: getYearViewColumns() })),
+
+  yearViewColumnsSet: adminProcedure.input(z.object({ columns: z.array(z.enum(YEAR_VIEW_COLUMNS)).max(YEAR_VIEW_COLUMNS.length) })).mutation(({ ctx, input }) => {
+    setYearViewColumns(input.columns);
+    audit(auditActor(ctx), 'settings.yearViewColumns', { entity: 'settings', detail: { columns: input.columns } });
+    return { ok: true as const };
+  }),
+
   // ── Charge items (the configurable Items tab) ────────────────────────────────
   chargeItemList: adminOrFinanceProcedure.query(() =>
     db.select().from(chargeItems).where(eq(chargeItems.status, 'active')).orderBy(asc(chargeItems.sortOrder), asc(chargeItems.name)).all(),
@@ -390,7 +528,10 @@ export const billingRouter = router({
     return fams.map((f) => ({ ...f, balance: familyBalance(f.id) }));
   }),
 
-  recordManualPayment: adminOrFinanceProcedure.input(z.object({ familyId: ID, amountCents: CENTS.min(1), channel: z.enum(['cash', 'zelle', 'check', 'other']), occurredAt: z.string().max(20), memo: z.string().trim().max(200).optional() })).mutation(({ ctx, input }) => {
+  /** Mark money as received that did not come through a card: cash, a check, a bank/ACH transfer,
+   *  Zelle, or anything else (with the memo saying what). The channel list is shared with the schema
+   *  so the dropdown and this enum cannot drift. */
+  recordManualPayment: adminOrFinanceProcedure.input(z.object({ familyId: ID, amountCents: CENTS.min(1), channel: z.enum(MANUAL_PAYMENT_CHANNELS), occurredAt: z.string().max(20), memo: z.string().trim().max(200).optional() })).mutation(({ ctx, input }) => {
     if (!db.select({ id: families.id }).from(families).where(eq(families.id, input.familyId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Family not found.' });
     const res = recordPayment({ familyId: input.familyId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${input.occurredAt}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null }, auditActor(ctx));
     audit(auditActor(ctx), 'payment.record', { entity: 'family', entityId: input.familyId, detail: { channel: input.channel, amountCents: input.amountCents } });

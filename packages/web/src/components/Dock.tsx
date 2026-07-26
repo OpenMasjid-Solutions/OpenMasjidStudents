@@ -9,14 +9,14 @@
  */
 import { type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { LayoutGrid, GraduationCap, Wallet, UserCog, Settings as SettingsIcon, AppWindow } from 'lucide-react';
+import { LayoutGrid, GraduationCap, Wallet, CalendarRange, Layers, UserCog, Settings as SettingsIcon, AppWindow } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useWindows } from './Windows';
 
 /** Admin sections (Dock is generic; this union just types the admin shell's state). */
-export type Section = 'dashboard' | 'students' | 'billing' | 'staff' | 'settings';
-/** Finance sections — finance runs billing (§5). */
-export type FinanceSection = 'billing';
+export type Section = 'dashboard' | 'students' | 'year' | 'structure' | 'billing' | 'staff' | 'settings';
+/** Finance sections — finance runs billing, and reads the year view (§5). */
+export type FinanceSection = 'billing' | 'year';
 
 export interface DockItem {
   id: string;
@@ -28,6 +28,8 @@ export interface DockItem {
 export const ADMIN_ITEMS: DockItem[] = [
   { id: 'dashboard', icon: <LayoutGrid size={20} />, labelKey: 'nav.dashboard' },
   { id: 'students', icon: <GraduationCap size={20} />, labelKey: 'nav.students' },
+  { id: 'year', icon: <CalendarRange size={20} />, labelKey: 'nav.year' },
+  { id: 'structure', icon: <Layers size={20} />, labelKey: 'nav.structure' },
   { id: 'billing', icon: <Wallet size={20} />, labelKey: 'nav.billing' },
   { id: 'staff', icon: <UserCog size={20} />, labelKey: 'nav.staff' },
   { id: 'settings', icon: <SettingsIcon size={20} />, labelKey: 'nav.settings' },
@@ -35,6 +37,7 @@ export const ADMIN_ITEMS: DockItem[] = [
 
 export const FINANCE_ITEMS: DockItem[] = [
   { id: 'billing', icon: <Wallet size={20} />, labelKey: 'nav.billing' },
+  { id: 'year', icon: <CalendarRange size={20} />, labelKey: 'nav.year' },
 ];
 
 export function Dock({ items, active, onNavigate }: { items: DockItem[]; active: string; onNavigate: (id: string) => void }) {

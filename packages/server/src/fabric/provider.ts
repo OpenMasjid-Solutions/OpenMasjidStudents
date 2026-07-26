@@ -25,7 +25,7 @@ import { familyBalance, invoiceTotal, invoicePaid, recordPayment } from '../bill
 import { formatMoney } from '../db/money';
 import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../settings';
 import { audit } from '../audit';
-import { notifyPlatform } from './platform';
+import { notifyPlatform, raiseAlert } from './platform';
 
 /** Constant-time check of the platform-proof header against our own secret. Disabled (always false)
  *  when no secret is configured — so a standalone install never accepts Fabric calls. */
@@ -79,8 +79,10 @@ export function registerFabricProvider(app: FastifyInstance): void {
       const wasLocked = pinLookupLimiter.retryAfterMs(pin) > 0;
       pinLookupLimiter.fail(pin);
       if (!wasLocked && pinLookupLimiter.retryAfterMs(pin) > 0) {
-        // Just transitioned to locked — someone is hammering this PIN. Tell finance (no PIN/PII).
-        void notifyPlatform('A tuition name+PIN lookup was locked after repeated failed attempts.', { title: 'Tuition lookup locked', level: 'warn' });
+        // Just transitioned to locked — someone is hammering this PIN. An ALERT, not a notification:
+        // it can reach the admin's email, whereas the webhook is off until someone configures one, and
+        // a silently-dropped "somebody is guessing PINs" is the worst one to lose. Never the PIN (§14).
+        void raiseAlert('pin-lockout', 'A tuition name + PIN lookup was locked after repeated failed attempts.', { title: 'Tuition lookup locked' });
       }
       return reply.send({ v: 1, found: false }); // identical shape + no timing oracle beyond a hash
     }

@@ -24,6 +24,9 @@ sqlite.pragma('foreign_keys = ON');
 
 export const db = drizzle(sqlite, { schema });
 export type DB = typeof db;
+/** The raw better-sqlite3 handle. Needed for statements Drizzle doesn't model — `VACUUM INTO` and
+ *  `PRAGMA integrity_check` (db/snapshot.ts). Nothing else should reach for this. */
+export const rawSqlite = sqlite;
 
 /** Apply committed migrations. Idempotent — Drizzle tracks what has been applied.
  *  Works in dev (src/db → ../../drizzle) and prod (dist/db → ../../drizzle, where

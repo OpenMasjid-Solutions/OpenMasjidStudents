@@ -11,6 +11,8 @@ import { fabricConfigured } from '../config';
 import { makeLog } from '../logger';
 import { runAutopay } from './autopay';
 import { reconcile } from './reconcile';
+import { refreshSiteInfo } from '../fabric/platform';
+import { writeSnapshot } from '../db/snapshot';
 
 const log = makeLog('scheduler');
 let started = false;
@@ -21,7 +23,26 @@ function todayIso(): string {
 }
 
 export function startSchedulers(): void {
-  if (started || !fabricConfigured()) return; // standalone: nothing to schedule
+  if (started) return;
+
+  // The DB snapshot is scheduled FIRST and deliberately OUTSIDE the fabricConfigured() guard below.
+  // It protects the data whether or not the platform is wired in — and a standalone install is
+  // arguably the one that most needs it, since nobody else is looking after its data. Every 30
+  // minutes; a snapshot is a read transaction, so writers are unaffected.
+  new Cron('*/30 * * * *', () => {
+    const r = writeSnapshot();
+    if (!r.ok) log.warn('db snapshot failed', { error: r.error });
+  });
+  // Take one at boot too, so a container that is restarted more often than every 30 minutes still
+  // leaves a usable snapshot on the volume.
+  const first = writeSnapshot();
+  if (!first.ok) log.warn('initial db snapshot failed', { error: first.error });
+
+  if (!fabricConfigured()) {
+    started = true;
+    log.info('schedulers started (standalone — snapshot only)');
+    return;
+  }
   started = true;
   // Daily at 06:00 — charge every autopay-ON family whatever is due, then let the webhooks settle.
   new Cron('0 6 * * *', async () => {
@@ -41,6 +62,12 @@ export function startSchedulers(): void {
     } catch (e) {
       log.error('reconcile run failed', { error: (e as Error).message });
     }
+  });
+  // Every 15 minutes — re-ask the platform for our public URL (manifest `domain: true`). It changes
+  // when an admin turns on Remote access, renames the path, or sets a custom domain, and an invite
+  // minted with a stale base is a dead link in someone's inbox. Cheap, fail-soft, no PII.
+  new Cron('*/15 * * * *', async () => {
+    await refreshSiteInfo();
   });
   log.info('schedulers started');
 }
