@@ -11,7 +11,7 @@
  */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
 import {
@@ -22,6 +22,8 @@ import {
   emergencyContacts,
   feePlans,
   studentFees,
+  invoiceItems,
+  charges,
   classes,
   guardianUsers,
   users,
@@ -324,6 +326,64 @@ export const peopleRouter = router({
     db.update(students).set({ pin, pinUpdatedAt: now(), updatedAt: now() }).where(eq(students.id, s.id)).run();
     audit(auditActor(ctx), 'student.pin.regenerate', { entity: 'student', entityId: s.id });
     return { pin };
+  }),
+
+  /**
+   * Can this student be deleted outright, and if not, why not?
+   *
+   * Three tables reference `students`, all ON DELETE RESTRICT, and they are not equal:
+   *   - `student_fees` is CONFIGURATION — which plans they carry. Deleting it with them is correct.
+   *   - `invoice_items` is MONEY HISTORY — a line on an invoice that was actually raised. Removing a
+   *     student who appears on an invoice would silently change what that invoice says it was for,
+   *     which is exactly the immutability §9 protects.
+   *   - `charges` is either: a `pending`/`void` charge is not yet money and goes with them; an
+   *     `invoiced` one is money history and blocks.
+   *
+   * So: delete is for a mistake (wrong name typed, duplicate row, a child who never actually
+   * enrolled). A student who has ever been billed is withdrawn, not deleted. Exposed as its own query
+   * so the office sees the reason BEFORE clicking, instead of hitting a refusal.
+   */
+  studentDeletable: adminProcedure.input(z.object({ studentId: ID })).query(({ input }) => {
+    const s = requireStudent(input.studentId);
+    const invoiceLines = db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.studentId, s.id)).all().length;
+    const invoicedCharges = db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), eq(charges.status, 'invoiced'))).all().length;
+    return {
+      deletable: invoiceLines === 0 && invoicedCharges === 0,
+      invoiceLines,
+      invoicedCharges,
+      /** Config rows that will be removed along with them. */
+      feeAssignments: db.select({ id: studentFees.id }).from(studentFees).where(eq(studentFees.studentId, s.id)).all().length,
+      pendingCharges: db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), ne(charges.status, 'invoiced'))).all().length,
+    };
+  }),
+
+  /**
+   * Delete a student for good — the "not just withdrawn" case: a duplicate, a typo, someone who never
+   * actually enrolled. Refuses whenever the student carries money history (see `studentDeletable`),
+   * because a raised invoice must keep meaning what it said.
+   *
+   * Their fee assignments and any not-yet-invoiced charges go with them, in ONE transaction, since the
+   * RESTRICT constraints would otherwise block the delete. Audited with the counts (never the name).
+   */
+  studentDelete: adminProcedure.input(z.object({ studentId: ID })).mutation(({ ctx, input }) => {
+    const s = requireStudent(input.studentId);
+    const invoiceLines = db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.studentId, s.id)).all().length;
+    const invoicedCharges = db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), eq(charges.status, 'invoiced'))).all().length;
+    if (invoiceLines > 0 || invoicedCharges > 0) {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'This student has been billed, so their record is part of your invoice history and can’t be deleted. Mark them withdrawn instead.',
+      });
+    }
+    let removedFees = 0;
+    let removedCharges = 0;
+    db.transaction((tx) => {
+      removedCharges = tx.delete(charges).where(eq(charges.studentId, s.id)).run().changes;
+      removedFees = tx.delete(studentFees).where(eq(studentFees.studentId, s.id)).run().changes;
+      tx.delete(students).where(eq(students.id, s.id)).run();
+    });
+    audit(auditActor(ctx), 'student.delete', { entity: 'student', entityId: s.id, detail: { familyId: s.familyId, removedFees, removedCharges } });
+    return { ok: true as const, removedFees, removedCharges };
   }),
 
   // ── Guardians + emergency contacts (admin write) ───────────────────────────

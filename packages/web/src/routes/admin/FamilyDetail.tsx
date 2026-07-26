@@ -22,6 +22,7 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
   const regen = trpc.people.pinRegenerate.useMutation();
   const addGuardian = trpc.people.guardianCreate.useMutation();
   const updateGuardian = trpc.people.guardianUpdate.useMutation();
+  const deleteStudent = trpc.people.studentDelete.useMutation();
   const addEC = trpc.people.emergencyContactAdd.useMutation();
   const invite = trpc.auth.inviteCreate.useMutation();
   const guardianReset = trpc.auth.sendGuardianReset.useMutation();
@@ -32,6 +33,8 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
   /** The guardian being edited. Editing matters beyond tidiness: a reset can only be emailed to a
    *  guardian who HAS an email, and without this there was no way to add one. */
   const [guardianEdit, setGuardianEdit] = useState<{ id: string; name: string; phone: string; email: string } | null>(null);
+  /** Why a delete was refused — shown as text, since it is the useful half of the interaction. */
+  const [deleteErr, setDeleteErr] = useState('');
 
   // A student MUST be put on a fee plan at creation — one with no plan is silently skipped by
   // invoice generation, which is how a child stops being billed without anyone noticing.
@@ -105,6 +108,25 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
     }
   }
 
+  /** Ask the server whether this student can be deleted, then confirm with the real reason either
+   *  way. The precheck exists so the office is never told "no" only after committing to the click. */
+  async function askDelete(studentId: string, name: string) {
+    setDeleteErr('');
+    try {
+      const info = await utils.people.studentDeletable.fetch({ studentId });
+      if (!info.deletable) {
+        setDeleteErr(t('directory.deleteBlocked', { name, count: info.invoiceLines + info.invoicedCharges }));
+        return;
+      }
+      const extra = info.feeAssignments + info.pendingCharges;
+      if (!window.confirm(extra > 0 ? t('directory.confirmDeleteWithExtras', { name, count: extra }) : t('directory.confirmDelete', { name }))) return;
+      await deleteStudent.mutateAsync({ studentId });
+      await refresh();
+    } catch (err) {
+      setDeleteErr((err as Error).message);
+    }
+  }
+
   async function saveGuardian(e: FormEvent) {
     e.preventDefault();
     if (!guardianEdit || !guardianEdit.name.trim()) return;
@@ -161,6 +183,10 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
                     <td className="actions">
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => regenerate(s.id)} disabled={regen.isPending}>{t('directory.regeneratePin')}</button>
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
+                      {/* Delete is for a mistake — a duplicate or a child who never enrolled. A student
+                          who has been billed is part of the invoice history and can only be withdrawn,
+                          so ask the server first and say why rather than offering a button that fails. */}
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => askDelete(s.id, `${s.firstName} ${s.lastName}`.trim())}>{t('common.delete')}</button>
                       {/* Moving a student to a sibling's family is how guardians start applying to
                           them — guardians hang off the FAMILY, so nothing is copied per-student. */}
                       <select
@@ -179,6 +205,11 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
                     </td>
                   </tr>
                 ))}
+                {deleteErr && (
+                  <tr>
+                    <td colSpan={5}><p className="form-error" style={{ margin: '0.25rem 0 0' }}>{deleteErr}</p></td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
