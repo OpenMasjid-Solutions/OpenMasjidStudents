@@ -17,6 +17,7 @@ import { audit } from '../audit';
 import { recordPayment, reversePayment, familyBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
 import { schoolYearMonths } from '../billing/schoolYear';
+import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
 import { getCurrency, getYearViewColumns, setYearViewColumns, YEAR_VIEW_COLUMNS } from '../settings';
 
@@ -387,6 +388,134 @@ export const billingRouter = router({
     audit(auditActor(ctx), 'settings.yearViewColumns', { entity: 'settings', detail: { columns: input.columns } });
     return { ok: true as const };
   }),
+
+  /**
+   * CSV export for the office's own records — the one thing the app had no way to produce.
+   *
+   * Four datasets, each a flat sheet: `payments` (the ledger), `invoices`, `balances` (one row per
+   * family) and `students` (the billing directory). Code-defined, not composed from user input: the
+   * dataset is an enum and every column is written here, so there is no path from a request to a
+   * query shape (§14 — the same rule the old Report Creator had).
+   *
+   * Every cell goes through `csvCell`, which neutralises spreadsheet formula injection: a guardian
+   * name or a payment memo is free text a parent can influence, and `=…` in a cell is code the office
+   * would run by opening the file.
+   *
+   * Returns the CSV as a string for the browser to save. Admin + finance, and the export itself is
+   * audited — it is a bulk read of billing data, which is worth a trail.
+   */
+  exportCsv: adminOrFinanceProcedure
+    .input(z.object({ dataset: z.enum(['payments', 'invoices', 'balances', 'students']) }))
+    .mutation(({ ctx, input }) => {
+      const currency = getCurrency();
+      let header: string[] = [];
+      let rows: unknown[][] = [];
+
+      if (input.dataset === 'payments') {
+        header = ['Date', 'Family', 'Amount', 'Currency', 'Method', 'Memo', 'Recorded by', 'Reversal of'];
+        rows = db
+          .select({
+            occurredAt: payments.occurredAt,
+            familyName: families.name,
+            amountCents: payments.amountCents,
+            channel: payments.channel,
+            memo: payments.memo,
+            by: payments.recordedByName,
+            reversalOf: payments.reversalOf,
+          })
+          .from(payments)
+          .innerJoin(families, eq(families.id, payments.familyId))
+          .orderBy(desc(payments.occurredAt))
+          .all()
+          .map((p) => [csvDate(p.occurredAt), p.familyName, csvMoney(p.amountCents), currency, p.channel, p.memo, p.by, p.reversalOf ? 'yes' : '']);
+      } else if (input.dataset === 'invoices') {
+        header = ['Period', 'Label', 'Family', 'Due', 'Total', 'Paid', 'Outstanding', 'Currency', 'Status'];
+        rows = db
+          .select({ id: invoices.id, periodKey: invoices.periodKey, label: invoices.label, familyName: families.name, dueDate: invoices.dueDate, status: invoices.status })
+          .from(invoices)
+          .innerJoin(families, eq(families.id, invoices.familyId))
+          .orderBy(desc(invoices.periodKey), asc(families.name))
+          .all()
+          .map((i) => {
+            const total = invoiceTotal(db, i.id);
+            const paid = invoicePaid(db, i.id);
+            return [i.periodKey, i.label, i.familyName, i.dueDate, csvMoney(total), csvMoney(paid), csvMoney(total - paid), currency, i.status];
+          });
+      } else if (input.dataset === 'balances') {
+        header = ['Family', 'Outstanding', 'Credit', 'Currency'];
+        rows = db
+          .select({ id: families.id, name: families.name })
+          .from(families)
+          .where(eq(families.status, 'active'))
+          .orderBy(asc(families.name))
+          .all()
+          .map((f) => {
+            const b = familyBalance(f.id);
+            return [f.name, csvMoney(b.owedCents), csvMoney(b.creditCents), currency];
+          });
+      } else {
+        // students — the billing directory. Deliberately WITHOUT PINs: a PIN pays tuition, and a
+        // spreadsheet of every child's PIN emailed around is a far wider exposure than the per-family
+        // statement it belongs on (§14). The student ID is included: it is not a secret.
+        header = ['Student', 'Student ID', 'Status', 'Family', 'Course', 'Class', 'Monthly fees', 'Currency', 'Guardians', 'Phones', 'Emails'];
+        const guardiansByFamily = new Map<string, { name: string; phone: string | null; email: string | null }[]>();
+        for (const g of db
+          .select({ familyId: guardianFamilies.familyId, name: guardians.name, phone: guardians.phone, email: guardians.email })
+          .from(guardianFamilies)
+          .innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId))
+          .all()) {
+          if (!guardiansByFamily.has(g.familyId)) guardiansByFamily.set(g.familyId, []);
+          guardiansByFamily.get(g.familyId)!.push({ name: g.name, phone: g.phone, email: g.email });
+        }
+        // Effective monthly total per student (override wins) — the same rule the year view uses.
+        const monthly = new Map<string, number>();
+        for (const r of db
+          .select({ studentId: studentFees.studentId, planAmount: feePlans.amountCents, override: studentFees.overrideAmountCents })
+          .from(studentFees)
+          .innerJoin(feePlans, eq(feePlans.id, studentFees.feePlanId))
+          .where(and(eq(feePlans.status, 'active'), eq(feePlans.cadence, 'monthly')))
+          .all()) {
+          monthly.set(r.studentId, (monthly.get(r.studentId) ?? 0) + (r.override ?? r.planAmount));
+        }
+        rows = db
+          .select({
+            id: students.id,
+            firstName: students.firstName,
+            lastName: students.lastName,
+            studentCode: students.studentCode,
+            status: students.status,
+            familyId: students.familyId,
+            familyName: families.name,
+            className: classes.name,
+            courseName: courses.name,
+          })
+          .from(students)
+          .innerJoin(families, eq(families.id, students.familyId))
+          .leftJoin(classes, eq(classes.id, students.classId))
+          .leftJoin(courses, eq(courses.id, classes.courseId))
+          .orderBy(asc(courses.name), asc(classes.name), asc(students.firstName))
+          .all()
+          .map((s) => {
+            const gs = guardiansByFamily.get(s.familyId) ?? [];
+            return [
+              `${s.firstName} ${s.lastName}`.trim(),
+              s.studentCode,
+              s.status,
+              s.familyName,
+              s.courseName,
+              s.className,
+              csvMoney(monthly.get(s.id) ?? 0),
+              currency,
+              gs.map((g) => g.name).join('; '),
+              gs.map((g) => g.phone).filter(Boolean).join('; '),
+              gs.map((g) => g.email).filter(Boolean).join('; '),
+            ];
+          });
+      }
+
+      audit(auditActor(ctx), 'billing.exportCsv', { entity: 'billing', detail: { dataset: input.dataset, rows: rows.length } });
+      return { dataset: input.dataset, rows: rows.length, filename: `${input.dataset}-${new Date().toISOString().slice(0, 10)}.csv`, csv: toCsv(header, rows) };
+    }),
 
   // ── Charge items (the configurable Items tab) ────────────────────────────────
   chargeItemList: adminOrFinanceProcedure.query(() =>

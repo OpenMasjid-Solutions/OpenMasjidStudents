@@ -13,6 +13,9 @@ import { FamilyBilling } from '../../components/FamilyBilling';
 import { MassApply } from '../../components/MassApply';
 import { formatMoney, parseCents, parseSignedCents } from '../../lib/money';
 
+/** The code-defined export sheets (the server owns the columns — §14, no query built from input). */
+type CsvDataset = 'payments' | 'invoices' | 'balances' | 'students';
+
 export function Billing() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
@@ -35,6 +38,7 @@ export function Billing() {
   const itemArchive = trpc.billing.chargeItemArchive.useMutation();
   const chargesQ = trpc.billing.chargeList.useQuery({});
   const chargeVoid = trpc.billing.chargeVoid.useMutation();
+  const exportCsv = trpc.billing.exportCsv.useMutation();
 
   const [plan, setPlan] = useState({ name: '', amount: '', cadence: 'monthly' });
   const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
@@ -86,6 +90,19 @@ export function Billing() {
     setItemEdit(null);
     await utils.billing.chargeItemList.invalidate();
   }
+  /** Save the server-built CSV. A Blob + object URL keeps it a plain download with no extra route,
+   *  and the BOM makes Excel open UTF-8 names correctly instead of mangling them. */
+  async function download(dataset: CsvDataset) {
+    const r = await exportCsv.mutateAsync({ dataset });
+    const blob = new Blob([`﻿${r.csv}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = r.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function doChargeVoid(id: string) {
     setChargeErr(null);
     try {
@@ -108,6 +125,22 @@ export function Billing() {
       <div className="admin-header">
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('nav.billing')}</h1>
         <span className="spacer" />
+        {/* Export what the office needs for its own records. The server builds the CSV (and escapes
+            spreadsheet formulas); the browser just saves it. */}
+        <select
+          className="input glass-inset"
+          style={{ width: 'auto', minWidth: '11rem' }}
+          value=""
+          onChange={(e) => { if (e.target.value) void download(e.target.value as CsvDataset); }}
+          disabled={exportCsv.isPending}
+          aria-label={t('billing.exportCsv')}
+        >
+          <option value="">{exportCsv.isPending ? t('billing.exporting') : t('billing.exportCsv')}</option>
+          <option value="payments">{t('billing.ds_payments')}</option>
+          <option value="invoices">{t('billing.ds_invoices')}</option>
+          <option value="balances">{t('billing.ds_balances')}</option>
+          <option value="students">{t('billing.ds_students')}</option>
+        </select>
         <button type="button" className="btn btn--ghost" onClick={openMassApply}><Users2 size={15} /> {t('mass.title')}</button>
       </div>
 
