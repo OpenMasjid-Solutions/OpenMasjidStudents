@@ -9,10 +9,13 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-export async function freshApp(opts: { fabric?: boolean } = {}) {
+export async function freshApp(opts: { fabric?: boolean; publicUrl?: string } = {}) {
   process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), 'omos-students-test-'));
   process.env.OPENMASJID_BASE_URL = opts.fabric ? 'http://platform.test' : '';
   process.env.OPENMASJID_APP_SECRET = opts.fabric ? 'test-secret' : '';
+  // The install-time mirror of the tunnel URL. Set it when a test needs invite/reset links to have an
+  // absolute base without standing up a fake /api/fabric/site.
+  process.env.OPENMASJID_PUBLIC_URL = opts.publicUrl ?? '';
   const dbmod = await import('../src/db');
   dbmod.runMigrations(path.resolve(process.cwd(), 'drizzle'));
   const { appRouter } = await import('../src/trpc/router');

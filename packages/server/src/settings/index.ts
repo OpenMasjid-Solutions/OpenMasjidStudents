@@ -15,8 +15,9 @@ export const SETTING_KEYS = {
   externalPayments: 'external_payments', // Donations/Kiosk tuition campaign on/off (§11.2 info.enabled)
   reconcileCursor: 'stripe_reconcile_cursor', // unix seconds — last reconciled PI created-time (§11.4)
   reconcileLast: 'stripe_reconcile_last', // JSON summary of the last reconcile run (for the finance UI)
-  smtp: 'smtp_config', // JSON blob: transactional email config (§4/§10). The password lives here in the
-  // DB (the DB file is already a secret, §9) — never logged, never returned to the client.
+  // NOTE: there is deliberately no `smtp` key. Email is OpenMasjidOS's job (POST /api/fabric/email) —
+  // it owns the provider and the From address, so this app never holds mail credentials at all. An
+  // upgraded install may still have a stale `smtp_config` row; it is simply never read.
   stripeAccount: 'stripe_account', // the OS-vault Stripe account id the admin picked for tuition (§10).
   // Empty → fall back to the STRIPE_ACCOUNT manifest default (resolved in payments/stripe.ts).
   selfRegistration: 'self_registration', // parent self-registration door on/off (§12, default ON).
@@ -116,32 +117,7 @@ export function getSelfRegistrationEnabled(): boolean {
 
 /** Transactional email (SMTP) config — app-owned, in the DB (§4/§10). `pass` is a secret: never log
  *  it, never return it to the client. */
-export interface SmtpConfig {
-  host: string;
-  port: number;
-  secure: boolean; // true = implicit TLS (465); false = STARTTLS (587)
-  user: string;
-  pass: string;
-  from: string; // e.g. "An-Noor School <office@example.org>"
-}
-
 /** The stored SMTP config, or null when unconfigured (host + from are the minimum to send). */
-export function getSmtp(): SmtpConfig | null {
-  const raw = getSetting(SETTING_KEYS.smtp);
-  if (!raw) return null;
-  try {
-    const c = JSON.parse(raw) as Partial<SmtpConfig>;
-    if (!c.host || !c.from) return null;
-    return { host: c.host, port: typeof c.port === 'number' ? c.port : 587, secure: !!c.secure, user: c.user ?? '', pass: c.pass ?? '', from: c.from };
-  } catch {
-    return null;
-  }
-}
-
-export function setSmtp(c: SmtpConfig): void {
-  setSetting(SETTING_KEYS.smtp, JSON.stringify(c));
-}
-
 /** The OS-vault Stripe account id the admin chose for tuition, or '' to use the manifest default
  *  (payments/stripe.ts resolves the fallback). This is an account REFERENCE, not a secret. */
 export function getChosenStripeAccount(): string {

@@ -8,12 +8,11 @@ import { isNotNull } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
 import { families, paymentMethods, autopayEnrollments } from '../db/schema';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getSmtp, setSmtp, getChosenStripeAccount, setChosenStripeAccount } from '../settings';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount } from '../settings';
 import { audit } from '../audit';
-import { verifySmtp, sendMail, smtpConfigured } from '../mail/smtp';
 import { mailAvailable } from '../mail/notify';
 import { portalBase } from '../auth/invites';
-import { cachedPublicUrl } from '../fabric/platform';
+import { cachedPublicUrl, sendPlatformEmail } from '../fabric/platform';
 import { fabricConfigured, config } from '../config';
 import { testEmail } from '../mail/templates';
 import { stripeReady, stripeAccountId, loadStripeKeys } from '../payments/stripe';
@@ -54,7 +53,8 @@ export const settingsRouter = router({
       publicUrl: base,
       /** Where the URL came from — `platform` is authoritative, `env` is the install-time mirror. */
       publicUrlSource: live ? ('platform' as const) : config.omosPublicUrl ? ('env' as const) : ('none' as const),
-      smtp: smtpConfigured(),
+      /** Kept for shape stability; always false now that the app has no SMTP of its own. */
+      smtp: false as const,
       /** We declare `email: true`, so the platform can send for us whenever the Fabric is wired up. */
       platformMail: fabricConfigured(),
       mailAvailable: mailAvailable(),
@@ -64,48 +64,29 @@ export const settingsRouter = router({
     };
   }),
 
-  // ── Email (SMTP) — the password is WRITE-ONLY: never returned to the client, never audited (§10/§14).
-  smtpGet: adminProcedure.query(() => {
-    const c = getSmtp();
-    return {
-      configured: !!c,
-      host: c?.host ?? '',
-      port: c?.port ?? 587,
-      secure: c?.secure ?? false,
-      user: c?.user ?? '',
-      from: c?.from ?? '',
-      hasPassword: !!c?.pass, // so the UI can show "•••• (unchanged)" instead of asking every time
-    };
-  }),
-
-  smtpSet: adminProcedure
-    .input(
-      z.object({
-        host: z.string().trim().max(255),
-        port: z.number().int().min(1).max(65535),
-        secure: z.boolean(),
-        user: z.string().trim().max(255),
-        from: z.string().trim().min(1).max(320),
-        // Omitted/empty → keep the stored password (write-only field; the admin only re-types to change it).
-        password: z.string().max(255).optional(),
-      }),
-    )
-    .mutation(({ ctx, input }) => {
-      const existing = getSmtp();
-      const pass = input.password && input.password.length > 0 ? input.password : (existing?.pass ?? '');
-      setSmtp({ host: input.host, port: input.port, secure: input.secure, user: input.user, pass, from: input.from });
-      // Audit keys only — NEVER the password (mirror settings.update).
-      audit(auditActor(ctx), 'settings.smtp.update', { entity: 'settings', detail: { host: input.host, port: input.port, secure: input.secure, passwordChanged: !!input.password } });
-      return { ok: true as const };
-    }),
-
-  /** Verify the connection, then send a probe to `to`. Friendly error on failure. */
-  smtpTest: adminProcedure.input(z.object({ to: z.string().trim().email().max(320) })).mutation(async ({ input }) => {
-    const v = await verifySmtp();
-    if (!v.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: v.error ? `Couldn't connect: ${v.error}` : "Couldn't connect to the mail server." });
+  /**
+   * Send a test email through OpenMasjidOS.
+   *
+   * There are no SMTP settings in this app any more — the OS owns the mail provider and the From
+   * address, so a masjid configures email once, there. What is still worth having is a way to prove it
+   * reaches somebody, which is what this is.
+   *
+   * The platform answers HTTP 200 with `{sent:false, reason}` when it has no provider configured, so a
+   * failure here is reported as a real failure rather than a cheerful success.
+   */
+  mailTest: adminProcedure.input(z.object({ to: z.string().trim().email().max(320) })).mutation(async ({ ctx, input }) => {
+    if (!fabricConfigured()) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'This app isn’t connected to OpenMasjidOS yet, so it can’t send email.' });
+    }
     const m = testEmail(getSchoolName());
-    const sent = await sendMail({ to: input.to, subject: m.subject, text: m.text, html: m.html });
-    if (!sent) throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Connected, but the test email could not be sent.' });
+    const sent = await sendPlatformEmail(input.to, m.subject, m.text, m.html);
+    audit(auditActor(ctx), 'settings.mailTest', { entity: 'settings', detail: { sent } });
+    if (!sent) {
+      throw new TRPCError({
+        code: 'BAD_GATEWAY',
+        message: 'OpenMasjidOS couldn’t send it. Check that email is set up in OpenMasjidOS → Settings, then try again.',
+      });
+    }
     return { ok: true as const };
   }),
 

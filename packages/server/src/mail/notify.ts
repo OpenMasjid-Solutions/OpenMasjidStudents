@@ -7,7 +7,6 @@
  * PII. The parent-portal link uses OPENMASJID_PUBLIC_URL when set (empty → no button, still valid).
  */
 import { getSchoolName } from '../settings';
-import { sendMail, sendMailTo, smtpConfigured } from './smtp';
 import { guardianEmailsForFamily } from './recipients';
 import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail } from './templates';
 import { portalBase } from '../auth/invites';
@@ -29,20 +28,25 @@ export interface MailOutcome {
   skipped?: MailSkip;
 }
 
-/** Is there ANY way to send mail right now? */
+/**
+ * Is there any way to send mail right now?
+ *
+ * This app has no mail transport of its own: OpenMasjidOS owns the provider and the From address, so
+ * a masjid sets email up once, there. A standalone install therefore sends nothing — and that is a
+ * supported mode, not a broken one: invites and resets degrade to copy/print links, which the office
+ * hands over directly (§6).
+ *
+ * Note this is still only a capability signal, not proof of delivery — the platform can accept the
+ * call and answer `{sent:false}` if the masjid has no provider configured. `deliver()` reports that
+ * honestly, and the Settings "Reaching parents" panel plus the test-send button are how an admin finds
+ * out for certain.
+ */
 export function mailAvailable(): boolean {
-  return smtpConfigured() || fabricConfigured();
+  return fabricConfigured();
 }
 
-/**
- * One email, by whichever transport exists.
- *
- * Local SMTP first — it is the app's own config and keeps a STANDALONE install fully working with no
- * platform at all (§6). The masjid's OpenMasjidOS mail provider is the fallback, which is what makes
- * SMTP genuinely optional rather than a hard requirement for ever reaching a parent.
- */
+/** One email, through the platform. Returns false when it did not actually send. */
 async function deliver(to: string, subject: string, text: string, html?: string): Promise<boolean> {
-  if (smtpConfigured() && (await sendMail({ to, subject, text, html }))) return true;
   return sendPlatformEmail(to, subject, text, html);
 }
 
@@ -78,10 +82,9 @@ export async function sendReceipt(familyId: string, amountFormatted: string): Pr
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   const m = receiptEmail(getSchoolName(), amountFormatted, portalHome());
-  if (smtpConfigured()) return sendMailTo(emails, m.subject, m.text, m.html);
   // The platform endpoint takes one recipient per call.
   let n = 0;
-  for (const e of emails) if (await sendPlatformEmail(e, m.subject, m.text, m.html)) n++;
+  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
   return n;
 }
 
@@ -92,8 +95,7 @@ export async function sendAutopayFailure(familyId: string, final: boolean): Prom
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   const m = autopayFailureEmail(getSchoolName(), portalHome(), final);
-  if (smtpConfigured()) return sendMailTo(emails, m.subject, m.text, m.html);
   let n = 0;
-  for (const e of emails) if (await sendPlatformEmail(e, m.subject, m.text, m.html)) n++;
+  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
   return n;
 }

@@ -19,8 +19,11 @@ const pub = (peer = '127.0.0.1') => app.appRouter.createCaller(makeCtx({ origin:
 const inviteCount = () => app.dbmod.db.select().from(invites).all().length;
 
 beforeAll(async () => {
-  process.env.OPENMASJID_PUBLIC_URL = 'https://masjid.test/students';
-  app = await freshApp();
+  // The door needs a mail transport AND an absolute public URL. There is no SMTP any more — email is
+  // the platform's job — so `fabric: true` is what opens it. The send itself fails (nothing is
+  // listening on platform.test), which is fine: the invite is still minted, which is what these
+  // tests are about.
+  app = await freshApp({ fabric: true, publicUrl: 'https://masjid.test/students' });
   settingsMod = await import('../src/settings');
 });
 afterAll(() => {
@@ -29,8 +32,6 @@ afterAll(() => {
 beforeEach(() => {
   const { db } = app.dbmod;
   for (const t of [invites, guardianUsers, guardians, guardianFamilies, studentFees, feePlans, students, families, sessions, users, settings]) db.delete(t).run();
-  // SMTP configured (fast-failing host) so the door is open; sendInvite fails but the invite is minted.
-  settingsMod.setSmtp({ host: '127.0.0.1', port: 1, secure: false, user: '', pass: '', from: 'School <o@test.org>' });
 });
 
 /** A family with a student (known PIN) + a guardian with an on-file email. */
