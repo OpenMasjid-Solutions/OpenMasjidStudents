@@ -22,6 +22,7 @@ import type { Tx } from '../billing/ledger';
 import { families, students, guardians, guardianFamilies, feePlans, studentFees, classes, courses } from '../db/schema';
 import { rid } from '../db/ids';
 import { generateUniquePin } from '../billing/pins';
+import { generateUniqueStudentCode } from '../billing/studentCodes';
 
 /** The canonical import fields. The web dialog fetches this to build the blank template AND to
  *  auto-match incoming headers, so there is exactly one source of truth for the column set.
@@ -259,6 +260,9 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
 
       const studentId = rid('stu');
       const pin = generateUniquePin();
+      // Like the PIN, the kiosk ID is always generated here and never taken from the spreadsheet —
+      // an imported ID could collide with an existing child's or be chosen to impersonate one.
+      const studentCode = generateUniqueStudentCode(firstName);
       const dob = norm(r.dob);
       tx.insert(students)
         .values({
@@ -272,6 +276,7 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
           classId,
           pin,
           pinUpdatedAt: ts,
+          studentCode,
           createdAt: ts,
           updatedAt: ts,
         })

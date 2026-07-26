@@ -34,7 +34,7 @@ export const portalRouter = router({
     const list: FamilyView[] = famIds.map((fid) => {
       const fam = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.id, fid)).get();
       const kids = db
-        .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, pin: students.pin })
+        .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, pin: students.pin, studentCode: students.studentCode })
         .from(students)
         .where(and(eq(students.familyId, fid), eq(students.status, 'active')))
         .orderBy(students.firstName)
@@ -228,7 +228,7 @@ type FamilyView = {
   id: string;
   name: string;
   balance: ReturnType<typeof familyBalance>;
-  students: { id: string; firstName: string; lastName: string; pin: string }[];
+  students: { id: string; firstName: string; lastName: string; pin: string; studentCode: string | null }[];
   invoices: { id: string; label: string; dueDate: string | null; balanceCents: number }[];
   payments: { id: string; amountCents: number; channel: string; occurredAt: Date; memo: string | null; reversalOf: string | null }[];
 };

@@ -22,6 +22,7 @@ import { createContext } from './trpc/trpc';
 import { registerStatementRoutes } from './billing/statementRoutes';
 import { registerFabricProvider } from './fabric/provider';
 import { refreshSiteInfo } from './fabric/platform';
+import { backfillStudentCodes } from './billing/studentCodes';
 import { loadStripeKeys } from './payments/stripe';
 import { startSchedulers } from './payments/scheduler';
 import { stripBasePath } from './http/basePath';
@@ -44,6 +45,10 @@ async function main(): Promise<void> {
   // an admin turns on Remote access — so asking is the difference between an invite that sends and
   // one that silently doesn't. The scheduler keeps it fresh.
   void refreshSiteInfo();
+  // Give a kiosk ID to any student that predates the column. Idempotent and a no-op once done, so it
+  // lives here rather than in a migration — assigning unique codes needs collision retries, which is
+  // application logic, not something to write in SQL.
+  backfillStudentCodes();
   startSchedulers(); // daily autopay run + reconciliation + public-URL refresh (no-op standalone)
 
   // The tunnel mount prefix (e.g. "/students"); "" when standalone / served at the root.

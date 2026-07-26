@@ -19,13 +19,14 @@ import { db } from '../db';
 import { students, families, invoices, payments } from '../db/schema';
 import { config } from '../config';
 import { classifyOrigin } from '../security/origin';
-import { pinLookupLimiter } from '../security/rateLimit';
+import { pinLookupLimiter, codeLookupLimiter } from '../security/rateLimit';
 import { nameMatches } from '../people/match';
 import { familyBalance, invoiceTotal, invoicePaid, recordPayment } from '../billing/ledger';
 import { formatMoney } from '../db/money';
 import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../settings';
 import { audit } from '../audit';
 import { notifyPlatform, raiseAlert } from './platform';
+import { normalizeStudentCode } from '../billing/studentCodes';
 
 /** Constant-time check of the platform-proof header against our own secret. Disabled (always false)
  *  when no secret is configured — so a standalone install never accepts Fabric calls. */
@@ -63,18 +64,88 @@ export function registerFabricProvider(app: FastifyInstance): void {
     return reply.send({ v: 1, enabled: getExternalPaymentsEnabled(), schoolName: getSchoolName(), currency: getCurrency(), tagline: 'Pay tuition with your child’s name and PIN' });
   });
 
-  // lookup — resolve a student name + PIN to a family + balance. Uniform found:false on any mismatch.
+  /**
+   * identify — echo back WHO a typed student ID belongs to, so a kiosk can ask "is this the right
+   * child?" before taking money. ADDITIVE at contract v1: a consumer that doesn't know this method
+   * simply never calls it.
+   *
+   * Returns a first name + last initial and NOTHING ELSE — no balance, no invoices, no siblings, no
+   * family id. A student ID is not a secret (its letters come from the child's first name and it is
+   * printed on statements), so it may establish identity but must never release anything payable;
+   * that still needs the PIN via `lookup` (§11.2, §14). The one disclosure here — a first name and an
+   * initial — is exactly what the sibling list already exposes, and it is capped per code by
+   * `codeLookupLimiter` (harder than the PIN's, since a code is far more guessable).
+   *
+   * Also gated on the admin's external-payments toggle: with tuition payments switched off there is
+   * no reason for this to answer at all.
+   */
+  app.post('/fabric/billing/identify', async (req, reply) => {
+    if (!gate(req, reply)) return;
+    const parsed = z.object({ v: V, studentCode: z.string().min(1).max(32) }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid', message: 'Bad request.' } });
+    if (!getExternalPaymentsEnabled()) return reply.send({ v: 1, found: false });
+
+    const code = normalizeStudentCode(parsed.data.studentCode);
+    if (codeLookupLimiter.retryAfterMs(code) > 0) return reply.send({ v: 1, found: false });
+
+    const student = code
+      ? db.select({ firstName: students.firstName, lastName: students.lastName, status: students.status, studentCode: students.studentCode }).from(students).where(eq(students.studentCode, code)).get()
+      : undefined;
+    if (!student || student.status !== 'active') {
+      const wasLocked = codeLookupLimiter.retryAfterMs(code) > 0;
+      codeLookupLimiter.fail(code);
+      if (!wasLocked && codeLookupLimiter.retryAfterMs(code) > 0) {
+        void raiseAlert('pin-lockout', 'A tuition student-ID lookup was locked after repeated failed attempts.', { title: 'Tuition lookup locked' });
+      }
+      return reply.send({ v: 1, found: false });
+    }
+    codeLookupLimiter.succeed(code);
+    return reply.send({
+      v: 1,
+      found: true,
+      // Deliberately minimal, and deliberately NOT the family id — confirming a name must not become
+      // a way to address a family.
+      student: { studentCode: student.studentCode, firstName: student.firstName, lastInitial: (student.lastName || '').charAt(0) },
+    });
+  });
+
+  // lookup — resolve a student to a family + balance. The student is identified by NAME + PIN (as
+  // always) or, additively at v1, by studentCode + PIN — the kiosk path, where the parent typed a code
+  // rather than spelling a name. The PIN is required either way: it is the only secret here, and it is
+  // what authorises releasing a balance. Uniform found:false on any mismatch, whatever mismatched.
   app.post('/fabric/billing/lookup', async (req, reply) => {
     if (!gate(req, reply)) return;
-    const parsed = z.object({ v: V, name: z.string().min(1).max(200), pin: z.string().min(1).max(20) }).safeParse(req.body ?? {});
+    const parsed = z
+      .object({
+        v: V,
+        name: z.string().min(1).max(200).optional(),
+        studentCode: z.string().min(1).max(32).optional(),
+        pin: z.string().min(1).max(20),
+      })
+      // One of the two must identify the student. An existing name+pin caller is unaffected.
+      .refine((b) => !!b.name || !!b.studentCode, { message: 'name or studentCode is required' })
+      .safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid', message: 'Bad request.' } });
-    const { name, pin } = parsed.data;
+    const { name, studentCode, pin } = parsed.data;
 
     // Locked PIN → uniform not-found (no signal that the PIN is otherwise valid).
     if (pinLookupLimiter.retryAfterMs(pin) > 0) return reply.send({ v: 1, found: false });
 
-    const student = db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, familyId: students.familyId, status: students.status }).from(students).where(eq(students.pin, pin)).get();
-    const ok = !!student && student.status === 'active' && nameMatches(name, student.firstName, student.lastName);
+    const sel = { id: students.id, firstName: students.firstName, lastName: students.lastName, familyId: students.familyId, status: students.status, pin: students.pin };
+    let student: { id: string; firstName: string; lastName: string; familyId: string; status: string; pin: string } | undefined;
+    let identityOk = false;
+    if (studentCode) {
+      // Code path: find the child by code, then require THEIR pin. Comparing the stored pin here
+      // (rather than looking up by pin) is what keeps a code+wrong-pin from matching another child.
+      const code = normalizeStudentCode(studentCode);
+      student = code ? db.select(sel).from(students).where(eq(students.studentCode, code)).get() : undefined;
+      identityOk = !!student && student.pin === pin;
+    } else {
+      // Name path, unchanged: the PIN is the unique index, the name is then verified leniently.
+      student = db.select(sel).from(students).where(eq(students.pin, pin)).get();
+      identityOk = !!student && nameMatches(name!, student.firstName, student.lastName);
+    }
+    const ok = !!student && student.status === 'active' && identityOk;
     if (!ok) {
       const wasLocked = pinLookupLimiter.retryAfterMs(pin) > 0;
       pinLookupLimiter.fail(pin);
@@ -89,7 +160,7 @@ export function registerFabricProvider(app: FastifyInstance): void {
     pinLookupLimiter.succeed(pin);
 
     const fam = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.id, student!.familyId)).get();
-    const kids = db.select({ firstName: students.firstName, lastName: students.lastName }).from(students).where(and(eq(students.familyId, student!.familyId), eq(students.status, 'active'))).all();
+    const kids = db.select({ id: students.id, studentCode: students.studentCode, firstName: students.firstName, lastName: students.lastName }).from(students).where(and(eq(students.familyId, student!.familyId), eq(students.status, 'active'))).all();
     const currency = getCurrency();
     const bal = familyBalance(student!.familyId);
     const open = db
@@ -107,8 +178,10 @@ export function registerFabricProvider(app: FastifyInstance): void {
       family: {
         id: fam?.id ?? student!.familyId,
         label: fam?.name ?? '',
-        // NEVER full last names, DOB, or contact (§14) — first name + last initial only.
-        students: kids.map((k) => ({ firstName: k.firstName, lastInitial: (k.lastName || '').charAt(0) })),
+        // NEVER full last names, DOB, or contact (§14) — first name + last initial only. `studentId`
+        // is the internal id a consumer passes back to record-payment; `studentCode` is added so the
+        // kiosk can show a sibling and pay for them WITHOUT the parent typing that child's ID.
+        students: kids.map((k) => ({ studentId: k.id, studentCode: k.studentCode, firstName: k.firstName, lastInitial: (k.lastName || '').charAt(0) })),
         balanceCents: bal.owedCents,
         currency,
         openInvoices: open,

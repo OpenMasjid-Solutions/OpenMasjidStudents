@@ -46,18 +46,22 @@ export function FamilyHome() {
               )}
             </div>
 
-            {/* Kids + PINs */}
+            {/* Kids, with the two things a parent needs at the kiosk: the ID they type and the PIN. */}
             <section className="fam-section">
               <h2>{t('family.children')}</h2>
               {fam.students.length === 0 ? (
                 <div className="fam-empty">{t('family.noChildren')}</div>
               ) : (
-                fam.students.map((s) => (
-                  <div key={s.id} className="kid-row glass">
-                    <span className="kid-name">{s.firstName} {s.lastName}</span>
-                    <span className="kid-pin"><span className="pin-lbl">{t('directory.pin')}</span>{s.pin}</span>
-                  </div>
-                ))
+                <>
+                  {fam.students.map((s) => (
+                    <div key={s.id} className="kid-row glass">
+                      <span className="kid-name">{s.firstName} {s.lastName}</span>
+                      {s.studentCode && <span className="kid-pin"><span className="pin-lbl">{t('directory.studentId')}</span>{s.studentCode}</span>}
+                      <span className="kid-pin"><span className="pin-lbl">{t('directory.pin')}</span>{s.pin}</span>
+                    </div>
+                  ))}
+                  <p className="fam-hint">{t('family.kioskHint')}</p>
+                </>
               )}
             </section>
 

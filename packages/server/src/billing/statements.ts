@@ -62,7 +62,7 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   const bal = familyBalance(familyId);
 
   const kids = db
-    .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, pin: students.pin })
+    .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, pin: students.pin, studentCode: students.studentCode })
     .from(students)
     .where(and(eq(students.familyId, familyId), eq(students.status, 'active')))
     .orderBy(students.firstName)
@@ -99,9 +99,16 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
       ? `<span class="credit">${esc(money(bal.creditCents))}</span> in credit`
       : `<span class="settled">${esc(money(0))}</span> — all settled`;
 
+  // Student ID + PIN side by side: the ID is what a parent types at the kiosk, the PIN is what
+  // authorises it. Printing both together is the point of the statement.
   const kidsRows = kids.length
-    ? kids.map((k) => `<tr><td>${esc(`${k.firstName} ${k.lastName}`.trim())}</td><td class="pin">${esc(k.pin)}</td></tr>`).join('')
-    : `<tr><td colspan="2" class="muted">No active students.</td></tr>`;
+    ? kids
+        .map(
+          (k) =>
+            `<tr><td>${esc(`${k.firstName} ${k.lastName}`.trim())}</td><td class="pin">${esc(k.studentCode ?? '—')}</td><td class="pin">${esc(k.pin)}</td></tr>`,
+        )
+        .join('')
+    : `<tr><td colspan="3" class="muted">No active students.</td></tr>`;
 
   const invoiceRows = openInvs.length
     ? openInvs.map((i) => `<tr><td>${esc(i.label)}</td><td>${esc(asDate(i.dueDate) || '—')}</td><td class="num">${esc(money(i.balanceCents))}</td></tr>`).join('')
@@ -163,9 +170,9 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   <div class="balance">Balance: ${balanceLine}</div>
 
   <section>
-    <h2>Your children &amp; their PINs</h2>
-    <table><thead><tr><th>Student</th><th>PIN</th></tr></thead><tbody>${kidsRows}</tbody></table>
-    <p class="payhint">You can pay tuition with your child's name + PIN at the donation site or the kiosk.</p>
+    <h2>Your children &amp; their payment details</h2>
+    <table><thead><tr><th>Student</th><th>Student ID</th><th>PIN</th></tr></thead><tbody>${kidsRows}</tbody></table>
+    <p class="payhint">At the kiosk, enter your child's Student ID, check the name it shows, then enter their PIN — you can then pay for any of your children on the same screen. On the donation site you can use your child's name + PIN instead.</p>
   </section>
 
   <section>

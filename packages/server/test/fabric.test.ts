@@ -82,8 +82,17 @@ describe('lookup (§11.2)', () => {
     expect(r.family.id).toBe(familyId);
     expect(r.family.balanceCents).toBe(5000);
     expect(r.family.openInvoices).toHaveLength(1);
-    // Only first name + last initial — never a full last name.
-    expect(r.family.students).toEqual(expect.arrayContaining([{ firstName: 'Yusuf', lastInitial: 'I' }, { firstName: 'Sara', lastInitial: 'I' }]));
+    // Only first name + last initial — never a full last name. Each sibling also carries their own
+    // ids (added at 0.38.0) so a kiosk can pay for a sibling without the parent typing their ID;
+    // the NAME minimisation is what this assertion guards, so check it field-by-field.
+    expect(r.family.students.map((k: { firstName: string; lastInitial: string }) => ({ firstName: k.firstName, lastInitial: k.lastInitial }))).toEqual(
+      expect.arrayContaining([
+        { firstName: 'Yusuf', lastInitial: 'I' },
+        { firstName: 'Sara', lastInitial: 'I' },
+      ]),
+    );
+    // Every sibling entry exposes exactly these four fields and nothing more.
+    for (const k of r.family.students) expect(Object.keys(k).sort()).toEqual(['firstName', 'lastInitial', 'studentCode', 'studentId']);
     expect(JSON.stringify(r)).not.toContain('Ismail"'); // no bare "Ismail" last-name value in the payload
   });
 

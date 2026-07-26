@@ -169,6 +169,13 @@
       "when": 1785031385104,
       "tag": "0023_sturdy_star_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1785104971107,
+      "tag": "0024_true_lake",
+      "breakpoints": true
     }
   ]
 }

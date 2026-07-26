@@ -25,7 +25,7 @@ export const SETTING_KEYS = {
 
 /** Optional columns the admin can switch on in the year view, beyond the fixed
  *  name / paying / month grid. */
-export const YEAR_VIEW_COLUMNS = ['dob', 'guardianNames', 'guardianPhones', 'guardianEmails', 'balance', 'pin'] as const;
+export const YEAR_VIEW_COLUMNS = ['studentId', 'dob', 'guardianNames', 'guardianPhones', 'guardianEmails', 'balance', 'pin'] as const;
 export type YearViewColumn = (typeof YEAR_VIEW_COLUMNS)[number];
 
 /** Which optional columns the year view shows. Defaults to guardian phone numbers — the column an

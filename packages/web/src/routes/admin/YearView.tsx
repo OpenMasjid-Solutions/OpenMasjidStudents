@@ -125,6 +125,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                   <th className="year-sticky">{t('students.name')}</th>
                   <th>{t('year.paying')}</th>
                   {g.months.map((m) => <th key={m.periodKey} className="year-month">{m.label}</th>)}
+                  {enabled.includes('studentId') && <th>{t('year.col_studentId')}</th>}
                   {enabled.includes('dob') && <th>{t('year.col_dob')}</th>}
                   {enabled.includes('balance') && <th>{t('year.col_balance')}</th>}
                   {enabled.includes('pin') && <th>{t('year.col_pin')}</th>}
@@ -172,6 +173,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                             )}
                           </td>
                         ))}
+                        {enabled.includes('studentId') && <td><span className="pin">{r.extra.studentCode ?? ''}</span></td>}
                         {enabled.includes('dob') && <td>{r.extra.dob ?? ''}</td>}
                         {enabled.includes('balance') && <td className="tnum">{formatMoney(r.extra.balanceCents ?? 0, g.currency)}</td>}
                         {enabled.includes('pin') && <td><span className="pin">{r.extra.pin}</span></td>}

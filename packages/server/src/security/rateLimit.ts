@@ -117,6 +117,19 @@ export const applyDailyLimiter = new SubmitLimiter(20, 24 * 60 * 60_000); // 20 
  *  low entropy. Keyed by the SUPPLIED pin; a success resets it. */
 export const pinLookupLimiter = new LoginLimiter({ maxFailures: 10, windowMs: 60 * 60_000, blockMs: 60 * 60_000 });
 
+/**
+ * Per-student-ID lockout for the kiosk's confirm-the-name step (§11.2, §14).
+ *
+ * A student ID is `ABC1234` — 3 letters derived from the first name plus 4 digits — so it is far more
+ * guessable than a PIN, and a successful probe reveals a first name + last initial. That makes this
+ * the app's cheapest name-enumeration surface, so it is capped HARDER than the PIN (6 tries, not 10)
+ * and keyed on the supplied code. A success resets it.
+ *
+ * Note it is deliberately NOT reset by a later successful PIN lookup: the two are separate probes,
+ * and someone sweeping codes should not be able to launder their failures with one good login.
+ */
+export const codeLookupLimiter = new LoginLimiter({ maxFailures: 6, windowMs: 60 * 60_000, blockMs: 60 * 60_000 });
+
 /** Password-reset REQUESTS — per-IP fixed-window cap so the endpoint can't be used to bomb an inbox
  *  or probe for accounts (§12/§14). Counts every call. */
 export const resetRequestLimiter = new SubmitLimiter(5, 15 * 60_000); // 5 / 15 min

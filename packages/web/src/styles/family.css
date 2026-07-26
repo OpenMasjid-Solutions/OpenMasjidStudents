@@ -97,6 +97,8 @@
 .list-row .row-amt.pos { color: var(--color-success, #46c99a); }
 
 .fam-empty { color: var(--color-text-muted, #9fb4aa); font-size: 0.92rem; padding: 0.5rem 0.25rem; }
+/* A one-line explainer under a list — how to actually use the ID + PIN above it. */
+.fam-hint { color: var(--color-text-muted, #9fb4aa); font-size: 0.85rem; line-height: 1.45; margin: 0.5rem 0.25rem 0; }
 
 /* Attendance tallies — four compact stat cards. */
 .att-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-block-end: 0.7rem; }

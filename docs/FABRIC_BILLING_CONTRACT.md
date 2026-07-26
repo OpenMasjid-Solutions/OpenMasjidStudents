@@ -37,25 +37,58 @@
 // "enabled": false (setup incomplete or external payments turned off by admin) → consumers hide the campaign
 ```
 
-**`POST /fabric/billing/lookup`** — resolve a **student name + PIN** to a family + balance.
+**`POST /fabric/billing/identify`** — *(added 0.38.0, ADDITIVE at v1)* echo back **who a typed student
+ID belongs to**, so a kiosk can ask "is this the right child?" before taking any money. A consumer
+that doesn't know this method simply never calls it.
 ```jsonc
-// request
+// request — the ID printed on the statement: first 3 letters of the first name + 4 digits.
+// Input is normalised here (case, spaces, hyphens), so "yus-1234" is fine.
+{ "v": 1, "studentCode": "YUS1234" }
+// 200 (found) — a first name + last initial and NOTHING else
+{ "v": 1, "found": true, "student": { "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" } }
+// 200 (not found) — unknown code, withdrawn student, locked code, or external payments switched off
+{ "v": 1, "found": false }
+```
+> **A student ID is NOT a secret and must never be treated as one.** Its letters are derived from the
+> child's first name and it is printed on statements, so it establishes *who* — the PIN still
+> establishes *may you*. `identify` therefore returns **no balance, no invoices, no sibling list and
+> not even the family id**; everything payable still requires `lookup` with the PIN. The one thing it
+> discloses is a first name + last initial, which is exactly what `lookup`'s sibling list already
+> exposes. Because a code is far more guessable than a PIN, it is locked **harder**: 6 failed
+> attempts per code per hour (vs the PIN's 10), and a lockout raises an admin alert.
+
+**`POST /fabric/billing/lookup`** — resolve a student to a family + balance. The student is identified
+by **name + PIN**, or *(added 0.38.0, ADDITIVE at v1)* by **studentCode + PIN** — the kiosk path,
+where the parent typed an ID rather than spelling a name. **The PIN is required either way.**
+```jsonc
+// request — supply `name` OR `studentCode` (one is required); `pin` always.
 { "v": 1, "name": "Yusuf Ismail", "pin": "482913" }
-// Matching (this app's job, not the consumer's): PIN is the unique index — find the student by PIN,
-// then verify the name leniently (case/diacritic-insensitive; every token the parent typed must
-// appear in the registered full name). PIN wrong OR name mismatch → identical "found": false.
+{ "v": 1, "studentCode": "YUS1234", "pin": "482913" }
+// Matching (this app's job, not the consumer's):
+//  - name path: PIN is the unique index — find the student by PIN, then verify the name leniently
+//    (case/diacritic-insensitive; every token the parent typed must appear in the registered name).
+//  - code path: find the student by code, then require THAT student's PIN. Comparing the stored PIN
+//    is what stops a code paired with some other child's PIN from matching.
+// Any mismatch → identical "found": false.
 // 200 (found)
 { "v": 1, "found": true,
   "matchedStudent": { "id": "stu_1" },
   "family": {
     "id": "fam_x1", "label": "Ismail family",
-    "students": [{ "firstName": "Yusuf", "lastInitial": "I" }],   // NEVER full last names, DOB, or contact info
+    // NEVER full last names, DOB, or contact info. `studentId` + `studentCode` were added in 0.38.0
+    // so a kiosk can offer a SIBLING and pay for them without the parent typing that child's ID.
+    "students": [{ "studentId": "stu_1", "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" },
+                 { "studentId": "stu_2", "studentCode": "MAR8802", "firstName": "Maryam", "lastInitial": "I" }],
     "balanceCents": 35000, "currency": "usd",
     "openInvoices": [{ "id": "inv_9", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 15000 }]
   } }
 // 200 (not found) — same shape, same latency, whatever actually mismatched (no enumeration oracle)
 { "v": 1, "found": false }
 ```
+> **Recommended kiosk flow:** `identify(studentCode)` → show the name, ask "is this right?" → collect
+> the PIN → `lookup(studentCode, pin)` → show the balance and the sibling list → `record-payment` with
+> the chosen child's `studentId` from that list. Note the balance is per FAMILY, so paying for a
+> sibling is the same ledger entry with a different `studentId` attribution.
 
 **`POST /fabric/billing/record-payment`** — record an external payment. **Idempotent.**
 ```jsonc

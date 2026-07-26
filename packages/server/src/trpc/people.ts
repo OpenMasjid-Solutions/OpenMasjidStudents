@@ -28,6 +28,7 @@ import {
 } from '../db/schema';
 import { rid } from '../db/ids';
 import { generateUniquePin } from '../billing/pins';
+import { generateUniqueStudentCode } from '../billing/studentCodes';
 import { audit } from '../audit';
 import { IMPORT_FIELDS, validateRows, commitRows, type ImportRow } from '../people/import';
 
@@ -213,6 +214,9 @@ export const peopleRouter = router({
       const id = rid('stu');
       const ts = now();
       const pin = generateUniquePin();
+      // The typed ID a parent uses at the kiosk. Derived from the first name, so it is generated
+      // here rather than accepted from the caller — never importable, never chosen (§14).
+      const studentCode = generateUniqueStudentCode(input.firstName);
       db.transaction((tx) => {
         tx.insert(students)
           .values({
@@ -226,6 +230,7 @@ export const peopleRouter = router({
             classId: input.classId ?? null,
             pin,
             pinUpdatedAt: ts,
+            studentCode,
             createdAt: ts,
             updatedAt: ts,
           })

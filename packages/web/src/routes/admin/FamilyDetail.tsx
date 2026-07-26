@@ -148,11 +148,14 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
-              <thead><tr><th>{t('directory.name')}</th><th>{t('directory.pin')}</th><th>{t('directory.status')}</th><th className="actions" /></tr></thead>
+              <thead><tr><th>{t('directory.name')}</th><th>{t('directory.studentId')}</th><th>{t('directory.pin')}</th><th>{t('directory.status')}</th><th className="actions" /></tr></thead>
               <tbody>
                 {students.map((s) => (
                   <tr key={s.id}>
                     <td>{s.firstName} {s.lastName}</td>
+                    {/* The ID a parent types at the kiosk. Not a secret (it is on the statement and
+                        derived from the first name) — the PIN beside it is what authorises a payment. */}
+                    <td><span className="pin">{s.studentCode ?? '—'}</span></td>
                     <td><span className="pin">{s.pin}</span></td>
                     <td>{s.status === 'withdrawn' ? <span className="chip is-muted">{t('directory.withdrawn')}</span> : <span className="chip">{t('directory.active')}</span>}</td>
                     <td className="actions">

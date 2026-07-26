@@ -283,6 +283,7 @@ export const billingRouter = router({
           status: students.status,
           dob: students.dob,
           pin: students.pin,
+          studentCode: students.studentCode,
           familyId: students.familyId,
           familyName: families.name,
           classId: students.classId,
@@ -364,6 +365,7 @@ export const billingRouter = router({
           }),
           // Only enabled columns are populated — a disabled one is absent from the payload entirely.
           extra: {
+            ...(columns.includes('studentId') ? { studentCode: s.studentCode } : {}),
             ...(columns.includes('dob') ? { dob: s.dob } : {}),
             ...(columns.includes('pin') ? { pin: s.pin } : {}),
             ...(columns.includes('guardianNames') ? { guardianNames: gs.map((g) => g.name) } : {}),

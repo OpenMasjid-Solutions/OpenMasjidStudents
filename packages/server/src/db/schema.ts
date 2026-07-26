@@ -193,11 +193,26 @@ export const students = sqliteTable(
     classId: text('class_id').references(() => classes.id, { onDelete: 'restrict' }),
     pin: text('pin').notNull(),
     pinUpdatedAt: integer('pin_updated_at', { mode: 'timestamp_ms' }).notNull(),
+    /**
+     * The human-readable student ID a parent types at the kiosk — first three letters of the first
+     * name + 4 digits, e.g. `YUS1234` (billing/studentCodes.ts).
+     *
+     * NOT a secret, and deliberately not treated as one: it is printed on statements and shown to
+     * staff, and it is guessable by anyone who knows a child's first name. It answers *who*, and the
+     * PIN still answers *may you*. Nothing payable is released on a code alone (§11.2).
+     *
+     * Nullable only because the column was added after `students` shipped; every student created
+     * from 0.38.0 on gets one, and `backfillStudentCodes()` fills the rest at boot.
+     */
+    studentCode: text('student_code'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => ({
     pinUq: unique('students_pin_uq').on(t.pin), // the unique lookup index (§11.2)
+    // UNIQUE, so a collision is a database error rather than two children sharing a payment code.
+    // SQLite allows many NULLs in a UNIQUE column, which is what lets the backfill run gradually.
+    codeUq: unique('students_code_uq').on(t.studentCode),
     familyIdx: index('students_family_idx').on(t.familyId),
     classIdx: index('students_class_idx').on(t.classId),
   }),
