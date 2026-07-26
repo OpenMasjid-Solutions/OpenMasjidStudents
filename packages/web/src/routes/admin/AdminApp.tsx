@@ -9,7 +9,7 @@ import { AppShell } from '../../components/AppShell';
 import { ADMIN_ITEMS, type Section } from '../../components/Dock';
 import { trpc } from '../../lib/trpc';
 import { Dashboard } from './Dashboard';
-import { Directory } from './Directory';
+import { Students } from './Students';
 import { Billing } from './Billing';
 import { Staff } from './Staff';
 import { Settings } from './Settings';
@@ -24,8 +24,8 @@ export function AdminApp() {
       <AppShell items={ADMIN_ITEMS} active={section} onNavigate={(s) => setSection(s as Section)} onSignedOut={onSignedOut}>
         {section === 'dashboard' ? (
           <Dashboard onNavigate={setSection} />
-        ) : section === 'directory' ? (
-          <Directory />
+        ) : section === 'students' ? (
+          <Students />
         ) : section === 'billing' ? (
           <Billing />
         ) : section === 'staff' ? (

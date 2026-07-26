@@ -9,7 +9,6 @@ import './index.css';
 import './styles/tokens.css';
 import './styles/glass.css';
 import './styles/app.css';
-import './styles/fonts-arabic.css';
 import './styles/shell.css';
 import './styles/admin.css';
 import './styles/family.css';
@@ -21,9 +20,13 @@ import { installCursorFx } from './lib/cursorFx';
 import { trpc, trpcClient, queryClient } from './lib/trpc';
 import { App } from './App';
 
-// Apply saved theme/accent/wallpaper/language before first paint, then adopt any OpenMasjidOS
-// appearance hand-off (the #omos fragment on a dashboard "Open") so the app opens on-theme.
+// Apply saved theme/accent/wallpaper before first paint, then adopt any OpenMasjidOS appearance
+// hand-off (the #omos fragment on a dashboard "Open") so the app opens on-theme.
 prefsStore.hydrate();
+// The app is English-only, but a browser that used the old language picker may still have `ar`/`ur`
+// in localStorage — which `applyLanguage` would honour by setting dir="rtl" on a now-English UI.
+// Force it back. (prefs.ts is a verbatim port from OpenMasjidOS and is deliberately not edited.)
+prefsStore.patch({ language: 'en' });
 hydrateAppearance();
 // Pointer-reactive light on glass surfaces (off under reduced-motion / touch).
 installCursorFx();

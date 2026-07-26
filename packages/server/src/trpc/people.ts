@@ -20,10 +20,14 @@ import {
   guardians,
   guardianFamilies,
   emergencyContacts,
+  feePlans,
+  studentFees,
+  classes,
 } from '../db/schema';
 import { rid } from '../db/ids';
 import { generateUniquePin } from '../billing/pins';
 import { audit } from '../audit';
+import { IMPORT_FIELDS, validateRows, commitRows, type ImportRow } from '../people/import';
 
 // ── input helpers ────────────────────────────────────────────────────────────
 const REQ_NAME = z.string().trim().min(1).max(120);
@@ -38,6 +42,25 @@ const DOB = z
   .optional();
 const ID = z.string().min(1).max(64);
 const blankToNull = (v: string | undefined): string | null => (v && v.trim() !== '' ? v.trim() : null);
+
+/** One CSV row as the dialog sends it: every cell optional and length-bounded. The real
+ *  validation lives in people/import.ts so problems can be reported per row, not as one
+ *  opaque zod failure the admin can't act on. */
+const CELL = z.string().max(300).optional();
+const IMPORT_ROW = z.object({
+  firstName: CELL,
+  lastName: CELL,
+  familyName: CELL,
+  dob: CELL,
+  className: CELL,
+  courseName: CELL,
+  feePlanName: CELL,
+  amount: CELL,
+  guardianName: CELL,
+  guardianPhone: CELL,
+  guardianEmail: CELL,
+  note: CELL,
+});
 
 const now = () => new Date();
 
@@ -135,31 +158,61 @@ export const peopleRouter = router({
 
   // ── Students (admin write) ─────────────────────────────────────────────────
   /** Create a student and auto-generate a unique PIN (§9). Returns the PIN once so the
-   *  admin can note/print it; thereafter it's on the student record (admin/finance). */
+   *  admin can note/print it; thereafter it's on the student record (admin/finance).
+   *
+   *  A FEE PLAN IS REQUIRED: a student who exists but is on no plan is invisible to invoice
+   *  generation, which is how a child silently stops being billed. The plan and the student are
+   *  created in ONE transaction, with an optional per-student override so an unusual amount does
+   *  not need a parallel plan. `classId` is optional — a student may be unplaced. */
   studentCreate: adminProcedure
-    .input(z.object({ familyId: ID, firstName: REQ_NAME, lastName: REQ_NAME, dob: DOB, notes: NOTES }))
+    .input(
+      z.object({
+        familyId: ID,
+        firstName: REQ_NAME,
+        lastName: REQ_NAME,
+        dob: DOB,
+        notes: NOTES,
+        feePlanId: ID,
+        overrideAmountCents: z.number().int().min(0).max(100_000_000).optional(),
+        feeNote: z.string().trim().max(200).optional(),
+        classId: ID.optional(),
+      }),
+    )
     .mutation(({ ctx, input }) => {
       requireFamily(input.familyId);
+      const plan = db.select({ id: feePlans.id }).from(feePlans).where(and(eq(feePlans.id, input.feePlanId), eq(feePlans.status, 'active'))).get();
+      if (!plan) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
+      if (input.classId) {
+        const k = db.select({ id: classes.id, status: classes.status }).from(classes).where(eq(classes.id, input.classId)).get();
+        if (!k) throw new TRPCError({ code: 'NOT_FOUND', message: 'Class not found.' });
+        if (k.status !== 'active') throw new TRPCError({ code: 'CONFLICT', message: 'That class is archived.' });
+      }
       const id = rid('stu');
       const ts = now();
       const pin = generateUniquePin();
-      db.insert(students)
-        .values({
-          id,
-          familyId: input.familyId,
-          firstName: input.firstName,
-          lastName: input.lastName,
-          dob: blankToNull(input.dob),
-          status: 'active',
-          notes: blankToNull(input.notes),
-          pin,
-          pinUpdatedAt: ts,
-          createdAt: ts,
-          updatedAt: ts,
-        })
-        .run();
+      db.transaction((tx) => {
+        tx.insert(students)
+          .values({
+            id,
+            familyId: input.familyId,
+            firstName: input.firstName,
+            lastName: input.lastName,
+            dob: blankToNull(input.dob),
+            status: 'active',
+            notes: blankToNull(input.notes),
+            classId: input.classId ?? null,
+            pin,
+            pinUpdatedAt: ts,
+            createdAt: ts,
+            updatedAt: ts,
+          })
+          .run();
+        tx.insert(studentFees)
+          .values({ id: rid('stf'), studentId: id, feePlanId: input.feePlanId, overrideAmountCents: input.overrideAmountCents ?? null, note: input.feeNote || null, createdAt: ts, updatedAt: ts })
+          .run();
+      });
       // Audit records the event, NEVER the PIN (§14).
-      audit(auditActor(ctx), 'student.create', { entity: 'student', entityId: id, detail: { familyId: input.familyId } });
+      audit(auditActor(ctx), 'student.create', { entity: 'student', entityId: id, detail: { familyId: input.familyId, feePlanId: input.feePlanId, classId: input.classId ?? null } });
       return { id, pin };
     }),
 
@@ -189,6 +242,54 @@ export const peopleRouter = router({
     }),
 
   /** Regenerate a student's PIN (admin | finance) — audited, PIN value never recorded. */
+  /** Move a student into another family — the "add siblings" path. Guardians and emergency
+   *  contacts attach to the FAMILY, so linking a student to their siblings' family is what makes
+   *  the parent/guardian details apply to them; nothing is copied per-student.
+   *
+   *  Invoices already raised stay with the family that was billed (they are immutable history), so
+   *  a move only redirects FUTURE billing. Audited both sides. */
+  studentSetFamily: adminProcedure.input(z.object({ studentId: ID, familyId: ID })).mutation(({ ctx, input }) => {
+    const s = requireStudent(input.studentId);
+    requireFamily(input.familyId);
+    if (s.familyId === input.familyId) return { ok: true as const, moved: false };
+    db.update(students).set({ familyId: input.familyId, updatedAt: now() }).where(eq(students.id, s.id)).run();
+    audit(auditActor(ctx), 'student.setFamily', { entity: 'student', entityId: s.id, detail: { from: s.familyId, to: input.familyId } });
+    return { ok: true as const, moved: true };
+  }),
+
+  // ── CSV import ───────────────────────────────────────────────────────────────
+  /** The canonical column set. The dialog uses this both to build the blank template and to
+   *  auto-match the uploaded file's headers, so there is one source of truth. */
+  importTemplate: adminProcedure.query(() =>
+    IMPORT_FIELDS.map((f) => ({ key: f.key, label: f.label, required: f.required, aliases: [...f.aliases] })),
+  ),
+
+  /** Dry run. Resolves families / classes / fee plans and reports per-row problems so the dialog
+   *  can show them before anything is written. A mutation, not a query, because the rows go in the
+   *  request BODY — a few hundred rows would not survive a query string. */
+  importPreview: adminProcedure
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional() }))
+    .mutation(({ input }) => validateRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null })),
+
+  /** Commit. Re-validates and writes everything in ONE transaction — all rows land or none do.
+   *  Returns each new student's PIN once so the admin can print them (never logged, never audited). */
+  importCommit: adminProcedure
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional() }))
+    .mutation(({ ctx, input }) => {
+      let res;
+      try {
+        res = commitRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null });
+      } catch (e) {
+        if ((e as Error).message === 'invalid_rows') {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'Some rows still have problems — fix them and try again.' });
+        }
+        throw e;
+      }
+      // Counts only: never the names or the PINs (§14).
+      audit(auditActor(ctx), 'student.import', { entity: 'people', detail: { created: res.created, familiesCreated: res.familiesCreated, guardiansCreated: res.guardiansCreated } });
+      return res;
+    }),
+
   pinRegenerate: adminOrFinanceProcedure.input(z.object({ studentId: ID })).mutation(({ ctx, input }) => {
     const s = requireStudent(input.studentId);
     const pin = generateUniquePin();

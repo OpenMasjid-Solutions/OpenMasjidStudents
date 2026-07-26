@@ -46,10 +46,12 @@ const call = (method: string, body: unknown, opts: { secret?: string | null; tun
 async function seed() {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail family' });
-  const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail' });
-  await admin.people.studentCreate({ familyId: fam.id, firstName: 'Sara', lastName: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  await admin.billing.assignFee({ studentId: s.id, feePlanId: plan.id });
+  const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  // Sara exists only to prove `lookup` returns siblings. studentCreate requires a plan, so she
+  // carries the same one with a ZERO override — she bills nothing, and the family balance the
+  // assertions below check stays exactly Yusuf's $50.
+  await admin.people.studentCreate({ familyId: fam.id, firstName: 'Sara', lastName: 'Ismail', feePlanId: plan.id, overrideAmountCents: 0 });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
   const pin = app.dbmod.db.select({ pin: students.pin }).from(students).where(eq(students.id, s.id)).get()!.pin;
   return { familyId: fam.id, studentId: s.id, pin };

@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { freshApp, makeCtx } from './harness';
-import { families, students, guardians, guardianFamilies, emergencyContacts, auditLog } from '../src/db/schema';
+import { families, students, guardians, guardianFamilies, emergencyContacts, auditLog, studentFees, feePlans } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
@@ -21,6 +21,9 @@ beforeEach(() => {
   const { db } = app.dbmod;
   db.delete(guardianFamilies).run();
   db.delete(emergencyContacts).run();
+  // student_fees references students AND fee_plans with RESTRICT, so it must go first.
+  db.delete(studentFees).run();
+  db.delete(feePlans).run();
   db.delete(students).run();
   db.delete(guardians).run();
   db.delete(families).run();
@@ -30,11 +33,16 @@ beforeEach(() => {
 const session = (role: Role) => ({ role, source: 'local' as const, username: `${role}-user`, userId: `usr_${role}` });
 const caller = (role: Role, origin: 'lan' | 'tunnel' = 'lan') => app.appRouter.createCaller(makeCtx({ origin, session: session(role) }).ctx);
 
+/** studentCreate requires a fee plan (a student on no plan would never be invoiced). These
+ *  tests are about people, not money, so they just need *a* plan to exist. */
+const aPlan = async (admin: ReturnType<typeof caller>) =>
+  (await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' })).id;
+
 describe('writes are admin-only; reads are admin | finance', () => {
   it('admin creates a family + student with a unique 6-digit PIN, visible in the directory', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Ismail family' });
-    const st = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail' });
+    const st = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: await aPlan(admin) });
     expect(st.pin).toMatch(/^\d{6}$/);
     const dir = await admin.people.directory();
     expect(dir).toHaveLength(1);
@@ -65,9 +73,10 @@ describe('student PINs', () => {
   it('generates unique PINs across many students', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Big family' });
+    const feePlanId = await aPlan(admin);
     const pins = new Set<string>();
     for (let i = 0; i < 25; i++) {
-      const s = await admin.people.studentCreate({ familyId: fam.id, firstName: `S${i}`, lastName: 'X' });
+      const s = await admin.people.studentCreate({ familyId: fam.id, firstName: `S${i}`, lastName: 'X', feePlanId });
       pins.add(s.pin);
     }
     expect(pins.size).toBe(25);
@@ -76,7 +85,7 @@ describe('student PINs', () => {
   it('regenerate changes the PIN (admin + finance) and is audited WITHOUT the PIN value', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Fam' });
-    const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'A', lastName: 'B' });
+    const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'A', lastName: 'B', feePlanId: await aPlan(admin) });
     const r = await caller('finance').people.pinRegenerate({ studentId: s.id });
     expect(r.pin).toMatch(/^\d{6}$/);
     expect(r.pin).not.toBe(s.pin);
@@ -91,7 +100,7 @@ describe('records + audit', () => {
   it('withdraw is audited as student.withdraw; guardians + emergency contacts attach; admin sees the PIN on the record', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Fam' });
-    const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'A', lastName: 'B' });
+    const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'A', lastName: 'B', feePlanId: await aPlan(admin) });
     await admin.people.studentUpdate({ id: s.id, status: 'withdrawn' });
     await admin.people.guardianCreate({ familyId: fam.id, name: 'Abu Yusuf', phone: '555-1', relation: 'father', isEmergencyContact: true });
     await admin.people.emergencyContactAdd({ familyId: fam.id, name: 'Neighbour', phone: '555-2' });

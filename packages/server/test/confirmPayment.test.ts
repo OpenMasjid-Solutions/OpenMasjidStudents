@@ -38,10 +38,9 @@ beforeEach(() => {
 async function familyWithParent() {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
-  const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail' });
-  const g = await admin.people.guardianCreate({ familyId: fam.id, name: 'Abu Yusuf', email: 'abu@example.com' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  await admin.billing.assignFee({ studentId: s.id, feePlanId: plan.id });
+  await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  const g = await admin.people.guardianCreate({ familyId: fam.id, name: 'Abu Yusuf', email: 'abu@example.com' });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
   const inv = await admin.auth.inviteCreate({ guardianId: g.id });
   await pub().auth.inviteAccept({ token: inv.token, password: 'parent-pass-1234' });

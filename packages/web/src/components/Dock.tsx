@@ -9,12 +9,12 @@
  */
 import { type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { LayoutGrid, Users, Wallet, UserCog, Settings as SettingsIcon, AppWindow } from 'lucide-react';
+import { LayoutGrid, GraduationCap, Wallet, UserCog, Settings as SettingsIcon, AppWindow } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useWindows } from './Windows';
 
 /** Admin sections (Dock is generic; this union just types the admin shell's state). */
-export type Section = 'dashboard' | 'directory' | 'billing' | 'staff' | 'settings';
+export type Section = 'dashboard' | 'students' | 'billing' | 'staff' | 'settings';
 /** Finance sections — finance runs billing (§5). */
 export type FinanceSection = 'billing';
 
@@ -27,7 +27,7 @@ export interface DockItem {
 
 export const ADMIN_ITEMS: DockItem[] = [
   { id: 'dashboard', icon: <LayoutGrid size={20} />, labelKey: 'nav.dashboard' },
-  { id: 'directory', icon: <Users size={20} />, labelKey: 'nav.directory' },
+  { id: 'students', icon: <GraduationCap size={20} />, labelKey: 'nav.students' },
   { id: 'billing', icon: <Wallet size={20} />, labelKey: 'nav.billing' },
   { id: 'staff', icon: <UserCog size={20} />, labelKey: 'nav.staff' },
   { id: 'settings', icon: <SettingsIcon size={20} />, labelKey: 'nav.settings' },

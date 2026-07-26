@@ -11,18 +11,73 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, asc, desc } from 'drizzle-orm';
 import { router, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
-import { feePlans, studentFees, students, families, invoices, payments } from '../db/schema';
+import { feePlans, studentFees, students, families, invoices, payments, chargeItems, charges, classes } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { recordPayment, reversePayment, familyBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
-import { generateForFamily, generateForPeriod } from '../billing/invoices';
+import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
 import { getCurrency } from '../settings';
 
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
 const CENTS = z.number().int().min(0).max(100_000_000);
+/** Charges may be NEGATIVE — a negative charge is how a credit / scholarship / correction is
+ *  expressed, since an invoice line is immutable once written (§9). */
+const SIGNED_CENTS = z.number().int().min(-100_000_000).max(100_000_000);
+const PERIOD = z.string().trim().min(1).max(40);
+const NOTE = z.string().trim().max(200);
 const now = () => new Date();
+
+/** Who a bulk apply targets: explicit students, or everyone active in a class or course.
+ *  One resolver so the fee-plan and charge-item tabs behave identically. */
+const BULK_TARGET = z.union([
+  z.object({ kind: z.literal('students'), studentIds: z.array(ID).min(1).max(2000) }),
+  z.object({ kind: z.literal('class'), classId: ID }),
+  z.object({ kind: z.literal('course'), courseId: ID }),
+]);
+
+/** Where a charge's label + amount come from: a preconfigured item (optionally re-priced for
+ *  this application) or a free-typed one-off. */
+const CHARGE_SOURCE = z.union([
+  z.object({ kind: z.literal('item'), chargeItemId: ID, amountCents: SIGNED_CENTS.optional() }),
+  z.object({ kind: z.literal('custom'), label: NAME, amountCents: SIGNED_CENTS }),
+]);
+
+/** Freeze the label + amount onto the charge. Renaming or repricing the item afterwards must
+ *  never rewrite a charge already applied (§9's frozen-fact rule), so we copy, never reference. */
+function snapshotCharge(source: z.infer<typeof CHARGE_SOURCE>): { label: string; amountCents: number; chargeItemId: string | null } {
+  if (source.kind === 'custom') {
+    if (source.amountCents === 0) throw new TRPCError({ code: 'BAD_REQUEST', message: 'A charge cannot be zero.' });
+    return { label: source.label, amountCents: source.amountCents, chargeItemId: null };
+  }
+  const item = db.select({ id: chargeItems.id, name: chargeItems.name, defaultAmountCents: chargeItems.defaultAmountCents, status: chargeItems.status }).from(chargeItems).where(eq(chargeItems.id, source.chargeItemId)).get();
+  if (!item) throw new TRPCError({ code: 'NOT_FOUND', message: 'Item not found.' });
+  if (item.status !== 'active') throw new TRPCError({ code: 'CONFLICT', message: 'That item is archived.' });
+  const amountCents = source.amountCents ?? item.defaultAmountCents;
+  if (amountCents === 0) throw new TRPCError({ code: 'BAD_REQUEST', message: 'A charge cannot be zero.' });
+  return { label: item.name, amountCents, chargeItemId: item.id };
+}
+
+function resolveTarget(target: z.infer<typeof BULK_TARGET>): string[] {
+  if (target.kind === 'students') {
+    // Keep only ids that are real AND active — a stale UI selection must not create rows
+    // pointing at withdrawn students.
+    const rows = db.select({ id: students.id }).from(students).where(eq(students.status, 'active')).all();
+    const live = new Set(rows.map((r) => r.id));
+    return target.studentIds.filter((id) => live.has(id));
+  }
+  if (target.kind === 'class') {
+    return db.select({ id: students.id }).from(students).where(and(eq(students.classId, target.classId), eq(students.status, 'active'))).all().map((r) => r.id);
+  }
+  return db
+    .select({ id: students.id })
+    .from(students)
+    .innerJoin(classes, eq(classes.id, students.classId))
+    .where(and(eq(classes.courseId, target.courseId), eq(students.status, 'active')))
+    .all()
+    .map((r) => r.id);
+}
 
 export const billingRouter = router({
   /** The install currency, for money formatting in the finance UI. */
@@ -55,24 +110,97 @@ export const billingRouter = router({
    *  a student with no fee still appears once, with null fee fields). */
   familyFees: adminOrFinanceProcedure.input(z.object({ familyId: ID })).query(({ input }) => {
     const rows = db
-      .select({ studentId: students.id, firstName: students.firstName, lastName: students.lastName, feeId: studentFees.id, feePlanId: feePlans.id, feePlanName: feePlans.name, amountCents: feePlans.amountCents })
+      .select({
+        studentId: students.id,
+        firstName: students.firstName,
+        lastName: students.lastName,
+        feeId: studentFees.id,
+        feePlanId: feePlans.id,
+        feePlanName: feePlans.name,
+        amountCents: feePlans.amountCents,
+        cadence: feePlans.cadence,
+        overrideAmountCents: studentFees.overrideAmountCents,
+        note: studentFees.note,
+      })
       .from(students)
       .leftJoin(studentFees, eq(studentFees.studentId, students.id))
       .leftJoin(feePlans, eq(feePlans.id, studentFees.feePlanId))
       .where(and(eq(students.familyId, input.familyId), eq(students.status, 'active')))
       .orderBy(asc(students.firstName))
       .all();
-    return rows;
+    // Surface the amount that will actually be billed so the UI never has to re-derive it.
+    return rows.map((r) => ({ ...r, effectiveAmountCents: r.feeId ? (r.overrideAmountCents ?? r.amountCents) : null }));
   }),
 
-  assignFee: adminOrFinanceProcedure.input(z.object({ studentId: ID, feePlanId: ID })).mutation(({ ctx, input }) => {
-    if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
-    if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.feePlanId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
-    if (db.select({ id: studentFees.id }).from(studentFees).where(and(eq(studentFees.studentId, input.studentId), eq(studentFees.feePlanId, input.feePlanId))).get()) return { ok: true as const };
-    db.insert(studentFees).values({ id: rid('stf'), studentId: input.studentId, feePlanId: input.feePlanId, createdAt: now() }).run();
-    audit(auditActor(ctx), 'fee.assign', { entity: 'student', entityId: input.studentId, detail: { feePlanId: input.feePlanId } });
-    return { ok: true as const };
-  }),
+  assignFee: adminOrFinanceProcedure
+    .input(z.object({ studentId: ID, feePlanId: ID, overrideAmountCents: CENTS.optional(), note: NOTE.optional() }))
+    .mutation(({ ctx, input }) => {
+      if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+      if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.feePlanId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
+      const ts = now();
+      const existing = db.select({ id: studentFees.id }).from(studentFees).where(and(eq(studentFees.studentId, input.studentId), eq(studentFees.feePlanId, input.feePlanId))).get();
+      if (existing) {
+        // Re-assigning an existing plan is how the UI edits the override, so treat it as an upsert
+        // rather than a silent no-op.
+        if (input.overrideAmountCents !== undefined || input.note !== undefined) {
+          db.update(studentFees)
+            .set({ overrideAmountCents: input.overrideAmountCents ?? null, note: input.note || null, updatedAt: ts })
+            .where(eq(studentFees.id, existing.id))
+            .run();
+          audit(auditActor(ctx), 'fee.override', { entity: 'student', entityId: input.studentId, detail: { feePlanId: input.feePlanId, overrideAmountCents: input.overrideAmountCents ?? null } });
+        }
+        return { ok: true as const };
+      }
+      db.insert(studentFees)
+        .values({ id: rid('stf'), studentId: input.studentId, feePlanId: input.feePlanId, overrideAmountCents: input.overrideAmountCents ?? null, note: input.note || null, createdAt: ts, updatedAt: ts })
+        .run();
+      audit(auditActor(ctx), 'fee.assign', { entity: 'student', entityId: input.studentId, detail: { feePlanId: input.feePlanId, overrideAmountCents: input.overrideAmountCents ?? null } });
+      return { ok: true as const };
+    }),
+
+  /** Change (or clear, by omitting `overrideAmountCents`) one student's amount for a plan they
+   *  already carry — the "override per student instead of making a whole new plan" path. */
+  setFeeOverride: adminOrFinanceProcedure
+    .input(z.object({ id: ID, overrideAmountCents: CENTS.nullable().optional(), note: NOTE.optional() }))
+    .mutation(({ ctx, input }) => {
+      const row = db.select({ id: studentFees.id, studentId: studentFees.studentId }).from(studentFees).where(eq(studentFees.id, input.id)).get();
+      if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee assignment not found.' });
+      const patch: Partial<typeof studentFees.$inferInsert> = { updatedAt: now() };
+      if (input.overrideAmountCents !== undefined) patch.overrideAmountCents = input.overrideAmountCents;
+      if (input.note !== undefined) patch.note = input.note || null;
+      db.update(studentFees).set(patch).where(eq(studentFees.id, input.id)).run();
+      audit(auditActor(ctx), 'fee.override', { entity: 'student', entityId: row.studentId, detail: { feeId: input.id, overrideAmountCents: input.overrideAmountCents ?? null } });
+      return { ok: true as const };
+    }),
+
+  /** Mass-apply one plan to many students (by explicit ids, or a whole class or course).
+   *  Idempotent: a student who already carries the plan is skipped, not duplicated. */
+  assignFeeBulk: adminOrFinanceProcedure
+    .input(z.object({ feePlanId: ID, target: BULK_TARGET, overrideAmountCents: CENTS.optional(), note: NOTE.optional() }))
+    .mutation(({ ctx, input }) => {
+      if (!db.select({ id: feePlans.id }).from(feePlans).where(and(eq(feePlans.id, input.feePlanId), eq(feePlans.status, 'active'))).get()) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
+      }
+      const ids = resolveTarget(input.target);
+      const ts = now();
+      let assigned = 0;
+      let skipped = 0;
+      db.transaction((tx) => {
+        for (const studentId of ids) {
+          const has = tx.select({ id: studentFees.id }).from(studentFees).where(and(eq(studentFees.studentId, studentId), eq(studentFees.feePlanId, input.feePlanId))).get();
+          if (has) {
+            skipped++;
+            continue;
+          }
+          tx.insert(studentFees)
+            .values({ id: rid('stf'), studentId, feePlanId: input.feePlanId, overrideAmountCents: input.overrideAmountCents ?? null, note: input.note || null, createdAt: ts, updatedAt: ts })
+            .run();
+          assigned++;
+        }
+      });
+      audit(auditActor(ctx), 'fee.assignBulk', { entity: 'billing', detail: { feePlanId: input.feePlanId, targeted: ids.length, assigned, skipped } });
+      return { assigned, skipped, targeted: ids.length };
+    }),
 
   unassignFee: adminOrFinanceProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
     db.delete(studentFees).where(eq(studentFees.id, input.id)).run();
@@ -89,17 +217,24 @@ export const billingRouter = router({
   }),
 
   // ── Invoice generation ───────────────────────────────────────────────────────
-  generatePeriod: adminOrFinanceProcedure.input(z.object({ periodKey: z.string().trim().min(1).max(40), label: NAME, dueDate: z.string().max(20).optional() })).mutation(({ ctx, input }) => {
-    const r = generateForPeriod({ periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null });
-    audit(auditActor(ctx), 'invoice.generatePeriod', { entity: 'billing', detail: { periodKey: input.periodKey, created: r.created } });
-    return r;
-  }),
+  /** `periodKind` drives the cadence gate: a `month` period bills monthly plans, a `term` period
+   *  bills per-term plans, and one-time plans bill once on whichever comes first. Defaults to
+   *  `month` — the common case, and what every existing caller means. */
+  generatePeriod: adminOrFinanceProcedure
+    .input(z.object({ periodKey: PERIOD, label: NAME, dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
+    .mutation(({ ctx, input }) => {
+      const r = generateForPeriod({ periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null, periodKind: input.periodKind });
+      audit(auditActor(ctx), 'invoice.generatePeriod', { entity: 'billing', detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
+      return r;
+    }),
 
-  generateFamily: adminOrFinanceProcedure.input(z.object({ familyId: ID, periodKey: z.string().trim().min(1).max(40), label: NAME, dueDate: z.string().max(20).optional() })).mutation(({ ctx, input }) => {
-    const r = generateForFamily(input.familyId, { periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null });
-    audit(auditActor(ctx), 'invoice.generateFamily', { entity: 'family', entityId: input.familyId, detail: { periodKey: input.periodKey, created: r.created } });
-    return r;
-  }),
+  generateFamily: adminOrFinanceProcedure
+    .input(z.object({ familyId: ID, periodKey: PERIOD, label: NAME, dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
+    .mutation(({ ctx, input }) => {
+      const r = generateForFamily(input.familyId, { periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null, periodKind: input.periodKind });
+      audit(auditActor(ctx), 'invoice.generateFamily', { entity: 'family', entityId: input.familyId, detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
+      return r;
+    }),
 
   voidInvoice: adminOrFinanceProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
     const inv = db.select({ id: invoices.id, status: invoices.status }).from(invoices).where(eq(invoices.id, input.id)).get();
@@ -110,6 +245,129 @@ export const billingRouter = router({
     if (invoicePaid(db, input.id) !== 0) throw new TRPCError({ code: 'CONFLICT', message: 'Reverse the payments on this invoice before voiding it.' });
     db.update(invoices).set({ status: 'void', updatedAt: now() }).where(eq(invoices.id, input.id)).run();
     audit(auditActor(ctx), 'invoice.void', { entity: 'invoice', entityId: input.id });
+    return { ok: true as const };
+  }),
+
+  // ── Charge items (the configurable Items tab) ────────────────────────────────
+  chargeItemList: adminOrFinanceProcedure.query(() =>
+    db.select().from(chargeItems).where(eq(chargeItems.status, 'active')).orderBy(asc(chargeItems.sortOrder), asc(chargeItems.name)).all(),
+  ),
+
+  chargeItemCreate: adminOrFinanceProcedure.input(z.object({ name: NAME, defaultAmountCents: SIGNED_CENTS, sortOrder: z.number().int().min(0).max(9999).optional() })).mutation(({ ctx, input }) => {
+    const id = rid('cit');
+    const ts = now();
+    db.insert(chargeItems).values({ id, name: input.name, defaultAmountCents: input.defaultAmountCents, sortOrder: input.sortOrder ?? 0, status: 'active', createdAt: ts, updatedAt: ts }).run();
+    audit(auditActor(ctx), 'chargeItem.create', { entity: 'chargeItem', entityId: id, detail: { defaultAmountCents: input.defaultAmountCents } });
+    return { id };
+  }),
+
+  /** Editing an item does NOT touch charges already applied — those hold their own snapshot. */
+  chargeItemUpdate: adminOrFinanceProcedure
+    .input(z.object({ id: ID, name: NAME.optional(), defaultAmountCents: SIGNED_CENTS.optional(), sortOrder: z.number().int().min(0).max(9999).optional() }))
+    .mutation(({ ctx, input }) => {
+      if (!db.select({ id: chargeItems.id }).from(chargeItems).where(eq(chargeItems.id, input.id)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Item not found.' });
+      const patch: Partial<typeof chargeItems.$inferInsert> = { updatedAt: now() };
+      if (input.name !== undefined) patch.name = input.name;
+      if (input.defaultAmountCents !== undefined) patch.defaultAmountCents = input.defaultAmountCents;
+      if (input.sortOrder !== undefined) patch.sortOrder = input.sortOrder;
+      db.update(chargeItems).set(patch).where(eq(chargeItems.id, input.id)).run();
+      audit(auditActor(ctx), 'chargeItem.update', { entity: 'chargeItem', entityId: input.id });
+      return { ok: true as const };
+    }),
+
+  chargeItemArchive: adminOrFinanceProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    if (!db.select({ id: chargeItems.id }).from(chargeItems).where(eq(chargeItems.id, input.id)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Item not found.' });
+    db.update(chargeItems).set({ status: 'archived', updatedAt: now() }).where(eq(chargeItems.id, input.id)).run();
+    audit(auditActor(ctx), 'chargeItem.archive', { entity: 'chargeItem', entityId: input.id });
+    return { ok: true as const };
+  }),
+
+  // ── Charges (per student, or mass-applied from an item) ──────────────────────
+  /** Add one charge to a student. If the target period's invoice already exists and is open the
+   *  line lands on it immediately (and the invoice status is re-derived); otherwise the charge
+   *  waits as `pending` and the next generation for that period picks it up. */
+  chargeAdd: adminOrFinanceProcedure
+    .input(z.object({ studentId: ID, source: CHARGE_SOURCE, note: NOTE.optional(), periodKey: PERIOD.optional() }))
+    .mutation(({ ctx, input }) => {
+      if (!db.select({ id: students.id }).from(students).where(and(eq(students.id, input.studentId), eq(students.status, 'active'))).get()) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+      }
+      const snap = snapshotCharge(input.source);
+      const id = rid('chg');
+      const ts = now();
+      db.insert(charges)
+        .values({ id, studentId: input.studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: input.periodKey ?? null, status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
+        .run();
+      const attach = attachChargeToExistingInvoice(id);
+      audit(auditActor(ctx), 'charge.add', { entity: 'student', entityId: input.studentId, detail: { chargeId: id, amountCents: snap.amountCents, periodKey: input.periodKey ?? null, attached: attach.attached } });
+      return { id, attached: attach.attached, invoiceId: attach.invoiceId };
+    }),
+
+  /** Mass-apply one charge to many students — "go on the item and select who to charge". */
+  chargeAddBulk: adminOrFinanceProcedure
+    .input(z.object({ source: CHARGE_SOURCE, target: BULK_TARGET, note: NOTE.optional(), periodKey: PERIOD.optional() }))
+    .mutation(({ ctx, input }) => {
+      const snap = snapshotCharge(input.source);
+      const ids = resolveTarget(input.target);
+      const ts = now();
+      const created: string[] = [];
+      db.transaction((tx) => {
+        for (const studentId of ids) {
+          const id = rid('chg');
+          tx.insert(charges)
+            .values({ id, studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: input.periodKey ?? null, status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
+            .run();
+          created.push(id);
+        }
+      });
+      // Attach after the insert transaction so one family's open invoice can't roll back the batch.
+      let attached = 0;
+      for (const id of created) if (attachChargeToExistingInvoice(id).attached) attached++;
+      audit(auditActor(ctx), 'charge.addBulk', { entity: 'billing', detail: { amountCents: snap.amountCents, targeted: ids.length, created: created.length, attached, periodKey: input.periodKey ?? null } });
+      return { created: created.length, attached, targeted: ids.length };
+    }),
+
+  chargeList: adminOrFinanceProcedure
+    .input(z.object({ studentId: ID.optional(), familyId: ID.optional(), status: z.enum(['pending', 'invoiced', 'void']).optional(), periodKey: PERIOD.optional() }).optional())
+    .query(({ input }) => {
+      const filters = [
+        input?.studentId ? eq(charges.studentId, input.studentId) : undefined,
+        input?.familyId ? eq(students.familyId, input.familyId) : undefined,
+        input?.status ? eq(charges.status, input.status) : undefined,
+        input?.periodKey ? eq(charges.periodKey, input.periodKey) : undefined,
+      ].filter(Boolean);
+      return db
+        .select({
+          id: charges.id,
+          studentId: charges.studentId,
+          firstName: students.firstName,
+          lastName: students.lastName,
+          label: charges.label,
+          amountCents: charges.amountCents,
+          note: charges.note,
+          periodKey: charges.periodKey,
+          status: charges.status,
+          invoiceItemId: charges.invoiceItemId,
+          createdAt: charges.createdAt,
+        })
+        .from(charges)
+        .innerJoin(students, eq(students.id, charges.studentId))
+        .where(filters.length ? and(...filters) : undefined)
+        .orderBy(desc(charges.createdAt))
+        .all();
+    }),
+
+  /** Void a charge that has not been invoiced yet. Once it is on an invoice the line is
+   *  immutable (§9) — the correction is a second, NEGATIVE charge, not an edit. */
+  chargeVoid: adminOrFinanceProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    const c = db.select({ id: charges.id, status: charges.status, studentId: charges.studentId }).from(charges).where(eq(charges.id, input.id)).get();
+    if (!c) throw new TRPCError({ code: 'NOT_FOUND', message: 'Charge not found.' });
+    if (c.status === 'void') return { ok: true as const };
+    if (c.status === 'invoiced') {
+      throw new TRPCError({ code: 'CONFLICT', message: 'This charge is already on an invoice. Add a negative charge to credit it back.' });
+    }
+    db.update(charges).set({ status: 'void', updatedAt: now() }).where(eq(charges.id, input.id)).run();
+    audit(auditActor(ctx), 'charge.void', { entity: 'student', entityId: c.studentId, detail: { chargeId: input.id } });
     return { ok: true as const };
   }),
 

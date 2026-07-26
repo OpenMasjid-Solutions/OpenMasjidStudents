@@ -25,8 +25,20 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
   const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
   const [inviteErr, setInviteErr] = useState<Record<string, string>>({});
 
+  // A student MUST be put on a fee plan at creation — one with no plan is silently skipped by
+  // invoice generation, which is how a child stops being billed without anyone noticing.
+  const feePlans = trpc.billing.feePlanList.useQuery();
+  // Every OTHER family, for the "move to a sibling's family" action below.
+  const allFamilies = trpc.people.directory.useQuery();
+  const otherFamilies = allFamilies.data?.filter((f) => f.id !== familyId).map((f) => ({ id: f.id, name: f.name }));
+  const setFamily = trpc.people.studentSetFamily.useMutation();
+
+  async function moveStudent(studentId: string, toFamilyId: string) {
+    await setFamily.mutateAsync({ studentId, familyId: toFamilyId });
+    await refresh();
+  }
   const [showStudent, setShowStudent] = useState(false);
-  const [stu, setStu] = useState({ firstName: '', lastName: '', dob: '' });
+  const [stu, setStu] = useState({ firstName: '', lastName: '', dob: '', feePlanId: '' });
   const [showGuardian, setShowGuardian] = useState(false);
   const [grd, setGrd] = useState({ name: '', phone: '', email: '', relation: '', emergency: false });
   const [showEC, setShowEC] = useState(false);
@@ -34,9 +46,9 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
 
   async function submitStudent(e: FormEvent) {
     e.preventDefault();
-    if (!stu.firstName.trim() || !stu.lastName.trim()) return;
-    await addStudent.mutateAsync({ familyId, firstName: stu.firstName.trim(), lastName: stu.lastName.trim(), dob: stu.dob || undefined });
-    setStu({ firstName: '', lastName: '', dob: '' });
+    if (!stu.firstName.trim() || !stu.lastName.trim() || !stu.feePlanId) return;
+    await addStudent.mutateAsync({ familyId, firstName: stu.firstName.trim(), lastName: stu.lastName.trim(), dob: stu.dob || undefined, feePlanId: stu.feePlanId });
+    setStu({ firstName: '', lastName: '', dob: '', feePlanId: '' });
     setShowStudent(false);
     await refresh();
   }
@@ -103,6 +115,21 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
                     <td className="actions">
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => regenerate(s.id)} disabled={regen.isPending}>{t('directory.regeneratePin')}</button>
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
+                      {/* Moving a student to a sibling's family is how guardians start applying to
+                          them — guardians hang off the FAMILY, so nothing is copied per-student. */}
+                      <select
+                        className="input glass-inset"
+                        style={{ width: 'auto', minWidth: '9rem', padding: '0.2rem 0.35rem' }}
+                        value=""
+                        onChange={(e) => { if (e.target.value) void moveStudent(s.id, e.target.value); }}
+                        aria-label={t('directory.moveToFamily')}
+                        disabled={setFamily.isPending}
+                      >
+                        <option value="">{t('directory.moveToFamily')}</option>
+                        {(otherFamilies ?? []).map((f) => (
+                          <option key={f.id} value={f.id}>{f.name}</option>
+                        ))}
+                      </select>
                     </td>
                   </tr>
                 ))}
@@ -115,7 +142,17 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
             <div className="field"><label className="label">{t('directory.firstName')}</label><input className="input glass-inset" value={stu.firstName} onChange={(e) => setStu({ ...stu, firstName: e.target.value })} autoFocus /></div>
             <div className="field"><label className="label">{t('directory.lastName')}</label><input className="input glass-inset" value={stu.lastName} onChange={(e) => setStu({ ...stu, lastName: e.target.value })} /></div>
             <div className="field"><label className="label">{t('directory.dob')}</label><input type="date" className="input glass-inset" value={stu.dob} onChange={(e) => setStu({ ...stu, dob: e.target.value })} /></div>
-            <button type="submit" className="btn btn--primary" disabled={addStudent.isPending}>{t('common.save')}</button>
+            <div className="field">
+              <label className="label">{t('directory.feePlan')}</label>
+              <select className="input glass-inset" value={stu.feePlanId} onChange={(e) => setStu({ ...stu, feePlanId: e.target.value })} required>
+                <option value="">—</option>
+                {(feePlans.data ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <p className="hint">{feePlans.data && feePlans.data.length === 0 ? t('directory.noFeePlans') : t('directory.feePlanHint')}</p>
+            </div>
+            <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>
           </form>
         )}
         {showStudent && <p className="hint">{t('directory.pinHint')}</p>}

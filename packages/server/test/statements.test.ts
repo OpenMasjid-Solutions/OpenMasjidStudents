@@ -49,9 +49,8 @@ describe('esc', () => {
 async function seed() {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
-  const s1 = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 5000, cadence: 'monthly' });
-  await admin.billing.assignFee({ studentId: s1.id, feePlanId: plan.id });
+  const s1 = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
   await admin.billing.recordManualPayment({ familyId: fam.id, amountCents: 2000, channel: 'cash', occurredAt: '2026-07-03' });
   return { admin, familyId: fam.id, studentId: s1.id };
@@ -98,7 +97,8 @@ describe('buildFamilyStatementHtml', () => {
   it('HTML-escapes student names it embeds (they are user input, §14)', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Test' });
-    await admin.people.studentCreate({ familyId: fam.id, firstName: '<script>alert(1)</script>', lastName: 'X' });
+    const p = await admin.billing.feePlanCreate({ name: 'T', amountCents: 1000, cadence: 'monthly' });
+    await admin.people.studentCreate({ familyId: fam.id, firstName: '<script>alert(1)</script>', lastName: 'X', feePlanId: p.id });
     const html = (await statements.buildFamilyStatementHtml(fam.id, 'http://h'))!;
     expect(html).not.toContain('<script>alert(1)</script>');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');

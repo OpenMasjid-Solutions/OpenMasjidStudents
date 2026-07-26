@@ -35,9 +35,8 @@ beforeEach(() => {
 async function familyDue(dueDate = '2026-06-01') {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
-  const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  await admin.billing.assignFee({ studentId: s.id, feePlanId: plan.id });
+  await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-06', label: 'Tuition — Jun 2026', dueDate });
   const { db } = app.dbmod;
   const ts = new Date();

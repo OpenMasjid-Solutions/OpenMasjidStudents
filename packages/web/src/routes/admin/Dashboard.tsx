@@ -18,8 +18,8 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Section) => void }) 
   const students = dir.data?.reduce((n, f) => n + f.students.filter((s) => s.status === 'active').length, 0) ?? 0;
 
   const stats: { icon: ReactNode; value: ReactNode; label: string; go: Section }[] = [
-    { icon: <Users size={18} />, value: students, label: t('dashboard.students'), go: 'directory' },
-    { icon: <UsersRound size={18} />, value: families, label: t('dashboard.families'), go: 'directory' },
+    { icon: <Users size={18} />, value: students, label: t('dashboard.students'), go: 'students' },
+    { icon: <UsersRound size={18} />, value: families, label: t('dashboard.families'), go: 'students' },
   ];
 
   return (

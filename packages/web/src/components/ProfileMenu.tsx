@@ -1,26 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * Top-right account button + menu: dark/light toggle, language, sign out, version.
+ * Top-right account button + menu: dark/light toggle, sign out, version.
  * Adapted from OpenMasjidOS packages/ui/src/components/ProfileMenu.tsx (no router /
  * no platform system.info — theme via prefs, version from health). See §15.
+ * The language picker was removed when the app went English-only.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Moon, Sun, LogOut, User, Globe } from 'lucide-react';
+import { Moon, Sun, LogOut, User } from 'lucide-react';
 import { trpc } from '../lib/trpc';
-import { usePrefs, prefsStore } from '../lib/prefs';
+import { prefsStore } from '../lib/prefs';
 import { stopFollowing } from '../lib/appearance';
-
-const LANGS = [
-  { id: 'en', label: 'English' },
-  { id: 'ar', label: 'العربية' },
-  { id: 'ur', label: 'اردو' },
-];
 
 export function ProfileMenu({ onSignedOut }: { onSignedOut: () => void }) {
   const { t } = useTranslation();
-  const prefs = usePrefs();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const health = trpc.health.useQuery(undefined, { retry: false });
@@ -48,20 +42,6 @@ export function ProfileMenu({ onSignedOut }: { onSignedOut: () => void }) {
             {isDark ? <Sun size={16} /> : <Moon size={16} />}
             {isDark ? t('profile.lightMode') : t('profile.darkMode')}
           </button>
-          <div className="menu-item" style={{ cursor: 'default' }}>
-            <Globe size={16} />
-            <select
-              className="input glass-inset"
-              style={{ padding: '0.2rem 0.4rem', width: 'auto', flex: 1 }}
-              value={prefs.language}
-              onChange={(e) => prefsStore.patch({ language: e.target.value })}
-              aria-label={t('controls.language')}
-            >
-              {LANGS.map((l) => (
-                <option key={l.id} value={l.id}>{l.label}</option>
-              ))}
-            </select>
-          </div>
           <div className="menu-sep" />
           <button className="menu-item" onClick={() => logout.mutate()}>
             <LogOut size={16} /> {t('profile.signOut')}

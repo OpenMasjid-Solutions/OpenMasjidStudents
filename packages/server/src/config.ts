@@ -17,7 +17,7 @@ function str(v: string | undefined): string {
 
 export const config = {
   /** Kept in step with the repo-root VERSION file + manifest.yaml (CLAUDE.md §19). */
-  version: '0.35.0',
+  version: '0.36.0',
   port: Number(env.PORT) || 8080,
   /** SQLite DB, attachments, and generated report/transcript PDFs live here. */
   dataDir: str(env.DATA_DIR) || path.resolve(process.cwd(), 'data'),

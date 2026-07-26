@@ -66,6 +66,86 @@ export const sessions = sqliteTable('sessions', {
 });
 export type Session = typeof sessions.$inferSelect;
 
+// ── Structure (school year, terms, courses, classes) ─────────────────────────
+
+/** A school year — the billing calendar (e.g. "1447–1448 / 2026–2027" running Apr→Mar).
+ *  `startMonth`/`endMonth` are 1-12; an `endMonth` <= `startMonth` means the year wraps into
+ *  the next calendar year. At most one row is `isCurrent` (the router clears the flag on the
+ *  others). Archived, never hard-deleted — generated invoice periods derive from it. */
+export const schoolYears = sqliteTable(
+  'school_years',
+  {
+    id: text('id').primaryKey(),
+    label: text('label').notNull(),
+    startMonth: integer('start_month').notNull(),
+    endMonth: integer('end_month').notNull(),
+    isCurrent: integer('is_current', { mode: 'boolean' }).notNull().default(false),
+    status: text('status').$type<'active' | 'archived'>().notNull().default('active'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ currentIdx: index('school_years_current_idx').on(t.isCurrent) }),
+);
+export type SchoolYear = typeof schoolYears.$inferSelect;
+
+/** An optional term/semester inside a school year — only used by madāris that bill per term
+ *  (`fee_plans.cadence = 'per_term'`). With NO terms configured, per-term plans generate
+ *  nothing, which is the correct no-op for a monthly-only madrasah (billing/invoices.ts). */
+export const terms = sqliteTable(
+  'terms',
+  {
+    id: text('id').primaryKey(),
+    schoolYearId: text('school_year_id')
+      .notNull()
+      .references(() => schoolYears.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    startDate: text('start_date'), // ISO date (YYYY-MM-DD)
+    endDate: text('end_date'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ yearIdx: index('terms_year_idx').on(t.schoolYearId), nameUq: unique('terms_year_name_uq').on(t.schoolYearId, t.name) }),
+);
+export type Term = typeof terms.$inferSelect;
+
+/** A course / programme (e.g. Hifz, Nazrah, ʿĀlim). Purely an ORGANISATIONAL grouping for the
+ *  student directory, the year view, and mass fee/charge apply — explicitly NOT academics:
+ *  no teachers, attendance, grades, or capacity live here. That scope was removed at v0.35.0
+ *  and stays out (CLAUDE.md §4 ❌). */
+export const courses = sqliteTable(
+  'courses',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
+    status: text('status').$type<'active' | 'archived'>().notNull().default('active'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ nameUq: unique('courses_name_uq').on(t.name) }),
+);
+export type Course = typeof courses.$inferSelect;
+
+/** A class within a course (e.g. "Hifz 1"). A student belongs to at most one class, held as a
+ *  single `students.class_id` — grouping only, so there is no per-year class history. */
+export const classes = sqliteTable(
+  'classes',
+  {
+    id: text('id').primaryKey(),
+    courseId: text('course_id')
+      .notNull()
+      .references(() => courses.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
+    status: text('status').$type<'active' | 'archived'>().notNull().default('active'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ courseIdx: index('classes_course_idx').on(t.courseId), nameUq: unique('classes_course_name_uq').on(t.courseId, t.name) }),
+);
+export type Class = typeof classes.$inferSelect;
+
 // ── People (families, students, guardians) ───────────────────────────────────
 
 /** A family groups students and links to guardians. Archived, never hard-deleted
@@ -104,6 +184,8 @@ export const students = sqliteTable(
     dob: text('dob'), // optional ISO date (YYYY-MM-DD); minimal by design (§14)
     status: text('status').$type<'active' | 'withdrawn'>().notNull().default('active'),
     notes: text('notes'),
+    /** Current class — grouping only (see `classes`). Nullable: a student can be unplaced. */
+    classId: text('class_id').references(() => classes.id, { onDelete: 'restrict' }),
     pin: text('pin').notNull(),
     pinUpdatedAt: integer('pin_updated_at', { mode: 'timestamp_ms' }).notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
@@ -112,6 +194,7 @@ export const students = sqliteTable(
   (t) => ({
     pinUq: unique('students_pin_uq').on(t.pin), // the unique lookup index (§11.2)
     familyIdx: index('students_family_idx').on(t.familyId),
+    classIdx: index('students_class_idx').on(t.classId),
   }),
 );
 export type Student = typeof students.$inferSelect;
@@ -254,7 +337,13 @@ export type FeePlan = typeof feePlans.$inferSelect;
 
 /** A fee plan assigned to one STUDENT. Invoice generation gathers a family's active students'
  *  fees (one line per student × plan) and rolls them into a per-family invoice. FK RESTRICT on
- *  the money path (§9). A student can carry more than one plan; UNIQUE(student, plan). */
+ *  the money path (§9). A student can carry more than one plan; UNIQUE(student, plan).
+ *
+ *  `overrideAmountCents` lets an admin charge THIS student a different amount without minting a
+ *  whole new plan — the effective amount is `overrideAmountCents ?? feePlans.amountCents`.
+ *  `note` is a short annotation shown beside the amount in the year view (e.g. "ACH").
+ *  `updatedAt` is nullable because the column was added after rows existed (SQLite cannot add a
+ *  NOT NULL column without a default); it is set on every write from here on. */
 export const studentFees = sqliteTable(
   'student_fees',
   {
@@ -265,7 +354,11 @@ export const studentFees = sqliteTable(
     feePlanId: text('fee_plan_id')
       .notNull()
       .references(() => feePlans.id, { onDelete: 'restrict' }),
+    /** Per-student amount override in cents; null = use the plan's amount. */
+    overrideAmountCents: integer('override_amount_cents'),
+    note: text('note'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }),
   },
   (t) => ({ uq: unique('student_fees_uq').on(t.studentId, t.feePlanId), studentIdx: index('student_fees_student_idx').on(t.studentId) }),
 );
@@ -302,11 +395,72 @@ export const invoiceItems = sqliteTable(
     description: text('description').notNull(),
     amountCents: integer('amount_cents').notNull(),
     studentId: text('student_id').references(() => students.id, { onDelete: 'restrict' }),
+    /** The fee plan this line came from, when it came from one. Lets `per_term`/`one_time`
+     *  cadences dedupe EXACTLY (has this student already been billed for this plan?) instead
+     *  of matching on the description text. Null for discounts and for charge lines. */
+    feePlanId: text('fee_plan_id').references(() => feePlans.id, { onDelete: 'restrict' }),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },
-  (t) => ({ invoiceIdx: index('invoice_items_invoice_idx').on(t.invoiceId) }),
+  (t) => ({ invoiceIdx: index('invoice_items_invoice_idx').on(t.invoiceId), planIdx: index('invoice_items_plan_idx').on(t.feePlanId) }),
 );
 export type InvoiceItem = typeof invoiceItems.$inferSelect;
+
+// ── Charges (one-off items: books, uniform, registration, late fees, credits) ─
+
+/** A preconfigured chargeable item with a default price (the Items tab). Applying one COPIES
+ *  its name + price onto the charge, so renaming or repricing an item never rewrites a charge
+ *  already applied (§9's frozen-fact rule). Deliberately has NO cadence — anything that
+ *  recurs is a fee plan, not a charge item. */
+export const chargeItems = sqliteTable(
+  'charge_items',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    defaultAmountCents: integer('default_amount_cents').notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
+    status: text('status').$type<'active' | 'archived'>().notNull().default('active'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ nameUq: unique('charge_items_name_uq').on(t.name) }),
+);
+export type ChargeItem = typeof chargeItems.$inferSelect;
+
+export type ChargeStatus = 'pending' | 'invoiced' | 'void';
+
+/** A one-off charge on a student for a period — a book, a late fee, or a NEGATIVE amount as a
+ *  credit/adjustment. `label` and `amountCents` are SNAPSHOTS taken when the charge is applied;
+ *  `chargeItemId` survives only as provenance (null = a custom one-off).
+ *
+ *  Lifecycle: `pending` → picked up by invoice generation for `periodKey` (or appended straight
+ *  onto that period's already-open invoice) → `invoiced`, with `invoiceItemId` set. A `pending`
+ *  charge can be voided; once `invoiced` the invoice line is IMMUTABLE, so the correction is a
+ *  second, negative charge (§9: no update/delete path on invoice_items). */
+export const charges = sqliteTable(
+  'charges',
+  {
+    id: text('id').primaryKey(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => students.id, { onDelete: 'restrict' }),
+    chargeItemId: text('charge_item_id').references(() => chargeItems.id, { onDelete: 'restrict' }),
+    label: text('label').notNull(),
+    amountCents: integer('amount_cents').notNull(), // may be NEGATIVE (a credit/adjustment)
+    note: text('note'),
+    /** Billing period to land in (e.g. "2026-07"); null = the next period generated. */
+    periodKey: text('period_key'),
+    status: text('status').$type<ChargeStatus>().notNull().default('pending'),
+    invoiceItemId: text('invoice_item_id').references(() => invoiceItems.id, { onDelete: 'restrict' }),
+    createdByUserId: text('created_by_user_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({
+    studentStatusIdx: index('charges_student_status_idx').on(t.studentId, t.status),
+    periodIdx: index('charges_period_idx').on(t.periodKey),
+  }),
+);
+export type Charge = typeof charges.$inferSelect;
 
 /** A payment against a family's balance — IMMUTABLE (corrections are reversal rows with a
  *  negative amount and `reversalOf` set). `idempotencyKey` is UNIQUE per install so a replay

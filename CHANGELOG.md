@@ -9,6 +9,50 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.36.0]
+
+### Added
+
+- **School year + terms** — configure which month the year runs from and to, and optionally the
+  terms inside it. Terms exist so `per-term` tuition means something; a monthly-only madrasah
+  simply never creates them.
+- **Courses → classes** as an organisational grouping (e.g. Hifz → Hifz 1). Grouping only: no
+  teachers, attendance, grades or capacity — that scope stays out (§4 ❌).
+- **Students tab**, replacing the family-first Directory: every student grouped by course and
+  class with a *No class* bucket last, search, a withdrawn filter, and inline class placement.
+- **CSV student import** — pick a file, confirm the auto-matched column mapping, review every
+  resolved row and its problems, then commit. The commit is all-or-nothing: a file with any bad
+  row imports nothing. A blank template is downloadable. Student IDs and PINs are never imported;
+  they are always generated here.
+- **One-off charges** (books, uniform, registration, late fees) with a configurable item
+  catalogue. A charge lands on the period's invoice immediately when one is open, otherwise it
+  waits for the next generation. A negative charge is how a credit or scholarship is issued.
+- **Mass apply** for both fee plans and charges, targeting explicit students, a class, or a whole
+  course.
+- **Per-student fee override + note** — charge one student a different amount without minting a
+  parallel plan; the note renders beside the amount.
+- **Move a student to another family**, which is how siblings are linked. Guardians hang off the
+  family, so nothing is copied per student. Invoices already raised stay with the family that was
+  billed; only future billing redirects.
+- First **frontend test suite** (`packages/web`), covering CSV parsing and column auto-matching.
+
+### Changed
+
+- **Adding a student now requires a fee plan.** A student on no plan is skipped silently by invoice
+  generation, which is how a child stops being billed without anyone noticing. Enforced
+  server-side, not just in the form.
+- **English only.** The Arabic and Urdu locales and the language picker were removed by decision.
+  Strings still go through i18next so copy stays in one reviewable file.
+
+### Fixed
+
+- **`fee_plans.cadence` is now honoured.** It was stored and never read, so a **`one_time` plan
+  re-billed every single period** — a live over-billing bug. Monthly plans now bill only on month
+  periods, per-term plans only on term periods, and a one-time plan exactly once. **Behaviour
+  change on existing data:** any one-time plan that has been re-billing will stop.
+- The bundled Arabic Naskh face was referenced with a root-absolute URL and so **404'd behind the
+  Cloudflare tunnel prefix**; the stylesheet went with the locales.
+
 ## [0.35.0]
 
 ### Changed — major scope pivot: tuition & fee management only

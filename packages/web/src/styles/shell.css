@@ -13,11 +13,6 @@
   z-index: 20;
 }
 
-.shell-lang {
-  width: auto;
-  min-width: 7.5rem;
-  padding-block: 0.4rem;
-}
 
 /* ── App-style top-bar chrome — matches Kiosk/Donations/Display, NOT the OS glass
    clock/profile (§15: copy the apps, not the platform). Loaded after the ported

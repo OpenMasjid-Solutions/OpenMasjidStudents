@@ -13,6 +13,7 @@ import { staffRouter } from './staff';
 import { settingsRouter } from './settings';
 import { billingRouter } from './billing';
 import { portalRouter } from './portal';
+import { structureRouter } from './structure';
 import { config, fabricConfigured } from '../config';
 
 export const appRouter = router({
@@ -30,6 +31,8 @@ export const appRouter = router({
   settings: settingsRouter,
   billing: billingRouter,
   portal: portalRouter,
+  /** School year + terms and the course → class grouping (organisational only, no academics). */
+  structure: structureRouter,
 });
 
 export type AppRouter = typeof appRouter;

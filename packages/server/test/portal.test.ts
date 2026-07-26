@@ -27,13 +27,15 @@ async function scenario() {
   const admin = caller('admin');
   const famA = await admin.people.familyCreate({ name: 'Ismail' });
   const famB = await admin.people.familyCreate({ name: 'Farooqi' });
-  const sA = await admin.people.studentCreate({ familyId: famA.id, firstName: 'Yusuf', lastName: 'Ismail' });
-  const sB = await admin.people.studentCreate({ familyId: famB.id, firstName: 'Bilal', lastName: 'Farooqi' });
+  // studentCreate requires a plan. Family A's student is on it for real; family B's carries a ZERO
+  // override so family B stays deliberately un-invoiced — it is the "other family" the
+  // parent-scoping walls below are tested against.
+  const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
+  const sA = await admin.people.studentCreate({ familyId: famA.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  const sB = await admin.people.studentCreate({ familyId: famB.id, firstName: 'Bilal', lastName: 'Farooqi', feePlanId: plan.id, overrideAmountCents: 0 });
   const gA = await admin.people.guardianCreate({ familyId: famA.id, name: 'Abu Yusuf', email: 'AbuYusuf@example.com' });
   const gB = await admin.people.guardianCreate({ familyId: famB.id, name: 'Abu Bilal', email: 'abubilal@example.com' });
-  // Family A: a fee + invoice + partial payment, so the balance view has content.
-  const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  await admin.billing.assignFee({ studentId: sA.id, feePlanId: plan.id });
+  // Family A: an invoice + partial payment, so the balance view has content.
   await admin.billing.generateFamily({ familyId: famA.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
   await admin.billing.recordManualPayment({ familyId: famA.id, amountCents: 2000, channel: 'cash', occurredAt: '2026-07-03' });
   return { admin, famA: famA.id, famB: famB.id, gA: gA.id, gB: gB.id, sA: sA.id, sB: sB.id };

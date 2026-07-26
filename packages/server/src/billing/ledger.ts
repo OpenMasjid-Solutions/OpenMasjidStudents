@@ -15,7 +15,7 @@ import { invoices, invoiceItems, payments, paymentAllocations, autopayEnrollment
 import type { InvoiceStatus, PaymentChannel } from '../db/schema';
 import { rid } from '../db/ids';
 
-type Tx = DB | Parameters<Parameters<DB['transaction']>[0]>[0];
+export type Tx = DB | Parameters<Parameters<DB['transaction']>[0]>[0];
 type Actor = { userId: string | null; role: string; name: string | null };
 
 /** Sum of an invoice's line items (its total). */
@@ -33,8 +33,10 @@ function statusFor(total: number, paid: number): InvoiceStatus {
   return 'partially_paid';
 }
 
-/** Recompute + persist an invoice's status from its total vs allocated (skips voided). */
-function refreshStatus(tx: Tx, invoiceId: string): void {
+/** Recompute + persist an invoice's status from its total vs allocated (skips voided).
+ *  Exported because appending a charge line changes an invoice's TOTAL, so its status has to be
+ *  re-derived too — a charge added to a `paid` invoice correctly drops it to `partially_paid`. */
+export function refreshStatus(tx: Tx, invoiceId: string): void {
   const inv = tx.select({ status: invoices.status }).from(invoices).where(eq(invoices.id, invoiceId)).get();
   if (!inv || inv.status === 'void') return;
   tx.update(invoices).set({ status: statusFor(invoiceTotal(tx, invoiceId), invoicePaid(tx, invoiceId)), updatedAt: new Date() }).where(eq(invoices.id, invoiceId)).run();
