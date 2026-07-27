@@ -155,15 +155,17 @@ export type Class = typeof classes.$inferSelect;
 
 /** A family groups students and links to guardians. Archived, never hard-deleted
  *  (money references it). `name` is the display label (e.g. "Ismail family").
- *  An optional per-family discount applies to generated invoices (§4): `none`, a `fixed`
- *  amount in cents, or a `percent` in basis points (e.g. 1000 = 10%). */
+ *
+ *  It carries no money of its own: since 0.39.0 invoices and payments are PER STUDENT, and the
+ *  family-level discount was dropped in favour of the per-student fee override that already
+ *  existed (`student_fees.override_amount_cents`). What remains here is grouping — siblings, and
+ *  the guardians they share — plus the Stripe Customer, which belongs to the family because it is
+ *  one adult's card paying for all their children. */
 export const families = sqliteTable('families', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   notes: text('notes'),
   status: text('status').$type<'active' | 'archived'>().notNull().default('active'),
-  discountKind: text('discount_kind').$type<'none' | 'fixed' | 'percent'>().notNull().default('none'),
-  discountValue: integer('discount_value').notNull().default(0), // cents (fixed) or basis points (percent)
   /** Stripe Customer id — created on the family's first saved card / portal payment (§13.1). */
   stripeCustomerId: text('stripe_customer_id'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
@@ -395,15 +397,16 @@ export const studentFees = sqliteTable(
 );
 export type StudentFee = typeof studentFees.$inferSelect;
 
-/** A family invoice for a period. Total = sum of items; balance + status are DERIVED from
- *  allocations, never stored (§9). `periodKey` (e.g. "2026-07") dedupes generation. */
+/** A STUDENT's invoice for a period (per-student since 0.39.0 — one bill per child, not one per
+ *  household). Total = sum of items; balance + status are DERIVED from allocations, never stored
+ *  (§9). `periodKey` (e.g. "2026-07") dedupes generation per student. */
 export const invoices = sqliteTable(
   'invoices',
   {
     id: text('id').primaryKey(),
-    familyId: text('family_id')
+    studentId: text('student_id')
       .notNull()
-      .references(() => families.id, { onDelete: 'restrict' }),
+      .references(() => students.id, { onDelete: 'restrict' }),
     label: text('label').notNull(),
     periodKey: text('period_key').notNull(),
     dueDate: text('due_date'), // ISO date
@@ -411,11 +414,15 @@ export const invoices = sqliteTable(
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
-  (t) => ({ familyIdx: index('invoices_family_idx').on(t.familyId), periodUq: unique('invoices_family_period_uq').on(t.familyId, t.periodKey) }),
+  (t) => ({ studentIdx: index('invoices_student_idx').on(t.studentId), periodUq: unique('invoices_student_period_uq').on(t.studentId, t.periodKey) }),
 );
 export type Invoice = typeof invoices.$inferSelect;
 
-/** A line on an invoice (integer cents). A discount is a negative-amount line. */
+/** A line on an invoice (integer cents). A credit/adjustment charge is a negative-amount line.
+ *
+ *  `studentId` is redundant with the invoice's own student now that invoices are per-student, but it
+ *  is kept because the one-time-fee dedupe (`alreadyBilled`) reads it directly — and it stays
+ *  nullable only because SQLite would need a table rebuild to tighten it. Every writer sets it. */
 export const invoiceItems = sqliteTable(
   'invoice_items',
   {
@@ -493,16 +500,23 @@ export const charges = sqliteTable(
 );
 export type Charge = typeof charges.$inferSelect;
 
-/** A payment against a family's balance — IMMUTABLE (corrections are reversal rows with a
- *  negative amount and `reversalOf` set). `idempotencyKey` is UNIQUE per install so a replay
- *  (any channel — cash, portal, autopay, donations, kiosk) returns the original (§9). */
+/**
+ * A payment against ONE STUDENT's balance — IMMUTABLE (corrections are reversal rows with a negative
+ * amount and `reversalOf` set). Per-student since 0.39.0: money recorded for a child sits in *that
+ * child's* balance and is absorbed by their own fees and charges as they arrive.
+ *
+ * One real card charge can cover several children (a parent paying for all their kids at the kiosk or
+ * in the portal). That becomes one payment row PER CHILD, all sharing the Stripe PaymentIntent, with
+ * `idempotencyKey` suffixed per student (`${key}:${studentId}`) so the UNIQUE index still makes a
+ * replay a no-op for each child independently.
+ */
 export const payments = sqliteTable(
   'payments',
   {
     id: text('id').primaryKey(),
-    familyId: text('family_id')
+    studentId: text('student_id')
       .notNull()
-      .references(() => families.id, { onDelete: 'restrict' }),
+      .references(() => students.id, { onDelete: 'restrict' }),
     amountCents: integer('amount_cents').notNull(), // negative for a reversal
     channel: text('channel').$type<PaymentChannel>().notNull(),
     occurredAt: integer('occurred_at', { mode: 'timestamp_ms' }).notNull(),
@@ -514,7 +528,7 @@ export const payments = sqliteTable(
     recordedByName: text('recorded_by_name'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },
-  (t) => ({ familyIdx: index('payments_family_idx').on(t.familyId), idemUq: unique('payments_idempotency_uq').on(t.idempotencyKey) }),
+  (t) => ({ studentIdx: index('payments_student_idx').on(t.studentId), idemUq: unique('payments_idempotency_uq').on(t.idempotencyKey) }),
 );
 export type Payment = typeof payments.$inferSelect;
 

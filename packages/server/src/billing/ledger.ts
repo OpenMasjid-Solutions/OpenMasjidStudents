@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * The ledger — the ONE money-write path (CLAUDE.md §16). Every payment (manual now; Fabric,
- * Stripe webhook, and autopay later) flows through `recordPayment`. Money is integer cents;
- * balances are DERIVED, never stored; payments are immutable (corrections are reversal rows).
+ * The ledger — the ONE money-write path (CLAUDE.md §16). Every payment (manual, Fabric, portal,
+ * autopay, reconciliation) flows through `recordPayment`. Money is integer cents; balances are
+ * DERIVED, never stored; payments are immutable (corrections are reversal rows).
  *
- * Allocation: a payment pays a family's open invoices oldest-due-first; any surplus becomes
- * family credit (unallocated). `idempotencyKey` is UNIQUE, so a replay returns the original.
+ * PER STUDENT since 0.39.0. A payment belongs to one child and pays *that child's* open invoices
+ * oldest-due-first; any surplus stays as that child's credit, which the next invoice for them
+ * absorbs automatically (nothing is stored — `credit = max(0, paid − invoiced)` falls out of the
+ * same subtraction). `familyBalance` still exists and simply sums a family's students, because a
+ * parent pays once for all their children.
+ *
+ * `idempotencyKey` is UNIQUE, so a replay returns the original. When one real card charge covers
+ * several siblings the caller records it once per child with a per-student key suffix — see
+ * `recordSplit`.
  */
 import { and, eq, asc, inArray, sql } from 'drizzle-orm';
 import { db } from '../db';
 import type { DB } from '../db';
-import { invoices, invoiceItems, payments, paymentAllocations, autopayEnrollments } from '../db/schema';
+import { invoices, invoiceItems, payments, paymentAllocations, autopayEnrollments, students } from '../db/schema';
 import type { InvoiceStatus, PaymentChannel } from '../db/schema';
 import { rid } from '../db/ids';
 
@@ -42,26 +49,62 @@ export function refreshStatus(tx: Tx, invoiceId: string): void {
   tx.update(invoices).set({ status: statusFor(invoiceTotal(tx, invoiceId), invoicePaid(tx, invoiceId)), updatedAt: new Date() }).where(eq(invoices.id, invoiceId)).run();
 }
 
-export interface FamilyBalance {
+export interface Balance {
   invoicedCents: number;
   paidCents: number;
   balanceCents: number; // > 0 owed, < 0 overpaid
   creditCents: number; // max(0, -balance)
   owedCents: number; // max(0, balance)
 }
+/** Retained name — a family balance and a student balance have the same shape. */
+export type FamilyBalance = Balance;
 
-/** A family's derived balance: total invoiced (non-void) minus net payments. */
-export function familyBalance(familyId: string): FamilyBalance {
-  const invs = db.select({ id: invoices.id, status: invoices.status }).from(invoices).where(eq(invoices.familyId, familyId)).all();
-  const liveIds = invs.filter((i) => i.status !== 'void').map((i) => i.id);
-  const invoicedCents = liveIds.length ? db.select({ a: invoiceItems.amountCents }).from(invoiceItems).where(inArray(invoiceItems.invoiceId, liveIds)).all().reduce((s, r) => s + r.a, 0) : 0;
-  const paidCents = db.select({ a: payments.amountCents }).from(payments).where(eq(payments.familyId, familyId)).all().reduce((s, r) => s + r.a, 0);
+const zero = (): Balance => ({ invoicedCents: 0, paidCents: 0, balanceCents: 0, creditCents: 0, owedCents: 0 });
+
+const shape = (invoicedCents: number, paidCents: number): Balance => {
   const balanceCents = invoicedCents - paidCents;
   return { invoicedCents, paidCents, balanceCents, creditCents: balanceCents < 0 ? -balanceCents : 0, owedCents: balanceCents > 0 ? balanceCents : 0 };
+};
+
+/** One student's derived balance: everything invoiced to them (non-void) minus their net payments.
+ *  Overpayment shows as `creditCents` and is absorbed by their next invoice — there is no stored
+ *  credit to go stale. */
+export function studentBalance(studentId: string): Balance {
+  return balanceForStudents([studentId]);
+}
+
+/** The combined balance across a set of students — one query pass, so a family view of 5 children
+ *  costs the same as one. Used by `familyBalance`, the portal and the year view. */
+export function balanceForStudents(studentIds: string[]): Balance {
+  if (!studentIds.length) return zero();
+  const liveIds = db
+    .select({ id: invoices.id, status: invoices.status })
+    .from(invoices)
+    .where(inArray(invoices.studentId, studentIds))
+    .all()
+    .filter((i) => i.status !== 'void')
+    .map((i) => i.id);
+  const invoicedCents = liveIds.length
+    ? db.select({ a: invoiceItems.amountCents }).from(invoiceItems).where(inArray(invoiceItems.invoiceId, liveIds)).all().reduce((s, r) => s + r.a, 0)
+    : 0;
+  const paidCents = db.select({ a: payments.amountCents }).from(payments).where(inArray(payments.studentId, studentIds)).all().reduce((s, r) => s + r.a, 0);
+  return shape(invoicedCents, paidCents);
+}
+
+/** Every student id on a family, whatever their status — a withdrawn child's unpaid bill is still
+ *  owed, so scoping this to `active` would quietly hide real debt. */
+export function familyStudentIds(familyId: string): string[] {
+  return db.select({ id: students.id }).from(students).where(eq(students.familyId, familyId)).all().map((s) => s.id);
+}
+
+/** A family's balance = the sum of its students'. A parent pays once for all their children, so this
+ *  is what the portal, statements and autopay work from. */
+export function familyBalance(familyId: string): Balance {
+  return balanceForStudents(familyStudentIds(familyId));
 }
 
 export interface RecordInput {
-  familyId: string;
+  studentId: string;
   amountCents: number; // > 0
   channel: PaymentChannel;
   occurredAt: Date;
@@ -85,15 +128,15 @@ export function recordPayment(input: RecordInput, actor: Actor): { paymentId: st
   const paymentId = rid('pay');
   let allocated = 0;
   db.transaction((tx) => {
-    tx.insert(payments).values({ id: paymentId, familyId: input.familyId, amountCents: input.amountCents, channel: input.channel, occurredAt: input.occurredAt, memo: input.memo ?? null, idempotencyKey: input.idempotencyKey, externalRef: input.externalRef ?? null, reversalOf: null, recordedByUserId: actor.userId, recordedByName: actor.name, createdAt: ts }).run();
+    tx.insert(payments).values({ id: paymentId, studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: input.occurredAt, memo: input.memo ?? null, idempotencyKey: input.idempotencyKey, externalRef: input.externalRef ?? null, reversalOf: null, recordedByUserId: actor.userId, recordedByName: actor.name, createdAt: ts }).run();
 
     if (input.allocations && input.allocations.length) {
       for (const a of input.allocations) {
-        const inv = tx.select({ id: invoices.id, familyId: invoices.familyId, status: invoices.status }).from(invoices).where(eq(invoices.id, a.invoiceId)).get();
-        // Same family, not void, within the invoice's remaining balance, and never exceeding
-        // the payment total — an explicit allocation (Fabric/webhook) can't overpay a bill or
-        // manufacture negative credit (§11.2).
-        if (!inv || inv.familyId !== input.familyId || inv.status === 'void') throw new Error('invalid_allocation');
+        const inv = tx.select({ id: invoices.id, studentId: invoices.studentId, status: invoices.status }).from(invoices).where(eq(invoices.id, a.invoiceId)).get();
+        // Same student, not void, within the invoice's remaining balance, and never exceeding
+        // the payment total — an explicit allocation (Fabric/webhook) can't overpay a bill,
+        // manufacture negative credit, or push one child's money onto another's invoice (§11.2).
+        if (!inv || inv.studentId !== input.studentId || inv.status === 'void') throw new Error('invalid_allocation');
         if (a.amountCents <= 0) continue;
         const bal = invoiceTotal(tx, a.invoiceId) - invoicePaid(tx, a.invoiceId);
         if (a.amountCents > bal || allocated + a.amountCents > input.amountCents) throw new Error('invalid_allocation');
@@ -102,11 +145,11 @@ export function recordPayment(input: RecordInput, actor: Actor): { paymentId: st
         refreshStatus(tx, a.invoiceId);
       }
     } else {
-      // Auto: oldest-due-first across the family's non-void invoices with a positive balance.
+      // Auto: oldest-due-first across THIS STUDENT's non-void invoices with a positive balance.
       const open = tx
         .select({ id: invoices.id, dueDate: invoices.dueDate, createdAt: invoices.createdAt })
         .from(invoices)
-        .where(and(eq(invoices.familyId, input.familyId)))
+        .where(eq(invoices.studentId, input.studentId))
         // Oldest-due-first. SQLite sorts NULL before any value, so an undated invoice would
         // otherwise jump the queue ahead of a genuinely-due one — push NULLs last (§11.2/§16).
         .orderBy(sql`${invoices.dueDate} is null`, asc(invoices.dueDate), asc(invoices.createdAt))
@@ -126,14 +169,57 @@ export function recordPayment(input: RecordInput, actor: Actor): { paymentId: st
       }
     }
   });
-  // A payment that clears the family's balance (via ANY channel — portal, manual, autopay, Fabric)
+  // A payment that clears the FAMILY's balance (via ANY channel — portal, manual, autopay, Fabric)
   // resets the autopay retry ladder: it tracks CONSECUTIVE failures against outstanding debt, so once
   // the debt is gone a fresh billing cycle must start at zero, not inherit a stale failure count that
-  // could trip the auto-disable early (§13.3). A no-op for families without an autopay enrollment.
-  if (familyBalance(input.familyId).owedCents === 0) {
-    db.update(autopayEnrollments).set({ failureCount: 0, nextAttemptAt: null, updatedAt: new Date() }).where(eq(autopayEnrollments.familyId, input.familyId)).run();
+  // could trip the auto-disable early (§13.3). Autopay charges one card for all a parent's children,
+  // so the ladder is still family-scoped even though the payment is not — clearing one child while a
+  // sibling is still in arrears must NOT reset it. A no-op for families without an enrollment.
+  const famId = db.select({ familyId: students.familyId }).from(students).where(eq(students.id, input.studentId)).get()?.familyId;
+  if (famId && familyBalance(famId).owedCents === 0) {
+    db.update(autopayEnrollments).set({ failureCount: 0, nextAttemptAt: null, updatedAt: new Date() }).where(eq(autopayEnrollments.familyId, famId)).run();
   }
   return { paymentId, duplicate: false, allocatedCents: allocated, creditCents: input.amountCents - allocated };
+}
+
+/** One student's share of a split payment. */
+export interface SplitShare {
+  studentId: string;
+  amountCents: number;
+}
+
+export interface SplitResult {
+  /** Per-student results, in the order given. */
+  parts: { studentId: string; paymentId: string; duplicate: boolean; allocatedCents: number; creditCents: number }[];
+  /** True only when EVERY part was already recorded — i.e. the whole charge is a replay. */
+  duplicate: boolean;
+}
+
+/**
+ * Record one real charge that covers several children — the "pay for all my kids" case at the kiosk,
+ * on the donation site, or in the portal.
+ *
+ * Payments are per student, so this fans out into one row per child, each with the shared
+ * `idempotencyKey` suffixed by that child's id. Two things fall out of that suffix: a replay of the
+ * whole charge is a no-op per child, and a partially-recorded charge (the process died halfway, or a
+ * consumer retried after a timeout) completes rather than duplicating — the children already written
+ * come back as duplicates and the rest get written.
+ *
+ * NOT one transaction across children on purpose: `recordPayment` opens its own, and a per-child key
+ * means a crash between children is recoverable by simply calling again with the same key.
+ */
+export function recordSplit(
+  base: Omit<RecordInput, 'studentId' | 'amountCents' | 'allocations'>,
+  shares: SplitShare[],
+  actor: Actor,
+): SplitResult {
+  const parts = shares
+    .filter((s) => s.amountCents > 0)
+    .map((s) => {
+      const r = recordPayment({ ...base, studentId: s.studentId, amountCents: s.amountCents, idempotencyKey: `${base.idempotencyKey}:${s.studentId}` }, actor);
+      return { studentId: s.studentId, ...r };
+    });
+  return { parts, duplicate: parts.length > 0 && parts.every((p) => p.duplicate) };
 }
 
 /** Reverse a payment: a negative payment + negative allocations mirroring the original, so
@@ -148,7 +234,7 @@ export function reversePayment(paymentId: string, actor: Actor): { reversalId: s
   const ts = new Date();
   const reversalId = rid('pay');
   db.transaction((tx) => {
-    tx.insert(payments).values({ id: reversalId, familyId: orig.familyId, amountCents: -orig.amountCents, channel: orig.channel, occurredAt: ts, memo: `Reversal of ${orig.id}`, idempotencyKey: `reversal:${orig.id}`, externalRef: null, reversalOf: orig.id, recordedByUserId: actor.userId, recordedByName: actor.name, createdAt: ts }).run();
+    tx.insert(payments).values({ id: reversalId, studentId: orig.studentId, amountCents: -orig.amountCents, channel: orig.channel, occurredAt: ts, memo: `Reversal of ${orig.id}`, idempotencyKey: `reversal:${orig.id}`, externalRef: null, reversalOf: orig.id, recordedByUserId: actor.userId, recordedByName: actor.name, createdAt: ts }).run();
     for (const a of tx.select().from(paymentAllocations).where(eq(paymentAllocations.paymentId, orig.id)).all()) {
       tx.insert(paymentAllocations).values({ id: rid('pal'), paymentId: reversalId, invoiceId: a.invoiceId, amountCents: -a.amountCents, createdAt: ts }).run();
       refreshStatus(tx, a.invoiceId);

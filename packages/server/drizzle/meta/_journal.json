@@ -183,6 +183,20 @@
       "when": 1785110145249,
       "tag": "0025_drop_student_pins",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1785120967921,
+      "tag": "0026_add_student_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1785120983705,
+      "tag": "0027_per_student_ledger",
+      "breakpoints": true
     }
   ]
 }
