@@ -9,6 +9,8 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.39.0]
+
 ### Removed
 
 - **Student PINs are gone.** Paying tuition on the donation site or at the kiosk now takes only the
