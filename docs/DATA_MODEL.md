@@ -22,7 +22,7 @@
 `payment_methods`, `autopay_enrollments`, `autopay_runs`, `stripe_events`, `attachments`,
 `audit_log`, `fabric_inbox`, `settings`.
 
-Non-negotiable rules live in §9 (student PINs unique + CSPRNG; exam subjects are a snapshot;
+Non-negotiable rules live in §9 (Student IDs unique + always generated; exam subjects are a snapshot;
 term finals are frozen; report cards/transcripts immutable + versioned; gradebook snapshots
 append-only; money = integer cents; idempotency keys UNIQUE; balances derived; FKs RESTRICT on
 money paths). Every table: `id`, `created_at`, `updated_at`.
@@ -110,10 +110,10 @@ Working assumptions in force unless/until Hasan says otherwise. **Ask before the
 | 1 | OS-side names (`tunnel:`, `fabric:`, `OPENMASJID_PUBLIC_URL`) | Use the names in CLAUDE.md; reconcile once the OS work order lands | 14–17 (Fabric/tunnel) |
 | 2 | Default host port | `8360` (host) → `8080` (container) | Manifest/compose (step 1) |
 | 3 | Autopay trigger; portal overpay | Charge **on due date**; overpay allowed → family credit | 16 (autopay) |
-| 4 | Parent self-registration default | **ON** (child name + PIN + on-file guardian email + email verify) | 11 (portal) |
+| 4 | Parent self-registration default | **ON** (child's Student ID + on-file guardian email + email verify) | 11 (portal) |
 | 5 | Gradebook visibility to parents | Visible **immediately on entry** (publish workflow deferred) | 5 (gradebook) |
 | 6 | SMTP provider | Per-masjid in-app settings only (no house relay) | portal/mail steps |
-| 7 | PIN policy + name match | **6-digit** CSPRNG; **lenient** name match (§11.2) | 10 (PINs) / 14 (lookup) |
+| 7 | PIN policy + name match | **ANSWERED (Hasan, 2026-07-26): no PINs.** Removed in v0.39.0 — the Student ID (`YUS1234`) is the whole credential, because the only thing it authorises is *paying* someone's tuition. Replaced by a name-confirmation step (`identify`) plus a shared per-ID lockout. Contract → **v2**. | done |
 | 8 | Existing campaign-type enum values `tuition` joins | **ANSWERED (recon):** enum is `donation \| zakat \| tuition` in BOTH Donations (`server` + `web`) and Kiosk (added v0.9.12). `tuition` ALREADY EXISTS — we mirror it, nothing to add. Type drives the card-fee rule (donation=optional cover, zakat=forced cover, tuition=admin-toggle). | 14 (Fabric provider) |
 | 9 | Default madrasa scale + merit categories | Ship the CLAUDE.md defaults (Mumtāz…Rāsib; Ādāb, Sunnah, Hifz milestone, Helping others), admin-editable | 5/6 |
 | 10 | Report cards: scale bands + teacher remark | Show scale band by default; keep optional per-student remark | 7 |

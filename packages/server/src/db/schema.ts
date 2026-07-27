@@ -2,16 +2,16 @@
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
  * Drizzle schema (SQLite). This app is tuition/fee management for a masjid: families and
- * students (with retrievable name+PIN lookup), fee plans assigned PER STUDENT, family
+ * students (each with a generated Student ID), fee plans assigned PER STUDENT, family
  * invoices, a derived ledger, manual + Stripe payments, saved cards and autopay — plus the
  * `students/billing` Fabric provider that powers the tuition option on OpenMasjidDonations
  * and OpenMasjidKiosk. No SIS/academics (classes, grades, attendance, exams, report cards).
  *
  * Rules: money in integer cents; balances DERIVED, never stored; payments IMMUTABLE
  * (corrections are reversal rows); FKs RESTRICT on money paths; every table has
- * id/created_at/updated_at. Student PINs are RETRIEVABLE (printed on statements), so the DB
- * file itself is a secret (CLAUDE.md §9, §14) — never a hash-only PIN column. Migrations are
- * forward-only and generated into ./drizzle.
+ * id/created_at/updated_at. The file holds minors' PII and every payment record, so it is
+ * itself a secret and backups of it must be treated as one (CLAUDE.md §9, §14). Migrations
+ * are forward-only and generated into ./drizzle.
  */
 import { sqliteTable, text, integer, primaryKey, index, unique } from 'drizzle-orm/sqlite-core';
 
@@ -171,12 +171,11 @@ export const families = sqliteTable('families', {
 });
 export type Family = typeof families.$inferSelect;
 
-/** A student. The PIN is a low-entropy capability token (6-digit CSPRNG, UNIQUE per
- *  install) used for name+PIN lookup at the Donations site / Kiosk and one door into
- *  portal self-registration — it is RETRIEVABLE (printed on statements), so it is stored
- *  in the clear and the DB file itself is a secret (§9/§14). Never logged / never in URLs.
- *  Withdrawn via `status`, never hard-deleted. FK to family is RESTRICT (archive, don't
- *  delete, a family with students). */
+/** A student. `studentCode` (below) is how a parent identifies this child when paying at the
+ *  Donations site / Kiosk and is one half of the portal self-registration door. Withdrawn via
+ *  `status` rather than hard-deleted in the normal case (see trpc/people.ts `studentDelete` for
+ *  the narrow exception). FK to family is RESTRICT (archive, don't delete, a family with
+ *  students). */
 export const students = sqliteTable(
   'students',
   {
@@ -191,15 +190,16 @@ export const students = sqliteTable(
     notes: text('notes'),
     /** Current class — grouping only (see `classes`). Nullable: a student can be unplaced. */
     classId: text('class_id').references(() => classes.id, { onDelete: 'restrict' }),
-    pin: text('pin').notNull(),
-    pinUpdatedAt: integer('pin_updated_at', { mode: 'timestamp_ms' }).notNull(),
     /**
-     * The human-readable student ID a parent types at the kiosk — first three letters of the first
-     * name + 4 digits, e.g. `YUS1234` (billing/studentCodes.ts).
+     * The human-readable student ID a parent types at the kiosk or on the donation site — first three
+     * letters of the first name + 4 digits, e.g. `YUS1234` (billing/studentCodes.ts).
      *
-     * NOT a secret, and deliberately not treated as one: it is printed on statements and shown to
-     * staff, and it is guessable by anyone who knows a child's first name. It answers *who*, and the
-     * PIN still answers *may you*. Nothing payable is released on a code alone (§11.2).
+     * This is the ONLY identifier in the payment flow; there is no PIN (removed in 0.39.0). It is not
+     * a secret and is not treated as one — it is printed on statements and guessable by anyone who
+     * knows a child's first name. What it authorises is deliberately narrow: seeing a balance and
+     * *paying* it. The threat model says so explicitly — the worst a stranger can do with someone
+     * else's ID is settle their tuition — so the compensating controls are a per-code lockout
+     * (security/rateLimit.ts) and an on-screen name confirmation, not a shared secret (§11.2, §14).
      *
      * Nullable only because the column was added after `students` shipped; every student created
      * from 0.38.0 on gets one, and `backfillStudentCodes()` fills the rest at boot.
@@ -209,7 +209,6 @@ export const students = sqliteTable(
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => ({
-    pinUq: unique('students_pin_uq').on(t.pin), // the unique lookup index (§11.2)
     // UNIQUE, so a collision is a database error rather than two children sharing a payment code.
     // SQLite allows many NULLs in a UNIQUE column, which is what lets the backfill run gradually.
     codeUq: unique('students_code_uq').on(t.studentCode),
@@ -327,10 +326,10 @@ export const auditLog = sqliteTable(
     actorUserId: text('actor_user_id'),
     actorRole: text('actor_role'),
     actorName: text('actor_name'),
-    action: text('action').notNull(), // e.g. 'student.pin.regenerate', 'family.create'
+    action: text('action').notNull(), // e.g. 'payment.record', 'student.create'
     entity: text('entity'), // e.g. 'student'
     entityId: text('entity_id'),
-    detail: text('detail', { mode: 'json' }).$type<Record<string, unknown>>(), // small before/after; NEVER PINs/secrets
+    detail: text('detail', { mode: 'json' }).$type<Record<string, unknown>>(), // small before/after; NEVER secrets or full PII
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => ({ entityIdx: index('audit_entity_idx').on(t.entity, t.entityId), atIdx: index('audit_at_idx').on(t.createdAt) }),

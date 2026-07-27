@@ -2,7 +2,7 @@
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
  * Append-only audit log for sensitive writes (§14). One tiny helper used across routers.
- * NEVER pass PINs, passwords, tokens, or full PII into `detail` — ids + before/after of
+ * NEVER pass passwords, tokens, or full PII into `detail` — ids + before/after of
  * non-secret fields only.
  */
 import { db } from '../db';

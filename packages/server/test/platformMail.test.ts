@@ -155,11 +155,11 @@ describe('an unsent platform email must not be reported as emailed', () => {
 describe('POST /api/fabric/alert — the id field is `alert`, not `id`', () => {
   it('puts the alert id in `alert` (sending `id` makes the platform 400 and the alert vanish)', async () => {
     reply = { status: 200, json: { delivered: true } };
-    const ok = await platform.raiseAlert('pin-lockout', 'A lookup was locked.', { title: 'Tuition lookup locked' });
+    const ok = await platform.raiseAlert('lookup-lockout', 'A lookup was locked.', { title: 'Tuition lookup locked' });
     expect(ok).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe('http://platform.test/api/fabric/alert');
-    expect(calls[0].body.alert).toBe('pin-lockout');
+    expect(calls[0].body.alert).toBe('lookup-lockout');
     // Guard against a regression back to the wrong key.
     expect('id' in calls[0].body).toBe(false);
     expect(calls[0].body.text).toBe('A lookup was locked.');
@@ -168,7 +168,7 @@ describe('POST /api/fabric/alert — the id field is `alert`, not `id`', () => {
 
   it('defaults to the platform severity `warning` (not notifyPlatform\'s `warn`)', async () => {
     reply = { status: 200, json: { delivered: true } };
-    await platform.raiseAlert('pin-lockout', 'x');
+    await platform.raiseAlert('lookup-lockout', 'x');
     expect(calls[0].body.level).toBe('warning');
   });
 
@@ -190,13 +190,14 @@ describe('POST /api/fabric/alert — the id field is `alert`, not `id`', () => {
 });
 
 describe('no PII leaves the app', () => {
-  it('an alert body carries no student PIN, name, or amount-with-name', async () => {
+  it('an alert body carries no Student ID, name, or amount-with-name', async () => {
     reply = { status: 200, json: { delivered: true } };
     // These are the exact strings the four call sites use (fabric/provider.ts, trpc/auth.ts,
-    // payments/autopay.ts, payments/reconcile.ts) — none may name a person or a PIN (§14).
-    await platform.raiseAlert('pin-lockout', 'A tuition name + PIN lookup was locked after repeated failed attempts.');
+    // payments/autopay.ts, payments/reconcile.ts) — none may name a person or carry the ID that was
+    // being guessed (§14).
+    await platform.raiseAlert('lookup-lockout', 'A tuition student-ID lookup was locked after repeated failed attempts.');
     const body = JSON.stringify(calls[0].body);
-    expect(body).not.toMatch(/\d{6}/); // no 6-digit PIN
+    expect(body).not.toMatch(/[A-Z]{3}\d{4}/); // no Student ID
     expect(body.toLowerCase()).not.toContain('yusuf');
   });
 });

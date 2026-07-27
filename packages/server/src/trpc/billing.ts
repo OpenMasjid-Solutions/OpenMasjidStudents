@@ -305,7 +305,6 @@ export const billingRouter = router({
           lastName: students.lastName,
           status: students.status,
           dob: students.dob,
-          pin: students.pin,
           studentCode: students.studentCode,
           familyId: students.familyId,
           familyName: families.name,
@@ -390,7 +389,6 @@ export const billingRouter = router({
           extra: {
             ...(columns.includes('studentId') ? { studentCode: s.studentCode } : {}),
             ...(columns.includes('dob') ? { dob: s.dob } : {}),
-            ...(columns.includes('pin') ? { pin: s.pin } : {}),
             ...(columns.includes('guardianNames') ? { guardianNames: gs.map((g) => g.name) } : {}),
             ...(columns.includes('guardianPhones') ? { guardianPhones: gs.map((g) => g.phone).filter((p): p is string => !!p) } : {}),
             ...(columns.includes('guardianEmails') ? { guardianEmails: gs.map((g) => g.email).filter((e): e is string => !!e) } : {}),
@@ -402,7 +400,8 @@ export const billingRouter = router({
       return { year: { id: year.id, label: year.label }, needsStartYear: false, months, columns, rows, currency: getCurrency() };
     }),
 
-  /** The optional year-view columns and which are on. Admin-only to change (it can expose PINs). */
+  /** The optional year-view columns and which are on. Admin-only to change — the guardian-contact
+   *  columns put phone numbers and email addresses on a whole-school page (§5: finance reads). */
   yearViewColumnsGet: adminOrFinanceProcedure.query(() => ({ available: [...YEAR_VIEW_COLUMNS], enabled: getYearViewColumns() })),
 
   yearViewColumnsSet: adminProcedure.input(z.object({ columns: z.array(z.enum(YEAR_VIEW_COLUMNS)).max(YEAR_VIEW_COLUMNS.length) })).mutation(({ ctx, input }) => {
@@ -476,9 +475,8 @@ export const billingRouter = router({
             return [f.name, csvMoney(b.owedCents), csvMoney(b.creditCents), currency];
           });
       } else {
-        // students — the billing directory. Deliberately WITHOUT PINs: a PIN pays tuition, and a
-        // spreadsheet of every child's PIN emailed around is a far wider exposure than the per-family
-        // statement it belongs on (§14). The student ID is included: it is not a secret.
+        // students — the billing directory, including the Student ID (the identifier the office reads
+        // out when a parent calls, and the one a payment is keyed on).
         header = ['Student', 'Student ID', 'Status', 'Family', 'Course', 'Class', 'Monthly fees', 'Currency', 'Guardians', 'Phones', 'Emails'];
         const guardiansByFamily = new Map<string, { name: string; phone: string | null; email: string | null }[]>();
         for (const g of db

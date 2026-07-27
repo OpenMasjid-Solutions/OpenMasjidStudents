@@ -47,9 +47,9 @@ alerts:
   - id: autopay-disabled
     label: Autopay switched off after repeated failures
     description: A family's card failed three times, so autopay was turned off. They will not be charged again until someone follows up.
-  - id: pin-lockout
-    label: Tuition name + PIN lookup locked
-    description: One student's PIN was locked after repeated failed attempts at the kiosk, the donation site, or parent sign-up — possibly someone guessing.
+  - id: lookup-lockout
+    label: Tuition Student ID lookup locked
+    description: One student's ID was locked after repeated failed attempts at the kiosk, the donation site, or parent sign-up — possibly someone guessing IDs.
   - id: reconcile-recovered
     label: A payment was recovered by reconciliation
     description: A card payment reached Stripe but never reached the ledger directly; the daily reconciliation found and recorded it. Worth a look.

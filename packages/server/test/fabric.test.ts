@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * The Fabric provider contract (CLAUDE.md §11) — students/billing. Verifies the transport gates
- * (constant-time secret; tunnel-origin refused), and the four methods: info, the name+PIN lookup
- * (lenient match, uniform found:false with no last-name/DOB leak, per-PIN lockout), the idempotent
- * record-payment (through the ledger), and check. Driven through a real Fastify instance via inject.
+ * The Fabric provider contract (CLAUDE.md §11) — students/billing at v2. Verifies the transport gates
+ * (constant-time secret; tunnel-origin refused) and the methods: info, the Student-ID lookup (uniform
+ * found:false with no last-name/DOB leak, per-code lockout), the idempotent record-payment (through
+ * the ledger), and check. Driven through a real Fastify instance via inject.
+ *
+ * The kiosk-facing half of the contract — identify, the shared lockout, v1 back-compat — lives in
+ * fabricIdentify.test.ts.
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
 import { freshApp, makeCtx } from './harness';
 import { students, families, invoices, payments, paymentAllocations, invoiceItems, studentFees, feePlans } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
@@ -42,7 +44,7 @@ const call = (method: string, body: unknown, opts: { secret?: string | null; tun
     payload: JSON.stringify(body),
   });
 
-/** Seed a family with a student (auto PIN) enrolled + a fee + an open invoice; returns ids + PIN. */
+/** Seed a family with a student + a fee + an open invoice; returns the ids and the Student ID. */
 async function seed() {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail family' });
@@ -53,38 +55,37 @@ async function seed() {
   // assertions below check stays exactly Yusuf's $50.
   await admin.people.studentCreate({ familyId: fam.id, firstName: 'Sara', lastName: 'Ismail', feePlanId: plan.id, overrideAmountCents: 0 });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
-  const pin = app.dbmod.db.select({ pin: students.pin }).from(students).where(eq(students.id, s.id)).get()!.pin;
-  return { familyId: fam.id, studentId: s.id, pin };
+  return { familyId: fam.id, studentId: s.id, code: s.studentCode };
 }
 
 describe('transport gates (§11.1)', () => {
   it('401 without/with a wrong secret; refuses tunnel-origin even with the right secret', async () => {
-    expect((await call('info', { v: 1 }, { secret: null })).statusCode).toBe(401);
-    expect((await call('info', { v: 1 }, { secret: 'wrong' })).statusCode).toBe(401);
-    expect((await call('info', { v: 1 }, { tunnel: true })).statusCode).toBe(404);
-    expect((await call('info', { v: 1 })).statusCode).toBe(200);
+    expect((await call('info', { v: 2 }, { secret: null })).statusCode).toBe(401);
+    expect((await call('info', { v: 2 }, { secret: 'wrong' })).statusCode).toBe(401);
+    expect((await call('info', { v: 2 }, { tunnel: true })).statusCode).toBe(404);
+    expect((await call('info', { v: 2 })).statusCode).toBe(200);
   });
 });
 
 describe('info (§11.2)', () => {
-  it('returns v:1 + school + currency + enabled', async () => {
-    const r = await call('info', { v: 1 });
-    expect(r.json()).toMatchObject({ v: 1, enabled: true, currency: 'usd' });
+  it('returns v:2 + school + currency + enabled', async () => {
+    const r = await call('info', { v: 2 });
+    expect(r.json()).toMatchObject({ v: 2, enabled: true, currency: 'usd' });
     expect(typeof r.json().schoolName).toBe('string');
   });
 });
 
 describe('lookup (§11.2)', () => {
-  it('resolves name+PIN → family + balance; no full last names or DOB', async () => {
-    const { familyId, studentId, pin } = await seed();
-    const r = (await call('lookup', { v: 1, name: 'yusuf ismail', pin })).json();
-    expect(r).toMatchObject({ v: 1, found: true, matchedStudent: { id: studentId } });
+  it('resolves a Student ID → family + balance; no full last names or DOB', async () => {
+    const { familyId, studentId, code } = await seed();
+    const r = (await call('lookup', { v: 2, studentCode: code })).json();
+    expect(r).toMatchObject({ v: 2, found: true, matchedStudent: { id: studentId } });
     expect(r.family.id).toBe(familyId);
     expect(r.family.balanceCents).toBe(5000);
     expect(r.family.openInvoices).toHaveLength(1);
     // Only first name + last initial — never a full last name. Each sibling also carries their own
-    // ids (added at 0.38.0) so a kiosk can pay for a sibling without the parent typing their ID;
-    // the NAME minimisation is what this assertion guards, so check it field-by-field.
+    // ids so a kiosk can pay for a sibling without the parent typing their ID; the NAME minimisation
+    // is what this assertion guards, so check it field-by-field.
     expect(r.family.students.map((k: { firstName: string; lastInitial: string }) => ({ firstName: k.firstName, lastInitial: k.lastInitial }))).toEqual(
       expect.arrayContaining([
         { firstName: 'Yusuf', lastInitial: 'I' },
@@ -96,41 +97,40 @@ describe('lookup (§11.2)', () => {
     expect(JSON.stringify(r)).not.toContain('Ismail"'); // no bare "Ismail" last-name value in the payload
   });
 
-  it('lenient match: partial/first-only token still matches', async () => {
-    const { pin } = await seed();
-    expect((await call('lookup', { v: 1, name: 'Yusuf', pin })).json().found).toBe(true);
+  it('accepts the ID as typed — lowercase and punctuation are normalised away', async () => {
+    const { code } = await seed();
+    expect((await call('lookup', { v: 2, studentCode: `${code.slice(0, 3).toLowerCase()} ${code.slice(3)}` })).json().found).toBe(true);
   });
 
-  it('wrong name and wrong PIN both give an identical found:false', async () => {
-    const { pin } = await seed();
-    expect((await call('lookup', { v: 1, name: 'Somebody Else', pin })).json()).toEqual({ v: 1, found: false });
-    expect((await call('lookup', { v: 1, name: 'Yusuf Ismail', pin: '000000' })).json()).toEqual({ v: 1, found: false });
+  it('an unknown ID gives a bare found:false', async () => {
+    await seed();
+    expect((await call('lookup', { v: 2, studentCode: 'ZZZ0000' })).json()).toEqual({ v: 2, found: false });
   });
 
-  it('per-PIN lockout: after 10 failed matches the PIN is locked even for the right name', async () => {
-    const { pin } = await seed();
-    for (let i = 0; i < 10; i++) await call('lookup', { v: 1, name: 'Wrong Name', pin });
-    expect((await call('lookup', { v: 1, name: 'Yusuf Ismail', pin })).json()).toEqual({ v: 1, found: false }); // locked
+  it('per-code lockout: after 6 failed lookups that ID is locked', async () => {
+    await seed();
+    for (let i = 0; i < 6; i++) await call('lookup', { v: 2, studentCode: 'WWW1111' });
+    expect((await call('lookup', { v: 2, studentCode: 'WWW1111' })).json()).toEqual({ v: 2, found: false }); // locked
   });
 });
 
 describe('record-payment + check (§11.3/§11.4)', () => {
   it('records once, is idempotent on replay, and check finds it', async () => {
     const { familyId } = await seed();
-    const body = { v: 1, idempotencyKey: 'pi_TEST123', familyId, amountCents: 3000, channel: 'donations-web', occurredAt: '2026-07-15T18:03:22Z' };
+    const body = { v: 2, idempotencyKey: 'pi_TEST123', familyId, amountCents: 3000, channel: 'donations-web', occurredAt: '2026-07-15T18:03:22Z' };
     const first = (await call('record-payment', body)).json();
-    expect(first).toMatchObject({ v: 1, recorded: true, duplicate: false });
+    expect(first).toMatchObject({ v: 2, recorded: true, duplicate: false });
     const replay = (await call('record-payment', body)).json();
     expect(replay).toMatchObject({ recorded: true, duplicate: true, paymentId: first.paymentId });
     // The ledger applied it: balance dropped 5000 → 2000.
     expect((await caller('admin').billing.familyBilling({ familyId })).balance.owedCents).toBe(2000);
     // check.
-    expect((await call('check', { v: 1, idempotencyKey: 'pi_TEST123' })).json()).toMatchObject({ v: 1, recorded: true, paymentId: first.paymentId });
-    expect((await call('check', { v: 1, idempotencyKey: 'nope' })).json()).toEqual({ v: 1, recorded: false });
+    expect((await call('check', { v: 2, idempotencyKey: 'pi_TEST123' })).json()).toMatchObject({ v: 2, recorded: true, paymentId: first.paymentId });
+    expect((await call('check', { v: 2, idempotencyKey: 'nope' })).json()).toEqual({ v: 2, recorded: false });
   });
 
   it('unknown family → 404 family_not_found', async () => {
-    const r = await call('record-payment', { v: 1, idempotencyKey: 'k', familyId: 'fam_nope', amountCents: 100, channel: 'kiosk' });
+    const r = await call('record-payment', { v: 2, idempotencyKey: 'k', familyId: 'fam_nope', amountCents: 100, channel: 'kiosk' });
     expect(r.statusCode).toBe(404);
     expect(r.json().error.code).toBe('family_not_found');
   });

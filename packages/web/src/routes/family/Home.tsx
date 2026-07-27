@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /** Parent portal — My Family (CLAUDE.md §4/§15). Phone-first: a big balance card, the family's
- *  kids (with their PINs), open invoices, recent payments, pay-now, saved cards, and autopay.
+ *  kids (with their Student IDs), open invoices, recent payments, pay-now, saved cards, and autopay.
  *  Everything is family-scoped server-side. */
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
@@ -46,7 +46,7 @@ export function FamilyHome() {
               )}
             </div>
 
-            {/* Kids, with the two things a parent needs at the kiosk: the ID they type and the PIN. */}
+            {/* Kids, each with the one thing a parent needs to pay anywhere: their Student ID. */}
             <section className="fam-section">
               <h2>{t('family.children')}</h2>
               {fam.students.length === 0 ? (
@@ -56,8 +56,7 @@ export function FamilyHome() {
                   {fam.students.map((s) => (
                     <div key={s.id} className="kid-row glass">
                       <span className="kid-name">{s.firstName} {s.lastName}</span>
-                      {s.studentCode && <span className="kid-pin"><span className="pin-lbl">{t('directory.studentId')}</span>{s.studentCode}</span>}
-                      <span className="kid-pin"><span className="pin-lbl">{t('directory.pin')}</span>{s.pin}</span>
+                      {s.studentCode && <span className="kid-code"><span className="code-lbl">{t('directory.studentId')}</span>{s.studentCode}</span>}
                     </div>
                   ))}
                   <p className="fam-hint">{t('family.kioskHint')}</p>

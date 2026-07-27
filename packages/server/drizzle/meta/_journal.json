@@ -176,6 +176,13 @@
       "when": 1785104971107,
       "tag": "0024_true_lake",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1785110145249,
+      "tag": "0025_drop_student_pins",
+      "breakpoints": true
     }
   ]
 }

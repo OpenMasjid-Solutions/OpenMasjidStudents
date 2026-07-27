@@ -5,7 +5,8 @@
  *  admin+finance-scoped server-side.
  *
  *  Finance gets the year view read-only — it can read the grid and print it, but changing which
- *  optional columns show (which can expose PINs) is admin-only, so `canConfigure` is false. */
+ *  optional columns show (guardian contact details among them) is admin-only, so `canConfigure` is
+ *  false. */
 import { useState } from 'react';
 import { WindowsProvider } from '../../components/Windows';
 import { AppShell } from '../../components/AppShell';

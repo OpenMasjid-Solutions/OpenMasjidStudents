@@ -16,12 +16,13 @@ per student, and generates **family invoices** each month or term. A **finance m
 records cash / Zelle / check payments and sees the whole ledger; **parents** get a
 phone-first portal with the family balance and a unified payment history, and can **pay by
 card in-app (Stripe)** — with **autopay** and saved cards. Printable statements carry each
-child's name + PIN and a portal-signup QR.
+child's **Student ID** and a portal-signup QR.
 
-Tuition can also be paid with a **child's name + PIN** on the masjid's **OpenMasjid
-Donations** site and **OpenMasjid Kiosk** — those payments flow straight into the same
-ledger over the OpenMasjidOS **Fabric**. This app provides the `students/billing` capability
-those apps consume (see [`docs/FABRIC_BILLING_CONTRACT.md`](docs/FABRIC_BILLING_CONTRACT.md)).
+Tuition can also be paid with a **child's Student ID** on the masjid's **OpenMasjid
+Donations** site and **OpenMasjid Kiosk**: type the ID, check the name it shows, then pay for
+any of your children from that one screen. Those payments flow straight into the same ledger
+over the OpenMasjidOS **Fabric**. This app provides the `students/billing` capability those
+apps consume (see [`docs/FABRIC_BILLING_CONTRACT.md`](docs/FABRIC_BILLING_CONTRACT.md)).
 
 Three roles: **admin** manages families, students, fee plans and settings (on the masjid
 network only); **finance** runs billing (network + internet uplink); **parents** get the

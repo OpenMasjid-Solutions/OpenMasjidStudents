@@ -13,9 +13,30 @@
 
 ---
 
-## 11. THE SHARED CONTRACT — Fabric capability `students/billing` (v1)
+## 11. THE SHARED CONTRACT — Fabric capability `students/billing` (v2)
 
-> Source of truth for four repos. Copy verbatim into `docs/FABRIC_BILLING_CONTRACT.md`; the OS/Donations/Kiosk briefs point here. Version the contract (`"v": 1` in every response). Consumers surface this capability as a **`tuition` campaign type** in their own campaign systems: the campaign shell (tile/card) lives in Donations/Kiosk, but everything inside it — label, lookup, balances, recording — is **fully managed by this container** via the methods below. **The parent portal (§13) does NOT change this contract** — portal/autopay payments are recorded internally and only touch §11.3 (a third `omos_app` value).
+> Source of truth for four repos. Copy verbatim into `docs/FABRIC_BILLING_CONTRACT.md`; the OS/Donations/Kiosk briefs point here. Version the contract (`"v": 2` in every response). Consumers surface this capability as a **`tuition` campaign type** in their own campaign systems: the campaign shell (tile/card) lives in Donations/Kiosk, but everything inside it — label, lookup, balances, recording — is **fully managed by this container** via the methods below. **The parent portal (§13) does NOT change this contract** — portal/autopay payments are recorded internally and only touch §11.3 (a third `omos_app` value).
+
+### 11.0 v1 → v2: the PIN is gone (breaking, `lookup` only)
+
+**What changed.** Student PINs were removed from the app entirely in 0.39.0. `lookup` no longer takes
+`name` or `pin`; it takes the **Student ID alone**. Nothing else on the wire changed.
+
+**Why.** The only thing a stranger can do with someone else's Student ID is *pay their tuition* — there
+is no path from an ID to changing a record, reading contact details, or taking money out. A secret that
+buys nothing but costs every parent friction at a kiosk keypad is a bad trade. What replaces it:
+
+1. **`identify` first.** The consumer echoes the matched child's first name back and asks "is this the
+   right child?" *before* any balance appears. That catches the realistic failure — a mistyped ID —
+   which a PIN never did.
+2. **One hard per-code lockout.** 6 failed probes per Student ID per hour, then that ID is locked and an
+   admin alert fires. `identify`, `lookup` and this app's own parent self-registration **share one
+   bucket**, so a caller cannot launder failures by switching endpoints.
+
+**What a consumer must do.** Replace the name+PIN form with a single Student ID field, call `identify`
+to confirm the name, then `lookup`. Until you ship that, your `lookup` calls **400** — they cannot
+silently half-work. `info`, `record-payment` and `check` are unchanged and still accept `"v": 1`, so an
+un-upgraded build keeps its money path; only the lookup screen breaks. Responses always carry `"v": 2`.
 
 ### 11.1 Transport (all four repos must agree)
 
@@ -31,69 +52,66 @@
 
 **`POST /fabric/billing/info`** — what consumers need to render the tuition campaign shell.
 ```jsonc
-{ "v": 1 }
-→ { "v": 1, "enabled": true, "schoolName": "An-Noor Weekend School", "currency": "usd",
-    "tagline": "Pay tuition with your child's name and PIN" }
+{ "v": 2 }
+→ { "v": 2, "enabled": true, "schoolName": "An-Noor Weekend School", "currency": "usd",
+    "tagline": "Pay tuition with your child's Student ID" }
 // "enabled": false (setup incomplete or external payments turned off by admin) → consumers hide the campaign
 ```
 
-**`POST /fabric/billing/identify`** — *(added 0.38.0, ADDITIVE at v1)* echo back **who a typed student
-ID belongs to**, so a kiosk can ask "is this the right child?" before taking any money. A consumer
-that doesn't know this method simply never calls it.
+**`POST /fabric/billing/identify`** — echo back **who a typed Student ID belongs to**, so a consumer can
+ask "is this the right child?" before showing a balance or taking money. **Call this first**; it is the
+confirmation step that replaced the PIN, not an optional nicety.
 ```jsonc
 // request — the ID printed on the statement: first 3 letters of the first name + 4 digits.
 // Input is normalised here (case, spaces, hyphens), so "yus-1234" is fine.
-{ "v": 1, "studentCode": "YUS1234" }
+{ "v": 2, "studentCode": "YUS1234" }
 // 200 (found) — a first name + last initial and NOTHING else
-{ "v": 1, "found": true, "student": { "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" } }
+{ "v": 2, "found": true, "student": { "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" } }
 // 200 (not found) — unknown code, withdrawn student, locked code, or external payments switched off
-{ "v": 1, "found": false }
+{ "v": 2, "found": false }
 ```
-> **A student ID is NOT a secret and must never be treated as one.** Its letters are derived from the
-> child's first name and it is printed on statements, so it establishes *who* — the PIN still
-> establishes *may you*. `identify` therefore returns **no balance, no invoices, no sibling list and
-> not even the family id**; everything payable still requires `lookup` with the PIN. The one thing it
-> discloses is a first name + last initial, which is exactly what `lookup`'s sibling list already
-> exposes. Because a code is far more guessable than a PIN, it is locked **harder**: 6 failed
-> attempts per code per hour (vs the PIN's 10), and a lockout raises an admin alert.
+> **A Student ID is NOT a secret and is not treated as one.** Its letters are derived from the child's
+> first name and it is printed on statements. It is nonetheless the whole credential, because of how
+> narrow what it authorises is: see a balance and pay it (§11.0). `identify` stays deliberately thin —
+> **no balance, no invoices, no sibling list, not even the family id** — which is what makes it safe to
+> answer *before* the parent has confirmed anything. The one disclosure, a first name plus an initial,
+> is exactly what `lookup`'s sibling list already exposes. 6 failed probes per code per hour, then that
+> code is locked for an hour and an admin alert fires.
 
-**`POST /fabric/billing/lookup`** — resolve a student to a family + balance. The student is identified
-by **name + PIN**, or *(added 0.38.0, ADDITIVE at v1)* by **studentCode + PIN** — the kiosk path,
-where the parent typed an ID rather than spelling a name. **The PIN is required either way.**
+**`POST /fabric/billing/lookup`** — resolve a Student ID to a family + balance + the siblings it can be
+paid alongside. **Breaking at v2:** `name` and `pin` are gone (§11.0).
 ```jsonc
-// request — supply `name` OR `studentCode` (one is required); `pin` always.
-{ "v": 1, "name": "Yusuf Ismail", "pin": "482913" }
-{ "v": 1, "studentCode": "YUS1234", "pin": "482913" }
-// Matching (this app's job, not the consumer's):
-//  - name path: PIN is the unique index — find the student by PIN, then verify the name leniently
-//    (case/diacritic-insensitive; every token the parent typed must appear in the registered name).
-//  - code path: find the student by code, then require THAT student's PIN. Comparing the stored PIN
-//    is what stops a code paired with some other child's PIN from matching.
-// Any mismatch → identical "found": false.
+// request — the Student ID alone, normalised as in `identify`.
+{ "v": 2, "studentCode": "YUS1234" }
 // 200 (found)
-{ "v": 1, "found": true,
+{ "v": 2, "found": true,
   "matchedStudent": { "id": "stu_1" },
   "family": {
     "id": "fam_x1", "label": "Ismail family",
-    // NEVER full last names, DOB, or contact info. `studentId` + `studentCode` were added in 0.38.0
-    // so a kiosk can offer a SIBLING and pay for them without the parent typing that child's ID.
+    // NEVER full last names, DOB, or contact info. `studentId` + `studentCode` let a kiosk offer a
+    // SIBLING and pay for them without the parent typing that child's ID.
     "students": [{ "studentId": "stu_1", "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" },
                  { "studentId": "stu_2", "studentCode": "MAR8802", "firstName": "Maryam", "lastInitial": "I" }],
     "balanceCents": 35000, "currency": "usd",
     "openInvoices": [{ "id": "inv_9", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 15000 }]
   } }
-// 200 (not found) — same shape, same latency, whatever actually mismatched (no enumeration oracle)
-{ "v": 1, "found": false }
+// 200 (not found) — same shape, same latency, whatever actually mismatched (no enumeration oracle):
+// unknown ID, withdrawn student, locked ID, or external payments switched off
+{ "v": 2, "found": false }
+// 400 — a v1-shaped body (name + pin, no studentCode). Update the consumer; it cannot half-work.
+{ "error": { "code": "invalid", "message": "Bad request." } }
 ```
-> **Recommended kiosk flow:** `identify(studentCode)` → show the name, ask "is this right?" → collect
-> the PIN → `lookup(studentCode, pin)` → show the balance and the sibling list → `record-payment` with
-> the chosen child's `studentId` from that list. Note the balance is per FAMILY, so paying for a
-> sibling is the same ledger entry with a different `studentId` attribution.
+> **Required consumer flow:** `identify(studentCode)` → show the name, ask "is this right?" → on confirm
+> `lookup(studentCode)` → show the balance and the sibling list → `record-payment` with the chosen
+> child's `studentId` from that list. Do not call `lookup` before the parent has confirmed the name —
+> the confirmation is the safeguard. Note the balance is per FAMILY, so paying for a sibling is the same
+> ledger entry with a different `studentId` attribution.
 
-**`POST /fabric/billing/record-payment`** — record an external payment. **Idempotent.**
+**`POST /fabric/billing/record-payment`** — record an external payment. **Idempotent.** Unchanged at v2;
+still accepts `"v": 1` so an un-upgraded consumer never loses its money path.
 ```jsonc
 // request
-{ "v": 1,
+{ "v": 2,
   "idempotencyKey": "pi_3PabcDEF",           // REQUIRED, ≤128 chars. Convention: the Stripe PaymentIntent id.
   "familyId": "fam_x1",                       // REQUIRED — from a prior lookup in this session
   "studentId": "stu_1",                       // optional — the matchedStudent from lookup
@@ -103,8 +121,8 @@ where the parent typed an ID rather than spelling a name. **The PIN is required 
   "externalRef": { "stripePaymentIntentId": "pi_3PabcDEF", "stripeChargeId": "ch_...", "stripeAccountId": "acct_..." },
   "allocations": [{ "invoiceId": "inv_9", "amountCents": 15000 }],   // optional; omitted → auto-allocate oldest-due-first
   "payerNote": "paid by grandmother" }        // optional, ≤200 chars, displayed to finance
-// 200 (first time)      { "v": 1, "recorded": true, "paymentId": "pay_71", "duplicate": false }
-// 200 (replay)          { "v": 1, "recorded": true, "paymentId": "pay_71", "duplicate": true }
+// 200 (first time)      { "v": 2, "recorded": true, "paymentId": "pay_71", "duplicate": false }
+// 200 (replay)          { "v": 2, "recorded": true, "paymentId": "pay_71", "duplicate": true }
 // 404 unknown family    { "error": { "code": "family_not_found", "message": "…" } }
 // 422 bad allocation    { "error": { "code": "invalid_allocation", "message": "…" } }
 ```
@@ -112,7 +130,7 @@ Surplus beyond open invoices becomes family credit. A recorded external payment 
 
 **`POST /fabric/billing/check`** — retry helper for consumer outboxes.
 ```jsonc
-{ "v": 1, "idempotencyKey": "pi_3PabcDEF" }  →  { "v": 1, "recorded": true, "paymentId": "pay_71" } | { "v": 1, "recorded": false }
+{ "v": 2, "idempotencyKey": "pi_3PabcDEF" }  →  { "v": 2, "recorded": true, "paymentId": "pay_71" } | { "v": 2, "recorded": false }
 ```
 
 ### 11.3 Stripe metadata contract (on EVERY tuition PaymentIntent, whoever mints it)
@@ -123,7 +141,7 @@ omos_app           = donations | kiosk | students-portal    ← students-portal 
 students_family_id = fam_x1                  ← REQUIRED (from lookup / known internally)
 students_student_id = stu_1                  ← optional, the matched student
 ```
-**Never put the PIN or the typed name in Stripe metadata, descriptions, or URLs** — metadata is visible in Stripe dashboards and exports. Description: `School balance — <family label>`. **Receipts must say "payment", never "donation"** — tuition is generally not tax-deductible; consumers exclude `purpose=students-billing` from donation totals and year-end letters, and this app's own receipts follow the same wording rule.
+**Never put a Student ID or a child's name in Stripe metadata, descriptions, or URLs** — metadata is visible in Stripe dashboards and exports. Description: `School balance — <family label>`. **Receipts must say "payment", never "donation"** — tuition is generally not tax-deductible; consumers exclude `purpose=students-billing` from donation totals and year-end letters, and this app's own receipts follow the same wording rule.
 
 ### 11.4 Reconciliation (this app's safety net — covers three channels)
 

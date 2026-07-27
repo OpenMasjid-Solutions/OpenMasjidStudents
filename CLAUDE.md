@@ -5,9 +5,9 @@
 
 > This file is the single source of truth for the OpenMasjidStudents project. Read it fully before writing any code. When in doubt, follow this document over your own assumptions. If something here is ambiguous, ask before guessing.
 >
-> ⚠️ **SCOPE PIVOT (v0.35.0).** This app was **descoped from a full SIS to tuition/fee management only.** All academics were **removed**: classes, scheduling/timetable, attendance, gradebook, grading scales, merit points, comment bank, exams, report cards, transcripts, term finals, the admissions pipeline (incl. the public `/apply` form), the Report Creator, custom student fields, student notes/incidents, and the **teacher** role. What remains is families/students (name + PIN), fee plans, invoices, the ledger, manual + Stripe/portal/autopay payments, statements, and the `students/billing` Fabric provider. **Fees are now assigned PER STUDENT** (`student_fees`), not per class enrollment. **The code is authoritative** — where a section below still describes an academic feature, it no longer applies; §11 (Fabric contract), §12 (auth/origin), §13 (payments), §14 (security), §16, §19 remain in force.
+> ⚠️ **SCOPE PIVOT (v0.35.0).** This app was **descoped from a full SIS to tuition/fee management only.** All academics were **removed**: classes, scheduling/timetable, attendance, gradebook, grading scales, merit points, comment bank, exams, report cards, transcripts, term finals, the admissions pipeline (incl. the public `/apply` form), the Report Creator, custom student fields, student notes/incidents, and the **teacher** role. What remains is students (each with a generated **Student ID**; no PINs — removed in v0.39.0), fee plans, invoices, the ledger, manual + Stripe/portal/autopay payments, statements, and the `students/billing` Fabric provider. **Fees are now assigned PER STUDENT** (`student_fees`), not per class enrollment. **The code is authoritative** — where a section below still describes an academic feature, it no longer applies; §11 (Fabric contract), §12 (auth/origin), §13 (payments), §14 (security), §16, §19 remain in force.
 >
-> **Product target, in one line:** self-hosted **tuition & fee management for a madrasa** — families/students with name + PIN, per-student fee plans, family invoices, a derived ledger, and payments by cash/Stripe (parent portal + autopay) **plus the OpenMasjid Donations site and Kiosk** over the Fabric.
+> **Product target, in one line:** self-hosted **tuition & fee management for a madrasa** — students with a generated Student ID, per-student fee plans, family invoices, a derived ledger, and payments by cash/Stripe (parent portal + autopay) **plus the OpenMasjid Donations site and Kiosk** over the Fabric.
 >
 > This app depends on two sibling work orders that land in other repos: **`OpenMasjidOS/docs/FABRIC_APP_LINK_AND_TUNNEL.md`** (the Fabric app-to-app broker + Cloudflare uplink) and the `STUDENTS_INTEGRATION.md` briefs in **OpenMasjidDonations** and **OpenMasjidKiosk**. §11 of this file is the shared contract all four repos must agree on. If the contract changes here, it changes everywhere.
 
@@ -15,7 +15,7 @@
 
 ## 1. What we are building (one paragraph)
 
-**OpenMasjidStudents** is a self-hosted **tuition & fee management** app **built for madāris** that runs as an **OpenMasjidOS app**: one Docker container, installed from the App Store, all data on the masjid's own hardware. It is a **three-role app**: **admins** manage families, students, fee plans and settings (LAN-only, by design); a **finance manager** runs billing (invoices, the ledger, manual + card payments); and **parents** get their own phone-first portal with the family balance and one unified payment history — **payable by card right in the app (Stripe)**, with **autopay** and saved cards. Every student gets an auto-generated **name + PIN**; fees are assigned **per student** as **fee plans** (monthly / per-term / one-time) and rolled up into a **per-family invoice** each period. Finance records cash/Zelle/check by hand, and prints **statements** carrying each child's PIN and a portal-signup QR. Finance and parents work over the **Cloudflare uplink the OS provides**; the admin surface stays on the masjid LAN. Tuition paid with a **child's name + PIN** through **OpenMasjidDonations** and **OpenMasjidKiosk** flows automatically into the same ledger over the **OpenMasjidOS Fabric** — this app is the **provider** of the `students/billing` capability those apps consume.
+**OpenMasjidStudents** is a self-hosted **tuition & fee management** app **built for madāris** that runs as an **OpenMasjidOS app**: one Docker container, installed from the App Store, all data on the masjid's own hardware. It is a **three-role app**: **admins** manage families, students, fee plans and settings (LAN-only, by design); a **finance manager** runs billing (invoices, the ledger, manual + card payments); and **parents** get their own phone-first portal with the family balance and one unified payment history — **payable by card right in the app (Stripe)**, with **autopay** and saved cards. Every student gets an auto-generated **Student ID** (`YUS1234` — first three letters of the first name + 4 digits); fees are assigned **per student** as **fee plans** (monthly / per-term / one-time) and rolled up into a **per-family invoice** each period. Finance records cash/Zelle/check by hand, and prints **statements** carrying each child's Student ID and a portal-signup QR. Finance and parents work over the **Cloudflare uplink the OS provides**; the admin surface stays on the masjid LAN. Tuition paid with a **child’s Student ID** through **OpenMasjidDonations** and **OpenMasjidKiosk** flows automatically into the same ledger over the **OpenMasjidOS Fabric** — this app is the **provider** of the `students/billing` capability those apps consume.
 
 Think: **"the madrasa's tuition & fee desk, in one container the masjid owns — and payable anywhere: the portal, the kiosk, or the donation site."**
 
@@ -28,8 +28,8 @@ Think: **"the madrasa's tuition & fee desk, in one container the masjid owns —
 | **`OpenMasjidStudents`** (this repo) | The app: server, all four role UIs, database, direct Stripe payments (portal + autopay), the **provider** side of the `students/billing` Fabric capability. |
 | **`OpenMasjidOS`** | The platform. Fabric core APIs, per-app secret, app-to-app broker, Cloudflare tunnel uplink, HTTPS serving for Stripe apps. Work order: `docs/FABRIC_APP_LINK_AND_TUNNEL.md`. |
 | **`OpenMasjidAPPS`** | The catalog. This app ships as its own repo + manifest; new manifest keys (`fabric:`, `tunnel:`) must be validated there too. |
-| **`OpenMasjidDonations`** | **Consumer** of `students/billing`: its campaign system gains a **`tuition` campaign type** that is *fully managed by this container* — label from `info`, flow is **student name + PIN** → balance → pay. Brief: `docs/STUDENTS_INTEGRATION.md` there. |
-| **`OpenMasjidKiosk`** | **Consumer** of `students/billing`: same **`tuition` campaign type** as a kiosk tile (Stripe Reader M2), same name + PIN flow. Brief: `docs/STUDENTS_INTEGRATION.md` there. |
+| **`OpenMasjidDonations`** | **Consumer** of `students/billing`: its campaign system gains a **`tuition` campaign type** that is *fully managed by this container* — label from `info`, flow is **Student ID** → confirm the name → balance → pay. Brief: `docs/STUDENTS_INTEGRATION.md` there. |
+| **`OpenMasjidKiosk`** | **Consumer** of `students/billing`: same **`tuition` campaign type** as a kiosk tile (Stripe Reader M2), same Student ID flow. Brief: `docs/STUDENTS_INTEGRATION.md` there. |
 
 **App identity:** app id **`students`** (compose project `omos-students`, data at `/opt/openmasjid/apps/students/`), display name **OpenMasjid Students**, repo **`OpenMasjid-Solutions/OpenMasjidStudents`**, image **`ghcr.io/openmasjid-solutions/openmasjidstudents:<semver>`** (public, multi-arch amd64+arm64; the CI derives the image name from the repo basename lowercased — no hyphen), category **`admin`**.
 
@@ -55,7 +55,7 @@ Think: **"the madrasa's tuition & fee desk, in one container the masjid owns —
 
 **People (the billing subjects)**
 - Students (name, DOB optional, status active/withdrawn, notes) grouped into **families**; **guardians** (name, phone, email) linked to families (a guardian can span multiple families); **emergency contacts** (flag guardians and/or add extra contacts per family).
-- **Student PINs**: every student gets an **auto-generated numeric PIN (6 digits, CSPRNG) at registration**. Student **name + PIN** is how a parent pays at the Donations site / Kiosk and one door into portal self-registration. Finance/admin can view and **regenerate** a PIN (audited); PINs are printed on statements next to each child.
+- **Student IDs**: every student gets an **auto-generated Student ID at registration** — first three letters of the first name + 4 digits (`YUS1234`), UNIQUE per install. It is how a parent pays at the Donations site / Kiosk and one half of the portal self-registration door. **There is no PIN** (removed v0.39.0): the only thing a stranger with someone else’s ID can do is pay their tuition, so the compensating controls are an on-screen name confirmation plus a hard per-ID lockout, not a shared secret (§11.2, §14). IDs are printed on statements next to each child.
 
 **Finance (billing — the whole app)**
 - **Fee plans**: amount (integer cents), cadence `monthly | per-term | one-time`, **assigned per STUDENT** (`student_fees`); per-family fixed or % **discount** line.
@@ -63,12 +63,12 @@ Think: **"the madrasa's tuition & fee desk, in one container the masjid owns —
 - **Family ledger & balance**: derived balance; payments auto-allocate oldest-due-first; overpayment becomes family **credit**.
 - **External payments** arrive over Fabric from Donations and Kiosk (§11); **portal and autopay payments** (§13) land in the same ledger. Finance *sees* the channel, Stripe reference, and status without doing anything.
 - **Manual payments**: channel `cash | zelle | check | other`, amount, date, memo, attached **proof** (jpg/png/webp/pdf, ≤10 MB), served only to `finance`/`admin`.
-- **Printable statements** (print-CSS HTML): balance, open invoices, recent payments, each child's **PIN**, and a **QR code to the parent-portal signup** — plus one line telling parents they can pay with "child's name + PIN" on the donation site or the kiosk.
+- **Printable statements** (print-CSS HTML): balance, open invoices, recent payments, each child’s **Student ID**, and a **QR code to the parent-portal signup** — plus one line telling parents they can pay with their child’s Student ID on the donation site or the kiosk.
 - **Stripe reconciliation** (safety net): daily job + on-demand button for PaymentIntents tagged `purpose=students-billing` (§11.4).
 - Parent-account tools: create/invite guardians, resend invites, disable accounts, see autopay status per family.
 
 **Parent portal (tunnel-first — the headline)**
-- Login lands on **My family**: the kids (with their PINs), the family balance, open invoices, and one unified payment history (kiosk / donation site / portal / autopay / cash).
+- Login lands on **My family**: the kids (with their Student IDs), the family balance, open invoices, and one unified payment history (kiosk / donation site / portal / autopay / cash).
 - **Pay now**: pay the full balance or a chosen amount by card, in-app, via **Stripe Elements**.
 - **Saved cards**: add/remove payment methods (SetupIntents, off-session capable), pick a default.
 - **Autopay**: per-family toggle — charge the default card automatically when invoices come due; decline handling with retries + emails; parent can turn it off any time (§13).
@@ -79,7 +79,7 @@ Think: **"the madrasa's tuition & fee desk, in one container the masjid owns —
 - **Cloudflare uplink** (`tunnel: true`): stable public HTTPS URL, injected as `OPENMASJID_PUBLIC_URL`; used for parent/finance access, QR links, and inbound Stripe webhooks.
 - **`https: true`** in the manifest — the parent portal embeds Stripe Elements, which requires a secure context.
 - **SMTP (in-app admin setting, strongly recommended)**: parent invites, password resets, payment receipts, autopay failure notices. **Transactional only in v1**. Without SMTP the portal still works — invites become copy/print links, resets go through the office.
-- **Audit log** on every sensitive write: fee assignment, invoices, payments, reversals, autopay changes, role/user changes, PIN regeneration — who, when, before → after.
+- **Audit log** on every sensitive write: fee assignment, invoices, payments, reversals, autopay changes, role/user changes — who, when, before → after.
 - **Access-origin policy**: `admin` sessions work **only on the masjid LAN**; `finance` and `parent` work on LAN **and** over the Cloudflare uplink (§12.4 — hard constraint).
 - i18n (i18next) + full **RTL**; light/dark via Fabric appearance; `prefers-reduced-motion`.
 
@@ -145,7 +145,7 @@ Every tRPC procedure declares a required role **and** allowed origin; checks liv
 | **Pay by card (Elements)** | ❌ (no reason) | ❌ | ❌ | ✅ own family |
 | **Saved cards / autopay manage** | ✅ (disable only) | ❌ | view status | ✅ own family |
 | Parent invites / account admin | ✅ | ❌ | ✅ | ❌ |
-| View / regenerate student PINs, print statements | ✅ | ❌ | ✅ | ❌ (kids' PINs shown read-only) |
+| View student IDs, print statements | ✅ | ❌ | ✅ | ❌ (own kids' IDs shown read-only) |
 | Audit log — read | ✅ | ❌ | billing only | ❌ |
 | CSV export | ✅ | ❌ | billing only | ❌ |
 
@@ -262,7 +262,7 @@ OpenMasjidStudents/
 │   │       ├── fabric/
 │   │       │   ├── provider.ts          # /fabric/billing/* (§11) — secret-gated
 │   │       │   └── platform.ts          # session check, notify, appearance, stripe keys
-│   │       ├── billing/                 # allocation engine, student PINs, statements
+│   │       ├── billing/                 # allocation engine, student IDs, statements
 │   │       ├── reports/                 # @react-pdf templates (report card + transcript), batch generator, versioning (→ /data/reports)
 │   │       ├── reporting/               # Report Creator dataset registry + query composition (role-scoped)
 │   │       ├── admissions/              # public-form handling (hostile input), pipeline logic
@@ -288,11 +288,11 @@ OpenMasjidStudents/
 
 ## 9. Data model (Drizzle/SQLite — key rules)
 
-Tables: `users`, `sessions`, `invites`, `families`, `students`, `guardians`, `guardian_families`, `guardian_users` (guardian ↔ user link, gives a parent account its family scope), `emergency_contacts`, `student_field_defs`, `student_field_values`, `student_documents`, `student_notes`, `incidents`, `terms`, `classes` (incl. `type`: `maktab|hifz|nazrah|alim|custom` + `custom_label`), `class_subjects` (ordered, free text), `class_teachers`, `class_sessions` (timetable), `enrollments`, `attendance`, `grading_scales` + `scale_bands`, `class_grade_config` (formula weights + scale), `grade_items`, `grades`, `gradebook_snapshots`, `merit_categories` + `merit_awards`, `comment_snippets` (shared|personal), `exams`, `exam_classes`, `exam_class_subjects` (the **snapshot** of a class's subjects + per-subject `max_marks` at assignment time), `exam_scores`, `term_remarks`, `term_finals`, `report_cards`, `transcripts`, `admissions` (+ `admission_notes`), `saved_reports`, `fee_plans`, `enrollment_fees`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `payment_methods` (Stripe PM refs — id/brand/last4/exp only, **never PANs**), `autopay_enrollments`, `autopay_runs`, `stripe_events` (webhook dedupe), `attachments`, `audit_log`, `fabric_inbox`, `settings`. Student PINs live on `students` (`pin`, `pin_updated_at`) — retrievable (they're printed on statements), so the DB file itself is a secret; never a hash-only column.
+Tables: `users`, `sessions`, `invites`, `families`, `students`, `guardians`, `guardian_families`, `guardian_users` (guardian ↔ user link, gives a parent account its family scope), `emergency_contacts`, `student_field_defs`, `student_field_values`, `student_documents`, `student_notes`, `incidents`, `terms`, `classes` (incl. `type`: `maktab|hifz|nazrah|alim|custom` + `custom_label`), `class_subjects` (ordered, free text), `class_teachers`, `class_sessions` (timetable), `enrollments`, `attendance`, `grading_scales` + `scale_bands`, `class_grade_config` (formula weights + scale), `grade_items`, `grades`, `gradebook_snapshots`, `merit_categories` + `merit_awards`, `comment_snippets` (shared|personal), `exams`, `exam_classes`, `exam_class_subjects` (the **snapshot** of a class's subjects + per-subject `max_marks` at assignment time), `exam_scores`, `term_remarks`, `term_finals`, `report_cards`, `transcripts`, `admissions` (+ `admission_notes`), `saved_reports`, `fee_plans`, `enrollment_fees`, `invoices`, `invoice_items`, `payments`, `payment_allocations`, `payment_methods` (Stripe PM refs — id/brand/last4/exp only, **never PANs**), `autopay_enrollments`, `autopay_runs`, `stripe_events` (webhook dedupe), `attachments`, `audit_log`, `fabric_inbox`, `settings`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they’re printed on statements). The DB file holds minors’ PII and every payment record, so the file itself is a secret regardless.
 
 Non-negotiable rules:
 
-- **Student PINs are UNIQUE per install** (they're the lookup index for name+PIN, §11.2), 6-digit CSPRNG, regenerable, and appear **nowhere** in logs, URLs, or Stripe metadata.
+- **Student IDs are UNIQUE per install** (the lookup index for every payment path, §11.2) and always GENERATED, never chosen or imported — two children sharing one would land a payment on the wrong record. They appear **nowhere** in logs or Stripe metadata (statements and staff screens are the intended places).
 - **Exam subjects are a snapshot**: `exam_class_subjects` is copied from `class_subjects` when an exam is assigned to a class (with editable `max_marks`); later edits to the class's subject list never touch existing exams. `exam_scores` UNIQUE per (exam_class, student, subject); `value` is a number **or** an explicit state `absent | exempt` — blanks mean "not yet entered" and block completion, nothing else.
 - **Term finals are frozen facts**: computed from the class's `class_grade_config` at term close and written to `term_finals`; transcripts read **only** `term_finals`, never live gradebooks. Reopening a term regenerates the affected finals — audited both ways.
 - **Report cards and transcripts are immutable, versioned artifacts**: a row = (student, term-or-cumulative, version, generated_by/at, published_at?, pdf path under `/data/reports/`) — regeneration inserts version N+1 (audited); no update/delete path for the PDF or the row. Publishing flips `published_at` only.
@@ -350,9 +350,9 @@ The compose **must reference** the Fabric env vars in `environment:` (`${VAR}` s
 
 ---
 
-## 11. THE SHARED CONTRACT — Fabric capability `students/billing` (v1)
+## 11. THE SHARED CONTRACT — Fabric capability `students/billing` (v2)
 
-> Source of truth for four repos. Copy verbatim into `docs/FABRIC_BILLING_CONTRACT.md`; the OS/Donations/Kiosk briefs point here. Version the contract (`"v": 1` in every response). Consumers surface this capability as a **`tuition` campaign type** in their own campaign systems: the campaign shell (tile/card) lives in Donations/Kiosk, but everything inside it — label, lookup, balances, recording — is **fully managed by this container** via the methods below. **The parent portal (§13) does NOT change this contract** — portal/autopay payments are recorded internally and only touch §11.3 (a third `omos_app` value).
+> Source of truth for four repos. Copy verbatim into `docs/FABRIC_BILLING_CONTRACT.md`; the OS/Donations/Kiosk briefs point here. Version the contract (`"v": 2` in every response — v2 dropped the PIN from `lookup`; see `docs/FABRIC_BILLING_CONTRACT.md` §11.0 for the v1→v2 note and what a consumer must change). Consumers surface this capability as a **`tuition` campaign type** in their own campaign systems: the campaign shell (tile/card) lives in Donations/Kiosk, but everything inside it — label, lookup, balances, recording — is **fully managed by this container** via the methods below. **The parent portal (§13) does NOT change this contract** — portal/autopay payments are recorded internally and only touch §11.3 (a third `omos_app` value).
 
 ### 11.1 Transport (all four repos must agree)
 
@@ -370,19 +370,26 @@ The compose **must reference** the Fabric env vars in `environment:` (`${VAR}` s
 ```jsonc
 { "v": 1 }
 → { "v": 1, "enabled": true, "schoolName": "An-Noor Weekend School", "currency": "usd",
-    "tagline": "Pay tuition with your child's name and PIN" }
+    "tagline": "Pay tuition with your child's Student ID" }
 // "enabled": false (setup incomplete or external payments turned off by admin) → consumers hide the campaign
 ```
 
-**`POST /fabric/billing/lookup`** — resolve a **student name + PIN** to a family + balance.
+**`POST /fabric/billing/identify`** — echo back WHO a typed Student ID belongs to, so a consumer can ask "is this the right child?" **before** any balance appears. Call it first; that confirmation is what replaced the PIN. Returns a first name + last initial and nothing else — no balance, no invoices, no siblings, not even the family id.
 ```jsonc
-// request
-{ "v": 1, "name": "Yusuf Ismail", "pin": "482913" }
-// Matching (this app's job, not the consumer's): PIN is the unique index — find the student by PIN,
-// then verify the name leniently (case/diacritic-insensitive; every token the parent typed must
-// appear in the registered full name). PIN wrong OR name mismatch → identical "found": false.
+{ "v": 2, "studentCode": "YUS1234" }
+→ { "v": 2, "found": true, "student": { "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" } }
+→ { "v": 2, "found": false }   // unknown / withdrawn / locked / external payments off
+```
+
+**`POST /fabric/billing/lookup`** — resolve a **Student ID** to a family + balance + sibling list.
+```jsonc
+// request — the ID alone (case/spaces/hyphens normalised here). No name, no PIN: v2 removed both.
+{ "v": 2, "studentCode": "YUS1234" }
+// Any mismatch — unknown ID, withdrawn child, locked ID, tuition payments switched off — gives an
+// identical "found": false. `identify` and `lookup` share ONE per-ID lockout bucket (6 failures/hour),
+// so probing through whichever endpoint answers faster gains nothing.
 // 200 (found)
-{ "v": 1, "found": true,
+{ "v": 2, "found": true,
   "matchedStudent": { "id": "stu_1" },
   "family": {
     "id": "fam_x1", "label": "Ismail family",
@@ -391,7 +398,7 @@ The compose **must reference** the Fabric env vars in `environment:` (`${VAR}` s
     "openInvoices": [{ "id": "inv_9", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 15000 }]
   } }
 // 200 (not found) — same shape, same latency, whatever actually mismatched (no enumeration oracle)
-{ "v": 1, "found": false }
+{ "v": 2, "found": false }
 ```
 
 **`POST /fabric/billing/record-payment`** — record an external payment. **Idempotent.**
@@ -427,7 +434,7 @@ omos_app           = donations | kiosk | students-portal    ← students-portal 
 students_family_id = fam_x1                  ← REQUIRED (from lookup / known internally)
 students_student_id = stu_1                  ← optional, the matched student
 ```
-**Never put the PIN or the typed name in Stripe metadata, descriptions, or URLs** — metadata is visible in Stripe dashboards and exports. Description: `School balance — <family label>`. **Receipts must say "payment", never "donation"** — tuition is generally not tax-deductible; consumers exclude `purpose=students-billing` from donation totals and year-end letters, and this app's own receipts follow the same wording rule.
+**Never put a Student ID or a child's name in Stripe metadata, descriptions, or URLs** — metadata is visible in Stripe dashboards and exports. Description: `School balance — <family label>`. **Receipts must say "payment", never "donation"** — tuition is generally not tax-deductible; consumers exclude `purpose=students-billing` from donation totals and year-end letters, and this app's own receipts follow the same wording rule.
 
 ### 11.4 Reconciliation (this app's safety net — covers three channels)
 
@@ -440,7 +447,7 @@ Daily job + on-demand "Reconcile now" button (finance): fetch keys via `GET ${OP
 - **App-local accounts are primary.** Username/email + argon2id, server-side sessions, HTTP-only `Secure` SameSite cookies, login rate-limited with generic errors. Admin/finance create staff users; forced password set on first login.
 - **Parent accounts** (two doors, both land on a `guardian_users` link):
   1. **Invite** (default): finance/admin picks a guardian → the app emails (or prints, if no SMTP) a one-time invite link (CSPRNG token, 7-day expiry, single use) → parent sets a password. Admissions' one-click enroll sends this automatically.
-  2. **Self-registration** (admin toggle, default ON): parent visits `/family/register`, enters **a child's name + PIN plus a guardian email already on file** (all must match the same family — a PIN alone is not enough to mint an account), then verifies via emailed link (SMTP required for this door; hidden when SMTP is off).
+  2. **Self-registration** (admin toggle, default ON): parent visits `/family/register`, enters **a child’s Student ID plus a guardian email already on file for that child’s family**, then verifies via emailed link (email required for this door; hidden when the platform has no mail). The on-file email is the load-bearing half: an ID alone can only *pay* (§11.2), so minting an ACCOUNT from one would be an escalation — requiring an address the office already recorded means the invite can only land in an inbox the school chose. Throttled per IP and per ID (the same lockout bucket the Fabric lookup uses).
   Password reset mirrors the doors: email link when SMTP is on; office re-invite when off.
 - **First run**: create the app `admin` (LAN only, naturally). No anonymous access to anything but login/first-run/invite/register/reset pages, the public `/apply` admissions form, and the secret-gated `/fabric/*` + `/api/stripe/webhook`.
 - **SSO fast-path (LAN only)**: per the platform spec — backend forwards the incoming `omos_session` cookie to `GET ${OPENMASJID_BASE_URL}/api/auth/session` with `X-OpenMasjid-App-Secret`; on `{authenticated:true}` mint an app session as `admin`. Cache positives ~45 s, cap SSO sessions ~1 h, treat `username` as untrusted display text. Identity signal only. (SSO mapping to `admin` is consistent with the origin policy: the platform cookie never rides the tunnel.)
@@ -498,7 +505,7 @@ This is the org's most sensitive app — **records about children, now internet-
 - Role checks server-side on every procedure; teacher scoping and **parent family-scoping** enforced in queries.
 - **Attachments**: magic-byte allow-list (jpg/png/webp/pdf), ≤10 MB, randomized names under `/data/attachments/`, EXIF/GPS stripped, three visibility classes enforced at the serving route — `payment-proof` (finance|admin only — **parents never see proofs**, not even their own), `student-document` (admin, or staff when so marked), `class-material` (staff + enrolled families). Never a public static mount.
 - **Report-card and transcript PDFs are minors' academic records**: stored under `/data/reports/` with randomized names, served **only** through the authed route that re-checks the matrix on every fetch (admin: any; teacher: own classes; parent: own kids, `published_at` set); never guessable URLs; generation/regeneration/publish/term-close all audited.
-- **Student PINs are capability tokens with LOW entropy (6 digits) — compensate with limits**: CSPRNG, unique per install, regenerable (audited). Lookup is throttled per-IP by the consumers, per-caller by the broker, **and per-PIN here** (e.g. 10 failed matches/hour → that PIN temporarily locked + Fabric-notify finance). Uniform `found:false` for every mismatch flavor. PINs never in logs, URLs, Stripe metadata, or emails. **Invite/reset/verify tokens**: CSPRNG, single-use, expiring, stored hashed.
+- **A Student ID is the whole credential on the payment path, and it is GUESSABLE — the limiter is the control, not a secret**: `ABC1234` is ~10k guesses per name prefix, so lookups are throttled per-IP by the consumers, per-caller by the broker, **and per-ID here** — 6 failed probes/hour locks that ID for an hour and raises an admin alert. `identify`, `lookup` and parent self-registration **share one bucket** so failures cannot be laundered across endpoints. Uniform `found:false` for every mismatch flavor. This is safe only because of how narrow the ID’s authority is (see a balance, pay it) — if a future feature would let an ID *do* anything more, it needs a second factor first. IDs never in logs or Stripe metadata. **Invite/reset/verify tokens**: CSPRNG, single-use, expiring, stored hashed.
 - Fabric provider: constant-time secret compare, zod before logic, 401 first; idempotency at the DB.
 - Audit log append-only; payments immutable (reversals only); term finals/report cards/transcripts immutable (new versions only); Drizzle-bound SQL only; CSV formula-injection escaping (`=`,`+`,`-`,`@` prefixes) — doubly important now that Report Creator exports CSV.
 - Internet-facing rate limits: login, register, reset, pay-now creation, admissions form — per-IP and per-account.
@@ -590,7 +597,7 @@ The `version:` in the registry entry, `manifest.yaml`, and `VERSION` must agree;
   7. **Exams & report cards**: admin exam builder (assign classes, subject snapshot + max marks) → teacher score grid with completion tracking → PDF pipeline (`reports/`, one template family, versioned artifacts) → class combined PDF → publish flow.
   8. **Term close → finals → transcripts** (multi-term fixture, batch generation, publish).
   9. **Billing core**: fee plans → invoice generation → ledger/allocation engine (tests first) → manual payments + proof uploads.
-  10. Student PINs (auto-generate on registration, regenerate, per-PIN lockout) + printable statement (PINs per child, portal-signup QR).
+  10. Student IDs (auto-generate on registration, per-ID lockout) + printable statement (IDs per child, portal-signup QR).
   11. **Parent portal, read-only slice**: invites/self-register, My-family home, schedule/grades/merit/attendance/report-cards/transcripts/balance/history views.
   12. **Admissions**: pipeline + one-click enroll first (staff-facing), the public `/apply` form last within the slice (it's the hostile surface — land it with its tests).
   13. **Report Creator**: dataset registry (role-scoped) → builder UI → saved reports → CSV/print.
@@ -607,10 +614,10 @@ The `version:` in the registry entry, `manifest.yaml`, and `VERSION` must agree;
 1. Exact OS-side names (`tunnel:`, `fabric:`, `OPENMASJID_PUBLIC_URL`) once the OS work order lands — reconcile if the implementation diverges.
 2. Default host port (`8360` proposed) — confirm free across the beta masajid.
 3. Autopay default trigger: **on due date** (assumed) vs "on invoice generation"; overpay allowance on portal pay-now (assumed: allowed, becomes credit).
-4. Parent **self-registration ON by default** (assumed, child's name + PIN + on-file email + email verify) vs invite-only.
+4. Parent **self-registration ON by default** (assumed, child’s Student ID + on-file email + email verify) vs invite-only.
 5. Gradebook grades visible to parents **immediately on entry** (assumed for v1) vs behind a teacher "publish" step.
 6. SMTP: is there a house-preferred provider/relay for the beta masajid, or per-masjid settings only (assumed)?
-7. PIN policy: **6 digits** assumed; and the lenient name-match rule in §11.2 — OK, or require exact full name?
+7. ~~PIN policy~~ — **settled (v0.39.0): no PINs.** Student ID only, with a name-confirmation step and a per-ID lockout (§11.2, §14).
 8. The names of the two existing campaign types in OpenMasjidDonations/Kiosk that `tuition` joins (the consumer briefs say "verify in-repo" — confirm the real enum values).
 9. Default **madrasa grading scale** bands (`Mumtāz / Jayyid Jiddan / Jayyid / Maqbūl / Rāsib`) and default **merit categories** (Ādāb, Sunnah practice, Hifz milestone, Helping others) — bless or edit the shipped defaults.
 10. Report cards: **letter/scale bands shown by default** now that scales exist (assumed yes) — and the optional per-student teacher remark stays (assumed yes)?

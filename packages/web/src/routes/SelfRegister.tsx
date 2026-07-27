@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /** Parent self-registration (CLAUDE.md §12 door 2). Anonymous /family/register: a parent proves they
- *  belong with a child's name + PIN + a guardian email already on file; on a match the server emails a
- *  portal-setup link. The response is always the same generic "check your email" — it never reveals
- *  whether the details matched (§14). Shown only when the door is open (admin toggle + email set up). */
+ *  belong with a child's Student ID + a guardian email already on file; on a match the server emails a
+ *  portal-setup link to THAT address, which is why an on-file email is required and not just the ID.
+ *  The response is always the same generic "check your email" — it never reveals whether the details
+ *  matched (§14). Shown only when the door is open (admin toggle + email set up). */
 import { useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
@@ -16,8 +17,7 @@ export function SelfRegister() {
   const { t } = useTranslation();
   const config = trpc.auth.registerConfig.useQuery(undefined, { retry: false });
   const register = trpc.auth.register.useMutation();
-  const [childName, setChildName] = useState('');
-  const [pin, setPin] = useState('');
+  const [studentCode, setStudentCode] = useState('');
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
@@ -26,7 +26,7 @@ export function SelfRegister() {
     e.preventDefault();
     setError('');
     try {
-      await register.mutateAsync({ childName: childName.trim(), pin: pin.trim(), email: email.trim() });
+      await register.mutateAsync({ studentCode: studentCode.trim(), email: email.trim() });
       setSent(true);
     } catch (err) {
       setError((err as Error).message);
@@ -48,12 +48,21 @@ export function SelfRegister() {
           <p className="page-sub" style={{ textAlign: 'center', marginBottom: '1.25rem' }}>{t('family.registerSubtitle')}</p>
           <form onSubmit={submit}>
             <div className="field">
-              <label className="label" htmlFor="sr-child">{t('family.registerChild')}</label>
-              <input id="sr-child" className="input glass-inset" value={childName} onChange={(e) => setChildName(e.target.value)} required />
-            </div>
-            <div className="field">
-              <label className="label" htmlFor="sr-pin">{t('family.registerPin')}</label>
-              <input id="sr-pin" className="input glass-inset" value={pin} onChange={(e) => setPin(e.target.value)} inputMode="numeric" autoComplete="off" required />
+              <label className="label" htmlFor="sr-code">{t('family.registerStudentId')}</label>
+              {/* Uppercased as they type: the ID is stored uppercase and the server normalises anyway,
+                  but seeing it match the statement removes the "did I type it right?" doubt. */}
+              <input
+                id="sr-code"
+                className="input glass-inset"
+                value={studentCode}
+                onChange={(e) => setStudentCode(e.target.value.toUpperCase())}
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                placeholder="YUS1234"
+                required
+              />
+              <span className="hint">{t('family.registerStudentIdHint')}</span>
             </div>
             <div className="field">
               <label className="label" htmlFor="sr-email">{t('family.registerEmail')}</label>

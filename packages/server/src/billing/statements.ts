@@ -2,13 +2,13 @@
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
  * Printable family statements (CLAUDE.md §4, §14). A self-contained, print-CSS HTML page
- * — balance, open invoices, recent payments, each child's PIN, and a QR to the parent-portal
+ * — balance, open invoices, recent payments, each child's Student ID, and a QR to the parent-portal
  * signup — that finance/admin hand to a family. Rendered server-side (like the report-card
  * PDFs), so the strings are fixed English for now, matching the other generated artifacts.
  *
  * Security: every dynamic value (names, memos, labels) is HTML-escaped — the statement embeds
- * student names, which are user input (§14: stored data is inert, always rendered as text). The
- * PIN appears here ON PURPOSE (parents type it to pay) but NEVER in logs, URLs, or metadata.
+ * student names, which are user input (§14: stored data is inert, always rendered as text). Printing
+ * the Student ID is the point of the page — it is what a parent types to pay (§11.2).
  */
 import { and, eq, asc, desc, inArray, sql } from 'drizzle-orm';
 import type { Role } from '../db/schema';
@@ -62,7 +62,7 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   const bal = familyBalance(familyId);
 
   const kids = db
-    .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, pin: students.pin, studentCode: students.studentCode })
+    .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode })
     .from(students)
     .where(and(eq(students.familyId, familyId), eq(students.status, 'active')))
     .orderBy(students.firstName)
@@ -99,16 +99,13 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
       ? `<span class="credit">${esc(money(bal.creditCents))}</span> in credit`
       : `<span class="settled">${esc(money(0))}</span> — all settled`;
 
-  // Student ID + PIN side by side: the ID is what a parent types at the kiosk, the PIN is what
-  // authorises it. Printing both together is the point of the statement.
+  // Each child's Student ID — the one thing a parent needs to pay anywhere. Printing it is the point
+  // of the statement (§11.2); there is no second factor to print beside it.
   const kidsRows = kids.length
     ? kids
-        .map(
-          (k) =>
-            `<tr><td>${esc(`${k.firstName} ${k.lastName}`.trim())}</td><td class="pin">${esc(k.studentCode ?? '—')}</td><td class="pin">${esc(k.pin)}</td></tr>`,
-        )
+        .map((k) => `<tr><td>${esc(`${k.firstName} ${k.lastName}`.trim())}</td><td class="code">${esc(k.studentCode ?? '—')}</td></tr>`)
         .join('')
-    : `<tr><td colspan="3" class="muted">No active students.</td></tr>`;
+    : `<tr><td colspan="2" class="muted">No active students.</td></tr>`;
 
   const invoiceRows = openInvs.length
     ? openInvs.map((i) => `<tr><td>${esc(i.label)}</td><td>${esc(asDate(i.dueDate) || '—')}</td><td class="num">${esc(money(i.balanceCents))}</td></tr>`).join('')
@@ -147,7 +144,7 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
   th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .pin { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 15px; letter-spacing: 0.14em; font-weight: 700; }
+  .code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 15px; letter-spacing: 0.14em; font-weight: 700; }
   .muted { color: var(--muted); }
   .payhint { margin-top: 6px; color: var(--muted); font-size: 13px; }
   .signup { display: flex; gap: 18px; align-items: center; margin-top: 22px; padding: 14px; border: 1px dashed var(--teal); border-radius: 8px; page-break-inside: avoid; }
@@ -171,8 +168,8 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
 
   <section>
     <h2>Your children &amp; their payment details</h2>
-    <table><thead><tr><th>Student</th><th>Student ID</th><th>PIN</th></tr></thead><tbody>${kidsRows}</tbody></table>
-    <p class="payhint">At the kiosk, enter your child's Student ID, check the name it shows, then enter their PIN — you can then pay for any of your children on the same screen. On the donation site you can use your child's name + PIN instead.</p>
+    <table><thead><tr><th>Student</th><th>Student ID</th></tr></thead><tbody>${kidsRows}</tbody></table>
+    <p class="payhint">To pay at the kiosk or on the masjid's donation site, enter your child's Student ID and check the name it shows — then you can pay for any of your children on the same screen.</p>
   </section>
 
   <section>

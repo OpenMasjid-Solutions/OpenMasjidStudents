@@ -2,8 +2,7 @@
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
  * People & SIS router (CLAUDE.md §4/§5/§9/§14): admin-only writes, admin|finance reads,
- * teacher/parent walled off (for now), admin LAN-only, unique PINs, and audit entries
- * that never contain the PIN.
+ * parent walled off, admin LAN-only, unique Student IDs, and audited records.
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -39,11 +38,12 @@ const aPlan = async (admin: ReturnType<typeof caller>) =>
   (await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' })).id;
 
 describe('writes are admin-only; reads are admin | finance', () => {
-  it('admin creates a family + student with a unique 6-digit PIN, visible in the directory', async () => {
+  it('admin creates a family + student with a Student ID, visible in the directory', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Ismail family' });
     const st = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: await aPlan(admin) });
-    expect(st.pin).toMatch(/^\d{6}$/);
+    expect(st.studentCode).toBe('YUS' + st.studentCode.slice(3)); // prefix from the first name
+    expect(st.studentCode).toMatch(/^[A-Z]{3}\d{4}$/);
     const dir = await admin.people.directory();
     expect(dir).toHaveLength(1);
     expect(dir[0].students[0].firstName).toBe('Yusuf');
@@ -69,35 +69,24 @@ describe('writes are admin-only; reads are admin | finance', () => {
   });
 });
 
-describe('student PINs', () => {
-  it('generates unique PINs across many students', async () => {
+describe('student IDs', () => {
+  it('generates unique Student IDs across many children who share a first-name prefix', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Big family' });
     const feePlanId = await aPlan(admin);
-    const pins = new Set<string>();
+    const codes = new Set<string>();
     for (let i = 0; i < 25; i++) {
-      const s = await admin.people.studentCreate({ familyId: fam.id, firstName: `S${i}`, lastName: 'X', feePlanId });
-      pins.add(s.pin);
+      // Same first three letters every time, so all 25 compete for one prefix — the case where a
+      // careless generator would collide.
+      const s = await admin.people.studentCreate({ familyId: fam.id, firstName: `Sami${i}`, lastName: 'X', feePlanId });
+      codes.add(s.studentCode);
     }
-    expect(pins.size).toBe(25);
-  });
-
-  it('regenerate changes the PIN (admin + finance) and is audited WITHOUT the PIN value', async () => {
-    const admin = caller('admin');
-    const fam = await admin.people.familyCreate({ name: 'Fam' });
-    const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'A', lastName: 'B', feePlanId: await aPlan(admin) });
-    const r = await caller('finance').people.pinRegenerate({ studentId: s.id });
-    expect(r.pin).toMatch(/^\d{6}$/);
-    expect(r.pin).not.toBe(s.pin);
-    const entries = app.dbmod.db.select().from(auditLog).where(eq(auditLog.action, 'student.pin.regenerate')).all();
-    expect(entries).toHaveLength(1);
-    expect(JSON.stringify(entries[0].detail ?? {})).not.toContain(r.pin); // PIN never in the audit trail
-    expect(JSON.stringify(entries[0].detail ?? {})).not.toContain(s.pin);
+    expect(codes.size).toBe(25);
   });
 });
 
 describe('records + audit', () => {
-  it('withdraw is audited as student.withdraw; guardians + emergency contacts attach; admin sees the PIN on the record', async () => {
+  it('withdraw is audited as student.withdraw; guardians + emergency contacts attach; admin sees the Student ID on the record', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Fam' });
     const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'A', lastName: 'B', feePlanId: await aPlan(admin) });
@@ -107,7 +96,7 @@ describe('records + audit', () => {
 
     const detail = await admin.people.familyGet({ id: fam.id });
     expect(detail.students[0].status).toBe('withdrawn');
-    expect(detail.students[0].pin).toMatch(/^\d{6}$/);
+    expect(detail.students[0].studentCode).toMatch(/^[A-Z]{3}\d{4}$/);
     expect(detail.guardians[0].name).toBe('Abu Yusuf');
     expect(detail.guardians[0].isEmergencyContact).toBe(true);
     expect(detail.emergencyContacts[0].name).toBe('Neighbour');

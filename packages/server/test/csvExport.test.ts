@@ -117,14 +117,11 @@ describe('billing.exportCsv end to end', () => {
     expect(r.csv).toContain("'=DANGER");
   });
 
-  it('never exports PINs, even though it does export the student ID', async () => {
+  it('exports the Student ID — the one identifier a parent pays with', async () => {
     const { admin } = await seed();
-    const pin = app.dbmod.db.select().from(students).all()[0].pin;
     const code = app.dbmod.db.select().from(students).all()[0].studentCode!;
     const r = await admin.billing.exportCsv({ dataset: 'students' });
-    expect(r.csv).toContain(code); // the ID is not a secret
-    expect(r.csv).not.toContain(pin); // the PIN is
-    expect(r.csv.split('\r\n')[0]).not.toMatch(/pin/i);
+    expect(r.csv).toContain(code);
   });
 
   it('is reachable by finance (including over the tunnel) but not by a parent', async () => {

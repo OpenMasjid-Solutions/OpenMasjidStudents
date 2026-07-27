@@ -5,8 +5,8 @@
  *
  *  A cell is the FAMILY's invoice state for that month — that is what is billed and paid, so
  *  siblings on one bill show the same cell. Clicking a billed cell opens that family's record.
- *  The optional columns (phones, balance, PIN…) are admin-configured and resolved server-side, so a
- *  column that is off never reaches the browser.
+ *  The optional columns (Student ID, phones, balance…) are admin-configured and resolved server-side,
+ *  so a column that is off never reaches the browser.
  *
  *  Phone-first: the grid scrolls horizontally with the name column pinned, which is the only
  *  treatment that keeps 12 months usable on a phone. */
@@ -97,7 +97,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                 );
               })}
             </div>
-            <p className="hint">{t('year.pinWarning')}</p>
+            <p className="hint">{t('year.columnsWarning')}</p>
           </div>
         </section>
       )}
@@ -128,7 +128,6 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                   {enabled.includes('studentId') && <th>{t('year.col_studentId')}</th>}
                   {enabled.includes('dob') && <th>{t('year.col_dob')}</th>}
                   {enabled.includes('balance') && <th>{t('year.col_balance')}</th>}
-                  {enabled.includes('pin') && <th>{t('year.col_pin')}</th>}
                   {enabled.includes('guardianNames') && <th>{t('year.col_guardianNames')}</th>}
                   {enabled.includes('guardianPhones') && <th>{t('year.col_guardianPhones')}</th>}
                   {enabled.includes('guardianEmails') && <th>{t('year.col_guardianEmails')}</th>}
@@ -173,10 +172,9 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                             )}
                           </td>
                         ))}
-                        {enabled.includes('studentId') && <td><span className="pin">{r.extra.studentCode ?? ''}</span></td>}
+                        {enabled.includes('studentId') && <td><span className="code">{r.extra.studentCode ?? ''}</span></td>}
                         {enabled.includes('dob') && <td>{r.extra.dob ?? ''}</td>}
                         {enabled.includes('balance') && <td className="tnum">{formatMoney(r.extra.balanceCents ?? 0, g.currency)}</td>}
-                        {enabled.includes('pin') && <td><span className="pin">{r.extra.pin}</span></td>}
                         {enabled.includes('guardianNames') && <td>{(r.extra.guardianNames ?? []).join(', ')}</td>}
                         {enabled.includes('guardianPhones') && <td style={{ whiteSpace: 'nowrap' }}>{(r.extra.guardianPhones ?? []).join(', ')}</td>}
                         {enabled.includes('guardianEmails') && <td>{(r.extra.guardianEmails ?? []).join(', ')}</td>}

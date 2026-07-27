@@ -3,8 +3,8 @@
 /**
  * SQLite (WAL) via better-sqlite3 + Drizzle. Migrations are committed under
  * ./drizzle and applied on boot (forward-only). The DB file lives on the /data
- * volume and — because student PINs are retrievable (printed on statements) — the
- * file itself is a secret (CLAUDE.md §9, §14). Never a hash-only PIN column.
+ * volume and holds minors' PII plus every payment record, so the file itself is a
+ * secret and backups of it must be handled as one (CLAUDE.md §9, §14).
  */
 import fs from 'node:fs';
 import path from 'node:path';

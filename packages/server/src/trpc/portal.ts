@@ -2,10 +2,10 @@
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
  * Parent portal (CLAUDE.md §4, §5) — the parent-facing lens, scoped to the caller's own families
- * via guardian_users (§14: scoping in the query, never the UI). The My-Family home (kids with their
- * PINs — parents may see their own kids' PINs — the derived balance, open invoices, and the unified
- * payment history), plus pay-now (Stripe Elements), saved cards, and autopay. Every value crosses
- * through parentProcedure (LAN + tunnel).
+ * via guardian_users (§14: scoping in the query, never the UI). The My-Family home (their kids with
+ * each child's Student ID, the derived balance, open invoices, and the unified payment history), plus
+ * pay-now (Stripe Elements), saved cards, and autopay. Every value crosses through parentProcedure
+ * (LAN + tunnel).
  */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
@@ -34,7 +34,7 @@ export const portalRouter = router({
     const list: FamilyView[] = famIds.map((fid) => {
       const fam = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.id, fid)).get();
       const kids = db
-        .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, pin: students.pin, studentCode: students.studentCode })
+        .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode })
         .from(students)
         .where(and(eq(students.familyId, fid), eq(students.status, 'active')))
         .orderBy(students.firstName)
@@ -91,7 +91,7 @@ export const portalRouter = router({
         currency: getCurrency(),
         customer: customerId,
         description: `School balance — ${fam.name}`,
-        // §11.3 metadata. NEVER the PIN or a typed name.
+        // §11.3 metadata. NEVER a Student ID or a child's name.
         metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: fam.id, students_channel: 'portal' },
         automatic_payment_methods: { enabled: true },
       });
@@ -228,7 +228,7 @@ type FamilyView = {
   id: string;
   name: string;
   balance: ReturnType<typeof familyBalance>;
-  students: { id: string; firstName: string; lastName: string; pin: string; studentCode: string | null }[];
+  students: { id: string; firstName: string; lastName: string; studentCode: string | null }[];
   invoices: { id: string; label: string; dueDate: string | null; balanceCents: number }[];
   payments: { id: string; amountCents: number; channel: string; occurredAt: Date; memo: string | null; reversalOf: string | null }[];
 };

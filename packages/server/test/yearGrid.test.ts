@@ -7,8 +7,8 @@
  * Two things matter most here:
  *  - a cell reports the FAMILY's invoice state for that period (that is what is billed and paid),
  *    so siblings on one bill legitimately show the same cell
- *  - a column the admin has not enabled is absent from the payload entirely — `pin` especially,
- *    since it is a capability token that pays tuition and is OFF by default (§14)
+ *  - a column the admin has not enabled is absent from the payload entirely, not merely blank — the
+ *    guardian ones especially, since they put contact details on a whole-school printout (§14)
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { freshApp, makeCtx } from './harness';
@@ -149,32 +149,32 @@ describe('yearGrid', () => {
   });
 });
 
-describe('optional columns are opt-in, and PIN is off by default', () => {
-  it('defaults to guardian phones and does NOT include PINs', async () => {
+describe('optional columns are opt-in', () => {
+  it('defaults to guardian phones and nothing else', async () => {
     const { admin } = await seed();
     const g = await admin.billing.yearGrid();
     expect(g.columns).toEqual(['guardianPhones']);
     const yusuf = g.rows.find((r) => r.firstName === 'Yusuf')!;
     expect(yusuf.extra.guardianPhones).toEqual(['(901) 949-2646']);
     // Absent from the payload entirely, not merely blank.
-    expect('pin' in yusuf.extra).toBe(false);
+    expect('studentCode' in yusuf.extra).toBe(false);
     expect('dob' in yusuf.extra).toBe(false);
     expect('balanceCents' in yusuf.extra).toBe(false);
   });
 
-  it('includes PINs only once an admin switches that column on', async () => {
+  it('includes a column only once an admin switches it on', async () => {
     const { admin } = await seed();
-    await admin.billing.yearViewColumnsSet({ columns: ['pin', 'balance', 'guardianNames'] });
+    await admin.billing.yearViewColumnsSet({ columns: ['studentId', 'balance', 'guardianNames'] });
     const g = await admin.billing.yearGrid();
-    expect(g.columns.sort()).toEqual(['balance', 'guardianNames', 'pin']);
+    expect(g.columns.sort()).toEqual(['balance', 'guardianNames', 'studentId']);
     const yusuf = g.rows.find((r) => r.firstName === 'Yusuf')!;
-    expect(yusuf.extra.pin).toMatch(/^\d{6}$/);
+    expect(yusuf.extra.studentCode).toMatch(/^[A-Z]{3}\d{4}$/);
     expect(yusuf.extra.guardianNames).toEqual(['Abu Yusuf']);
     expect(typeof yusuf.extra.balanceCents).toBe('number');
     // Turning it back off removes it again.
     await admin.billing.yearViewColumnsSet({ columns: [] });
     const g2 = await admin.billing.yearGrid();
-    expect('pin' in g2.rows[0].extra).toBe(false);
+    expect('studentCode' in g2.rows[0].extra).toBe(false);
   });
 
   it('reports the balance a family actually owes', async () => {
@@ -193,7 +193,7 @@ describe('walls', () => {
     const finance = caller('finance');
     expect((await finance.billing.yearGrid()).rows).toHaveLength(3);
     expect((await finance.billing.yearViewColumnsGet()).enabled).toEqual(['guardianPhones']);
-    await expect(finance.billing.yearViewColumnsSet({ columns: ['pin'] })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(finance.billing.yearViewColumnsSet({ columns: ['guardianEmails'] })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it('a parent cannot read the grid, and admin over the tunnel is refused', async () => {

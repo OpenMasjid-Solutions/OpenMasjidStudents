@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * The human-readable student ID (`YUS1234`) — generation, the awkward names, uniqueness, the boot
- * backfill, and the security line the Fabric must hold: a code establishes WHO, the PIN still
- * authorises WHAT. A code alone must never release a balance, an invoice or a sibling list.
+ * The human-readable student ID (`YUS1234`) — generation, the awkward names, uniqueness, and the boot
+ * backfill. Since there is no PIN behind it, the ID is the whole credential in the payment flow, which
+ * makes two of its properties load-bearing: it must be UNIQUE per install (two children sharing one
+ * would let a payment land on the wrong record) and it must be generated, never chosen.
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { freshApp, makeCtx } from './harness';

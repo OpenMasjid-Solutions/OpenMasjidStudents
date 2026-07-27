@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * Minimal structured logger. NEVER log secrets, PINs, PII, or request bodies
+ * Minimal structured logger. NEVER log secrets, PII, or request bodies
  * (CLAUDE.md §14 — ids and event names only). Kept tiny on purpose.
  */
 type Level = 'info' | 'warn' | 'error';

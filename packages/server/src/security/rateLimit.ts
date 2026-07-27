@@ -112,21 +112,18 @@ export class SubmitLimiter {
 export const applyBurstLimiter = new SubmitLimiter(5, 10 * 60_000); // 5 / 10 min
 export const applyDailyLimiter = new SubmitLimiter(20, 24 * 60 * 60_000); // 20 / day
 
-/** Per-PIN lookup lockout for the Fabric name+PIN payment lookup (§14): 10 failed matches/hour on a
- *  given PIN → that PIN is temporarily locked (and finance is notified). Compensates for the PIN's
- *  low entropy. Keyed by the SUPPLIED pin; a success resets it. */
-export const pinLookupLimiter = new LoginLimiter({ maxFailures: 10, windowMs: 60 * 60_000, blockMs: 60 * 60_000 });
-
 /**
- * Per-student-ID lockout for the kiosk's confirm-the-name step (§11.2, §14).
+ * Per-student-ID lockout — THE compensating control for the whole student-ID surface (§11.2, §14).
  *
- * A student ID is `ABC1234` — 3 letters derived from the first name plus 4 digits — so it is far more
- * guessable than a PIN, and a successful probe reveals a first name + last initial. That makes this
- * the app's cheapest name-enumeration surface, so it is capped HARDER than the PIN (6 tries, not 10)
- * and keyed on the supplied code. A success resets it.
+ * A student ID is `ABC1234` — 3 letters derived from the first name plus 4 digits — and since 0.39.0
+ * it is the only identifier in the payment flow; there is no PIN behind it. That makes this limiter,
+ * not a secret, what stops someone sweeping the ID space: 6 failed probes/hour on a given code, then
+ * that code is locked for an hour and an alert is raised. Keyed on the SUPPLIED code; a success
+ * resets it.
  *
- * Note it is deliberately NOT reset by a later successful PIN lookup: the two are separate probes,
- * and someone sweeping codes should not be able to launder their failures with one good login.
+ * Every secret-less code probe shares this one bucket on purpose — the kiosk's confirm-the-name step,
+ * the Fabric balance lookup, and parent self-registration are all the same guess against the same
+ * identifier, so laundering failures by switching endpoints must not work.
  */
 export const codeLookupLimiter = new LoginLimiter({ maxFailures: 6, windowMs: 60 * 60_000, blockMs: 60 * 60_000 });
 
@@ -137,6 +134,6 @@ export const resetRequestLimiter = new SubmitLimiter(5, 15 * 60_000); // 5 / 15 
  *  256-bit + unguessable; this just caps hammering). */
 export const resetConfirmLimiter = new LoginLimiter({ maxFailures: 10, windowMs: 15 * 60_000, blockMs: 15 * 60_000 });
 
-/** Parent self-registration — per-IP fixed-window cap (§12/§14): the endpoint takes a name + PIN, so
- *  it's throttled per IP (on top of the per-PIN lockout that pinLookupLimiter enforces on the PIN). */
+/** Parent self-registration — per-IP fixed-window cap (§12/§14): the endpoint takes a student ID, so
+ *  it's throttled per IP on top of the per-code lockout `codeLookupLimiter` enforces on the ID. */
 export const registerLimiter = new SubmitLimiter(8, 15 * 60_000); // 8 / 15 min

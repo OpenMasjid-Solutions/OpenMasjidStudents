@@ -5,9 +5,8 @@
  * Writes are admin-only; directory + record reads are admin OR finance (§5). Teachers
  * (own-class students) and parents (own family) get scoped reads once classes and
  * portal accounts exist — until then those roles simply have no access here (walls err
- * toward deny). Students are withdrawn, families archived — never hard-deleted (§9).
- * Every create/update/withdraw and every PIN regeneration is audited; PINs never enter
- * the audit detail or logs (§14).
+ * toward deny). Students are withdrawn, families archived — never hard-deleted (§9),
+ * except the explicit `studentDelete` path below. Every create/update/withdraw is audited.
  */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
@@ -29,7 +28,6 @@ import {
   users,
 } from '../db/schema';
 import { rid } from '../db/ids';
-import { generateUniquePin } from '../billing/pins';
 import { generateUniqueStudentCode } from '../billing/studentCodes';
 import { audit } from '../audit';
 import { IMPORT_FIELDS, validateRows, commitRows, type ImportRow } from '../people/import';
@@ -82,8 +80,7 @@ function requireStudent(id: string) {
 
 export const peopleRouter = router({
   // ── Directory (admin | finance) ────────────────────────────────────────────
-  /** Families with their students + guardians. NO PINs in the bulk view (PINs come
-   *  from the per-student record). */
+  /** Families with their students + guardians. */
   directory: adminOrFinanceProcedure.query(() => {
     const fams = db.select().from(families).all();
     const ids = fams.map((f) => f.id);
@@ -117,8 +114,7 @@ export const peopleRouter = router({
     }));
   }),
 
-  /** One family with everything on the record — students (incl. PIN, for admin/finance),
-   *  guardians, emergency contacts. */
+  /** One family with everything on the record — students, guardians, emergency contacts. */
   familyGet: adminOrFinanceProcedure.input(z.object({ id: ID })).query(({ input }) => {
     const fam = requireFamily(input.id);
     const studs = db.select().from(students).where(eq(students.familyId, fam.id)).all();
@@ -183,8 +179,8 @@ export const peopleRouter = router({
     }),
 
   // ── Students (admin write) ─────────────────────────────────────────────────
-  /** Create a student and auto-generate a unique PIN (§9). Returns the PIN once so the
-   *  admin can note/print it; thereafter it's on the student record (admin/finance).
+  /** Create a student and auto-generate their unique Student ID (§9) — returned so the admin can
+   *  note it straight away; thereafter it's on the student record and the statement.
    *
    *  A FEE PLAN IS REQUIRED: a student who exists but is on no plan is invisible to invoice
    *  generation, which is how a child silently stops being billed. The plan and the student are
@@ -215,7 +211,6 @@ export const peopleRouter = router({
       }
       const id = rid('stu');
       const ts = now();
-      const pin = generateUniquePin();
       // The typed ID a parent uses at the kiosk. Derived from the first name, so it is generated
       // here rather than accepted from the caller — never importable, never chosen (§14).
       const studentCode = generateUniqueStudentCode(input.firstName);
@@ -230,8 +225,6 @@ export const peopleRouter = router({
             status: 'active',
             notes: blankToNull(input.notes),
             classId: input.classId ?? null,
-            pin,
-            pinUpdatedAt: ts,
             studentCode,
             createdAt: ts,
             updatedAt: ts,
@@ -241,9 +234,8 @@ export const peopleRouter = router({
           .values({ id: rid('stf'), studentId: id, feePlanId: input.feePlanId, overrideAmountCents: input.overrideAmountCents ?? null, note: input.feeNote || null, createdAt: ts, updatedAt: ts })
           .run();
       });
-      // Audit records the event, NEVER the PIN (§14).
       audit(auditActor(ctx), 'student.create', { entity: 'student', entityId: id, detail: { familyId: input.familyId, feePlanId: input.feePlanId, classId: input.classId ?? null } });
-      return { id, pin };
+      return { id, studentCode };
     }),
 
   studentUpdate: adminProcedure
@@ -271,7 +263,6 @@ export const peopleRouter = router({
       return { ok: true as const };
     }),
 
-  /** Regenerate a student's PIN (admin | finance) — audited, PIN value never recorded. */
   /** Move a student into another family — the "add siblings" path. Guardians and emergency
    *  contacts attach to the FAMILY, so linking a student to their siblings' family is what makes
    *  the parent/guardian details apply to them; nothing is copied per-student.
@@ -302,7 +293,7 @@ export const peopleRouter = router({
     .mutation(({ input }) => validateRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null })),
 
   /** Commit. Re-validates and writes everything in ONE transaction — all rows land or none do.
-   *  Returns each new student's PIN once so the admin can print them (never logged, never audited). */
+   *  Returns each new student's ID so the admin can print them (never logged, never audited). */
   importCommit: adminProcedure
     .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional() }))
     .mutation(({ ctx, input }) => {
@@ -315,18 +306,10 @@ export const peopleRouter = router({
         }
         throw e;
       }
-      // Counts only: never the names or the PINs (§14).
+      // Counts only: never the names or the Student IDs (§14).
       audit(auditActor(ctx), 'student.import', { entity: 'people', detail: { created: res.created, familiesCreated: res.familiesCreated, guardiansCreated: res.guardiansCreated } });
       return res;
     }),
-
-  pinRegenerate: adminOrFinanceProcedure.input(z.object({ studentId: ID })).mutation(({ ctx, input }) => {
-    const s = requireStudent(input.studentId);
-    const pin = generateUniquePin();
-    db.update(students).set({ pin, pinUpdatedAt: now(), updatedAt: now() }).where(eq(students.id, s.id)).run();
-    audit(auditActor(ctx), 'student.pin.regenerate', { entity: 'student', entityId: s.id });
-    return { pin };
-  }),
 
   /**
    * Can this student be deleted outright, and if not, why not?

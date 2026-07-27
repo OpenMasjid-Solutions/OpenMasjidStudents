@@ -61,15 +61,12 @@ export function getAutoInvoiceLast(): string | null {
 
 /** Optional columns the admin can switch on in the year view, beyond the fixed
  *  name / paying / month grid. */
-export const YEAR_VIEW_COLUMNS = ['studentId', 'dob', 'guardianNames', 'guardianPhones', 'guardianEmails', 'balance', 'pin'] as const;
+export const YEAR_VIEW_COLUMNS = ['studentId', 'dob', 'guardianNames', 'guardianPhones', 'guardianEmails', 'balance'] as const;
 export type YearViewColumn = (typeof YEAR_VIEW_COLUMNS)[number];
 
 /** Which optional columns the year view shows. Defaults to guardian phone numbers — the column an
- *  office actually keeps beside a payment grid.
- *
- *  `pin` is available but OFF by default on purpose: a PIN is a capability token that pays tuition,
- *  and a whole-school grid carrying every child's PIN is a much broader exposure than the per-family
- *  statement that is meant to (§14). The admin opts in knowingly. */
+ *  office actually keeps beside a payment grid. Everything else is opt-in, so a page that gets
+ *  printed and left on a desk carries only what the admin asked for (§14). */
 export function getYearViewColumns(): YearViewColumn[] {
   const raw = getSetting(SETTING_KEYS.yearViewColumns);
   if (!raw) return ['guardianPhones'];

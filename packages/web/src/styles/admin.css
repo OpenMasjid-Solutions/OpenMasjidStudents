@@ -158,7 +158,7 @@
   text-align: end;
   white-space: nowrap;
 }
-.pin {
+.code {
   font-family: var(--mono, ui-monospace, monospace);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.12em;
@@ -384,7 +384,7 @@
 
 /* ── Phone layout for the surfaces a volunteer actually uses on a phone ────────
    Scope: the Students list, the Year view and Billing — the things finance and the
-   office check on the move (a balance, an invoice, a student's PIN, a printout).
+   office check on the move (a balance, an invoice, a Student ID, a printout).
    The deep admin settings forms are deliberately left alone; they are desk work.
 
    Two problems to fix on a small screen: headers/forms that assume a wide row, and

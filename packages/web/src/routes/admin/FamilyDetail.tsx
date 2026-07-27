@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
-/** One family's record (window content): students (PIN + regenerate + withdraw),
+/** One family's record (window content): students (Student ID + withdraw + delete + move),
  *  guardians, emergency contacts. */
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -19,7 +19,6 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
 
   const addStudent = trpc.people.studentCreate.useMutation();
   const updateStudent = trpc.people.studentUpdate.useMutation();
-  const regen = trpc.people.pinRegenerate.useMutation();
   const addGuardian = trpc.people.guardianCreate.useMutation();
   const updateGuardian = trpc.people.guardianUpdate.useMutation();
   const deleteStudent = trpc.people.studentDelete.useMutation();
@@ -81,10 +80,6 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
   }
   async function toggleWithdraw(id: string, status: 'active' | 'withdrawn') {
     await updateStudent.mutateAsync({ id, status: status === 'active' ? 'withdrawn' : 'active' });
-    await refresh();
-  }
-  async function regenerate(id: string) {
-    await regen.mutateAsync({ studentId: id });
     await refresh();
   }
   /** Turn the server's reason for not emailing into something the office can act on. */
@@ -170,18 +165,16 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
-              <thead><tr><th>{t('directory.name')}</th><th>{t('directory.studentId')}</th><th>{t('directory.pin')}</th><th>{t('directory.status')}</th><th className="actions" /></tr></thead>
+              <thead><tr><th>{t('directory.name')}</th><th>{t('directory.studentId')}</th><th>{t('directory.status')}</th><th className="actions" /></tr></thead>
               <tbody>
                 {students.map((s) => (
                   <tr key={s.id}>
                     <td>{s.firstName} {s.lastName}</td>
-                    {/* The ID a parent types at the kiosk. Not a secret (it is on the statement and
-                        derived from the first name) — the PIN beside it is what authorises a payment. */}
-                    <td><span className="pin">{s.studentCode ?? '—'}</span></td>
-                    <td><span className="pin">{s.pin}</span></td>
+                    {/* The ID a parent types to pay, at the kiosk or on the donation site. Read it out
+                        freely — it is printed on the statement and is not a secret. */}
+                    <td><span className="code">{s.studentCode ?? '—'}</span></td>
                     <td>{s.status === 'withdrawn' ? <span className="chip is-muted">{t('directory.withdrawn')}</span> : <span className="chip">{t('directory.active')}</span>}</td>
                     <td className="actions">
-                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => regenerate(s.id)} disabled={regen.isPending}>{t('directory.regeneratePin')}</button>
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
                       {/* Delete is for a mistake — a duplicate or a child who never enrolled. A student
                           who has been billed is part of the invoice history and can only be withdrawn,
@@ -232,7 +225,7 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
             <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>
           </form>
         )}
-        {showStudent && <p className="hint">{t('directory.pinHint')}</p>}
+        {showStudent && <p className="hint">{t('directory.idHint')}</p>}
       </section>
 
       {/* Guardians */}

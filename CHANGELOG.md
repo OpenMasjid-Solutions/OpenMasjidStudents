@@ -9,6 +9,37 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+### Removed
+
+- **Student PINs are gone.** Paying tuition on the donation site or at the kiosk now takes only the
+  child's **Student ID** — type it, check the name the screen shows back, then pay for any of your
+  children from there. No keypad, no second number to remember, nothing to reissue when a parent
+  forgets it.
+  - Why it's safe: the only thing anyone can do with someone else's Student ID is *pay their tuition*.
+    There is no route from an ID to changing a record, reading a phone number, or taking money out. A
+    secret that buys nothing and costs every parent friction at a kiosk was the wrong trade.
+  - What protects it instead: the **name-confirmation step** (which catches the realistic mistake — a
+    mistyped ID — in a way a PIN never did), and a **hard per-ID lockout**: 6 failed attempts on one ID
+    per hour locks it for an hour and raises an admin alert. The kiosk name check, the balance lookup
+    and parent sign-up all share one lockout, so failures can't be laundered by switching screens.
+  - Parent self-sign-up now asks for the **Student ID plus an email the office already has on file**.
+    The email half is deliberate: an ID alone may pay, but creating an *account* needs an address the
+    school chose, so an invite can only ever land in an inbox already on the record.
+  - Gone with it: the PIN column on the student record and the statement, the "New PIN" button, the
+    year-view PIN column, and the `students.pin` / `pin_updated_at` columns (migration `0025`).
+
+### Changed
+
+- **Fabric contract `students/billing` → `v: 2`** (breaking, `lookup` only). `lookup` takes
+  `studentCode` and nothing else; `name` and `pin` are gone, and a v1-shaped body now gets a `400`
+  rather than half-working. `info`, `record-payment` and `check` are unchanged and still accept
+  `"v": 1`, so a Donations or Kiosk build that hasn't shipped its update keeps its **money path**
+  working — only its lookup screen needs the change. See
+  [`docs/FABRIC_BILLING_CONTRACT.md`](docs/FABRIC_BILLING_CONTRACT.md) §11.0 for the migration note.
+- The `pin-lockout` admin alert is now **`lookup-lockout`** ("Tuition Student ID lookup locked"). The
+  id changes in the manifest, so the alert starts working again once the catalog entry updates.
+- CSV student export and the year view now carry the Student ID where they used to offer a PIN column.
+
 ## [0.38.0]
 
 ### Added

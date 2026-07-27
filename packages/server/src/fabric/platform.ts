@@ -51,12 +51,6 @@ export async function probePlatformSession(cookieHeader: string | undefined): Pr
   }
 }
 
-/**
- * Fire a notification to the masjid webhook via the OS core (CLAUDE.md §4 — payments, autopay
- * failures, new admissions, per-PIN lockouts). The OS `/api/fabric/notify` contract is
- * `{ title?, text (required), level? }` (verified against the platform code). Best-effort: no-op when
- * the platform isn't wired in, never throws. `text` MUST NOT carry PII (never a name+amount pair, §14).
- */
 /** A non-secret reference to a Stripe account in the OS vault, for the in-app picker. */
 export interface StripeAccountRef {
   id: string;
@@ -198,7 +192,7 @@ export async function sendPlatformEmail(to: string, subject: string, text: strin
 // ── Admin alerts (manifest `alerts:`) ────────────────────────────────────────
 /** The alert ids we declare in manifest.yaml. Declaring one IS the authorization — the platform
  *  refuses any id an app didn't declare — and the admin picks email/webhook/off per alert. */
-export type AlertId = 'autopay-disabled' | 'pin-lockout' | 'reconcile-recovered' | 'test';
+export type AlertId = 'autopay-disabled' | 'lookup-lockout' | 'reconcile-recovered' | 'test';
 
 /** The platform's alert severities. Note these are NOT `notifyPlatform`'s levels — that endpoint
  *  takes `warn`, this one takes `warning`, and sending the wrong word silently downgrades to the
@@ -240,6 +234,15 @@ export async function raiseAlert(id: AlertId, text: string, opts: { title?: stri
   }
 }
 
+/**
+ * Fire a notification to the masjid webhook via the OS core (CLAUDE.md §4 — payments, autopay
+ * failures, Student-ID lookup lockouts). The OS `/api/fabric/notify` contract is
+ * `{ title?, text (required), level? }` (verified against the platform code). Best-effort: no-op when
+ * the platform isn't wired in, never throws. `text` MUST NOT carry PII (never a name+amount pair, §14).
+ *
+ * Prefer `raiseAlert` for anything security-relevant: this endpoint is webhook-only and silently dead
+ * until an admin configures one, whereas an alert can reach their email.
+ */
 export async function notifyPlatform(text: string, opts: { title?: string; level?: 'info' | 'warn' | 'error' } = {}): Promise<void> {
   if (!fabricConfigured()) return;
   try {

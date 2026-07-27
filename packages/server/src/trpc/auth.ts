@@ -21,10 +21,10 @@ import { createSession, destroySession, cookieOptions, COOKIE, COOKIE_PATH, SSO_
 import { probePlatformSession, raiseAlert } from '../fabric/platform';
 import { fabricConfigured, config } from '../config';
 import { clientIp } from '../security/origin';
-import { loginLimiter, inviteAcceptLimiter, resetRequestLimiter, resetConfirmLimiter, registerLimiter, pinLookupLimiter } from '../security/rateLimit';
+import { loginLimiter, inviteAcceptLimiter, resetRequestLimiter, resetConfirmLimiter, registerLimiter, codeLookupLimiter } from '../security/rateLimit';
 import { audit } from '../audit';
 import { mintInvite, portalBase } from '../auth/invites';
-import { nameMatches } from '../people/match';
+import { normalizeStudentCode } from '../billing/studentCodes';
 import { sendInvite, sendReset, mailAvailable } from '../mail/notify';
 import { getSelfRegistrationEnabled } from '../settings';
 
@@ -370,45 +370,46 @@ export const authRouter = router({
    *  link is emailed). */
   registerConfig: publicProcedure.query(() => ({ available: getSelfRegistrationEnabled() && mailAvailable() && !!portalBase() })),
 
-  /** Self-registration door 2 (§12): a parent proves they belong by a child's name + PIN + a guardian
-   *  email ALREADY on file — all matching the SAME family (a PIN alone is not enough). On a full match
-   *  we email that guardian a portal invite (the verify link IS the invite link). ALWAYS returns
-   *  { ok: true } — never an oracle about which part matched (§14) — and is throttled per IP AND per
-   *  PIN (pinLookupLimiter, shared with the Fabric lookup) since the PIN is low-entropy. */
+  /** Self-registration door 2 (§12): a parent proves they belong by a child's Student ID + a guardian
+   *  email ALREADY on file for that child's family. Two independent facts, and the email is the one
+   *  that matters — the ID alone can only ever *pay* (§11.2), so minting an ACCOUNT off it would be a
+   *  real escalation; requiring an on-file address means the invite can only ever land in an inbox the
+   *  office already recorded. ALWAYS returns { ok: true } — never an oracle about which part matched
+   *  (§14) — and is throttled per IP AND per code (codeLookupLimiter, the same bucket the Fabric
+   *  lookup uses, so probing IDs here instead is not a way around it). */
   register: publicProcedure
-    .input(z.object({ childName: z.string().trim().min(1).max(120), pin: z.string().trim().min(1).max(20), email: USERNAME }))
+    .input(z.object({ studentCode: z.string().trim().min(1).max(32), email: USERNAME }))
     .mutation(async ({ ctx, input }) => {
       if (!registerLimiter.allow(clientIp(ctx.req))) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in a little while.' });
       // Door closed (toggle off / no mail transport / no public URL) → behave exactly like a non-match.
       if (!getSelfRegistrationEnabled() || !mailAvailable() || !portalBase()) return { ok: true as const };
-      const pin = input.pin.trim();
+      const code = normalizeStudentCode(input.studentCode);
       const email = input.email.trim().toLowerCase();
-      // A locked PIN behaves as a non-match (no signal it's otherwise valid).
-      if (pinLookupLimiter.retryAfterMs(pin) > 0) return { ok: true as const };
-      const student = db.select({ firstName: students.firstName, lastName: students.lastName, familyId: students.familyId, status: students.status }).from(students).where(eq(students.pin, pin)).get();
-      const nameOk = !!student && student.status === 'active' && nameMatches(input.childName, student.firstName, student.lastName);
+      // A locked code behaves as a non-match (no signal it's otherwise valid).
+      if (!code || codeLookupLimiter.retryAfterMs(code) > 0) return { ok: true as const };
+      const student = db.select({ familyId: students.familyId, status: students.status }).from(students).where(eq(students.studentCode, code)).get();
       // The email must belong to a guardian ON THE SAME family.
-      const guardian = nameOk
+      const guardian = student && student.status === 'active'
         ? db
             .select({ id: guardians.id })
             .from(guardians)
             .innerJoin(guardianFamilies, eq(guardianFamilies.guardianId, guardians.id))
-            .where(and(eq(guardianFamilies.familyId, student!.familyId), eq(sql`lower(coalesce(${guardians.email}, ''))`, email)))
+            .where(and(eq(guardianFamilies.familyId, student.familyId), eq(sql`lower(coalesce(${guardians.email}, ''))`, email)))
             .get()
         : undefined;
       if (!guardian) {
-        const wasLocked = pinLookupLimiter.retryAfterMs(pin) > 0;
-        pinLookupLimiter.fail(pin);
+        const wasLocked = codeLookupLimiter.retryAfterMs(code) > 0;
+        codeLookupLimiter.fail(code);
         // An alert (email-capable), not a webhook-only notification — see fabric/provider.ts.
-        if (!wasLocked && pinLookupLimiter.retryAfterMs(pin) > 0) void raiseAlert('pin-lockout', 'A self-registration name + PIN lookup was locked after repeated failed attempts.', { title: 'Signup lookup locked' });
+        if (!wasLocked && codeLookupLimiter.retryAfterMs(code) > 0) void raiseAlert('lookup-lockout', 'A self-registration Student ID lookup was locked after repeated failed attempts.', { title: 'Signup lookup locked' });
         return { ok: true as const }; // generic — no enumeration (§14)
       }
-      pinLookupLimiter.succeed(pin);
+      codeLookupLimiter.succeed(code);
       // Mint + email a portal invite for the matched guardian (the verify link = the invite link). If
       // that guardian already has an account (mintInvite !ok), we simply send nothing — still generic.
       // The send is FIRE-AND-FORGET (not awaited) so a full match doesn't take observably longer than
-      // a non-match — otherwise the SMTP round-trip is a timing oracle that leaks a valid name+PIN
-      // (§14). Mirrors resetRequest. The invite row is already minted synchronously above.
+      // a non-match — otherwise the mail round-trip is a timing oracle that leaks a valid ID + email
+      // pair (§14). Mirrors resetRequest. The invite row is already minted synchronously above.
       const inv = mintInvite(guardian.id, null);
       if (inv.ok) {
         audit({ userId: null, role: null, name: null }, 'self_register.invite', { entity: 'guardian', entityId: guardian.id });

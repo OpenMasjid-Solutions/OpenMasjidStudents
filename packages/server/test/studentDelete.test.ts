@@ -92,10 +92,10 @@ describe('studentDelete', () => {
     expect(app.dbmod.db.select().from(students).where(eq(students.id, studentId)).get()!.status).toBe('withdrawn');
   });
 
-  it('frees the deleted student’s ID and PIN for reuse (both are UNIQUE)', async () => {
+  it('frees the deleted student’s ID for reuse (it is UNIQUE per install)', async () => {
     const { admin, famId, planId, studentId } = await seed();
     await admin.people.studentDelete({ studentId });
-    // Creating another Yusuf must not trip the unique index on either column.
+    // Creating another Yusuf must not trip the unique index on student_code.
     const again = await admin.people.studentCreate({ familyId: famId, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
     expect(app.dbmod.db.select().from(students).where(eq(students.id, again.id)).get()!.studentCode).toMatch(/^YUS\d{4}$/);
   });

@@ -243,8 +243,7 @@ export const structureRouter = router({
     return { ok: true as const };
   }),
 
-  /** Students grouped by course → class for the Students tab, with the unplaced bucket last.
-   *  No PINs here (they come from the per-student record, §14). */
+  /** Students grouped by course → class for the Students tab, with the unplaced bucket last. */
   studentsByClass: adminOrFinanceProcedure.input(z.object({ includeWithdrawn: z.boolean().optional() }).optional()).query(({ input }) => {
     const rows = db
       .select({

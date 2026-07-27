@@ -61,19 +61,21 @@ describe('buildFamilyStatementHtml', () => {
     expect(await statements.buildFamilyStatementHtml('fam_nope', 'http://host')).toBeNull();
   });
 
-  it('renders balance, the open invoice, the payment, each child PIN, and the portal-signup QR', async () => {
+  it('renders balance, the open invoice, the payment, each child’s Student ID, and the portal-signup QR', async () => {
     const { familyId, studentId } = await seed();
-    const pin = app.dbmod.db.select().from(students).all().find((s) => s.id === studentId)!.pin;
+    const code = app.dbmod.db.select().from(students).all().find((s) => s.id === studentId)!.studentCode!;
     const html = (await statements.buildFamilyStatementHtml(familyId, 'https://school.example.org/'))!;
     expect(html).toContain('Our Madrasa'); // default school name
     expect(html).toContain('Ismail'); // family name
     expect(html).toContain('Yusuf'); // student
-    expect(html).toContain(pin); // the child's PIN is printed on the statement (§4)
+    expect(html).toContain(code); // the child's Student ID is printed on the statement (§4)
     expect(html).toContain('Tuition — Jul 2026'); // the open invoice ($50 total, $20 paid → $30 open)
     expect(html).toContain('$30.00'); // remaining invoice balance
     expect(html).toContain('$30.00'); // owed balance too
     expect(html).toContain('Cash'); // the recorded payment channel
-    expect(html).toContain("child's name + PIN"); // the pay-by-name+PIN hint
+    expect(html).toContain("child's Student ID"); // the how-to-pay hint
+    // No PIN concept survives anywhere on the printed page (§11.2).
+    expect(html).not.toMatch(/PIN/i);
     // The portal-signup QR is embedded as a data URI, and the link is the base + /family/register.
     expect(html).toContain('data:image/png;base64,');
     expect(html).toContain('https://school.example.org/family/register');

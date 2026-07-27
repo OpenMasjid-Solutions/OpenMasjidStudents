@@ -79,7 +79,7 @@
   margin-block-end: 0.6rem;
 }
 .kid-row .kid-name { font-weight: 600; }
-.kid-row .kid-pin {
+.kid-row .kid-code {
   margin-inline-start: auto;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   letter-spacing: 0.14em;
@@ -87,7 +87,7 @@
   font-size: 1.02rem;
   color: var(--color-text, #eaf3ee);
 }
-.kid-row .kid-pin .pin-lbl { display: block; font-family: inherit; font-size: 0.62rem; letter-spacing: 0.06em; color: var(--color-text-muted, #9fb4aa); text-align: end; font-weight: 600; }
+.kid-row .kid-code .code-lbl { display: block; font-family: inherit; font-size: 0.62rem; letter-spacing: 0.06em; color: var(--color-text-muted, #9fb4aa); text-align: end; font-weight: 600; }
 
 .list-row .row-main { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
 .list-row .row-title { font-weight: 550; }
@@ -97,7 +97,7 @@
 .list-row .row-amt.pos { color: var(--color-success, #46c99a); }
 
 .fam-empty { color: var(--color-text-muted, #9fb4aa); font-size: 0.92rem; padding: 0.5rem 0.25rem; }
-/* A one-line explainer under a list — how to actually use the ID + PIN above it. */
+/* A one-line explainer under a list — how to actually use the Student IDs above it. */
 .fam-hint { color: var(--color-text-muted, #9fb4aa); font-size: 0.85rem; line-height: 1.45; margin: 0.5rem 0.25rem 0; }
 
 /* Attendance tallies — four compact stat cards. */

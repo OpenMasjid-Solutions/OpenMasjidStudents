@@ -4,7 +4,8 @@
  * Authed serving of printable family statements (CLAUDE.md §4, §5, §14). Registered before the
  * SPA fallback and excluded from the tRPC/session middleware — it gates itself: session from the
  * cookie, role must be admin (LAN only) or finance (LAN + tunnel), re-checked on every request.
- * The statement embeds student PINs, so it is NEVER on a public static mount.
+ * The statement carries a family's balance, payment history and every child's Student ID, so it is
+ * NEVER on a public static mount.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getSession, COOKIE } from '../auth/sessions';

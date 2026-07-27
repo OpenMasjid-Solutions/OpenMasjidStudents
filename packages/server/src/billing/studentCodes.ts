@@ -3,18 +3,22 @@
 /**
  * The human-readable student ID: first three letters of the first name + 4 digits — `YUS1234`.
  *
- * WHAT IT IS FOR. A parent at the kiosk types this instead of spelling a full name. The kiosk then
- * echoes the matched child's name back and asks "is this the right one?", which catches a mistyped
- * code before any money moves.
+ * WHAT IT IS FOR. A parent at the kiosk or on the donation site types this instead of spelling a full
+ * name. The consumer then echoes the matched child's name back and asks "is this the right one?",
+ * which catches a mistyped code before any money moves. Since 0.39.0 it is the ONLY identifier in
+ * that flow — there is no PIN behind it.
  *
  * WHAT IT IS NOT. It is **not** a secret and must never be treated as one:
  *   - the letters are derived from the child's first name, so a third of it is public by design;
  *   - 4 digits is ~10k guesses per prefix, trivially brute-forced without a limiter;
  *   - it is printed on statements and shown on staff screens.
- * So the code answers *who*, and the PIN still answers *may you*. Nothing payable — no balance, no
- * invoice, no sibling list — is released on a code alone (§11.2, §14). The one thing a code alone
- * reveals is a first name + last initial, which is exactly what the sibling list already exposes,
- * and it is rate-limited per code with the same lockout the PIN gets.
+ * That is deliberate rather than a gap, because of what the code can actually do: see a balance and
+ * *pay* it. There is no path from a code to changing a record, reading contact details, or taking
+ * money out, so the worst outcome of a guessed code is a stranger settling a child's tuition. What
+ * compensates is a hard per-code lockout (`codeLookupLimiter`) plus the name-confirmation step — not
+ * a shared secret, which would cost every parent friction at the kiosk to buy very little (§11.2,
+ * §14). Minting a portal ACCOUNT is the one thing a code cannot do alone: that also needs a guardian
+ * email already on file (trpc/auth.ts `register`).
  *
  * FORMAT RULES, all deterministic so the same name always produces the same prefix:
  *   - strip diacritics (Yūsuf → YUSUF) and keep A-Z only, so punctuation and spaces never appear;

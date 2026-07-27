@@ -175,8 +175,8 @@ describe('commit is all-or-nothing', () => {
     });
     expect(r).toMatchObject({ created: 3, familiesCreated: 2, guardiansCreated: 1 });
     expect(r.students).toHaveLength(3);
-    for (const s of r.students) expect(s.pin).toMatch(/^\d{6}$/);
-    expect(new Set(r.students.map((s) => s.pin)).size).toBe(3); // PINs unique
+    for (const s of r.students) expect(s.studentCode).toMatch(/^[A-Z]{3}\d{4}$/);
+    expect(new Set(r.students.map((s) => s.studentCode)).size).toBe(3); // Student IDs unique
 
     // Siblings really share one family.
     const grouped = await admin.structure.studentsByClass();
@@ -209,14 +209,14 @@ describe('commit is all-or-nothing', () => {
     expect(detail.guardians).toHaveLength(1);
   });
 
-  it('audits counts only — never names or PINs', async () => {
+  it('audits counts only — never names or Student IDs', async () => {
     const { admin, planId } = await base();
     const r = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ firstName: 'Yusuf', lastName: 'Ismail' }] });
     const entry = app.dbmod.db.select().from(auditLog).all().find((e) => e.action === 'student.import')!;
     const detail = JSON.stringify(entry.detail ?? {});
     expect(detail).toContain('"created":1');
     expect(detail).not.toContain('Yusuf');
-    expect(detail).not.toContain(r.students[0].pin);
+    expect(detail).not.toContain(r.students[0].studentCode);
   });
 });
 

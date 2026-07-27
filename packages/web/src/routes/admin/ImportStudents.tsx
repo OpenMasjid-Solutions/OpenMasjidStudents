@@ -66,8 +66,8 @@ export function ImportStudents() {
 
   const requiredUnmapped = (fields.data ?? []).filter((f) => f.required && (mapping[f.key] ?? -1) < 0);
   const matchedCount = Object.values(mapping).filter((i) => i >= 0).length;
-  // Columns in the file that no field claims — most often an "ID" or "PIN" column, which this app
-  // always generates itself. Say so instead of dropping them silently.
+  // Columns in the file that no field claims — most often an "ID" column, which this app always
+  // generates itself. Say so instead of dropping them silently.
   const ignoredColumns = headers.filter((h, i) => h !== '' && !Object.values(mapping).includes(i));
 
   async function runPreview() {
@@ -225,7 +225,7 @@ export function ImportStudents() {
         </section>
       )}
 
-      {/* ── Step 4: done — PINs, shown once ─────────────────────────────── */}
+      {/* ── Step 4: done — the generated Student IDs ────────────────────── */}
       {step === 'done' && commit.data && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head">
@@ -236,15 +236,15 @@ export function ImportStudents() {
           <p className="hint">
             {t('import.summary', { students: commit.data.created, families: commit.data.familiesCreated, guardians: commit.data.guardiansCreated })}
           </p>
-          <p className="hint">{t('import.pinsOnce')}</p>
+          <p className="hint">{t('import.idsAssigned')}</p>
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
-              <thead><tr><th>{t('students.name')}</th><th>{t('directory.pin')}</th></tr></thead>
+              <thead><tr><th>{t('students.name')}</th><th>{t('directory.studentId')}</th></tr></thead>
               <tbody>
                 {commit.data.students.map((s) => (
                   <tr key={s.studentId}>
                     <td>{s.firstName} {s.lastName}</td>
-                    <td><span className="pin">{s.pin}</span></td>
+                    <td><span className="code">{s.studentCode}</span></td>
                   </tr>
                 ))}
               </tbody>

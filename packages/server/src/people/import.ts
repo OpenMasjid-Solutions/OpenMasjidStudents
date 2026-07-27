@@ -21,16 +21,15 @@ import { db } from '../db';
 import type { Tx } from '../billing/ledger';
 import { families, students, guardians, guardianFamilies, feePlans, studentFees, classes, courses } from '../db/schema';
 import { rid } from '../db/ids';
-import { generateUniquePin } from '../billing/pins';
 import { generateUniqueStudentCode } from '../billing/studentCodes';
 
 /** The canonical import fields. The web dialog fetches this to build the blank template AND to
  *  auto-match incoming headers, so there is exactly one source of truth for the column set.
  *
- *  THERE IS DELIBERATELY NO ID OR PIN FIELD. Student ids and PINs are always minted by this app —
- *  the PIN is a capability token that pays tuition and must be unique per install and CSPRNG, so
- *  it can never come from a spreadsheet. A file that carries an "ID" column has nothing to map it
- *  to, so it is ignored; the dialog lists ignored columns rather than dropping them silently. */
+ *  THERE IS DELIBERATELY NO ID FIELD. Student IDs are always minted by this app: an ID pays tuition,
+ *  so it must be unique per install and derived from the child's own first name, neither of which a
+ *  spreadsheet can guarantee. A file that carries an "ID" column has nothing to map it to, so it is
+ *  ignored; the dialog lists ignored columns rather than dropping them silently. */
 export const IMPORT_FIELDS = [
   { key: 'firstName', label: 'First name', required: true, aliases: ['first', 'first name', 'firstname', 'given name', 'name'] },
   { key: 'lastName', label: 'Last name', required: true, aliases: ['last', 'last name', 'lastname', 'surname', 'family name'] },
@@ -212,8 +211,9 @@ export interface CommitResult {
   created: number;
   familiesCreated: number;
   guardiansCreated: number;
-  /** PINs are returned ONCE so the admin can print them; they are never logged or audited (§14). */
-  students: { row: number; studentId: string; firstName: string; lastName: string; pin: string }[];
+  /** The generated Student IDs, so the admin can print them straight after an import. `studentId` is
+   *  the internal row id; `studentCode` is the ID a parent types (never logged or audited — §14). */
+  students: { row: number; studentId: string; firstName: string; lastName: string; studentCode: string }[];
 }
 
 /** Commit an import. Re-validates first and THROWS if anything is wrong, so the whole file either
@@ -259,9 +259,8 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
       const overrideAmountCents = amt === 'bad' || amt === null ? null : amt;
 
       const studentId = rid('stu');
-      const pin = generateUniquePin();
-      // Like the PIN, the kiosk ID is always generated here and never taken from the spreadsheet —
-      // an imported ID could collide with an existing child's or be chosen to impersonate one.
+      // The kiosk ID is always generated here and never taken from the spreadsheet — an imported ID
+      // could collide with an existing child's or be chosen to impersonate one.
       const studentCode = generateUniqueStudentCode(firstName);
       const dob = norm(r.dob);
       tx.insert(students)
@@ -274,8 +273,6 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
           status: 'active',
           notes: norm(r.note) || null,
           classId,
-          pin,
-          pinUpdatedAt: ts,
           studentCode,
           createdAt: ts,
           updatedAt: ts,
@@ -296,7 +293,7 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
       }
 
       result.created++;
-      result.students.push({ row: i, studentId, firstName, lastName, pin });
+      result.students.push({ row: i, studentId, firstName, lastName, studentCode });
     });
   });
 
