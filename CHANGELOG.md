@@ -64,6 +64,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   derives the split). `info`, `record-payment` and `check` still accept `"v": 1`, so a Donations or
   Kiosk build that hasn't shipped its update keeps its **money path** working — only its lookup screen
   needs the change. See [`docs/FABRIC_BILLING_CONTRACT.md`](docs/FABRIC_BILLING_CONTRACT.md) §11.0.
+  - **Action required in the consumer apps.** At this release both **OpenMasjid Donations** and
+    **OpenMasjid Kiosk** still ask for a student name and PIN, so **their tuition lookup screens stop
+    working on this version** until each ships its v2 update (the campaign tile and every other campaign
+    type are unaffected, as is any tuition payment already in flight). This deliberately isn't papered
+    over: PINs no longer exist anywhere in this app, so a compatibility shim would leave those screens
+    asking parents for a number that was never issued and accepting anything typed into it. A loud `400`
+    while the consumers are updated is the honest failure. Masajid using tuition at the kiosk or the
+    donation site should update all three apps together.
 
 ### Fixed
 
