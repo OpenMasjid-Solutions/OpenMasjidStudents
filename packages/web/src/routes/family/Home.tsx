@@ -24,6 +24,11 @@ export function FamilyHome() {
   if (!data || data.families.length === 0) return <div className="fam-empty">{t('family.noFamily')}</div>;
   const money = (c: number) => formatMoney(c, data.currency);
   const fmtDate = (v: unknown) => new Date(v as number).toLocaleDateString();
+  /** The child an invoice or payment belongs to. */
+  const kidName = (fam: (typeof data.families)[number], studentId: string) => {
+    const s = fam.students.find((k) => k.id === studentId);
+    return s ? `${s.firstName} ${s.lastName}`.trim() : '';
+  };
 
   return (
     <motion.div variants={staggerContainer} initial="initial" animate="animate" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -55,7 +60,18 @@ export function FamilyHome() {
                 <>
                   {fam.students.map((s) => (
                     <div key={s.id} className="kid-row glass">
-                      <span className="kid-name">{s.firstName} {s.lastName}</span>
+                      <span className="kid-name">
+                        {s.firstName} {s.lastName}
+                        {/* Each child has their own bill now, so say what each one owes. The big card
+                            above is still the single figure the parent pays. */}
+                        <span className="kid-sub">
+                          {s.balance.owedCents > 0
+                            ? t('family.kidOwes', { amount: money(s.balance.owedCents) })
+                            : s.balance.creditCents > 0
+                              ? t('family.kidCredit', { amount: money(s.balance.creditCents) })
+                              : t('family.kidSettled')}
+                        </span>
+                      </span>
                       {s.studentCode && <span className="kid-code"><span className="code-lbl">{t('directory.studentId')}</span>{s.studentCode}</span>}
                     </div>
                   ))}
@@ -73,8 +89,13 @@ export function FamilyHome() {
                 fam.invoices.map((i) => (
                   <div key={i.id} className="list-row glass">
                     <div className="row-main">
-                      <span className="row-title">{i.label}</span>
-                      {i.dueDate && <span className="row-sub">{t('family.due')} {fmtDate(new Date(`${i.dueDate}T12:00:00`).getTime())}</span>}
+                      {/* Whose bill it is, first: with one invoice per child, three "Tuition — Jul"
+                          rows are indistinguishable without the name. */}
+                      <span className="row-title">{kidName(fam, i.studentId)}</span>
+                      <span className="row-sub">
+                        {i.label}
+                        {i.dueDate ? ` · ${t('family.due')} ${fmtDate(new Date(`${i.dueDate}T12:00:00`).getTime())}` : ''}
+                      </span>
                     </div>
                     <span className="row-amt neg">{money(i.balanceCents)}</span>
                   </div>
@@ -91,8 +112,12 @@ export function FamilyHome() {
                 fam.payments.map((p) => (
                   <div key={p.id} className="list-row glass">
                     <div className="row-main">
-                      <span className="row-title">{t(`billing.ch_${p.channel}`, p.channel)}</span>
-                      <span className="row-sub">{fmtDate(p.occurredAt)}{p.reversalOf ? ` · ${t('family.reversed')}` : ''}</span>
+                      <span className="row-title">{kidName(fam, p.studentId)}</span>
+                      {/* One card payment covering several children appears as one row per child.
+                          That is the truth of it — each child's balance moved by their own share. */}
+                      <span className="row-sub">
+                        {t(`billing.ch_${p.channel}`, p.channel)} · {fmtDate(p.occurredAt)}{p.reversalOf ? ` · ${t('family.reversed')}` : ''}
+                      </span>
                     </div>
                     <span className={`row-amt ${p.amountCents < 0 ? 'neg' : 'pos'}`}>{money(p.amountCents)}</span>
                   </div>

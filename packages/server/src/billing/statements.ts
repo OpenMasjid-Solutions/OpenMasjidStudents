@@ -17,7 +17,7 @@ import { roleAllowedFromOrigin } from '../security/origin';
 import { db } from '../db';
 import { families, students, invoices, payments } from '../db/schema';
 import { formatMoney } from '../db/money';
-import { familyBalance, invoiceTotal, invoicePaid } from './ledger';
+import { familyBalance, studentBalance, invoiceTotal, invoicePaid } from './ledger';
 import { getSchoolName, getCurrency } from '../settings';
 
 /** Only admin (LAN) and finance (LAN + tunnel) may print statements (§5 permission matrix). */
@@ -61,32 +61,43 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   const money = (c: number) => formatMoney(c, currency);
   const bal = familyBalance(familyId);
 
+  // Every child on the family, not just the active ones: a withdrawn child's unpaid bill is still
+  // owed, and a statement that hid it would understate the total the parent is being asked for.
   const kids = db
-    .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode })
+    .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode, status: students.status })
     .from(students)
-    .where(and(eq(students.familyId, familyId), eq(students.status, 'active')))
+    .where(eq(students.familyId, familyId))
     .orderBy(students.firstName)
     .all();
+  const kidIds = kids.map((k) => k.id);
 
-  const openInvs = db
-    .select({ id: invoices.id, label: invoices.label, dueDate: invoices.dueDate, status: invoices.status })
-    .from(invoices)
-    .where(and(eq(invoices.familyId, familyId), inArray(invoices.status, ['open', 'partially_paid'])))
-    // Oldest-due-first, mirroring the ledger's allocation order — SQLite sorts NULL before any
-    // value, so push undated invoices last rather than to the top (see ledger.ts).
-    .orderBy(sql`${invoices.dueDate} is null`, asc(invoices.dueDate), asc(invoices.createdAt))
-    .all()
-    .map((i) => ({ ...i, balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id) }))
-    .filter((i) => i.balanceCents > 0);
+  // Invoices and payments are per student now, so both carry the child's name — on a household
+  // statement "Tuition — Jul" appearing three times is only useful if you can tell whose is whose.
+  const nameOf = new Map(kids.map((k) => [k.id, `${k.firstName} ${k.lastName}`.trim()]));
+
+  const openInvs = !kidIds.length
+    ? []
+    : db
+        .select({ id: invoices.id, label: invoices.label, dueDate: invoices.dueDate, status: invoices.status, studentId: invoices.studentId })
+        .from(invoices)
+        .where(and(inArray(invoices.studentId, kidIds), inArray(invoices.status, ['open', 'partially_paid'])))
+        // Oldest-due-first, mirroring the ledger's allocation order — SQLite sorts NULL before any
+        // value, so push undated invoices last rather than to the top (see ledger.ts).
+        .orderBy(sql`${invoices.dueDate} is null`, asc(invoices.dueDate), asc(invoices.createdAt))
+        .all()
+        .map((i) => ({ ...i, balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id) }))
+        .filter((i) => i.balanceCents > 0);
 
   // Recent payments (net view — reversals show as negative, so the record is honest).
-  const recent = db
-    .select({ amountCents: payments.amountCents, channel: payments.channel, occurredAt: payments.occurredAt, memo: payments.memo })
-    .from(payments)
-    .where(eq(payments.familyId, familyId))
-    .orderBy(desc(payments.occurredAt), desc(payments.createdAt))
-    .limit(10)
-    .all();
+  const recent = !kidIds.length
+    ? []
+    : db
+        .select({ amountCents: payments.amountCents, channel: payments.channel, occurredAt: payments.occurredAt, memo: payments.memo, studentId: payments.studentId })
+        .from(payments)
+        .where(inArray(payments.studentId, kidIds))
+        .orderBy(desc(payments.occurredAt), desc(payments.createdAt))
+        .limit(10)
+        .all();
 
   // The portal-signup QR. Dynamic-imported so the (CJS) server has no top-level ESM/heavy load.
   const qrcode = (await import('qrcode')).default;
@@ -99,21 +110,25 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
       ? `<span class="credit">${esc(money(bal.creditCents))}</span> in credit`
       : `<span class="settled">${esc(money(0))}</span> — all settled`;
 
-  // Each child's Student ID — the one thing a parent needs to pay anywhere. Printing it is the point
-  // of the statement (§11.2); there is no second factor to print beside it.
+  // Each child's Student ID (the one thing a parent needs to pay anywhere — §11.2) and, now that bills
+  // are per child, what each of them actually owes.
   const kidsRows = kids.length
     ? kids
-        .map((k) => `<tr><td>${esc(`${k.firstName} ${k.lastName}`.trim())}</td><td class="code">${esc(k.studentCode ?? '—')}</td></tr>`)
+        .map((k) => {
+          const b = studentBalance(k.id);
+          const owed = b.owedCents > 0 ? money(b.owedCents) : b.creditCents > 0 ? `${money(b.creditCents)} credit` : money(0);
+          return `<tr><td>${esc(nameOf.get(k.id) ?? '')}${k.status === 'withdrawn' ? ' <span class="muted">(withdrawn)</span>' : ''}</td><td class="code">${esc(k.studentCode ?? '—')}</td><td class="num${b.owedCents > 0 ? ' owed' : ''}">${esc(owed)}</td></tr>`;
+        })
         .join('')
-    : `<tr><td colspan="2" class="muted">No active students.</td></tr>`;
+    : `<tr><td colspan="3" class="muted">No students on this record.</td></tr>`;
 
   const invoiceRows = openInvs.length
-    ? openInvs.map((i) => `<tr><td>${esc(i.label)}</td><td>${esc(asDate(i.dueDate) || '—')}</td><td class="num">${esc(money(i.balanceCents))}</td></tr>`).join('')
-    : `<tr><td colspan="3" class="muted">No open invoices.</td></tr>`;
+    ? openInvs.map((i) => `<tr><td>${esc(nameOf.get(i.studentId) ?? '')}</td><td>${esc(i.label)}</td><td>${esc(asDate(i.dueDate) || '—')}</td><td class="num">${esc(money(i.balanceCents))}</td></tr>`).join('')
+    : `<tr><td colspan="4" class="muted">No open invoices.</td></tr>`;
 
   const paymentRows = recent.length
-    ? recent.map((p) => `<tr><td>${esc(asDate(p.occurredAt))}</td><td>${esc(CHANNEL_LABELS[p.channel] ?? p.channel)}</td><td>${esc(p.memo ?? '')}</td><td class="num ${p.amountCents < 0 ? 'owed' : ''}">${esc(money(p.amountCents))}</td></tr>`).join('')
-    : `<tr><td colspan="4" class="muted">No payments recorded yet.</td></tr>`;
+    ? recent.map((p) => `<tr><td>${esc(asDate(p.occurredAt))}</td><td>${esc(nameOf.get(p.studentId) ?? '')}</td><td>${esc(CHANNEL_LABELS[p.channel] ?? p.channel)}</td><td>${esc(p.memo ?? '')}</td><td class="num ${p.amountCents < 0 ? 'owed' : ''}">${esc(money(p.amountCents))}</td></tr>`).join('')
+    : `<tr><td colspan="5" class="muted">No payments recorded yet.</td></tr>`;
 
   const printedOn = asDate(new Date());
 
@@ -167,19 +182,19 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   <div class="balance">Balance: ${balanceLine}</div>
 
   <section>
-    <h2>Your children &amp; their payment details</h2>
-    <table><thead><tr><th>Student</th><th>Student ID</th></tr></thead><tbody>${kidsRows}</tbody></table>
+    <h2>Your children &amp; what each owes</h2>
+    <table><thead><tr><th>Student</th><th>Student ID</th><th class="num">Owes</th></tr></thead><tbody>${kidsRows}</tbody></table>
     <p class="payhint">To pay at the kiosk or on the masjid's donation site, enter your child's Student ID and check the name it shows — then you can pay for any of your children on the same screen.</p>
   </section>
 
   <section>
     <h2>Open invoices</h2>
-    <table><thead><tr><th>Invoice</th><th>Due</th><th class="num">Balance</th></tr></thead><tbody>${invoiceRows}</tbody></table>
+    <table><thead><tr><th>Student</th><th>Invoice</th><th>Due</th><th class="num">Balance</th></tr></thead><tbody>${invoiceRows}</tbody></table>
   </section>
 
   <section>
     <h2>Recent payments</h2>
-    <table><thead><tr><th>Date</th><th>Method</th><th>Note</th><th class="num">Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>
+    <table><thead><tr><th>Date</th><th>Student</th><th>Method</th><th>Note</th><th class="num">Amount</th></tr></thead><tbody>${paymentRows}</tbody></table>
   </section>
 
   <div class="signup">

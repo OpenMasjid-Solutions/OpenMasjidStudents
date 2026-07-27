@@ -97,7 +97,7 @@ describe('when a charge reaches an invoice', () => {
   it('lands on an already-open invoice immediately and re-derives its status', async () => {
     const { admin, studentId, familyId } = await seed();
     await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
-    await admin.billing.recordManualPayment({ familyId, amountCents: 5000, channel: 'cash', occurredAt: '2026-07-03' });
+    await admin.billing.recordManualPayment({ studentId, amountCents: 5000, channel: 'cash', occurredAt: '2026-07-03' });
     expect((await invoiceFor(admin, familyId, '2026-07'))!.status).toBe('paid');
     // Adding a charge to the paid invoice raises the total, so it is no longer fully paid.
     const r = await admin.billing.chargeAdd({ studentId, source: { kind: 'custom', label: 'Late fee', amountCents: 1500 }, periodKey: '2026-07' });
@@ -136,7 +136,7 @@ describe('voiding a charge', () => {
     // A voided charge is skipped by generation.
     const gen = await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
     expect((await invoiceFor(admin, familyId, '2026-07'))!.totalCents).toBe(5000);
-    expect(gen.created).toBe(true);
+    expect(gen.created).toBe(1);
 
     const b = await admin.billing.chargeAdd({ studentId, source: { kind: 'custom', label: 'Late fee', amountCents: 1000 }, periodKey: '2026-07' });
     expect(b.attached).toBe(true);

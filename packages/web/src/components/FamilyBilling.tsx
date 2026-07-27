@@ -30,19 +30,23 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
   const chargesQ = trpc.billing.chargeList.useQuery({ familyId });
   const chargeAdd = trpc.billing.chargeAdd.useMutation();
   const chargeVoid = trpc.billing.chargeVoid.useMutation();
-  const setDiscount = trpc.billing.setDiscount.useMutation();
   const generate = trpc.billing.generateFamily.useMutation();
   const voidInv = trpc.billing.voidInvoice.useMutation();
   const pay = trpc.billing.recordManualPayment.useMutation();
   const reverse = trpc.billing.reversePayment.useMutation();
 
   const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
-  const [payment, setPayment] = useState<{ amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({ amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
+  const [payment, setPayment] = useState<{ studentId: string; amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({ studentId: '', amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
   /** Which fee assignment is having its per-student amount edited, if any. */
   const [override, setOverrideForm] = useState<{ feeId: string; amount: string; note: string } | null>(null);
   const [charge, setCharge] = useState({ studentId: '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
   const [chargeErr, setChargeErr] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
+  /** Whose invoice / payment this is. Every row carries a child now, so the tables say so. */
+  const nameOf = (studentId: string) => {
+    const s = (billing.data?.students ?? []).find((k) => k.id === studentId);
+    return s ? `${s.firstName} ${s.lastName}`.trim() : '';
+  };
 
   const refresh = async () => {
     await utils.billing.familyBilling.invalidate({ familyId });
@@ -62,8 +66,10 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
   async function doPay(e: FormEvent) {
     e.preventDefault();
     const cents = parseCents(payment.amount);
-    if (!cents || cents < 1) return;
-    await pay.mutateAsync({ familyId, amountCents: cents, channel: payment.channel, occurredAt: payment.occurredAt, memo: payment.memo.trim() || undefined });
+    if (!cents || cents < 1 || !payment.studentId) return;
+    await pay.mutateAsync({ studentId: payment.studentId, amountCents: cents, channel: payment.channel, occurredAt: payment.occurredAt, memo: payment.memo.trim() || undefined });
+    // The child stays selected: several siblings paying at once is several records in a row, and
+    // re-picking the same name every time would be the annoying part.
     setPayment({ ...payment, amount: '', memo: '' });
     await refresh();
   }
@@ -303,10 +309,11 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
-              <thead><tr><th>{t('billing.invoice')}</th><th>{t('billing.due')}</th><th>{t('billing.total')}</th><th>{t('billing.paid')}</th><th>{t('billing.status')}</th><th className="actions" /></tr></thead>
+              <thead><tr><th>{t('students.name')}</th><th>{t('billing.invoice')}</th><th>{t('billing.due')}</th><th>{t('billing.total')}</th><th>{t('billing.paid')}</th><th>{t('billing.status')}</th><th className="actions" /></tr></thead>
               <tbody>
                 {billing.data?.invoices.map((i) => (
                   <tr key={i.id}>
+                    <td>{nameOf(i.studentId)}</td>
                     <td>{i.label}</td>
                     <td>{i.dueDate ?? '—'}</td>
                     <td>{money(i.totalCents)}</td>
@@ -327,10 +334,21 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
         </form>
       </section>
 
-      {/* Record payment */}
+      {/* Record payment — against ONE child, because that is how the money arrives: "Yusuf brought
+          cash for April". It lands in his balance and his own bills absorb it oldest-first. */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head"><h2>{t('billing.recordPayment')}</h2></div>
         <form className="inline-form glass-inset" onSubmit={doPay} style={{ marginBlockStart: 0 }}>
+          <div className="field" style={{ flex: '1 1 11rem' }}><label className="label">{t('billing.forStudent')}</label>
+            <select className="input glass-inset" value={payment.studentId} onChange={(e) => setPayment({ ...payment, studentId: e.target.value })} required>
+              <option value="">{t('billing.chooseStudent')}</option>
+              {(billing.data?.students ?? []).map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.firstName} {s.lastName}{s.balance.owedCents > 0 ? ` — ${money(s.balance.owedCents)} ${t('billing.owed')}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" min="0" className="input glass-inset" value={payment.amount} onChange={(e) => setPayment({ ...payment, amount: e.target.value })} /></div>
           <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.channel')}</label>
             <select className="input glass-inset" value={payment.channel} onChange={(e) => setPayment({ ...payment, channel: e.target.value as ManualChannel })}>
@@ -339,7 +357,8 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
           </div>
           <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.date')}</label><input type="date" className="input glass-inset" value={payment.occurredAt} onChange={(e) => setPayment({ ...payment, occurredAt: e.target.value })} /></div>
           <div className="field"><label className="label">{t('billing.memo')}</label><input className="input glass-inset" value={payment.memo} onChange={(e) => setPayment({ ...payment, memo: e.target.value })} /></div>
-          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !parseCents(payment.amount)}>{t('billing.record')}</button>
+          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount)}>{t('billing.record')}</button>
+          <p className="hint">{t('billing.recordHint')}</p>
         </form>
 
         {(billing.data?.payments ?? []).length > 0 && (
@@ -348,6 +367,7 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
               <tbody>
                 {billing.data?.payments.map((p) => (
                   <tr key={p.id}>
+                    <td>{nameOf(p.studentId)}</td>
                     <td className={p.amountCents < 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>{money(p.amountCents)}</td>
                     <td>{t(`billing.ch_${p.channel}`, p.channel)}</td>
                     <td>{new Date(p.occurredAt as unknown as number).toISOString().slice(0, 10)}</td>
@@ -361,37 +381,9 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
         )}
       </section>
 
-      {/* Discount */}
-      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
-        <div className="section-head"><h2>{t('billing.discount')}</h2></div>
-        {billing.data && <DiscountForm key={familyId} familyId={familyId} current={billing.data.discount} onSaved={refresh} setDiscount={setDiscount} />}
-      </section>
+      {/* No discount section: a household discount had nowhere honest to sit once each child gets
+          their own bill. A reduced rate is now the per-student amount on the fee assignment above,
+          which is also where it shows up on the invoice the parent actually receives. */}
     </div>
-  );
-}
-
-function DiscountForm({ familyId, current, onSaved, setDiscount }: { familyId: string; current: { kind: 'none' | 'fixed' | 'percent'; value: number }; onSaved: () => Promise<void>; setDiscount: ReturnType<typeof trpc.billing.setDiscount.useMutation> }) {
-  const { t } = useTranslation();
-  const [kind, setKind] = useState<'none' | 'fixed' | 'percent'>(current.kind);
-  // Stored as basis points (percent) or cents (fixed); show as plain percent / dollars.
-  const [value, setValue] = useState(current.kind === 'none' ? '' : current.kind === 'percent' ? String(current.value / 100) : (current.value / 100).toFixed(2));
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    const v = kind === 'none' ? 0 : kind === 'percent' ? Math.round(Number(value) * 100) : parseCents(value) ?? 0;
-    await setDiscount.mutateAsync({ familyId, kind, value: v });
-    await onSaved();
-  }
-  return (
-    <form className="inline-form glass-inset" onSubmit={save} style={{ marginBlockStart: 0 }}>
-      <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.discountKind')}</label>
-        <select className="input glass-inset" value={kind} onChange={(e) => setKind(e.target.value as 'none' | 'fixed' | 'percent')}>
-          <option value="none">{t('billing.dk_none')}</option>
-          <option value="fixed">{t('billing.dk_fixed')}</option>
-          <option value="percent">{t('billing.dk_percent')}</option>
-        </select>
-      </div>
-      {kind !== 'none' && <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{kind === 'percent' ? '%' : t('billing.amount')}</label><input type="number" step="0.01" min="0" className="input glass-inset" value={value} onChange={(e) => setValue(e.target.value)} /></div>}
-      <button type="submit" className="btn btn--primary" disabled={setDiscount.isPending}>{t('common.save')}</button>
-    </form>
   );
 }

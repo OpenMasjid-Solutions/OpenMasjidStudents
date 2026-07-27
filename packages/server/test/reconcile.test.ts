@@ -38,10 +38,21 @@ async function familyWithInvoice(amount = 5000, due = '2026-06-01') {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: amount, cadence: 'monthly' });
-  await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  const stu = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-06', label: 'Tuition — Jun 2026', dueDate: due });
+  studentOf.set(fam.id, stu.id);
   return fam.id;
 }
+
+/** familyId → its one child, so tests can record against the student the way the app does. */
+const studentOf = new Map<string, string>();
+
+/**
+ * The ledger rows for one PaymentIntent. A charge covering several children is stored as one row per
+ * child under `${piId}:${studentId}`, so an exact idempotency-key match would find nothing.
+ */
+const rowsForPi = (piId: string) =>
+  app.dbmod.db.select().from(payments).all().filter((x) => x.idempotencyKey === piId || x.idempotencyKey.startsWith(`${piId}:`));
 
 interface FakePI {
   id: string;
@@ -96,7 +107,7 @@ describe('reconcile — with mocked Stripe search', () => {
     searchImpl = () => ({ data: [pi({ id: 'pi_don1', metadata: { purpose: 'students-billing', omos_app: 'donations', students_family_id: familyId } })], has_more: false, next_page: null });
     const r = await recon.reconcile(sysActor);
     expect(r).toMatchObject({ ok: true, scanned: 1, recorded: 1 });
-    const p = app.dbmod.db.select().from(payments).where(eq(payments.idempotencyKey, 'pi_don1')).get()!;
+    const p = rowsForPi('pi_don1')[0]!;
     expect(p.channel).toBe('donations-web');
     expect((p.externalRef as Record<string, unknown>).via).toBe('reconciliation');
     expect(ledger.familyBalance(familyId).owedCents).toBe(0);
@@ -154,7 +165,8 @@ describe('reconcile — with mocked Stripe search', () => {
   it('holds the cursor below a PI that errored on record, then re-records it next run (no money loss)', async () => {
     const familyId = await familyWithInvoice(20000);
     const { db } = app.dbmod;
-    // pi_bad references a family that does not exist yet → recordPayment throws (FK) → must be retried.
+    // pi_bad references a family that does not exist yet, so there is no child to attribute it to.
+    // That is retryable, not terminal — the cursor must be held below it.
     searchImpl = () => ({
       data: [
         pi({ id: 'pi_bad', created: 100, metadata: { purpose: 'students-billing', omos_app: 'donations', students_family_id: 'fam_missing' } }),
@@ -165,14 +177,17 @@ describe('reconcile — with mocked Stripe search', () => {
     });
     const r1 = await recon.reconcile(sysActor);
     expect(r1.recorded).toBe(1); // only pi_good
-    expect(db.select().from(payments).where(eq(payments.idempotencyKey, 'pi_bad')).get()).toBeUndefined();
+    expect(rowsForPi('pi_bad')).toHaveLength(0);
     expect(cursorVal()).toBe('99'); // held below pi_bad (created 100), NOT advanced to 200 — pi_bad is not lost
-    // The family arrives; the next run re-scans the held window and records pi_bad.
+    // The family AND a child arrive; the next run re-scans the held window and records pi_bad. A
+    // family with no children still has nowhere to put the money, so the student is the part that
+    // actually unblocks it.
     const ts = new Date();
     db.insert(families).values({ id: 'fam_missing', name: 'Late', createdAt: ts, updatedAt: ts }).run();
+    db.insert(students).values({ id: 'stu_late', familyId: 'fam_missing', firstName: 'Late', lastName: 'Arrival', status: 'active', studentCode: 'LAT9001', createdAt: ts, updatedAt: ts }).run();
     const r2 = await recon.reconcile(sysActor);
     expect(r2.recorded).toBe(1);
-    expect(db.select().from(payments).where(eq(payments.idempotencyKey, 'pi_bad')).get()).toBeTruthy();
+    expect(rowsForPi('pi_bad')).toHaveLength(1);
   });
 
   it('advances the cursor past an unattributable PI (it can never be recorded)', async () => {
@@ -190,7 +205,7 @@ describe('reconcile — with mocked Stripe search', () => {
     const { db } = app.dbmod;
     const runId = ap.createAutopayRun(familyId, 5000, '2026-07-01', 1)!; // pending
     // The payment is already in the ledger, but the run stayed 'pending' (crash after the ledger write).
-    ledger.recordPayment({ familyId, amountCents: 5000, channel: 'autopay', occurredAt: new Date(), idempotencyKey: 'pi_healed', memo: null, externalRef: { stripePaymentIntentId: 'pi_healed' } }, { userId: null, role: 'autopay', name: 'x' });
+    ledger.recordPayment({ studentId: studentOf.get(familyId)!, amountCents: 5000, channel: 'autopay', occurredAt: new Date(), idempotencyKey: 'pi_healed', memo: null, externalRef: { stripePaymentIntentId: 'pi_healed' } }, { userId: null, role: 'autopay', name: 'x' });
     const ts = new Date();
     db.insert(autopayEnrollments).values({ familyId, enabled: true, defaultPmId: null, consentAt: ts, failureCount: 1, nextAttemptAt: '2026-07-03', createdAt: ts, updatedAt: ts }).run();
     searchImpl = () => ({ data: [pi({ id: 'pi_healed', metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_channel: 'autopay', students_family_id: familyId, students_autopay_run_id: runId } })], has_more: false, next_page: null });
@@ -209,7 +224,7 @@ describe('reconcile — with mocked Stripe search', () => {
     searchImpl = () => ({ data: [pi({ id: 'pi_auto', metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_channel: 'autopay', students_family_id: familyId, students_autopay_run_id: runId } })], has_more: false, next_page: null });
     const r = await recon.reconcile(sysActor);
     expect(r.recorded).toBe(1);
-    expect(db.select().from(payments).where(eq(payments.idempotencyKey, 'pi_auto')).get()!.channel).toBe('autopay');
+    expect(rowsForPi('pi_auto')[0]!.channel).toBe('autopay');
     const run = db.select().from(autopayRuns).where(eq(autopayRuns.id, runId)).get()!;
     expect(run).toMatchObject({ status: 'charged', stripePaymentIntentId: 'pi_auto' });
     expect(db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get()!).toMatchObject({ failureCount: 0, nextAttemptAt: null });

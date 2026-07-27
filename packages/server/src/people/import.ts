@@ -241,7 +241,7 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
       let familyId = L.familyByName.get(key(familyName));
       if (!familyId) {
         familyId = rid('fam');
-        tx.insert(families).values({ id: familyId, name: familyName, status: 'active', discountKind: 'none', discountValue: 0, createdAt: ts, updatedAt: ts }).run();
+        tx.insert(families).values({ id: familyId, name: familyName, status: 'active', createdAt: ts, updatedAt: ts }).run();
         L.familyByName.set(key(familyName), familyId);
         result.familiesCreated++;
       }

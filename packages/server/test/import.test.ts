@@ -185,11 +185,13 @@ describe('commit is all-or-nothing', () => {
     expect(new Set(ismail.map((g) => g.familyId)).size).toBe(1);
     expect(ismail.every((g) => g.classId === classId)).toBe(true);
 
-    // The Amount column became a per-student override, so the invoice reflects 350 + 700.
+    // The Amount column became a per-student override. Billing the household now produces ONE INVOICE
+    // PER CHILD — 350 and 700 — which together still come to the 1050 the family owes.
     const familyId = ismail[0].familyId;
     await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
-    const inv = (await admin.billing.familyBilling({ familyId })).invoices[0];
-    expect(inv.totalCents).toBe(105000);
+    const billing = await admin.billing.familyBilling({ familyId });
+    expect(billing.invoices.map((i) => i.totalCents).sort((x, y) => x - y)).toEqual([35000, 70000]);
+    expect(billing.balance.owedCents).toBe(105000);
 
     // Bilal had no Amount, so he falls back to the plan's own 35000.
     const bilal = grouped.find((g) => g.firstName === 'Bilal')!;
@@ -228,19 +230,27 @@ describe('walls', () => {
     await expect(caller('admin', { origin: 'tunnel' }).people.importCommit({ rows })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
-  it('moving a student between families is admin-only and redirects future billing only', async () => {
+  /** A bill belongs to the CHILD since 0.39.0, so moving a child between households carries their
+   *  billing with them. That is the right answer: an unpaid bill stranded on a household the child
+   *  has left is a debt nobody is looking at. The invoice rows themselves are never rewritten. */
+  it('moving a student between families is admin-only and takes their billing with them', async () => {
     const { admin, planId } = await base();
     const a = await admin.people.familyCreate({ name: 'A fam' });
     const b = await admin.people.familyCreate({ name: 'B fam' });
     const s = await admin.people.studentCreate({ familyId: a.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
-    // Bill family A, then move the student to B.
+    // Bill the child while they are on family A, then move them to B.
     await admin.billing.generateFamily({ familyId: a.id, periodKey: '2026-07', label: 'Jul' });
+    const invId = (await admin.billing.studentBilling({ studentId: s.id })).invoices[0].id;
     const moved = await admin.people.studentSetFamily({ studentId: s.id, familyId: b.id });
     expect(moved.moved).toBe(true);
-    // A keeps the invoice it was billed (immutable history); B bills going forward.
-    expect((await admin.billing.familyBilling({ familyId: a.id })).invoices).toHaveLength(1);
-    await admin.billing.generateFamily({ familyId: b.id, periodKey: '2026-08', label: 'Aug' });
-    expect((await admin.billing.familyBilling({ familyId: b.id })).invoices[0].totalCents).toBe(35000);
+    // The child's own record is unchanged — same invoice, same id, still owed.
+    const after = await admin.billing.studentBilling({ studentId: s.id });
+    expect(after.invoices).toHaveLength(1);
+    expect(after.invoices[0].id).toBe(invId);
+    expect(after.balance.owedCents).toBe(35000);
+    // A has nothing left to show (no children); B now shows the child and their debt.
+    expect((await admin.billing.familyBilling({ familyId: a.id })).invoices).toHaveLength(0);
+    expect((await admin.billing.familyBilling({ familyId: b.id })).balance.owedCents).toBe(35000);
     await expect(caller('finance').people.studentSetFamily({ studentId: s.id, familyId: a.id })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

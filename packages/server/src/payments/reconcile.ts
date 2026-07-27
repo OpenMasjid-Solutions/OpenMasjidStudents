@@ -15,7 +15,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { payments } from '../db/schema';
 import type { PaymentChannel } from '../db/schema';
-import { recordPayment } from '../billing/ledger';
+import { recordSplit, splitAcrossFamily, recordedSplit } from '../billing/ledger';
 import { onAutopaySucceeded, onAutopayFailed, abandonRun, pendingRuns } from './autopay';
 import { stripeClient, loadStripeKeys } from './stripe';
 import { getSetting, setSetting, SETTING_KEYS } from '../settings';
@@ -118,8 +118,11 @@ function channelFor(md: Record<string, string>): PaymentChannel | null {
   }
 }
 
+/** Has this PI reached the ledger? Asks via `recordedSplit`, not an exact key match, because one PI
+ *  covering several children is stored as one row per child under `${piId}:${studentId}` — an exact
+ *  match would report "not recorded" for every split payment and reconcile it a second time. */
 function alreadyRecorded(piId: string): boolean {
-  return !!db.select({ id: payments.id }).from(payments).where(eq(payments.idempotencyKey, piId)).get();
+  return recordedSplit(piId).length > 0;
 }
 
 /** Run one reconciliation pass. Safe to call concurrently with the webhook and to re-run. */
@@ -179,16 +182,29 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
           continue;
         }
         try {
-          const r = recordPayment(
+          // Payments are per student, but a PI only carries a family (and optionally the one student
+          // it was matched to). `splitAcrossFamily` walks that family's open invoices oldest-due-first
+          // — the same deterministic order the original push path used — so the split we reproduce
+          // here is the one that charge would have produced had its webhook arrived.
+          const shares = splitAcrossFamily(familyId, amount, md.students_student_id || null);
+          if (!shares.length) {
+            // The family has no student to attribute to — because the family row does not exist yet,
+            // or its children have not been imported yet. RETRYABLE, not terminal: hold the cursor
+            // below this PI so a later run picks it up once the roster catches up. Skipping would
+            // advance the cursor past real money and lose it, which §11.4 exists to prevent.
+            if (pi.created < earliestErrored) earliestErrored = pi.created;
+            log.warn('reconcile: tuition PI has no student to attribute to yet — will retry', { pi: pi.id });
+            continue;
+          }
+          const r = recordSplit(
             {
-              familyId,
-              amountCents: amount,
               channel,
               occurredAt: new Date(pi.created * 1000),
               idempotencyKey: pi.id,
               memo: null,
               externalRef: { stripePaymentIntentId: pi.id, stripeChargeId: (pi.latest_charge as string) ?? null, via: 'reconciliation' },
             },
+            shares,
             { userId: null, role: channel, name: 'reconciliation' },
           );
           if (!r.duplicate) {

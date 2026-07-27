@@ -17,10 +17,17 @@
 
 > Source of truth for four repos. Copy verbatim into `docs/FABRIC_BILLING_CONTRACT.md`; the OS/Donations/Kiosk briefs point here. Version the contract (`"v": 2` in every response). Consumers surface this capability as a **`tuition` campaign type** in their own campaign systems: the campaign shell (tile/card) lives in Donations/Kiosk, but everything inside it — label, lookup, balances, recording — is **fully managed by this container** via the methods below. **The parent portal (§13) does NOT change this contract** — portal/autopay payments are recorded internally and only touch §11.3 (a third `omos_app` value).
 
-### 11.0 v1 → v2: the PIN is gone (breaking, `lookup` only)
+### 11.0 v1 → v2: the PIN is gone, and bills are per child (breaking, `lookup` only)
 
-**What changed.** Student PINs were removed from the app entirely in 0.39.0. `lookup` no longer takes
-`name` or `pin`; it takes the **Student ID alone**. Nothing else on the wire changed.
+**What changed.** Two things, both in 0.39.0:
+
+1. Student PINs were removed entirely. `lookup` no longer takes `name` or `pin`; it takes the
+   **Student ID alone**.
+2. **Invoices and payments are per STUDENT, not per family.** `lookup` therefore reports a balance for
+   each child as well as the household total, and `record-payment` accepts an optional per-child
+   `students[]` breakdown. A caller that sends none still works — this app derives the split itself.
+
+Nothing else on the wire changed, and `record-payment` remains fully backward compatible.
 
 **Why.** The only thing a stranger can do with someone else's Student ID is *pay their tuition* — there
 is no path from an ID to changing a record, reading contact details, or taking money out. A secret that
@@ -85,15 +92,18 @@ paid alongside. **Breaking at v2:** `name` and `pin` are gone (§11.0).
 { "v": 2, "studentCode": "YUS1234" }
 // 200 (found)
 { "v": 2, "found": true,
-  "matchedStudent": { "id": "stu_1" },
+  "matchedStudent": { "id": "stu_1", "balanceCents": 20000 },   // the child whose ID was typed
   "family": {
     "id": "fam_x1", "label": "Ismail family",
     // NEVER full last names, DOB, or contact info. `studentId` + `studentCode` let a kiosk offer a
     // SIBLING and pay for them without the parent typing that child's ID.
-    "students": [{ "studentId": "stu_1", "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" },
-                 { "studentId": "stu_2", "studentCode": "MAR8802", "firstName": "Maryam", "lastInitial": "I" }],
-    "balanceCents": 35000, "currency": "usd",
-    "openInvoices": [{ "id": "inv_9", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 15000 }]
+    // `balanceCents` per child is new at v2: with one bill per child, "pay for Maryam" needs to know
+    // what Maryam owes, not just the household total.
+    "students": [{ "studentId": "stu_1", "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I", "balanceCents": 20000 },
+                 { "studentId": "stu_2", "studentCode": "MAR8802", "firstName": "Maryam", "lastInitial": "I", "balanceCents": 15000 }],
+    "balanceCents": 35000, "currency": "usd",   // the household total — what a parent pays in one go
+    // Every open invoice across the family, each tagged with the child it belongs to.
+    "openInvoices": [{ "id": "inv_9", "studentId": "stu_2", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 15000 }]
   } }
 // 200 (not found) — same shape, same latency, whatever actually mismatched (no enumeration oracle):
 // unknown ID, withdrawn student, locked ID, or external payments switched off
@@ -104,33 +114,52 @@ paid alongside. **Breaking at v2:** `name` and `pin` are gone (§11.0).
 > **Required consumer flow:** `identify(studentCode)` → show the name, ask "is this right?" → on confirm
 > `lookup(studentCode)` → show the balance and the sibling list → `record-payment` with the chosen
 > child's `studentId` from that list. Do not call `lookup` before the parent has confirmed the name —
-> the confirmation is the safeguard. Note the balance is per FAMILY, so paying for a sibling is the same
-> ledger entry with a different `studentId` attribution.
+> the confirmation is the safeguard. A parent paying for several children is ONE charge with a
+> `students[]` breakdown on `record-payment` — see below.
 
-**`POST /fabric/billing/record-payment`** — record an external payment. **Idempotent.** Unchanged at v2;
-still accepts `"v": 1` so an un-upgraded consumer never loses its money path.
+**`POST /fabric/billing/record-payment`** — record an external payment. **Idempotent.** Still accepts
+`"v": 1` so an un-upgraded consumer never loses its money path.
 ```jsonc
 // request
 { "v": 2,
   "idempotencyKey": "pi_3PabcDEF",           // REQUIRED, ≤128 chars. Convention: the Stripe PaymentIntent id.
   "familyId": "fam_x1",                       // REQUIRED — from a prior lookup in this session
   "studentId": "stu_1",                       // optional — the matchedStudent from lookup
-  "amountCents": 15000, "currency": "usd",
+  "amountCents": 15000, "currency": "usd",    // the ONE amount actually charged to the card
   "channel": "donations-web",                 // "donations-web" | "kiosk"
   "occurredAt": "2026-07-15T18:03:22Z",
   "externalRef": { "stripePaymentIntentId": "pi_3PabcDEF", "stripeChargeId": "ch_...", "stripeAccountId": "acct_..." },
+  // NEW at v2, optional: what the parent chose to pay per child. Must sum EXACTLY to amountCents and
+  // every student must belong to familyId. Omit it and this app derives the split itself, walking the
+  // family's open invoices oldest-due-first.
+  "students": [{ "studentId": "stu_1", "amountCents": 10000 }, { "studentId": "stu_2", "amountCents": 5000 }],
   "allocations": [{ "invoiceId": "inv_9", "amountCents": 15000 }],   // optional; omitted → auto-allocate oldest-due-first
   "payerNote": "paid by grandmother" }        // optional, ≤200 chars, displayed to finance
-// 200 (first time)      { "v": 2, "recorded": true, "paymentId": "pay_71", "duplicate": false }
-// 200 (replay)          { "v": 2, "recorded": true, "paymentId": "pay_71", "duplicate": true }
+// 200 (first time) — one ledger row PER CHILD, so `payments[]` is the full truth; `paymentId` is the
+// first of them, kept so a v1 consumer that stores a single id still gets something meaningful.
+{ "v": 2, "recorded": true, "paymentId": "pay_71", "duplicate": false,
+  "payments": [{ "studentId": "stu_1", "paymentId": "pay_71", "amountCents": 10000, "duplicate": false },
+               { "studentId": "stu_2", "paymentId": "pay_72", "amountCents": 5000,  "duplicate": false }] }
+// 200 (replay) — same shape with "duplicate": true throughout. NOTHING is written.
 // 404 unknown family    { "error": { "code": "family_not_found", "message": "…" } }
 // 422 bad allocation    { "error": { "code": "invalid_allocation", "message": "…" } }
+//     …also returned when students[] doesn't sum to amountCents, or names a child of another family.
 ```
-Surplus beyond open invoices becomes family credit. A recorded external payment fires a Fabric **notification** and an audit entry.
+Surplus beyond a child's open invoices becomes **that child's** credit, which their next invoice
+absorbs automatically. A recorded external payment fires a Fabric **notification** and an audit entry.
 
-**`POST /fabric/billing/check`** — retry helper for consumer outboxes.
+> **Idempotency, precisely.** A charge covering N children is stored as N rows keyed
+> `${idempotencyKey}:${studentId}`. A replay of the same key writes nothing at all — the app checks for
+> those rows *before* deriving any split, because deriving reads the very invoices the first call paid
+> down and would otherwise produce a second, different split under fresh keys. Consumers do not need to
+> know the suffix; `check` handles it.
+
+**`POST /fabric/billing/check`** — retry helper for consumer outboxes. Matches a split charge by any of
+its per-child rows, so a consumer always asks with the plain key it sent.
 ```jsonc
-{ "v": 2, "idempotencyKey": "pi_3PabcDEF" }  →  { "v": 2, "recorded": true, "paymentId": "pay_71" } | { "v": 2, "recorded": false }
+{ "v": 2, "idempotencyKey": "pi_3PabcDEF" }
+→ { "v": 2, "recorded": true, "paymentId": "pay_71", "paymentIds": ["pay_71", "pay_72"] }
+→ { "v": 2, "recorded": false }
 ```
 
 ### 11.3 Stripe metadata contract (on EVERY tuition PaymentIntent, whoever mints it)

@@ -13,7 +13,7 @@ import { and, eq, desc, inArray } from 'drizzle-orm';
 import { router, parentProcedure } from './trpc';
 import { db } from '../db';
 import { families, students, invoices, payments, paymentMethods, autopayEnrollments } from '../db/schema';
-import { familyBalance, invoiceTotal, invoicePaid, recordPayment } from '../billing/ledger';
+import { familyBalance, studentBalance, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit } from '../billing/ledger';
 import { formatMoney } from '../db/money';
 import { getCurrency } from '../settings';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
@@ -39,26 +39,36 @@ export const portalRouter = router({
         .where(and(eq(students.familyId, fid), eq(students.status, 'active')))
         .orderBy(students.firstName)
         .all();
-      const open = db
-        .select({ id: invoices.id, label: invoices.label, dueDate: invoices.dueDate, status: invoices.status })
-        .from(invoices)
-        .where(and(eq(invoices.familyId, fid), inArray(invoices.status, ['open', 'partially_paid'])))
-        .all()
-        .map((i) => ({ id: i.id, label: i.label, dueDate: i.dueDate, balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id) }))
+      const kidIds = kids.map((k) => k.id);
+      // Invoices and payments are per child now, so each row says which child it is for. The parent
+      // still sees ONE combined balance and pays once — that is the whole point of the family view —
+      // but they can now tell what each child owes, which they never could before.
+      const open = (
+        kidIds.length
+          ? db
+              .select({ id: invoices.id, studentId: invoices.studentId, label: invoices.label, dueDate: invoices.dueDate })
+              .from(invoices)
+              .where(and(inArray(invoices.studentId, kidIds), inArray(invoices.status, ['open', 'partially_paid'])))
+              .all()
+          : []
+      )
+        .map((i) => ({ id: i.id, studentId: i.studentId, label: i.label, dueDate: i.dueDate, balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id) }))
         .filter((i) => i.balanceCents > 0)
         .sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999'));
-      const pays = db
-        .select({ id: payments.id, amountCents: payments.amountCents, channel: payments.channel, occurredAt: payments.occurredAt, memo: payments.memo, reversalOf: payments.reversalOf })
-        .from(payments)
-        .where(eq(payments.familyId, fid))
-        .orderBy(desc(payments.occurredAt), desc(payments.createdAt))
-        .limit(25)
-        .all();
+      const pays = kidIds.length
+        ? db
+            .select({ id: payments.id, studentId: payments.studentId, amountCents: payments.amountCents, channel: payments.channel, occurredAt: payments.occurredAt, memo: payments.memo, reversalOf: payments.reversalOf })
+            .from(payments)
+            .where(inArray(payments.studentId, kidIds))
+            .orderBy(desc(payments.occurredAt), desc(payments.createdAt))
+            .limit(25)
+            .all()
+        : [];
       return {
         id: fid,
         name: fam?.name ?? '',
         balance: familyBalance(fid),
-        students: kids,
+        students: kids.map((k) => ({ ...k, balance: studentBalance(k.id) })),
         invoices: open,
         payments: pays,
       };
@@ -124,10 +134,18 @@ export const portalRouter = router({
       throw new TRPCError({ code: 'NOT_FOUND', message: 'Payment not found.' });
     }
     const succeeded = pi.status === 'succeeded';
-    if (succeeded) {
+    // Already recorded (a double-submit, or reconciliation got there first)? Then do nothing at all —
+    // asking BEFORE deriving a split is what makes this idempotent, since `splitAcrossFamily` reads
+    // the invoices the first attempt already paid down and would otherwise derive a second, different
+    // split under new per-student keys.
+    if (succeeded && recordedSplit(pi.id).length === 0) {
       const amount = pi.amount_received || pi.amount || 0;
-      const res = recordPayment(
-        { familyId: input.familyId, amountCents: amount, channel: 'portal', occurredAt: new Date(), idempotencyKey: pi.id, memo: null, externalRef: { stripePaymentIntentId: pi.id, stripeChargeId: (pi.latest_charge as string) ?? null } },
+      // One card charge, one ledger row per child: the parent paid a single household amount, and it
+      // is spread over their children's open invoices oldest-due-first. Reconciliation (§11.4) uses
+      // the same split, so a lost confirm-on-return lands identically when the daily job replays it.
+      const res = recordSplit(
+        { channel: 'portal', occurredAt: new Date(), idempotencyKey: pi.id, memo: null, externalRef: { stripePaymentIntentId: pi.id, stripeChargeId: (pi.latest_charge as string) ?? null } },
+        splitAcrossFamily(input.familyId, amount),
         { userId: ctx.session.userId ?? null, role: 'portal', name: 'portal' },
       );
       if (!res.duplicate) {
@@ -227,8 +245,10 @@ export const portalRouter = router({
 type FamilyView = {
   id: string;
   name: string;
+  /** The combined household balance — what the parent pays in one go. */
   balance: ReturnType<typeof familyBalance>;
-  students: { id: string; firstName: string; lastName: string; studentCode: string | null }[];
-  invoices: { id: string; label: string; dueDate: string | null; balanceCents: number }[];
-  payments: { id: string; amountCents: number; channel: string; occurredAt: Date; memo: string | null; reversalOf: string | null }[];
+  /** Each child, with their own balance: bills are per child, so "what does Maryam owe?" is answerable. */
+  students: { id: string; firstName: string; lastName: string; studentCode: string | null; balance: ReturnType<typeof studentBalance> }[];
+  invoices: { id: string; studentId: string; label: string; dueDate: string | null; balanceCents: number }[];
+  payments: { id: string; studentId: string; amountCents: number; channel: string; occurredAt: Date; memo: string | null; reversalOf: string | null }[];
 };

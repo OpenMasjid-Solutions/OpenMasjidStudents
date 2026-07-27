@@ -37,7 +37,7 @@ async function scenario() {
   const gB = await admin.people.guardianCreate({ familyId: famB.id, name: 'Abu Bilal', email: 'abubilal@example.com' });
   // Family A: an invoice + partial payment, so the balance view has content.
   await admin.billing.generateFamily({ familyId: famA.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
-  await admin.billing.recordManualPayment({ familyId: famA.id, amountCents: 2000, channel: 'cash', occurredAt: '2026-07-03' });
+  await admin.billing.recordManualPayment({ studentId: sA.id, amountCents: 2000, channel: 'cash', occurredAt: '2026-07-03' });
   return { admin, famA: famA.id, famB: famB.id, gA: gA.id, gB: gB.id, sA: sA.id, sB: sB.id };
 }
 

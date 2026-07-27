@@ -52,16 +52,16 @@ describe('cadence gates which periods a plan bills on', () => {
     expect(await totalOf(admin, familyId, '2026-08')).toBe(5000);
     // A term period has no monthly line to draw, so no invoice is created at all.
     const term = await admin.billing.generateFamily({ familyId, periodKey: 'T1', label: 'Term 1', periodKind: 'term' });
-    expect(term.created).toBe(false);
+    expect(term.created).toBe(0);
     expect(await totalOf(admin, familyId, 'T1')).toBeNull();
   });
 
   it('a per-term plan bills a term period and NOTHING on a month period', async () => {
     const { admin, familyId } = await seed('per_term', 20000);
     const month = await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
-    expect(month.created).toBe(false);
+    expect(month.created).toBe(0);
     const term = await admin.billing.generateFamily({ familyId, periodKey: 'T1', label: 'Term 1', periodKind: 'term' });
-    expect(term.created).toBe(true);
+    expect(term.created).toBe(1);
     expect(await totalOf(admin, familyId, 'T1')).toBe(20000);
   });
 
@@ -71,10 +71,10 @@ describe('cadence gates which periods a plan bills on', () => {
     expect(await totalOf(admin, familyId, '2026-07')).toBe(15000);
     // Second period: already billed, so there is nothing to invoice.
     const second = await admin.billing.generateFamily({ familyId, periodKey: '2026-08', label: 'Aug' });
-    expect(second.created).toBe(false);
+    expect(second.created).toBe(0);
     expect(await totalOf(admin, familyId, '2026-08')).toBeNull();
     const third = await admin.billing.generateFamily({ familyId, periodKey: 'T1', label: 'Term 1', periodKind: 'term' });
-    expect(third.created).toBe(false);
+    expect(third.created).toBe(0);
   });
 
   it('voiding the invoice makes a one-time fee billable again (its line stops counting)', async () => {
@@ -83,7 +83,7 @@ describe('cadence gates which periods a plan bills on', () => {
     const invId = (await admin.billing.familyBilling({ familyId })).invoices[0].id;
     await admin.billing.voidInvoice({ id: invId });
     const again = await admin.billing.generateFamily({ familyId, periodKey: '2026-08', label: 'Aug' });
-    expect(again.created).toBe(true);
+    expect(again.created).toBe(1);
     expect(await totalOf(admin, familyId, '2026-08')).toBe(15000);
   });
 });
@@ -98,7 +98,7 @@ describe('per-student amount override', () => {
   it('a ZERO override bills nothing for that student while keeping them on the plan', async () => {
     const { admin, familyId } = await seed('monthly', 5000, 0);
     const gen = await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
-    expect(gen.created).toBe(false); // the only line was zero, so there is no invoice
+    expect(gen.created).toBe(0); // the only line was zero, so there is no invoice
     // The assignment still exists — the student is on a plan, just at no charge.
     const fees = await admin.billing.familyFees({ familyId });
     expect(fees[0].feePlanId).toBeTruthy();

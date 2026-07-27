@@ -267,8 +267,10 @@ export const peopleRouter = router({
    *  contacts attach to the FAMILY, so linking a student to their siblings' family is what makes
    *  the parent/guardian details apply to them; nothing is copied per-student.
    *
-   *  Invoices already raised stay with the family that was billed (they are immutable history), so
-   *  a move only redirects FUTURE billing. Audited both sides. */
+   *  Invoices and payments belong to the STUDENT (0.39.0), so a move takes their billing history with
+   *  them rather than stranding it on a household they have left — a debt nobody is looking at is
+   *  worse than one that follows the child. No money row is rewritten; only the child's family
+   *  changes. Audited both sides. */
   studentSetFamily: adminProcedure.input(z.object({ studentId: ID, familyId: ID })).mutation(({ ctx, input }) => {
     const s = requireStudent(input.studentId);
     requireFamily(input.familyId);

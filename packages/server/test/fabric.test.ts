@@ -92,8 +92,9 @@ describe('lookup (§11.2)', () => {
         { firstName: 'Sara', lastInitial: 'I' },
       ]),
     );
-    // Every sibling entry exposes exactly these four fields and nothing more.
-    for (const k of r.family.students) expect(Object.keys(k).sort()).toEqual(['firstName', 'lastInitial', 'studentCode', 'studentId']);
+    // Each sibling entry exposes exactly these five fields and nothing more — `balanceCents` is new
+    // at v2 so a kiosk can show what each child owes.
+    for (const k of r.family.students) expect(Object.keys(k).sort()).toEqual(['balanceCents', 'firstName', 'lastInitial', 'studentCode', 'studentId']);
     expect(JSON.stringify(r)).not.toContain('Ismail"'); // no bare "Ismail" last-name value in the payload
   });
 

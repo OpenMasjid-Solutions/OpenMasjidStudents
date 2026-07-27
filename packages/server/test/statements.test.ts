@@ -3,8 +3,8 @@
 /**
  * Printable family statements (CLAUDE.md §4, §5, §14): the access wall (admin LAN-only /
  * finance LAN+tunnel / others never), the rendered content (balance, open invoices, recent
- * payments, each child's PIN, the portal-signup QR + link), and HTML-escaping of the student
- * names it embeds (which are user input).
+ * payments, each child's Student ID and what they owe, the portal-signup QR + link), and HTML-escaping
+ * of the student names it embeds (which are user input).
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { freshApp, makeCtx } from './harness';
@@ -52,7 +52,7 @@ async function seed() {
   const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 5000, cadence: 'monthly' });
   const s1 = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
-  await admin.billing.recordManualPayment({ familyId: fam.id, amountCents: 2000, channel: 'cash', occurredAt: '2026-07-03' });
+  await admin.billing.recordManualPayment({ studentId: s1.id, amountCents: 2000, channel: 'cash', occurredAt: '2026-07-03' });
   return { admin, familyId: fam.id, studentId: s1.id };
 }
 
@@ -84,11 +84,12 @@ describe('buildFamilyStatementHtml', () => {
   it('lists open invoices oldest-due-first, undated last (matches the ledger order)', async () => {
     const { db } = app.dbmod;
     const ts = new Date();
-    db.insert(families).values({ id: 'fam_ord', name: 'Order Fam', status: 'active', discountKind: 'none', discountValue: 0, createdAt: ts, updatedAt: ts }).run();
+    db.insert(families).values({ id: 'fam_ord', name: 'Order Fam', status: 'active', createdAt: ts, updatedAt: ts }).run();
+    db.insert(students).values({ id: 'stu_ord', familyId: 'fam_ord', firstName: 'Ord', lastName: 'Fam', status: 'active', studentCode: 'ORD9000', createdAt: ts, updatedAt: ts }).run();
     // A dated, genuinely-due invoice and an undated one, both open with a positive balance.
     const mk = (id: string, label: string, due: string | null) => {
-      db.insert(invoices).values({ id, familyId: 'fam_ord', label, periodKey: id, dueDate: due, status: 'open', createdAt: ts, updatedAt: ts }).run();
-      db.insert(invoiceItems).values({ id: `it_${id}`, invoiceId: id, description: 'Tuition', amountCents: 5000, studentId: null, createdAt: ts }).run();
+      db.insert(invoices).values({ id, studentId: 'stu_ord', label, periodKey: id, dueDate: due, status: 'open', createdAt: ts, updatedAt: ts }).run();
+      db.insert(invoiceItems).values({ id: `it_${id}`, invoiceId: id, description: 'Tuition', amountCents: 5000, studentId: 'stu_ord', createdAt: ts }).run();
     };
     mk('inv_dated', 'Dated invoice', '2026-06-01');
     mk('inv_undated', 'Undated invoice', null);

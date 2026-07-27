@@ -5,8 +5,8 @@
  * admin-configurable optional columns.
  *
  * Two things matter most here:
- *  - a cell reports the FAMILY's invoice state for that period (that is what is billed and paid),
- *    so siblings on one bill legitimately show the same cell
+ *  - a cell reports THAT CHILD's own invoice state for that period (billing is per student since
+ *    0.39.0), so two siblings can differ in the same month — the point of the change
  *  - a column the admin has not enabled is absent from the payload entirely, not merely blank — the
  *    guardian ones especially, since they put contact details on a whole-school printout (§14)
  */
@@ -62,14 +62,14 @@ async function seed() {
   const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 35000, cadence: 'monthly' });
 
   const ismail = await admin.people.familyCreate({ name: 'Ismail' });
-  await admin.people.studentCreate({ familyId: ismail.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id, classId: cls.id });
-  await admin.people.studentCreate({ familyId: ismail.id, firstName: 'Sara', lastName: 'Ismail', feePlanId: plan.id, overrideAmountCents: 70000, feeNote: 'ACH', classId: cls.id });
+  const yusuf = await admin.people.studentCreate({ familyId: ismail.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id, classId: cls.id });
+  const sara = await admin.people.studentCreate({ familyId: ismail.id, firstName: 'Sara', lastName: 'Ismail', feePlanId: plan.id, overrideAmountCents: 70000, feeNote: 'ACH', classId: cls.id });
   await admin.people.guardianCreate({ familyId: ismail.id, name: 'Abu Yusuf', phone: '(901) 949-2646', email: 'abu@example.com' });
 
   const farooqi = await admin.people.familyCreate({ name: 'Farooqi' });
   await admin.people.studentCreate({ familyId: farooqi.id, firstName: 'Bilal', lastName: 'Farooqi', feePlanId: plan.id, classId: cls.id });
 
-  return { admin, ismailId: ismail.id, farooqiId: farooqi.id, planId: plan.id };
+  return { admin, ismailId: ismail.id, farooqiId: farooqi.id, planId: plan.id, yusufId: yusuf.id, saraId: sara.id };
 }
 
 describe('yearGrid', () => {
@@ -95,8 +95,10 @@ describe('yearGrid', () => {
     expect(sara.feeNote).toBe('ACH');
   });
 
-  it('cells track the family invoice through open → partial → paid, and stay none when unbilled', async () => {
-    const { admin, ismailId } = await seed();
+  /** Each cell is now THAT CHILD's own invoice, so siblings move independently. This is the visible
+   *  payoff of per-student billing: "Yusuf paid April, Sara hasn't" is finally expressible. */
+  it('cells track each child’s OWN invoice through open → partial → paid, siblings independently', async () => {
+    const { admin, ismailId, yusufId } = await seed();
     const at = async (first: string, period: string) => {
       const g = await admin.billing.yearGrid();
       return g.rows.find((r) => r.firstName === first)!.cells.find((c) => c.periodKey === period)!;
@@ -105,17 +107,18 @@ describe('yearGrid', () => {
     expect((await at('Yusuf', '2026-04')).status).toBe('none');
     await admin.billing.generateFamily({ familyId: ismailId, periodKey: '2026-04', label: 'Apr' });
     expect((await at('Yusuf', '2026-04')).status).toBe('open');
+    expect((await at('Yusuf', '2026-04')).totalCents).toBe(35000); // his own bill, not the household's
 
-    // 35000 + 70000 = 105000 for the family.
-    await admin.billing.recordManualPayment({ familyId: ismailId, amountCents: 40000, channel: 'cash', occurredAt: '2026-04-05' });
+    // Pay Yusuf only: his cell advances and Sara's does NOT.
+    await admin.billing.recordManualPayment({ studentId: yusufId, amountCents: 20000, channel: 'cash', occurredAt: '2026-04-05' });
     expect((await at('Yusuf', '2026-04')).status).toBe('partial');
-    await admin.billing.recordManualPayment({ familyId: ismailId, amountCents: 65000, channel: 'zelle', occurredAt: '2026-04-09' });
-    const paid = await at('Yusuf', '2026-04');
-    expect(paid.status).toBe('paid');
-    expect(paid.totalCents).toBe(105000);
-
-    // Siblings share the bill, so Sara's cell matches Yusuf's.
-    expect((await at('Sara', '2026-04')).status).toBe('paid');
+    expect((await at('Sara', '2026-04')).status).toBe('open');
+    await admin.billing.recordManualPayment({ studentId: yusufId, amountCents: 15000, channel: 'zelle', occurredAt: '2026-04-09' });
+    expect((await at('Yusuf', '2026-04')).status).toBe('paid');
+    // Sara is still open on her own 70000 — the sibling's payment did not touch her.
+    const sara = await at('Sara', '2026-04');
+    expect(sara.status).toBe('open');
+    expect(sara.totalCents).toBe(70000);
     // A different family is untouched.
     expect((await at('Bilal', '2026-04')).status).toBe('none');
     // A later month is still unbilled.
@@ -177,13 +180,22 @@ describe('optional columns are opt-in', () => {
     expect('studentCode' in g2.rows[0].extra).toBe(false);
   });
 
-  it('reports the balance a family actually owes', async () => {
-    const { admin, ismailId } = await seed();
+  /** The balance column is the CHILD's own, not the household's — the row is the child. Two siblings
+   *  on one bill used to show the same (combined) figure, which read as double-counting. */
+  it('reports what each child owes, not the household total', async () => {
+    const { admin, ismailId, yusufId } = await seed();
     await admin.billing.yearViewColumnsSet({ columns: ['balance'] });
     await admin.billing.generateFamily({ familyId: ismailId, periodKey: '2026-04', label: 'Apr' });
-    const g = await admin.billing.yearGrid();
-    expect(g.rows.find((r) => r.firstName === 'Yusuf')!.extra.balanceCents).toBe(105000);
-    expect(g.rows.find((r) => r.firstName === 'Bilal')!.extra.balanceCents).toBe(0);
+    let g = await admin.billing.yearGrid();
+    expect(g.rows.find((r) => r.firstName === 'Yusuf')!.extra.balanceCents).toBe(35000); // his plan
+    expect(g.rows.find((r) => r.firstName === 'Sara')!.extra.balanceCents).toBe(70000); // her override
+    expect(g.rows.find((r) => r.firstName === 'Bilal')!.extra.balanceCents).toBe(0); // never billed
+
+    // Paying one child moves only that child's figure.
+    await admin.billing.recordManualPayment({ studentId: yusufId, amountCents: 35000, channel: 'cash', occurredAt: '2026-04-05' });
+    g = await admin.billing.yearGrid();
+    expect(g.rows.find((r) => r.firstName === 'Yusuf')!.extra.balanceCents).toBe(0);
+    expect(g.rows.find((r) => r.firstName === 'Sara')!.extra.balanceCents).toBe(70000);
   });
 });
 

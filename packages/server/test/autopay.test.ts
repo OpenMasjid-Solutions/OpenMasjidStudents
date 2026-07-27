@@ -36,14 +36,14 @@ async function familyDue(dueDate = '2026-06-01') {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  const stu = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-06', label: 'Tuition — Jun 2026', dueDate });
   const { db } = app.dbmod;
   const ts = new Date();
   db.update(families).set({ stripeCustomerId: 'cus_test' }).where(eq(families.id, fam.id)).run();
   db.insert(paymentMethods).values({ id: 'pm_test', familyId: fam.id, brand: 'visa', last4: '4242', expMonth: 12, expYear: 2030, isDefault: true, createdAt: ts }).run();
   db.insert(autopayEnrollments).values({ familyId: fam.id, enabled: true, defaultPmId: 'pm_test', consentAt: ts, failureCount: 0, nextAttemptAt: null, createdAt: ts, updatedAt: ts }).run();
-  return fam.id;
+  return { familyId: fam.id, studentId: stu.id };
 }
 
 describe('addDays', () => {
@@ -55,7 +55,7 @@ describe('addDays', () => {
 
 describe('autopayDue', () => {
   it('selects an enrolled family with a due invoice; skips off/not-due/waiting families', async () => {
-    const familyId = await familyDue('2026-06-01');
+    const { familyId, studentId } = await familyDue('2026-06-01');
     expect(ap.autopayDue('2026-07-01')).toEqual([{ familyId, amountCents: 5000 }]);
     // Not yet due (invoice due in the future relative to the run date).
     expect(ap.autopayDue('2026-05-01')).toEqual([]);
@@ -71,7 +71,7 @@ describe('autopayDue', () => {
 
 describe('createAutopayRun idempotency', () => {
   it('is one run per family per day', async () => {
-    const familyId = await familyDue();
+    const { familyId, studentId } = await familyDue();
     expect(ap.createAutopayRun(familyId, 5000, '2026-07-01', 1)).toBeTruthy();
     expect(ap.createAutopayRun(familyId, 5000, '2026-07-01', 1)).toBeNull(); // same day → no second run
     expect(ap.createAutopayRun(familyId, 5000, '2026-07-02', 2)).toBeTruthy(); // next day is fine
@@ -87,7 +87,7 @@ describe('retry ladder', () => {
   const enr = (familyId: string) => app.dbmod.db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get()!;
 
   it('advances +2 then +5, then disables after the third failure', async () => {
-    const familyId = await familyDue();
+    const { familyId, studentId } = await familyDue();
     runFail(familyId, '2026-07-01');
     expect(enr(familyId)).toMatchObject({ enabled: true, failureCount: 1, nextAttemptAt: '2026-07-03' }); // +2
     runFail(familyId, '2026-07-03');
@@ -97,7 +97,7 @@ describe('retry ladder', () => {
   });
 
   it('a success resets the ladder', async () => {
-    const familyId = await familyDue();
+    const { familyId, studentId } = await familyDue();
     runFail(familyId, '2026-07-01');
     expect(enr(familyId).failureCount).toBe(1);
     const runId = ap.createAutopayRun(familyId, 5000, '2026-07-03', 2)!;
@@ -108,7 +108,7 @@ describe('retry ladder', () => {
   });
 
   it('resolves a late failure by run id, backfills the PI id, and never double-advances', async () => {
-    const familyId = await familyDue();
+    const { familyId, studentId } = await familyDue();
     // create() timed out: run pending, PI id never persisted. The webhook resolves it by our run id.
     const runId = ap.createAutopayRun(familyId, 5000, '2026-07-01', 1)!;
     ap.onAutopayFailed('pi_f', runId);
@@ -122,7 +122,7 @@ describe('retry ladder', () => {
   });
 
   it('links a late success by run id and backfills the PI id, resetting an inflated ladder', async () => {
-    const familyId = await familyDue();
+    const { familyId, studentId } = await familyDue();
     const runId = ap.createAutopayRun(familyId, 5000, '2026-07-01', 1)!; // pending, no PI id
     app.dbmod.db.update(autopayEnrollments).set({ failureCount: 1, nextAttemptAt: '2026-07-03' }).where(eq(autopayEnrollments.familyId, familyId)).run();
     ap.onAutopaySucceeded('pi_late', runId);
@@ -135,21 +135,21 @@ describe('retry ladder', () => {
 
 describe('ladder reset on any balance-clearing payment', () => {
   it('resets a mid-ladder family when a non-autopay payment clears the balance', async () => {
-    const familyId = await familyDue('2026-06-01');
+    const { familyId, studentId } = await familyDue('2026-06-01');
     const { db } = app.dbmod;
     // Two prior autopay failures, waiting on the retry ladder.
     db.update(autopayEnrollments).set({ failureCount: 2, nextAttemptAt: '2026-07-05' }).where(eq(autopayEnrollments.familyId, familyId)).run();
     // The parent pays the $50 balance manually (cash) — a different channel entirely.
-    ledger.recordPayment({ familyId, amountCents: 5000, channel: 'cash', occurredAt: new Date(), idempotencyKey: 'cash_manual_1', memo: null }, { userId: null, role: 'admin', name: 'admin' });
+    ledger.recordPayment({ studentId, amountCents: 5000, channel: 'cash', occurredAt: new Date(), idempotencyKey: 'cash_manual_1', memo: null }, { userId: null, role: 'admin', name: 'admin' });
     expect(ledger.familyBalance(familyId).owedCents).toBe(0);
     expect(db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get()!).toMatchObject({ failureCount: 0, nextAttemptAt: null });
   });
 
   it('leaves the ladder alone when a payment only partially clears the balance', async () => {
-    const familyId = await familyDue('2026-06-01');
+    const { familyId, studentId } = await familyDue('2026-06-01');
     const { db } = app.dbmod;
     db.update(autopayEnrollments).set({ failureCount: 2, nextAttemptAt: '2026-07-05' }).where(eq(autopayEnrollments.familyId, familyId)).run();
-    ledger.recordPayment({ familyId, amountCents: 2000, channel: 'cash', occurredAt: new Date(), idempotencyKey: 'cash_partial_1', memo: null }, { userId: null, role: 'admin', name: 'admin' });
+    ledger.recordPayment({ studentId, amountCents: 2000, channel: 'cash', occurredAt: new Date(), idempotencyKey: 'cash_partial_1', memo: null }, { userId: null, role: 'admin', name: 'admin' });
     expect(ledger.familyBalance(familyId).owedCents).toBe(3000);
     expect(db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get()!).toMatchObject({ failureCount: 2, nextAttemptAt: '2026-07-05' });
   });
@@ -176,7 +176,7 @@ describe('chargeFamily (off-session, mocked Stripe)', () => {
   });
 
   it('records a synchronous success and clears the balance so there is no cross-day re-charge', async () => {
-    const familyId = await familyDue('2026-06-01');
+    const { familyId, studentId } = await familyDue('2026-06-01');
     createImpl = () => ({ id: 'pi_sync', status: 'succeeded', latest_charge: 'ch_sync' });
     await ap.chargeFamily(familyId, 5000, '2026-07-01');
     expect(createCalls.length).toBe(1);
@@ -188,7 +188,7 @@ describe('chargeFamily (off-session, mocked Stripe)', () => {
   });
 
   it('does not re-charge while a prior run is still pending (delayed / lost webhook)', async () => {
-    const familyId = await familyDue('2026-06-01');
+    const { familyId, studentId } = await familyDue('2026-06-01');
     const { db } = app.dbmod;
     const ts = new Date();
     // A prior charge fired a PI but its outcome hasn't landed yet.
@@ -199,7 +199,7 @@ describe('chargeFamily (off-session, mocked Stripe)', () => {
   });
 
   it('leaves the run pending and does NOT advance the ladder on an indeterminate error', async () => {
-    const familyId = await familyDue('2026-06-01');
+    const { familyId, studentId } = await familyDue('2026-06-01');
     createImpl = () => { throw { type: 'StripeConnectionError', message: 'timeout' }; };
     await ap.chargeFamily(familyId, 5000, '2026-07-01');
     expect(runOf(familyId).status).toBe('pending');
@@ -207,7 +207,7 @@ describe('chargeFamily (off-session, mocked Stripe)', () => {
   });
 
   it('advances the ladder and backfills the PI id on a synchronous card decline', async () => {
-    const familyId = await familyDue('2026-06-01');
+    const { familyId, studentId } = await familyDue('2026-06-01');
     createImpl = () => { throw { type: 'StripeCardError', code: 'card_declined', payment_intent: { id: 'pi_declined' } }; };
     await ap.chargeFamily(familyId, 5000, '2026-07-01');
     expect(runOf(familyId)).toMatchObject({ status: 'failed', stripePaymentIntentId: 'pi_declined' });

@@ -90,10 +90,10 @@ describe('billing.exportCsv end to end', () => {
     const fam = await admin.people.familyCreate({ name: '=cmd|/c calc' });
     await admin.people.guardianCreate({ familyId: fam.id, name: '@evil', phone: '+15550100', email: 'a@test.org' });
     const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-    await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+    const stu = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
     await admin.billing.generatePeriod({ periodKey: '2026-07', label: 'Tuition — Jul 2026' });
-    await admin.billing.recordManualPayment({ familyId: fam.id, amountCents: 2500, channel: 'ach', occurredAt: '2026-07-15', memo: '=DANGER()' });
-    return { admin, famId: fam.id };
+    await admin.billing.recordManualPayment({ studentId: stu.id, amountCents: 2500, channel: 'ach', occurredAt: '2026-07-15', memo: '=DANGER()' });
+    return { admin, famId: fam.id, studentId: stu.id };
   }
 
   it('exports all four datasets with rows', async () => {

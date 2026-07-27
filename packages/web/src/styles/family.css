@@ -78,7 +78,9 @@
   border-radius: 14px;
   margin-block-end: 0.6rem;
 }
-.kid-row .kid-name { font-weight: 600; }
+.kid-row .kid-name { font-weight: 600; display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+/* What this child owes, under their name — bills are per child, so each row carries its own figure. */
+.kid-row .kid-sub { font-weight: 500; font-size: 0.78rem; color: var(--color-text-muted, #9fb4aa); }
 .kid-row .kid-code {
   margin-inline-start: auto;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;

@@ -30,12 +30,42 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Changed
 
+- **One bill per child.** Invoices and payments used to belong to a household; now they belong to a
+  student. What this fixes, in the office's words: *"Yusuf paid April, Sara hasn't"* is finally
+  something the app can say. The year view shows each child's own months, the balance column is that
+  child's, and a statement lists what each child owes.
+  - **Recording an in-person payment now asks which child** — "Yusuf brought cash for April". It lands
+    in his balance, pays down his oldest unpaid bill first, and anything left over stays as **his**
+    credit that his next invoice absorbs automatically. Nothing is stored, so it cannot go stale.
+  - Parents still see **one combined balance and pay once.** A single card charge covering three
+    children is recorded as three ledger rows, one per child, so each child's balance moves by their
+    own share — and the payment history says which child each row was for.
+  - Moving a child between households now takes their billing with them. An unpaid bill stranded on a
+    household the child has left is a debt nobody is looking at.
+- **Family discounts are gone.** A household-level discount had nowhere honest to sit once each child
+  gets their own bill. A reduced rate is the **per-student amount** on their fee assignment, which is
+  where a parent sees it on the invoice anyway. Any family currently on a discount needs that amount
+  entered per child.
 - **Fabric contract `students/billing` → `v: 2`** (breaking, `lookup` only). `lookup` takes
   `studentCode` and nothing else; `name` and `pin` are gone, and a v1-shaped body now gets a `400`
-  rather than half-working. `info`, `record-payment` and `check` are unchanged and still accept
-  `"v": 1`, so a Donations or Kiosk build that hasn't shipped its update keeps its **money path**
-  working — only its lookup screen needs the change. See
-  [`docs/FABRIC_BILLING_CONTRACT.md`](docs/FABRIC_BILLING_CONTRACT.md) §11.0 for the migration note.
+  rather than half-working. It also returns **each child's own balance** alongside the household total,
+  and `record-payment` accepts an optional per-child `students[]` breakdown (omit it and this app
+  derives the split). `info`, `record-payment` and `check` still accept `"v": 1`, so a Donations or
+  Kiosk build that hasn't shipped its update keeps its **money path** working — only its lookup screen
+  needs the change. See [`docs/FABRIC_BILLING_CONTRACT.md`](docs/FABRIC_BILLING_CONTRACT.md) §11.0.
+
+### Fixed
+
+- **`check` would have missed every multi-child payment.** It matched the idempotency key exactly, but a
+  charge covering N children is stored as N rows keyed `<key>:<studentId>` — so a consumer's outbox
+  would have retried forever. (The first attempt at the fix used SQL `LIKE`, which was worse: `_` is a
+  LIKE wildcard and Stripe ids are full of them.)
+- **A replayed `record-payment` could have recorded the money twice.** Deriving a per-child split reads
+  the invoices the first attempt already paid down, so re-deriving produced a *different* split under
+  fresh keys, which the per-key idempotency check couldn't catch. Every path that derives a split now
+  checks whether the charge was already recorded first.
+- **Reconciliation could have dropped a payment** for a family whose students hadn't been imported yet.
+  It now holds its cursor and retries rather than skipping past real money (§11.4).
 - The `pin-lockout` admin alert is now **`lookup-lockout`** ("Tuition Student ID lookup locked"). The
   id changes in the manifest, so the alert starts working again once the catalog entry updates.
 - CSV student export and the year view now carry the Student ID where they used to offer a PIN column.

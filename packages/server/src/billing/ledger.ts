@@ -188,11 +188,82 @@ export interface SplitShare {
   amountCents: number;
 }
 
+/**
+ * Turn "this family paid £X" into a per-student split — THE shared primitive for every path where a
+ * parent pays once for several children: portal pay-now, a kiosk/donation charge that only names a
+ * family, autopay, and reconciliation replaying a lost webhook.
+ *
+ * It walks the family's open invoices oldest-due-first (the same order `recordPayment` allocates in)
+ * and assigns each invoice's outstanding balance to that invoice's student until the money runs out.
+ * Because the order is deterministic, every one of those paths produces the SAME split for the same
+ * inputs — which is what lets reconciliation reproduce a charge it never saw recorded.
+ *
+ * Any remainder once every invoice is covered is credit, and credit has to sit on some child: it goes
+ * to `preferStudentId` when the caller knows who was being paid for (the kiosk's matched student),
+ * otherwise to the family's first child by name. Deterministic either way, and the office can move it
+ * by recording a correction — never silently spread around.
+ */
+export function splitAcrossFamily(familyId: string, amountCents: number, preferStudentId?: string | null): SplitShare[] {
+  if (amountCents <= 0) return [];
+  const kids = familyStudentIds(familyId);
+  if (!kids.length) return [];
+
+  const open = db
+    .select({ id: invoices.id, studentId: invoices.studentId, status: invoices.status })
+    .from(invoices)
+    .where(inArray(invoices.studentId, kids))
+    .orderBy(sql`${invoices.dueDate} is null`, asc(invoices.dueDate), asc(invoices.createdAt))
+    .all();
+
+  const byStudent = new Map<string, number>();
+  let remaining = amountCents;
+  for (const inv of open) {
+    if (remaining <= 0) break;
+    if (inv.status === 'void') continue;
+    const bal = invoiceTotal(db, inv.id) - invoicePaid(db, inv.id);
+    if (bal <= 0) continue;
+    const amt = Math.min(remaining, bal);
+    byStudent.set(inv.studentId, (byStudent.get(inv.studentId) ?? 0) + amt);
+    remaining -= amt;
+  }
+
+  if (remaining > 0) {
+    // Overpayment → credit on one child. Prefer whoever the payment was made for.
+    const target = preferStudentId && kids.includes(preferStudentId) ? preferStudentId : firstChildByName(familyId) ?? kids[0];
+    byStudent.set(target, (byStudent.get(target) ?? 0) + remaining);
+  }
+  return [...byStudent].map(([studentId, amt]) => ({ studentId, amountCents: amt }));
+}
+
+/** A family's first child by first name — the documented tie-break for where stray credit lands. */
+function firstChildByName(familyId: string): string | undefined {
+  return db.select({ id: students.id }).from(students).where(eq(students.familyId, familyId)).orderBy(asc(students.firstName)).all()[0]?.id;
+}
+
 export interface SplitResult {
   /** Per-student results, in the order given. */
   parts: { studentId: string; paymentId: string; duplicate: boolean; allocatedCents: number; creditCents: number }[];
   /** True only when EVERY part was already recorded — i.e. the whole charge is a replay. */
   duplicate: boolean;
+}
+
+/**
+ * The parts of a split charge already recorded under `key` — i.e. "have we seen this charge before?".
+ *
+ * Every caller that DERIVES a split (rather than being handed one) must ask this FIRST, because
+ * deriving is not idempotent: `splitAcrossFamily` reads the invoices the first attempt already paid
+ * down, so re-deriving after a successful call yields a different, smaller split whose per-student
+ * keys are new — and the money would be recorded twice. Asking here turns a replay into a no-op.
+ *
+ * Prefix-matched with substr rather than `LIKE key || ':%'` on purpose: `_` is a LIKE wildcard and
+ * Stripe ids are full of them (`pi_3Pabc…`), so LIKE would need an ESCAPE clause to even be correct.
+ */
+export function recordedSplit(key: string): { studentId: string; paymentId: string; amountCents: number }[] {
+  return db
+    .select({ studentId: payments.studentId, paymentId: payments.id, amountCents: payments.amountCents })
+    .from(payments)
+    .where(sql`${payments.idempotencyKey} = ${key} OR substr(${payments.idempotencyKey}, 1, ${key.length + 1}) = ${`${key}:`}`)
+    .all();
 }
 
 /**

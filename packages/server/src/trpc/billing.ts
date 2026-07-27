@@ -14,7 +14,7 @@ import { db } from '../db';
 import { feePlans, studentFees, students, families, invoices, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
-import { recordPayment, reversePayment, familyBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
+import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
 import { schoolYearMonths } from '../billing/schoolYear';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
@@ -80,6 +80,34 @@ function resolveTarget(target: z.infer<typeof BULK_TARGET>): string[] {
     .where(and(eq(classes.courseId, target.courseId), eq(students.status, 'active')))
     .all()
     .map((r) => r.id);
+}
+
+/** Invoice rows for a set of students, newest first, each carrying whose bill it is. Shared by the
+ *  per-student window and the household one so the two can never disagree about a total. */
+function invoiceRowsFor(studentIds: string[]) {
+  if (!studentIds.length) return [];
+  return db
+    .select({ id: invoices.id, studentId: invoices.studentId, label: invoices.label, periodKey: invoices.periodKey, dueDate: invoices.dueDate, status: invoices.status, createdAt: invoices.createdAt })
+    .from(invoices)
+    .where(inArray(invoices.studentId, studentIds))
+    .orderBy(desc(invoices.createdAt))
+    .all()
+    .map((i) => {
+      const total = invoiceTotal(db, i.id);
+      const paid = invoicePaid(db, i.id);
+      return { id: i.id, studentId: i.studentId, label: i.label, periodKey: i.periodKey, dueDate: i.dueDate, status: i.status, totalCents: total, paidCents: paid, balanceCents: total - paid };
+    });
+}
+
+/** Payment rows for a set of students, newest first. */
+function paymentRowsFor(studentIds: string[]) {
+  if (!studentIds.length) return [];
+  return db
+    .select({ id: payments.id, studentId: payments.studentId, amountCents: payments.amountCents, channel: payments.channel, occurredAt: payments.occurredAt, memo: payments.memo, reversalOf: payments.reversalOf, by: payments.recordedByName })
+    .from(payments)
+    .where(inArray(payments.studentId, studentIds))
+    .orderBy(desc(payments.occurredAt), desc(payments.createdAt))
+    .all();
 }
 
 export const billingRouter = router({
@@ -211,13 +239,9 @@ export const billingRouter = router({
     return { ok: true as const };
   }),
 
-  setDiscount: adminOrFinanceProcedure.input(z.object({ familyId: ID, kind: z.enum(['none', 'fixed', 'percent']), value: CENTS })).mutation(({ ctx, input }) => {
-    if (!db.select({ id: families.id }).from(families).where(eq(families.id, input.familyId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Family not found.' });
-    const value = input.kind === 'none' ? 0 : input.kind === 'percent' ? Math.min(input.value, 10000) : input.value;
-    db.update(families).set({ discountKind: input.kind, discountValue: value, updatedAt: now() }).where(eq(families.id, input.familyId)).run();
-    audit(auditActor(ctx), 'family.setDiscount', { entity: 'family', entityId: input.familyId, detail: { kind: input.kind, value } });
-    return { ok: true as const };
-  }),
+  // No `setDiscount` any more. A family-level discount had nowhere honest to sit once each child gets
+  // their own bill, so a reduced rate is now the per-student fee override (`assignFee`'s
+  // `overrideAmountCents`) — on the child whose bill it actually reduces.
 
   // ── Invoice generation ───────────────────────────────────────────────────────
   /** `periodKind` drives the cadence gate: a `month` period bills monthly plans, a `term` period
@@ -334,14 +358,16 @@ export const billingRouter = router({
         monthly.set(r.studentId, { amountCents: amt, note: r.note ?? prev?.note ?? null });
       }
 
-      // One pass over the year's invoices → per (family, period) status.
-      const cellByFamily = new Map<string, Map<string, { status: string; totalCents: number; paidCents: number; invoiceId: string }>>();
+      // One pass over the year's invoices → per (STUDENT, period) status. Each row now reports the
+      // child's own bill rather than the household's, so two siblings can legitimately differ in the
+      // same month — which is the whole point of per-student invoices.
+      const cellByStudent = new Map<string, Map<string, { status: string; totalCents: number; paidCents: number; invoiceId: string }>>();
       if (periodKeys.length) {
-        for (const inv of db.select({ id: invoices.id, familyId: invoices.familyId, periodKey: invoices.periodKey, status: invoices.status }).from(invoices).where(inArray(invoices.periodKey, periodKeys)).all()) {
+        for (const inv of db.select({ id: invoices.id, studentId: invoices.studentId, periodKey: invoices.periodKey, status: invoices.status }).from(invoices).where(inArray(invoices.periodKey, periodKeys)).all()) {
           const total = invoiceTotal(db, inv.id);
           const paid = invoicePaid(db, inv.id);
-          if (!cellByFamily.has(inv.familyId)) cellByFamily.set(inv.familyId, new Map());
-          cellByFamily.get(inv.familyId)!.set(inv.periodKey, { status: inv.status, totalCents: total, paidCents: paid, invoiceId: inv.id });
+          if (!cellByStudent.has(inv.studentId)) cellByStudent.set(inv.studentId, new Map());
+          cellByStudent.get(inv.studentId)!.set(inv.periodKey, { status: inv.status, totalCents: total, paidCents: paid, invoiceId: inv.id });
         }
       }
 
@@ -360,12 +386,10 @@ export const billingRouter = router({
       }
 
       const wantsBalance = columns.includes('balance');
-      const balanceByFamily = new Map<string, number>();
 
       const rows = studentRows.map((s) => {
         const m = monthly.get(s.id);
-        const fam = cellByFamily.get(s.familyId);
-        if (wantsBalance && !balanceByFamily.has(s.familyId)) balanceByFamily.set(s.familyId, familyBalance(s.familyId).owedCents);
+        const cells = cellByStudent.get(s.id);
         const gs = guardiansByFamily.get(s.familyId) ?? [];
         return {
           studentId: s.id,
@@ -380,7 +404,7 @@ export const billingRouter = router({
           monthlyAmountCents: m?.amountCents ?? 0,
           feeNote: m?.note ?? null,
           cells: months.map((mo) => {
-            const c = fam?.get(mo.periodKey);
+            const c = cells?.get(mo.periodKey);
             if (!c) return { periodKey: mo.periodKey, status: 'none' as const };
             const state = c.status === 'void' ? 'void' : c.paidCents >= c.totalCents && c.totalCents > 0 ? 'paid' : c.paidCents > 0 ? 'partial' : 'open';
             return { periodKey: mo.periodKey, status: state, totalCents: c.totalCents, paidCents: c.paidCents, invoiceId: c.invoiceId };
@@ -392,7 +416,8 @@ export const billingRouter = router({
             ...(columns.includes('guardianNames') ? { guardianNames: gs.map((g) => g.name) } : {}),
             ...(columns.includes('guardianPhones') ? { guardianPhones: gs.map((g) => g.phone).filter((p): p is string => !!p) } : {}),
             ...(columns.includes('guardianEmails') ? { guardianEmails: gs.map((g) => g.email).filter((e): e is string => !!e) } : {}),
-            ...(wantsBalance ? { balanceCents: balanceByFamily.get(s.familyId) ?? 0 } : {}),
+            // This child's own balance, not the household's — the row is the child.
+            ...(wantsBalance ? { balanceCents: studentBalance(s.id).owedCents } : {}),
           },
         };
       });
@@ -433,10 +458,13 @@ export const billingRouter = router({
       let rows: unknown[][] = [];
 
       if (input.dataset === 'payments') {
-        header = ['Date', 'Family', 'Amount', 'Currency', 'Method', 'Memo', 'Recorded by', 'Reversal of'];
+        header = ['Date', 'Student', 'Student ID', 'Family', 'Amount', 'Currency', 'Method', 'Memo', 'Recorded by', 'Reversal of'];
         rows = db
           .select({
             occurredAt: payments.occurredAt,
+            firstName: students.firstName,
+            lastName: students.lastName,
+            studentCode: students.studentCode,
             familyName: families.name,
             amountCents: payments.amountCents,
             channel: payments.channel,
@@ -445,22 +473,24 @@ export const billingRouter = router({
             reversalOf: payments.reversalOf,
           })
           .from(payments)
-          .innerJoin(families, eq(families.id, payments.familyId))
+          .innerJoin(students, eq(students.id, payments.studentId))
+          .innerJoin(families, eq(families.id, students.familyId))
           .orderBy(desc(payments.occurredAt))
           .all()
-          .map((p) => [csvDate(p.occurredAt), p.familyName, csvMoney(p.amountCents), currency, p.channel, p.memo, p.by, p.reversalOf ? 'yes' : '']);
+          .map((p) => [csvDate(p.occurredAt), `${p.firstName} ${p.lastName}`.trim(), p.studentCode, p.familyName, csvMoney(p.amountCents), currency, p.channel, p.memo, p.by, p.reversalOf ? 'yes' : '']);
       } else if (input.dataset === 'invoices') {
-        header = ['Period', 'Label', 'Family', 'Due', 'Total', 'Paid', 'Outstanding', 'Currency', 'Status'];
+        header = ['Period', 'Label', 'Student', 'Student ID', 'Family', 'Due', 'Total', 'Paid', 'Outstanding', 'Currency', 'Status'];
         rows = db
-          .select({ id: invoices.id, periodKey: invoices.periodKey, label: invoices.label, familyName: families.name, dueDate: invoices.dueDate, status: invoices.status })
+          .select({ id: invoices.id, periodKey: invoices.periodKey, label: invoices.label, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode, familyName: families.name, dueDate: invoices.dueDate, status: invoices.status })
           .from(invoices)
-          .innerJoin(families, eq(families.id, invoices.familyId))
-          .orderBy(desc(invoices.periodKey), asc(families.name))
+          .innerJoin(students, eq(students.id, invoices.studentId))
+          .innerJoin(families, eq(families.id, students.familyId))
+          .orderBy(desc(invoices.periodKey), asc(students.firstName))
           .all()
           .map((i) => {
             const total = invoiceTotal(db, i.id);
             const paid = invoicePaid(db, i.id);
-            return [i.periodKey, i.label, i.familyName, i.dueDate, csvMoney(total), csvMoney(paid), csvMoney(total - paid), currency, i.status];
+            return [i.periodKey, i.label, `${i.firstName} ${i.lastName}`.trim(), i.studentCode, i.familyName, i.dueDate, csvMoney(total), csvMoney(paid), csvMoney(total - paid), currency, i.status];
           });
       } else if (input.dataset === 'balances') {
         header = ['Family', 'Outstanding', 'Credit', 'Currency'];
@@ -660,17 +690,36 @@ export const billingRouter = router({
     return { ok: true as const };
   }),
 
-  // ── Family ledger + payments ─────────────────────────────────────────────────
+  // ── Student ledger + payments ────────────────────────────────────────────────
+  /** ONE STUDENT's record: their balance, their invoices, their payments. This is the window finance
+   *  works in — recording an in-person payment happens here, against the child it was paid for. */
+  studentBilling: adminOrFinanceProcedure.input(z.object({ studentId: ID })).query(({ input }) => {
+    const s = db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode, familyId: students.familyId }).from(students).where(eq(students.id, input.studentId)).get();
+    if (!s) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+    return {
+      student: s,
+      balance: studentBalance(s.id),
+      invoices: invoiceRowsFor([s.id]),
+      payments: paymentRowsFor([s.id]),
+    };
+  }),
+
+  /** The whole household, for when a parent asks "what do we owe altogether?". The combined balance
+   *  plus each child's own, and every invoice/payment tagged with the child it belongs to. */
   familyBilling: adminOrFinanceProcedure.input(z.object({ familyId: ID })).query(({ input }) => {
-    const fam = db.select({ discountKind: families.discountKind, discountValue: families.discountValue }).from(families).where(eq(families.id, input.familyId)).get();
-    const balance = familyBalance(input.familyId);
-    const invs = db.select().from(invoices).where(eq(invoices.familyId, input.familyId)).orderBy(desc(invoices.createdAt)).all().map((i) => {
-      const total = invoiceTotal(db, i.id);
-      const paid = invoicePaid(db, i.id);
-      return { id: i.id, label: i.label, periodKey: i.periodKey, dueDate: i.dueDate, status: i.status, totalCents: total, paidCents: paid, balanceCents: total - paid };
-    });
-    const pays = db.select().from(payments).where(eq(payments.familyId, input.familyId)).orderBy(desc(payments.occurredAt), desc(payments.createdAt)).all().map((p) => ({ id: p.id, amountCents: p.amountCents, channel: p.channel, occurredAt: p.occurredAt, memo: p.memo, reversalOf: p.reversalOf, by: p.recordedByName }));
-    return { balance, invoices: invs, payments: pays, discount: { kind: fam?.discountKind ?? 'none', value: fam?.discountValue ?? 0 } };
+    const kids = db
+      .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode, status: students.status })
+      .from(students)
+      .where(eq(students.familyId, input.familyId))
+      .orderBy(asc(students.firstName))
+      .all();
+    const kidIds = kids.map((k) => k.id);
+    return {
+      balance: familyBalance(input.familyId),
+      students: kids.map((k) => ({ ...k, balance: studentBalance(k.id) })),
+      invoices: invoiceRowsFor(kidIds),
+      payments: paymentRowsFor(kidIds),
+    };
   }),
 
   /** Overview: every active family with its balance (the Billing landing list). */
@@ -681,19 +730,24 @@ export const billingRouter = router({
 
   /** Mark money as received that did not come through a card: cash, a check, a bank/ACH transfer,
    *  Zelle, or anything else (with the memo saying what). The channel list is shared with the schema
-   *  so the dropdown and this enum cannot drift. */
-  recordManualPayment: adminOrFinanceProcedure.input(z.object({ familyId: ID, amountCents: CENTS.min(1), channel: z.enum(MANUAL_PAYMENT_CHANNELS), occurredAt: z.string().max(20), memo: z.string().trim().max(200).optional() })).mutation(({ ctx, input }) => {
-    if (!db.select({ id: families.id }).from(families).where(eq(families.id, input.familyId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Family not found.' });
-    const res = recordPayment({ familyId: input.familyId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${input.occurredAt}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null }, auditActor(ctx));
-    audit(auditActor(ctx), 'payment.record', { entity: 'family', entityId: input.familyId, detail: { channel: input.channel, amountCents: input.amountCents } });
+   *  so the dropdown and this enum cannot drift.
+   *
+   *  Recorded against ONE STUDENT — "Yusuf handed me cash for April". It lands in his balance and his
+   *  own invoices absorb it oldest-first; anything left over stays as his credit and the next bill for
+   *  him takes it. Paying for several children is several records, which is the honest shape: the
+   *  office counted separate amounts for separate kids. */
+  recordManualPayment: adminOrFinanceProcedure.input(z.object({ studentId: ID, amountCents: CENTS.min(1), channel: z.enum(MANUAL_PAYMENT_CHANNELS), occurredAt: z.string().max(20), memo: z.string().trim().max(200).optional() })).mutation(({ ctx, input }) => {
+    if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+    const res = recordPayment({ studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${input.occurredAt}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null }, auditActor(ctx));
+    audit(auditActor(ctx), 'payment.record', { entity: 'student', entityId: input.studentId, detail: { channel: input.channel, amountCents: input.amountCents } });
     return res;
   }),
 
   reversePayment: adminOrFinanceProcedure.input(z.object({ paymentId: ID })).mutation(({ ctx, input }) => {
-    const p = db.select({ id: payments.id, familyId: payments.familyId }).from(payments).where(eq(payments.id, input.paymentId)).get();
+    const p = db.select({ id: payments.id, studentId: payments.studentId }).from(payments).where(eq(payments.id, input.paymentId)).get();
     if (!p) throw new TRPCError({ code: 'NOT_FOUND', message: 'Payment not found.' });
     const r = reversePayment(input.paymentId, auditActor(ctx));
-    audit(auditActor(ctx), 'payment.reverse', { entity: 'family', entityId: p.familyId, detail: { paymentId: input.paymentId } });
+    audit(auditActor(ctx), 'payment.reverse', { entity: 'student', entityId: p.studentId, detail: { paymentId: input.paymentId } });
     return r;
   }),
 

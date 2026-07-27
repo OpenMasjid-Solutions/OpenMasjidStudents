@@ -34,77 +34,96 @@ async function scenario(plan: { name: string; amountCents: number; cadence: 'mon
 }
 
 describe('fee plans → assign → generate → pay', () => {
-  it('generates a family invoice from assigned fees and records a payment against it', async () => {
-    const { admin, familyId } = await scenario();
+  /** Billing a household now creates ONE INVOICE PER CHILD. The parent still sees one combined figure;
+   *  the difference is that each child's bill exists in its own right. */
+  it('generates one invoice per child and records a payment against one of them', async () => {
+    const { admin, familyId, s1 } = await scenario();
     const gen = await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
-    expect(gen.created).toBe(true);
+    expect(gen.created).toBe(2); // two children, two bills
     let billing = await admin.billing.familyBilling({ familyId });
-    expect(billing.invoices[0].totalCents).toBe(10000); // 2 students × $50
-    expect(billing.balance.owedCents).toBe(10000);
-    // Re-generating the same period is idempotent (no duplicate invoice).
-    const again = await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'x' });
-    expect(again.created).toBe(false);
-    // Pay part, then the rest.
-    await admin.billing.recordManualPayment({ familyId, amountCents: 4000, channel: 'cash', occurredAt: '2026-07-03' });
+    expect(billing.invoices).toHaveLength(2);
+    expect(billing.invoices.every((i) => i.totalCents === 5000)).toBe(true); // $50 each
+    expect(billing.balance.owedCents).toBe(10000); // the household total is unchanged
+    // Re-generating the same period is idempotent (no duplicate invoices).
+    expect((await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'x' })).created).toBe(0);
+
+    // Pay one child in two goes. The money touches HIS bill only.
+    await admin.billing.recordManualPayment({ studentId: s1, amountCents: 2000, channel: 'cash', occurredAt: '2026-07-03' });
     billing = await admin.billing.familyBilling({ familyId });
-    expect(billing.invoices[0].status).toBe('partially_paid');
-    expect(billing.balance.owedCents).toBe(6000);
-    await admin.billing.recordManualPayment({ familyId, amountCents: 6000, channel: 'check', occurredAt: '2026-07-10' });
+    expect(billing.invoices.find((i) => i.studentId === s1)!.status).toBe('partially_paid');
+    expect(billing.students.find((k) => k.id === s1)!.balance.owedCents).toBe(3000);
+    expect(billing.balance.owedCents).toBe(8000);
+    await admin.billing.recordManualPayment({ studentId: s1, amountCents: 3000, channel: 'check', occurredAt: '2026-07-10' });
     billing = await admin.billing.familyBilling({ familyId });
-    expect(billing.invoices[0].status).toBe('paid');
-    expect(billing.balance.balanceCents).toBe(0);
+    expect(billing.invoices.find((i) => i.studentId === s1)!.status).toBe('paid');
+    expect(billing.students.find((k) => k.id === s1)!.balance.balanceCents).toBe(0);
+    // The sibling is untouched — his bill is still fully open.
+    expect(billing.balance.owedCents).toBe(5000);
   });
 
-  it('applies a family percent discount as a negative line', async () => {
-    const { admin, familyId } = await scenario({ name: 'Tuition', amountCents: 10000, cadence: 'per_term' });
-    await admin.billing.setDiscount({ familyId, kind: 'percent', value: 1000 }); // 10%
+  /** The family discount was dropped in 0.39.0. A reduced rate is the per-student override, which lands
+   *  on the child whose bill it reduces rather than as a household line no single invoice could carry. */
+  it('a per-student override is how a reduced rate is expressed', async () => {
+    const { admin, familyId, s1 } = await scenario({ name: 'Tuition', amountCents: 10000, cadence: 'per_term' });
+    const fees = await admin.billing.familyFees({ familyId });
+    const s1Fee = fees.find((f) => f.studentId === s1)!;
+    await admin.billing.setFeeOverride({ id: s1Fee.feeId!, overrideAmountCents: 9000, note: 'Sibling rate' });
     // A per-term plan only bills on a TERM period now that cadence is enforced.
     await admin.billing.generateFamily({ familyId, periodKey: 'T1', label: 'Term 1', periodKind: 'term' });
     const billing = await admin.billing.familyBilling({ familyId });
-    expect(billing.invoices[0].totalCents).toBe(18000); // 20000 - 10%
+    expect(billing.invoices.find((i) => i.studentId === s1)!.totalCents).toBe(9000);
+    expect(billing.invoices.find((i) => i.studentId !== s1)!.totalCents).toBe(10000);
+    expect(billing.balance.owedCents).toBe(19000);
   });
 
   it('refuses to void an invoice that still carries payment; allows it once reversed', async () => {
-    const { admin, familyId } = await scenario({ name: 'Tuition', amountCents: 8000, cadence: 'one_time' });
+    const { admin, familyId, s1 } = await scenario({ name: 'Tuition', amountCents: 8000, cadence: 'one_time' });
     await admin.billing.generateFamily({ familyId, periodKey: 'once', label: 'One-time' });
-    const invId = (await admin.billing.familyBilling({ familyId })).invoices[0].id;
-    const pay = await admin.billing.recordManualPayment({ familyId, amountCents: 16000, channel: 'cash', occurredAt: '2026-07-03' });
+    const invId = (await admin.billing.studentBilling({ studentId: s1 })).invoices[0].id;
+    const pay = await admin.billing.recordManualPayment({ studentId: s1, amountCents: 8000, channel: 'cash', occurredAt: '2026-07-03' });
     // Voiding a paid invoice would understate the balance — refuse until the payment is reversed.
     await expect(admin.billing.voidInvoice({ id: invId })).rejects.toMatchObject({ code: 'CONFLICT' });
     await admin.billing.reversePayment({ paymentId: pay.paymentId });
     await admin.billing.voidInvoice({ id: invId });
-    expect((await admin.billing.familyBilling({ familyId })).invoices[0].status).toBe('void');
+    const after = await admin.billing.studentBilling({ studentId: s1 });
+    expect(after.invoices[0].status).toBe('void');
     // Balance stays coherent: nothing invoiced (voided), the payment netted out by its reversal.
-    expect((await admin.billing.familyBilling({ familyId })).balance.balanceCents).toBe(0);
+    expect(after.balance.balanceCents).toBe(0);
   });
 
-  it('familyBilling reports the family discount so the finance form can show it', async () => {
-    const { admin, familyId } = await scenario();
-    expect((await admin.billing.familyBilling({ familyId })).discount).toMatchObject({ kind: 'none', value: 0 });
-    await admin.billing.setDiscount({ familyId, kind: 'percent', value: 1500 });
-    expect((await admin.billing.familyBilling({ familyId })).discount).toMatchObject({ kind: 'percent', value: 1500 });
+  it('studentBilling shows one child’s own record', async () => {
+    const { admin, s1, s2 } = await scenario();
+    await admin.billing.generateFamily({ familyId: (await admin.billing.studentBilling({ studentId: s1 })).student.familyId, periodKey: '2026-07', label: 'Jul' });
+    const a = await admin.billing.studentBilling({ studentId: s1 });
+    expect(a.student.id).toBe(s1);
+    expect(a.invoices).toHaveLength(1);
+    expect(a.balance.owedCents).toBe(5000);
+    // And it really is scoped: the sibling's bill is nowhere in it.
+    expect(a.invoices.every((i) => i.studentId === s1)).toBe(true);
+    expect((await admin.billing.studentBilling({ studentId: s2 })).invoices.every((i) => i.studentId === s2)).toBe(true);
   });
 
   it('reversing a payment restores the balance; void removes an invoice from the balance', async () => {
-    const { admin, familyId } = await scenario({ name: 'Tuition', amountCents: 8000, cadence: 'one_time' });
+    const { admin, s1 } = await scenario({ name: 'Tuition', amountCents: 8000, cadence: 'one_time' });
+    const familyId = (await admin.billing.studentBilling({ studentId: s1 })).student.familyId;
     await admin.billing.generateFamily({ familyId, periodKey: 'once', label: 'One-time' });
-    const pay = await admin.billing.recordManualPayment({ familyId, amountCents: 16000, channel: 'cash', occurredAt: '2026-07-03' });
-    expect((await admin.billing.familyBilling({ familyId })).balance.balanceCents).toBe(0);
+    const pay = await admin.billing.recordManualPayment({ studentId: s1, amountCents: 8000, channel: 'cash', occurredAt: '2026-07-03' });
+    expect((await admin.billing.studentBilling({ studentId: s1 })).balance.balanceCents).toBe(0);
     await admin.billing.reversePayment({ paymentId: pay.paymentId });
-    expect((await admin.billing.familyBilling({ familyId })).balance.owedCents).toBe(16000);
-    const invId = (await admin.billing.familyBilling({ familyId })).invoices[0].id;
+    expect((await admin.billing.studentBilling({ studentId: s1 })).balance.owedCents).toBe(8000);
+    const invId = (await admin.billing.studentBilling({ studentId: s1 })).invoices[0].id;
     await admin.billing.voidInvoice({ id: invId });
-    expect((await admin.billing.familyBilling({ familyId })).balance.owedCents).toBe(0);
+    expect((await admin.billing.studentBilling({ studentId: s1 })).balance.owedCents).toBe(0);
   });
 });
 
 describe('walls', () => {
   it('billing is admin+finance only; teacher/parent refused; admin over tunnel refused; finance over tunnel ok', async () => {
-    const { admin, familyId } = await scenario();
+    const { admin, familyId, s1 } = await scenario();
     for (const r of ['parent'] as const) {
       await expect(caller(r).billing.feePlanList()).rejects.toMatchObject({ code: 'FORBIDDEN' });
       await expect(caller(r).billing.familyBilling({ familyId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-      await expect(caller(r).billing.recordManualPayment({ familyId, amountCents: 100, channel: 'cash', occurredAt: '2026-07-01' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(caller(r).billing.recordManualPayment({ studentId: s1, amountCents: 100, channel: 'cash', occurredAt: '2026-07-01' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     }
     await expect(caller('admin', { origin: 'tunnel' }).billing.feePlanList()).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // finance can do billing, including over the tunnel

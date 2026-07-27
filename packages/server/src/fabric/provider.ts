@@ -19,7 +19,7 @@
  * flows through the ONE ledger write path. External payments fire a best-effort Fabric notification.
  */
 import { timingSafeEqual } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { db } from '../db';
@@ -27,7 +27,7 @@ import { students, families, invoices, payments } from '../db/schema';
 import { config } from '../config';
 import { classifyOrigin } from '../security/origin';
 import { codeLookupLimiter } from '../security/rateLimit';
-import { familyBalance, invoiceTotal, invoicePaid, recordPayment } from '../billing/ledger';
+import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit } from '../billing/ledger';
 import { formatMoney } from '../db/money';
 import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../settings';
 import { audit } from '../audit';
@@ -167,34 +167,61 @@ export function registerFabricProvider(app: FastifyInstance): void {
     const fam = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.id, student.familyId)).get();
     const kids = db.select({ id: students.id, studentCode: students.studentCode, firstName: students.firstName, lastName: students.lastName }).from(students).where(and(eq(students.familyId, student.familyId), eq(students.status, 'active'))).all();
     const currency = getCurrency();
-    const bal = familyBalance(student.familyId);
-    const open = db
-      .select({ id: invoices.id, label: invoices.label, dueDate: invoices.dueDate, status: invoices.status })
-      .from(invoices)
-      .where(and(eq(invoices.familyId, student.familyId), inArray(invoices.status, ['open', 'partially_paid'])))
-      .all()
-      .map((i) => ({ id: i.id, label: i.label, dueDate: i.dueDate, balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id) }))
+    const kidIds = kids.map((k) => k.id);
+    const famBal = familyBalance(student.familyId);
+    // Every open invoice across the family, tagged with the child it belongs to — bills are per
+    // student now, so a consumer showing "Tuition — Jul" three times needs to say whose is whose.
+    const open = (
+      kidIds.length
+        ? db
+            .select({ id: invoices.id, label: invoices.label, dueDate: invoices.dueDate, studentId: invoices.studentId })
+            .from(invoices)
+            .where(and(inArray(invoices.studentId, kidIds), inArray(invoices.status, ['open', 'partially_paid'])))
+            .all()
+        : []
+    )
+      .map((i) => ({ id: i.id, studentId: i.studentId, label: i.label, dueDate: i.dueDate, balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id) }))
       .filter((i) => i.balanceCents > 0);
 
     return reply.send({
       v: CONTRACT_V,
       found: true,
-      matchedStudent: { id: student.id },
+      matchedStudent: { id: student.id, balanceCents: studentBalance(student.id).owedCents },
       family: {
         id: fam?.id ?? student.familyId,
         label: fam?.name ?? '',
         // NEVER full last names, DOB, or contact (§14) — first name + last initial only. `studentId`
         // is the internal id a consumer passes back to record-payment; `studentCode` is there so the
         // kiosk can show a sibling and pay for them WITHOUT the parent typing that child's ID.
-        students: kids.map((k) => ({ studentId: k.id, studentCode: k.studentCode, firstName: k.firstName, lastInitial: (k.lastName || '').charAt(0) })),
-        balanceCents: bal.owedCents,
+        // `balanceCents` per child is new at v2: with one bill per child, "pay for Maryam" needs to
+        // know what Maryam owes, not just the household total.
+        students: kids.map((k) => ({
+          studentId: k.id,
+          studentCode: k.studentCode,
+          firstName: k.firstName,
+          lastInitial: (k.lastName || '').charAt(0),
+          balanceCents: studentBalance(k.id).owedCents,
+        })),
+        balanceCents: famBal.owedCents,
         currency,
         openInvoices: open,
       },
     });
   });
 
-  // record-payment — record an external (donations-web | kiosk) payment. Idempotent via the ledger.
+  /**
+   * record-payment — record an external (donations-web | kiosk) payment. Idempotent via the ledger.
+   *
+   * v2: payments are per student, but one card charge often covers several children. So the caller may
+   * send `students: [{studentId, amountCents}, …]` — the amounts a parent chose per child — and we
+   * write one ledger row each, keyed `${idempotencyKey}:${studentId}`.
+   *
+   * A caller that sends no split still works: `splitAcrossFamily` walks the family's open invoices
+   * oldest-due-first and derives one. That keeps a v1-shaped body (family + amount) correct rather
+   * than merely accepted, which matters because this is the money path — see the `v: 1` note at the
+   * top of the file. `paymentId` in the response is the FIRST row written, kept so a v1 consumer that
+   * stores it still gets something meaningful; `payments[]` carries the full per-child truth.
+   */
   app.post('/fabric/billing/record-payment', async (req, reply) => {
     if (!gate(req, reply)) return;
     const parsed = z
@@ -208,6 +235,8 @@ export function registerFabricProvider(app: FastifyInstance): void {
         channel: z.enum(['donations-web', 'kiosk']),
         occurredAt: z.string().max(40).optional(),
         externalRef: z.record(z.unknown()).optional(),
+        /** Per-child amounts, when the parent chose them. Must sum to `amountCents`. */
+        students: z.array(z.object({ studentId: z.string().min(1).max(64), amountCents: z.number().int().min(1).max(100_000_000) })).max(50).optional(),
         allocations: z.array(z.object({ invoiceId: z.string().min(1).max(64), amountCents: z.number().int().min(1).max(100_000_000) })).max(100).optional(),
         payerNote: z.string().max(200).optional(),
       })
@@ -218,11 +247,53 @@ export function registerFabricProvider(app: FastifyInstance): void {
     if (!db.select({ id: families.id }).from(families).where(eq(families.id, d.familyId)).get()) {
       return reply.code(404).send({ error: { code: 'family_not_found', message: 'Family not found.' } });
     }
+
+    // Seen this charge before? Answer from what was recorded and write NOTHING. This has to come
+    // before deriving a split, because `splitAcrossFamily` reads the very invoices the first call paid
+    // down — re-deriving would produce a different split under new per-student keys and record the
+    // money twice (§9: a replay is a no-op).
+    const already = recordedSplit(d.idempotencyKey);
+    if (already.length) {
+      return reply.send({
+        v: CONTRACT_V,
+        recorded: true,
+        paymentId: already[0].paymentId,
+        duplicate: true,
+        payments: already.map((p) => ({ studentId: p.studentId, paymentId: p.paymentId, amountCents: p.amountCents, duplicate: true })),
+      });
+    }
+
+    // An explicit split must belong to THIS family and add up — otherwise a consumer bug could park a
+    // payment on another household's child, which no later correction would make obvious.
+    let shares;
+    if (d.students?.length) {
+      const kidIds = new Set(familyStudentIds(d.familyId));
+      if (d.students.some((s) => !kidIds.has(s.studentId))) {
+        return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'A student does not belong to that family.' } });
+      }
+      if (d.students.reduce((s, x) => s + x.amountCents, 0) !== d.amountCents) {
+        return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'The per-student amounts must add up to amountCents.' } });
+      }
+      shares = d.students;
+    } else {
+      shares = splitAcrossFamily(d.familyId, d.amountCents, d.studentId ?? null);
+    }
+    if (!shares.length) {
+      return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'That family has no student to record a payment against.' } });
+    }
+
     const occurredAt = d.occurredAt ? new Date(d.occurredAt) : new Date();
-    let res: ReturnType<typeof recordPayment>;
+    let res: ReturnType<typeof recordSplit>;
     try {
-      res = recordPayment(
-        { familyId: d.familyId, amountCents: d.amountCents, channel: d.channel, occurredAt: Number.isNaN(occurredAt.getTime()) ? new Date() : occurredAt, idempotencyKey: d.idempotencyKey, memo: d.payerNote ?? null, externalRef: d.externalRef ?? null, allocations: d.allocations },
+      res = recordSplit(
+        {
+          channel: d.channel,
+          occurredAt: Number.isNaN(occurredAt.getTime()) ? new Date() : occurredAt,
+          idempotencyKey: d.idempotencyKey,
+          memo: d.payerNote ?? null,
+          externalRef: d.externalRef ?? null,
+        },
+        shares,
         { userId: null, role: 'fabric', name: (Array.isArray(req.headers['x-openmasjid-caller-app']) ? req.headers['x-openmasjid-caller-app'][0] : req.headers['x-openmasjid-caller-app']) ?? d.channel },
       );
     } catch (e) {
@@ -230,19 +301,41 @@ export function registerFabricProvider(app: FastifyInstance): void {
       throw e;
     }
     if (!res.duplicate) {
-      audit({ userId: null, role: 'fabric', name: d.channel }, 'payment.record', { entity: 'family', entityId: d.familyId, detail: { channel: d.channel, amountCents: d.amountCents } });
+      audit({ userId: null, role: 'fabric', name: d.channel }, 'payment.record', { entity: 'family', entityId: d.familyId, detail: { channel: d.channel, amountCents: d.amountCents, students: res.parts.length } });
       // Amount + channel only — never a family/student name (§14: no name+amount together).
       void notifyPlatform(`A tuition payment of ${formatMoney(d.amountCents, getCurrency())} was received (${d.channel}).`, { title: 'Tuition payment' });
     }
-    return reply.send({ v: CONTRACT_V, recorded: true, paymentId: res.paymentId, duplicate: res.duplicate });
+    return reply.send({
+      v: CONTRACT_V,
+      recorded: true,
+      paymentId: res.parts[0]?.paymentId,
+      duplicate: res.duplicate,
+      payments: res.parts.map((p) => ({ studentId: p.studentId, paymentId: p.paymentId, amountCents: shares.find((s) => s.studentId === p.studentId)?.amountCents ?? 0, duplicate: p.duplicate })),
+    });
   });
 
-  // check — retry helper for consumer outboxes: has this idempotency key been recorded?
+  /**
+   * check — retry helper for consumer outboxes: has this idempotency key been recorded?
+   *
+   * A charge covering several children is stored as one row PER CHILD, keyed `${key}:${studentId}`, so
+   * matching the bare key alone would answer "not recorded" for every split payment and send a
+   * consumer's outbox into an endless retry — double-charging nobody, but never settling either. So
+   * this matches the exact key OR any per-student suffix of it.
+   */
   app.post('/fabric/billing/check', async (req, reply) => {
     if (!gate(req, reply)) return;
     const parsed = z.object({ v: V, idempotencyKey: z.string().min(1).max(128) }).safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid', message: 'Bad request.' } });
-    const p = db.select({ id: payments.id }).from(payments).where(eq(payments.idempotencyKey, parsed.data.idempotencyKey)).get();
-    return reply.send(p ? { v: CONTRACT_V, recorded: true, paymentId: p.id } : { v: CONTRACT_V, recorded: false });
+    const key = parsed.data.idempotencyKey;
+    // Prefix-matched with substr, NOT `LIKE key || ':%'`: `_` is a LIKE wildcard and Stripe ids are
+    // full of them (`pi_3Pabc…`), so a LIKE pattern would need an ESCAPE clause to be correct at all.
+    // An exact substr comparison has no pattern semantics to get wrong.
+    const rows = db
+      .select({ id: payments.id })
+      .from(payments)
+      .where(or(eq(payments.idempotencyKey, key), sql`substr(${payments.idempotencyKey}, 1, ${key.length + 1}) = ${`${key}:`}`))
+      .all();
+    if (!rows.length) return reply.send({ v: CONTRACT_V, recorded: false });
+    return reply.send({ v: CONTRACT_V, recorded: true, paymentId: rows[0].id, paymentIds: rows.map((r) => r.id) });
   });
 }

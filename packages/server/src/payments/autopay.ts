@@ -11,7 +11,7 @@
 import { and, eq, inArray, lte, isNull, or } from 'drizzle-orm';
 import { db } from '../db';
 import { autopayEnrollments, autopayRuns, families, invoices } from '../db/schema';
-import { invoiceTotal, invoicePaid, recordPayment } from '../billing/ledger';
+import { invoiceTotal, invoicePaid, recordSplit, splitAcrossFamily, familyStudentIds } from '../billing/ledger';
 import { formatMoney } from '../db/money';
 import { getCurrency } from '../settings';
 import { rid } from '../db/ids';
@@ -34,9 +34,19 @@ export function addDays(iso: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** The sum of a family's open invoice balances due on/before `today` (what autopay should charge). */
+/**
+ * What autopay should charge a family today: the sum of EVERY child's invoice balances due on/before
+ * `today`. One card, one charge, even though the bills behind it are per student — the split back out
+ * to the children happens at the ledger (see `chargeFamily`).
+ */
 function amountDue(familyId: string, today: string): number {
-  const open = db.select({ id: invoices.id, dueDate: invoices.dueDate, status: invoices.status }).from(invoices).where(and(eq(invoices.familyId, familyId), inArray(invoices.status, ['open', 'partially_paid']))).all();
+  const kidIds = familyStudentIds(familyId);
+  if (!kidIds.length) return 0;
+  const open = db
+    .select({ id: invoices.id, dueDate: invoices.dueDate, status: invoices.status })
+    .from(invoices)
+    .where(and(inArray(invoices.studentId, kidIds), inArray(invoices.status, ['open', 'partially_paid'])))
+    .all();
   let due = 0;
   for (const i of open) {
     if (!i.dueDate || i.dueDate > today) continue; // only invoices actually due by today
@@ -118,16 +128,18 @@ export async function chargeFamily(familyId: string, amountCents: number, today:
     // family "due" tomorrow and we'd charge the card again. A non-'succeeded' status (rare async
     // processing) stays pending for the webhook; a synchronous decline throws (handled below).
     if (pi.status === 'succeeded') {
-      const res = recordPayment(
+      // One card charge, one ledger row PER CHILD. The split walks the family's open invoices
+      // oldest-due-first — the same order every other payment path uses, so a lost webhook that
+      // reconciliation later replays lands on exactly the same children in the same amounts (§11.4).
+      const res = recordSplit(
         {
-          familyId,
-          amountCents,
           channel: 'autopay',
           occurredAt: new Date(),
           idempotencyKey: pi.id,
           memo: null,
           externalRef: { stripePaymentIntentId: pi.id, stripeChargeId: (pi.latest_charge as string) ?? null },
         },
+        splitAcrossFamily(familyId, amountCents),
         { userId: null, role: 'autopay', name: 'autopay' },
       );
       if (!res.duplicate) {
