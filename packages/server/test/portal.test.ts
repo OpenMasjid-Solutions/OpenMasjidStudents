@@ -126,7 +126,7 @@ describe('parent portal scoping (the wall)', () => {
     expect(res.families).toHaveLength(1);
     const f = res.families[0];
     expect(f.id).toBe(famA);
-    expect(f.name).toBe('Ismail');
+    expect(f.name).toBe('Ismail family'); // derived from the children's surname (0.39.0)
     expect(f.students.map((s) => s.firstName)).toEqual(['Yusuf']);
     expect(f.balance.owedCents).toBe(3000); // 5000 invoiced − 2000 paid
     expect(f.invoices).toHaveLength(1);

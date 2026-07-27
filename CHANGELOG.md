@@ -30,6 +30,15 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Changed
 
+- **Adding people starts with the student.** The Students tab's button is now **Add student**, not "Add
+  family" — you fill in the child, pick their fee plan and class, and if they have a **brother or sister
+  already enrolled you pick them from a list**. That link is what puts them in one household, so the
+  guardian and emergency-contact details already on file apply to the new child with nothing to re-type.
+- **Nobody names a family any more.** The household label is worked out from the children in it —
+  "Ismail family", or "Farooqi / Ismail" for step-siblings, because picking one child's surname to stand
+  for the household would be wrong in exactly the case where it matters. It updates itself when children
+  are added, so it is one less field to keep current. Two unrelated children who happen to share a
+  surname stay separate households, as they should.
 - **One bill per child.** Invoices and payments used to belong to a household; now they belong to a
   student. What this fixes, in the office's words: *"Yusuf paid April, Sara hasn't"* is finally
   something the app can say. The year view shows each child's own months, the balance column is that

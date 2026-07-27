@@ -54,7 +54,7 @@ Think: **"the madrasa's tuition & fee desk, in one container the masjid owns —
 ### ✅ In scope (v1)
 
 **People (the billing subjects)**
-- Students (name, DOB optional, status active/withdrawn, notes) grouped into **families**; **guardians** (name, phone, email) linked to families (a guardian can span multiple families); **emergency contacts** (flag guardians and/or add extra contacts per family).
+- Students (name, DOB optional, status active/withdrawn, notes). **Adding people starts with a STUDENT** (`people.studentAdd`) — there is no "add a family" step and nobody is ever asked to NAME a family (0.39.0). A household is formed by linking a new child to an existing sibling (`linkToStudentId`), and its label is DERIVED from the children's surnames (`familyLabel`): one surname → "Ismail family", several → "Farooqi / Ismail", sorted so it never depends on who was added first. **guardians** (name, phone, email) attach to the HOUSEHOLD, which is exactly why linking a sibling is what makes the parent details apply to them — nothing is copied per student. **emergency contacts** (flag guardians and/or add extra contacts per household).
 - **Student IDs**: every student gets an **auto-generated Student ID at registration** — first three letters of the first name + 4 digits (`YUS1234`), UNIQUE per install. It is how a parent pays at the Donations site / Kiosk and one half of the portal self-registration door. **There is no PIN** (removed v0.39.0): the only thing a stranger with someone else’s ID can do is pay their tuition, so the compensating controls are an on-screen name confirmation plus a hard per-ID lockout, not a shared secret (§11.2, §14). IDs are printed on statements next to each child.
 
 **Finance (billing — the whole app)**

@@ -120,3 +120,68 @@ describe('records + audit', () => {
     await expect(admin.people.guardianLinkFamily({ guardianId: g.id, familyId: famB.id })).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 });
+
+/**
+ * The student-first door (0.39.0). Adding people starts with a CHILD: no "add family" step, and nobody
+ * is ever asked to name a household. `linkToStudentId` is what makes two children siblings, and because
+ * guardians hang off the household, linking IS how the parent details come to apply to the new child.
+ */
+describe('studentAdd — student-first, no family naming', () => {
+  it('creates a household for a first child and labels it from their surname', async () => {
+    const admin = caller('admin');
+    const r = await admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: await aPlan(admin) });
+    expect(r.familyLabel).toBe('Ismail family');
+    expect(r.studentCode).toMatch(/^YUS\d{4}$/);
+    const detail = await admin.people.familyGet({ id: r.familyId });
+    expect(detail.students).toHaveLength(1);
+    expect(detail.family.name).toBe('Ismail family'); // stored label kept in step
+  });
+
+  it('links a sibling into the SAME household, so guardians already on file apply to them', async () => {
+    const admin = caller('admin');
+    const planId = await aPlan(admin);
+    const first = await admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
+    await admin.people.guardianCreate({ familyId: first.familyId, name: 'Abu Yusuf', phone: '555-1' });
+
+    const sibling = await admin.people.studentAdd({ firstName: 'Maryam', lastName: 'Ismail', feePlanId: planId, linkToStudentId: first.id });
+    expect(sibling.familyId).toBe(first.familyId);
+    // Nothing was copied — the guardian is simply on the household both children are in.
+    const detail = await admin.people.familyGet({ id: first.familyId });
+    expect(detail.students).toHaveLength(2);
+    expect(detail.guardians).toHaveLength(1);
+    expect(detail.guardians[0].name).toBe('Abu Yusuf');
+  });
+
+  it('without a link, two children of the same surname are separate households', async () => {
+    const admin = caller('admin');
+    const planId = await aPlan(admin);
+    const a = await admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
+    const b = await admin.people.studentAdd({ firstName: 'Bilal', lastName: 'Ismail', feePlanId: planId });
+    // Same surname is NOT evidence of the same family — two unrelated Ismails must not share guardians.
+    expect(b.familyId).not.toBe(a.familyId);
+  });
+
+  it('a household of step-siblings is labelled with both surnames, not one of them', async () => {
+    const admin = caller('admin');
+    const planId = await aPlan(admin);
+    const first = await admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
+    const step = await admin.people.studentAdd({ firstName: 'Bilal', lastName: 'Farooqi', feePlanId: planId, linkToStudentId: first.id });
+    // Picking one child's surname to stand for the household would be wrong in exactly this case.
+    // Sorted, so the label depends on who is in the household and not on who was added first.
+    expect(step.familyLabel).toBe('Farooqi / Ismail');
+  });
+
+  it('still requires a fee plan — a student on no plan is never invoiced', async () => {
+    const admin = caller('admin');
+    await expect(admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: 'plan_nope' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // …and nothing was left behind by the failed attempt.
+    expect(await admin.people.directory()).toHaveLength(0);
+  });
+
+  it('is admin-only and LAN-only', async () => {
+    const admin = caller('admin');
+    const planId = await aPlan(admin);
+    await expect(caller('finance').people.studentAdd({ firstName: 'X', lastName: 'Y', feePlanId: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller('admin', 'tunnel').people.studentAdd({ firstName: 'X', lastName: 'Y', feePlanId: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});

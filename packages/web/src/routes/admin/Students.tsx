@@ -37,10 +37,14 @@ export function Students() {
   const list = trpc.structure.studentsByClass.useQuery({ includeWithdrawn: showWithdrawn });
   const tree = trpc.structure.courseTree.useQuery();
   const setClass = trpc.structure.setStudentClass.useMutation();
-  const createFamily = trpc.people.familyCreate.useMutation();
+  const addStudent = trpc.people.studentAdd.useMutation();
+  const plans = trpc.billing.feePlanList.useQuery();
+  const siblings = trpc.people.siblingOptions.useQuery();
 
   const [adding, setAdding] = useState(false);
-  const [famName, setFamName] = useState('');
+  /** A student is added on its own terms; `linkToStudentId` is what makes them a sibling — guardians
+   *  hang off the household, so linking IS how the parent details come to apply to them. */
+  const [stu, setStu] = useState({ firstName: '', lastName: '', dob: '', feePlanId: '', classId: '', linkToStudentId: '' });
 
   const openFamily = (id: string, label: string) =>
     open({ title: label, wide: true, dedupeKey: `family:${id}`, icon: <Users size={15} />, node: <FamilyDetail familyId={id} /> });
@@ -48,14 +52,27 @@ export function Students() {
   const openImport = () =>
     open({ title: t('students.import'), wide: true, dedupeKey: 'import:students', icon: <Upload size={15} />, node: <ImportStudents /> });
 
-  async function addFamily(e: FormEvent) {
+  async function submitStudent(e: FormEvent) {
     e.preventDefault();
-    if (!famName.trim()) return;
-    const r = await createFamily.mutateAsync({ name: famName.trim() });
-    setFamName('');
+    if (!stu.firstName.trim() || !stu.lastName.trim() || !stu.feePlanId) return;
+    const r = await addStudent.mutateAsync({
+      firstName: stu.firstName.trim(),
+      lastName: stu.lastName.trim(),
+      dob: stu.dob || undefined,
+      feePlanId: stu.feePlanId,
+      classId: stu.classId || undefined,
+      linkToStudentId: stu.linkToStudentId || undefined,
+    });
+    setStu({ firstName: '', lastName: '', dob: '', feePlanId: stu.feePlanId, classId: stu.classId, linkToStudentId: '' });
     setAdding(false);
-    await utils.people.directory.invalidate();
-    openFamily(r.id, famName.trim());
+    await Promise.all([
+      utils.people.directory.invalidate(),
+      utils.people.siblingOptions.invalidate(),
+      utils.structure.studentsByClass.invalidate(),
+      utils.structure.courseTree.invalidate(),
+    ]);
+    // Straight into their record — the next thing the office does is add the guardian details.
+    openFamily(r.familyId, r.familyLabel);
   }
 
   async function place(studentId: string, classId: string) {
@@ -99,17 +116,44 @@ export function Students() {
         <span className="chip is-muted">{t('students.count', { count: total })}</span>
         <span className="spacer" />
         <button type="button" className="btn btn--ghost" onClick={openImport}>{t('students.import')}</button>
-        <button type="button" className="btn btn--primary" onClick={() => setAdding((v) => !v)}>{t('directory.addFamily')}</button>
+        <button type="button" className="btn btn--primary" onClick={() => setAdding((v) => !v)}>{t('directory.addStudent')}</button>
       </div>
 
       {adding && (
-        <form className="inline-form glass-inset" onSubmit={addFamily}>
-          <div className="field">
-            <label className="label" htmlFor="fam-name">{t('directory.familyName')}</label>
-            <input id="fam-name" className="input glass-inset" value={famName} onChange={(e) => setFamName(e.target.value)} autoFocus />
+        <form className="inline-form glass-inset" onSubmit={submitStudent}>
+          <div className="field"><label className="label" htmlFor="stu-first">{t('directory.firstName')}</label>
+            <input id="stu-first" className="input glass-inset" value={stu.firstName} onChange={(e) => setStu({ ...stu, firstName: e.target.value })} autoFocus />
           </div>
-          <button type="submit" className="btn btn--primary" disabled={createFamily.isPending}>{t('common.save')}</button>
-          <p className="hint">{t('students.addViaFamily')}</p>
+          <div className="field"><label className="label" htmlFor="stu-last">{t('directory.lastName')}</label>
+            <input id="stu-last" className="input glass-inset" value={stu.lastName} onChange={(e) => setStu({ ...stu, lastName: e.target.value })} />
+          </div>
+          <div className="field" style={{ flex: '0 1 10rem' }}><label className="label" htmlFor="stu-dob">{t('directory.dob')}</label>
+            <input id="stu-dob" type="date" className="input glass-inset" value={stu.dob} onChange={(e) => setStu({ ...stu, dob: e.target.value })} />
+          </div>
+          {/* A fee plan is required: a student on no plan is skipped by invoice generation, which is
+              how a child silently stops being billed. */}
+          <div className="field" style={{ flex: '1 1 12rem' }}><label className="label" htmlFor="stu-plan">{t('directory.feePlan')}</label>
+            <select id="stu-plan" className="input glass-inset" value={stu.feePlanId} onChange={(e) => setStu({ ...stu, feePlanId: e.target.value })} required>
+              <option value="">{(plans.data ?? []).length ? t('directory.feePlan') : t('directory.noFeePlans')}</option>
+              {(plans.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <span className="hint">{t('directory.feePlanHint')}</span>
+          </div>
+          <div className="field" style={{ flex: '1 1 11rem' }}><label className="label" htmlFor="stu-class">{t('students.class')}</label>
+            <select id="stu-class" className="input glass-inset" value={stu.classId} onChange={(e) => setStu({ ...stu, classId: e.target.value })}>
+              <option value="">{t('students.unplaced')}</option>
+              {classOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </div>
+          {/* The sibling link. This is the ONLY way households are formed — nobody names a family. */}
+          <div className="field" style={{ flex: '1 1 13rem' }}><label className="label" htmlFor="stu-sibling">{t('students.linkSibling')}</label>
+            <select id="stu-sibling" className="input glass-inset" value={stu.linkToStudentId} onChange={(e) => setStu({ ...stu, linkToStudentId: e.target.value })}>
+              <option value="">{t('students.noSibling')}</option>
+              {(siblings.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.firstName} {s.lastName}</option>)}
+            </select>
+            <span className="hint">{t('students.linkSiblingHint')}</span>
+          </div>
+          <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>
         </form>
       )}
 

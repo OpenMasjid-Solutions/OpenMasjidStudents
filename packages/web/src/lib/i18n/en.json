@@ -61,8 +61,6 @@
   },
   "directory": {
     "title": "Directory",
-    "addFamily": "Add family",
-    "familyName": "Family name",
     "empty": "No families yet. Add your first family to get started.",
     "archived": "Archived",
     "noStudents": "No students",
@@ -113,7 +111,7 @@
   "students": {
     "title": "Students",
     "count": "{{count}} students",
-    "empty": "No students yet — add a family, then add students to it, or import a CSV.",
+    "empty": "No students yet — add your first student, or import a CSV.",
     "noMatches": "No students match that search.",
     "search": "Search",
     "searchPlaceholder": "Name or family…",
@@ -124,7 +122,9 @@
     "class": "Class",
     "status": "Status",
     "import": "Import CSV",
-    "addViaFamily": "Students are added inside a family record, so siblings share one bill."
+    "linkSibling": "Sibling already enrolled?",
+    "noSibling": "— no, first child in the family —",
+    "linkSiblingHint": "Pick a brother or sister and they share one household, so the guardian details already on file apply to this child too."
   },
   "import": {
     "title": "Import students",
