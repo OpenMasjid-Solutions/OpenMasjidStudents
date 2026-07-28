@@ -28,12 +28,42 @@ export type DB = typeof db;
  *  `PRAGMA integrity_check` (db/snapshot.ts). Nothing else should reach for this. */
 export const rawSqlite = sqlite;
 
-/** Apply committed migrations. Idempotent — Drizzle tracks what has been applied.
- *  Works in dev (src/db → ../../drizzle) and prod (dist/db → ../../drizzle, where
- *  the Dockerfile copies the committed migrations alongside dist). Tests pass an
- *  explicit folder to avoid depending on __dirname under the test runner. */
+/**
+ * Apply committed migrations. Idempotent — Drizzle tracks what has been applied.
+ * Works in dev (src/db → ../../drizzle) and prod (dist/db → ../../drizzle, where
+ * the Dockerfile copies the committed migrations alongside dist). Tests pass an
+ * explicit folder to avoid depending on __dirname under the test runner.
+ *
+ * FOREIGN KEYS ARE OFF FOR THE DURATION, and that is required rather than lax.
+ *
+ * SQLite cannot change a table's columns in place, so drizzle emits the standard rebuild —
+ * create `__new_x`, copy, DROP the original, rename. Every drizzle rebuild therefore starts with
+ * `PRAGMA foreign_keys=OFF`, which assumes it can take effect. It cannot: the migrator wraps the
+ * whole file in a transaction, and SQLite silently ignores that pragma inside one. With FK
+ * enforcement left on, dropping a table that anything references fails — so a rebuild of, say,
+ * `students` works perfectly on an empty database and fails to boot on a real one the moment a
+ * single child has an invoice. (`defer_foreign_keys` is not a way out either: DROP TABLE bumps
+ * SQLite's deferred-violation counter, and recreating the table does not clear it, so the COMMIT
+ * still fails with nothing dangling.)
+ *
+ * So the switch is thrown HERE, outside any transaction, where it actually applies — and thrown
+ * back afterwards. The safety net that replaces it is `foreign_key_check`: run once the migrations
+ * are in, it reports any row a migration orphaned while the guard was down. That is logged loudly
+ * rather than thrown, because refusing to boot over it would leave an admin with no way in to fix
+ * anything — but it must never be ignored.
+ */
 export function runMigrations(folder?: string): void {
   const migrationsFolder = folder ?? path.resolve(__dirname, '..', '..', 'drizzle');
-  migrate(db, { migrationsFolder });
+  sqlite.pragma('foreign_keys = OFF');
+  try {
+    migrate(db, { migrationsFolder });
+  } finally {
+    sqlite.pragma('foreign_keys = ON');
+  }
+  const orphaned = sqlite.pragma('foreign_key_check') as unknown[];
+  if (orphaned.length) {
+    // Table + row ids only — never the row contents, which are minors' PII (§14).
+    log.error('migrations left rows with a broken reference', { count: orphaned.length, sample: orphaned.slice(0, 5) });
+  }
   log.info('migrations applied');
 }
