@@ -77,7 +77,7 @@ describe('generateUniqueStudentCode', () => {
 
   it('matches the agreed shape: first three letters + 4 digits', async () => {
     const { admin, famId, planId } = await seedFamily();
-    const r = await admin.people.studentCreate({ familyId: famId, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
+    const r = await admin.people.studentCreate({ familyId: famId, fullName: 'Yusuf Ismail', feePlanId: planId });
     const row = app.dbmod.db.select().from(students).all().find((s) => s.id === r.id)!;
     expect(row.studentCode).toMatch(/^YUS\d{4}$/);
     expect(row.studentCode).toMatch(codes.STUDENT_CODE_RE);
@@ -86,7 +86,7 @@ describe('generateUniqueStudentCode', () => {
   it('never repeats a code, even for many children with the same first name', async () => {
     const { admin, famId, planId } = await seedFamily();
     for (let i = 0; i < 25; i++) {
-      await admin.people.studentCreate({ familyId: famId, firstName: 'Yusuf', lastName: `Ismail${i}`, feePlanId: planId });
+      await admin.people.studentCreate({ familyId: famId, fullName: `Yusuf Ismail${i}`, feePlanId: planId });
     }
     const all = app.dbmod.db.select().from(students).all();
     const list = all.map((s) => s.studentCode!);
@@ -100,8 +100,7 @@ describe('generateUniqueStudentCode', () => {
     // studentCreate's input schema has no studentCode field at all; passing one is ignored/rejected.
     const r = await admin.people.studentCreate({
       familyId: famId,
-      firstName: 'Yusuf',
-      lastName: 'Ismail',
+      fullName: 'Yusuf Ismail',
       feePlanId: planId,
       // @ts-expect-error — proving the field is not part of the contract
       studentCode: 'AAA0001',
@@ -116,8 +115,10 @@ describe('backfillStudentCodes — the upgrade path', () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Ismail' });
     const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-    const a = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
-    const b = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Bo', lastName: 'Ismail', feePlanId: plan.id });
+    const a = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
+    // A whole name of only two letters — the case the X-padding exists for. (A short GIVEN name is
+    // no longer short overall: "Bo Ismail" has plenty of letters and gets BOI.)
+    const b = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Bo', feePlanId: plan.id });
 
     // Simulate rows that predate the column.
     const { db } = app.dbmod;

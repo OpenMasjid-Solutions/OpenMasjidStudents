@@ -10,13 +10,16 @@
  *
  *  Phone-first: the grid scrolls horizontally with the name column pinned, which is the only
  *  treatment that keeps 12 months usable on a phone. */
-import { Fragment, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Users, Settings2, Printer } from 'lucide-react';
+import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
 import { formatMoney } from '../../lib/money';
 import { useWindows } from '../../components/Windows';
 import { FamilyDetail } from './FamilyDetail';
+
+const UNPLACED = '__unplaced';
 
 export function YearView({ canConfigure }: { canConfigure: boolean }) {
   const { t } = useTranslation();
@@ -24,6 +27,8 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
   const { open } = useWindows();
 
   const [yearId, setYearId] = useState<string>('');
+  /** '' = All courses, which is where the screen starts. */
+  const [courseFilter, setCourseFilter] = useState('');
   const years = trpc.structure.schoolYearList.useQuery();
   const grid = trpc.billing.yearGrid.useQuery({ schoolYearId: yearId || undefined });
   const cols = trpc.billing.yearViewColumnsGet.useQuery();
@@ -47,6 +52,25 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
 
   const g = grid.data;
   const enabled = cols.data?.enabled ?? [];
+
+  /** Course filter buttons, counted off the grid itself so a course with nobody in this year is not
+   *  offered as an empty filter. */
+  const courseButtons = useMemo(() => {
+    const rows = g?.rows ?? [];
+    const seen = new Map<string, { id: string; label: string; count: number }>();
+    for (const r of rows) {
+      const id = r.courseId ?? UNPLACED;
+      if (!seen.has(id)) seen.set(id, { id, label: r.courseName ?? t('students.unplaced'), count: 0 });
+      seen.get(id)!.count++;
+    }
+    // Unplaced last, so a real course is never buried under it.
+    return [...seen.values()].sort((a, b) => (a.id === UNPLACED ? 1 : b.id === UNPLACED ? -1 : 0));
+  }, [g?.rows, t]);
+
+  const rows = useMemo(
+    () => (g?.rows ?? []).filter((r) => !courseFilter || (r.courseId ?? UNPLACED) === courseFilter),
+    [g?.rows, courseFilter],
+  );
 
   return (
     <div className="page">
@@ -115,8 +139,23 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
         <section className="section glass print-area" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head">
             <h2>{g.year.label}</h2>
-            <span className="chip is-muted">{t('students.count', { count: g.rows.length })}</span>
+            <span className="chip is-muted">{t('students.count', { count: rows.length })}</span>
           </div>
+
+          {/* Course filter — "All" first and selected by default. Hidden when printing: a printed
+              sheet should show what is on screen, not the controls that chose it. */}
+          {courseButtons.length > 1 && (
+            <div className="filter-bar no-print" role="group" aria-label={t('students.filterByCourse')}>
+              <button type="button" className={cn('btn btn--ghost btn--sm', courseFilter === '' && 'is-active')} aria-pressed={courseFilter === ''} onClick={() => setCourseFilter('')}>
+                {t('students.allCourses')}
+              </button>
+              {courseButtons.map((c) => (
+                <button key={c.id} type="button" className={cn('btn btn--ghost btn--sm', courseFilter === c.id && 'is-active')} aria-pressed={courseFilter === c.id} onClick={() => setCourseFilter(c.id)}>
+                  {c.label} <span className="chip is-muted">{c.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="year-scroll">
             <table className="data-table year-grid">
@@ -134,21 +173,30 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                 </tr>
               </thead>
               <tbody>
-                {g.rows.map((r, i) => {
-                  const prev = g.rows[i - 1];
-                  const newGroup = !prev || prev.classId !== r.classId;
-                  const groupLabel = r.className ? `${r.courseName ?? '—'} · ${r.className}` : t('students.unplaced');
+                {rows.map((r, i) => {
+                  // Two levels of heading, in the order the office thinks: the course, then the
+                  // classes inside it. Rows arrive already sorted by course → class → name, so a
+                  // change of value IS a new group.
+                  const prev = rows[i - 1];
+                  const newCourse = !prev || (prev.courseId ?? UNPLACED) !== (r.courseId ?? UNPLACED);
+                  const newClass = newCourse || prev.classId !== r.classId;
+                  const span = 2 + g.months.length + enabled.length;
                   return (
                     <Fragment key={r.studentId}>
-                      {newGroup && (
+                      {newCourse && (
                         <tr className="year-group">
-                          <td className="year-sticky" colSpan={2 + g.months.length + enabled.length}>{groupLabel}</td>
+                          <td className="year-sticky" colSpan={span}>{r.courseName ?? t('students.unplaced')}</td>
+                        </tr>
+                      )}
+                      {newClass && (
+                        <tr className="year-group year-group--class">
+                          <td className="year-sticky" colSpan={span}>{r.className ?? t('students.unplaced')}</td>
                         </tr>
                       )}
                       <tr>
                         <td className="year-sticky">
                           <button type="button" className="btn btn--ghost btn--sm" onClick={() => openFamily(r.familyId, r.familyName)}>
-                            {r.firstName} {r.lastName}
+                            {r.fullName}
                           </button>
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
@@ -165,7 +213,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                                 className="year-cell-btn"
                                 onClick={() => openFamily(r.familyId, r.familyName)}
                                 title={`${c.periodKey} — ${t(`year.cell_${c.status}`)}`}
-                                aria-label={`${r.firstName} ${c.periodKey} ${t(`year.cell_${c.status}`)}`}
+                                aria-label={`${r.fullName} ${c.periodKey} ${t(`year.cell_${c.status}`)}`}
                               >
                                 {c.status === 'paid' ? '✓' : c.status === 'partial' ? '½' : c.status === 'void' ? '—' : '·'}
                               </button>

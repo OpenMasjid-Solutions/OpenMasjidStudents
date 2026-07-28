@@ -31,8 +31,8 @@ async function scenario() {
   // override so family B stays deliberately un-invoiced — it is the "other family" the
   // parent-scoping walls below are tested against.
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  const sA = await admin.people.studentCreate({ familyId: famA.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
-  const sB = await admin.people.studentCreate({ familyId: famB.id, firstName: 'Bilal', lastName: 'Farooqi', feePlanId: plan.id, overrideAmountCents: 0 });
+  const sA = await admin.people.studentCreate({ familyId: famA.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
+  const sB = await admin.people.studentCreate({ familyId: famB.id, fullName: 'Bilal Farooqi', feePlanId: plan.id, overrideAmountCents: 0 });
   const gA = await admin.people.guardianCreate({ familyId: famA.id, name: 'Abu Yusuf', email: 'AbuYusuf@example.com' });
   const gB = await admin.people.guardianCreate({ familyId: famB.id, name: 'Abu Bilal', email: 'abubilal@example.com' });
   // Family A: an invoice + partial payment, so the balance view has content.
@@ -127,7 +127,7 @@ describe('parent portal scoping (the wall)', () => {
     const f = res.families[0];
     expect(f.id).toBe(famA);
     expect(f.name).toBe('Ismail family'); // derived from the children's surname (0.39.0)
-    expect(f.students.map((s) => s.firstName)).toEqual(['Yusuf']);
+    expect(f.students.map((s) => s.fullName)).toEqual(['Yusuf Ismail']);
     expect(f.balance.owedCents).toBe(3000); // 5000 invoiced − 2000 paid
     expect(f.invoices).toHaveLength(1);
     expect(f.payments.length).toBeGreaterThan(0);

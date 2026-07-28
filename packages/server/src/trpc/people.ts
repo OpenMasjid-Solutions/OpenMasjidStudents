@@ -26,9 +26,14 @@ import {
   classes,
   guardianUsers,
   users,
+  paymentMethods,
+  autopayEnrollments,
+  autopayRuns,
 } from '../db/schema';
 import { rid } from '../db/ids';
 import { generateUniqueStudentCode } from '../billing/studentCodes';
+import { displayName } from '../people/names';
+import { familyLabel } from '../people/household';
 import type { Tx } from '../billing/ledger';
 import { audit } from '../audit';
 import { IMPORT_FIELDS, validateRows, commitRows, type ImportRow } from '../people/import';
@@ -52,9 +57,7 @@ const blankToNull = (v: string | undefined): string | null => (v && v.trim() !==
  *  opaque zod failure the admin can't act on. */
 const CELL = z.string().max(300).optional();
 const IMPORT_ROW = z.object({
-  firstName: CELL,
-  lastName: CELL,
-  familyName: CELL,
+  fullName: CELL,
   dob: CELL,
   className: CELL,
   courseName: CELL,
@@ -68,30 +71,9 @@ const IMPORT_ROW = z.object({
 
 const now = () => new Date();
 
-/**
- * The label for a household, DERIVED from the children in it — nobody is ever asked to name a family
- * (0.39.0). A family is not a thing an office maintains; it is just the link that makes siblings share
- * guardians, so its name should never be another field to keep up to date.
- *
- * One surname → "Ismail family". Several (step-siblings, a remarriage) → "Farooqi / Ismail", because
- * picking one child's surname to stand for the household would be wrong in exactly the cases where it
- * matters. Surnames are sorted so the label depends on WHO is in the household, not on the order they
- * were added — otherwise the same family would read differently on two installs. Falls back to the
- * stored `families.name` for a household with no children yet (a CSV import can create one), and
- * finally to a neutral label so nothing renders blank.
- */
-export function familyLabel(familyId: string, tx: Tx = db): string {
-  const kids = tx.select({ lastName: students.lastName }).from(students).where(eq(students.familyId, familyId)).all();
-  const surnames = [...new Set(kids.map((k) => k.lastName.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  if (surnames.length === 1) return `${surnames[0]} family`;
-  if (surnames.length > 1) return surnames.join(' / ');
-  return tx.select({ name: families.name }).from(families).where(eq(families.id, familyId)).get()?.name || 'Family';
-}
-
 interface NewStudent {
   familyId: string;
-  firstName: string;
-  lastName: string;
+  fullName: string;
   dob?: string;
   notes?: string;
   feePlanId: string;
@@ -124,15 +106,14 @@ function createStudentRow(input: NewStudent, actor: ReturnType<typeof auditActor
     }
     const id = rid('stu');
     const ts = now();
-    // The typed ID a parent uses at the kiosk. Derived from the first name, so it is generated here
+    // The typed ID a parent uses at the kiosk. Derived from the given name, so it is generated here
     // rather than accepted from the caller — never importable, never chosen (§14).
-    const studentCode = generateUniqueStudentCode(input.firstName);
+    const studentCode = generateUniqueStudentCode(input.fullName);
     tx.insert(students)
       .values({
         id,
         familyId: input.familyId,
-        firstName: input.firstName,
-        lastName: input.lastName,
+        fullName: displayName(input.fullName),
         dob: blankToNull(input.dob),
         status: 'active',
         notes: blankToNull(input.notes),
@@ -175,7 +156,7 @@ export const peopleRouter = router({
     const ids = fams.map((f) => f.id);
     const studs = ids.length
       ? db
-          .select({ id: students.id, familyId: students.familyId, firstName: students.firstName, lastName: students.lastName, status: students.status })
+          .select({ id: students.id, familyId: students.familyId, fullName: students.fullName, status: students.status, classId: students.classId })
           .from(students)
           .where(inArray(students.familyId, ids))
           .all()
@@ -282,8 +263,7 @@ export const peopleRouter = router({
     .input(
       z.object({
         familyId: ID,
-        firstName: REQ_NAME,
-        lastName: REQ_NAME,
+        fullName: REQ_NAME,
         dob: DOB,
         notes: NOTES,
         feePlanId: ID,
@@ -307,8 +287,7 @@ export const peopleRouter = router({
   studentAdd: adminProcedure
     .input(
       z.object({
-        firstName: REQ_NAME,
-        lastName: REQ_NAME,
+        fullName: REQ_NAME,
         dob: DOB,
         notes: NOTES,
         feePlanId: ID,
@@ -330,8 +309,9 @@ export const peopleRouter = router({
         } else {
           fid = rid('fam');
           const ts = now();
-          // A provisional label; createStudentRow derives the real one once the child exists.
-          tx.insert(families).values({ id: fid, name: `${input.lastName} family`, status: 'active', createdAt: ts, updatedAt: ts }).run();
+          // A placeholder, overwritten inside the same transaction: createStudentRow derives the real
+          // label from the child once they exist. Nobody ever types a household name.
+          tx.insert(families).values({ id: fid, name: 'Family', status: 'active', createdAt: ts, updatedAt: ts }).run();
         }
         return { familyId: fid, r: createStudentRow({ ...input, familyId: fid }, auditActor(ctx), tx) };
       });
@@ -343,10 +323,10 @@ export const peopleRouter = router({
    *  so the add dialog can offer "shares a family with…". */
   siblingOptions: adminOrFinanceProcedure.query(() =>
     db
-      .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, familyId: students.familyId })
+      .select({ id: students.id, fullName: students.fullName, familyId: students.familyId })
       .from(students)
       .where(eq(students.status, 'active'))
-      .orderBy(students.lastName, students.firstName)
+      .orderBy(students.fullName)
       .all(),
   ),
 
@@ -354,42 +334,124 @@ export const peopleRouter = router({
     .input(
       z.object({
         id: ID,
-        firstName: OPT_NAME,
-        lastName: OPT_NAME,
+        fullName: OPT_NAME,
         dob: z.union([DOB, z.literal('')]).optional(),
         notes: NOTES,
         status: z.enum(['active', 'withdrawn']).optional(),
+        classId: z.union([ID, z.literal('')]).optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
       const s = requireStudent(input.id);
       const patch: Partial<typeof students.$inferInsert> = { updatedAt: now() };
-      if (input.firstName !== undefined) patch.firstName = input.firstName;
-      if (input.lastName !== undefined) patch.lastName = input.lastName;
+      if (input.fullName !== undefined) patch.fullName = displayName(input.fullName);
       if (input.dob !== undefined) patch.dob = blankToNull(input.dob);
       if (input.notes !== undefined) patch.notes = blankToNull(input.notes);
       if (input.status !== undefined) patch.status = input.status;
+      if (input.classId !== undefined) {
+        const cid = blankToNull(input.classId);
+        if (cid) {
+          const k = db.select({ id: classes.id, status: classes.status }).from(classes).where(eq(classes.id, cid)).get();
+          if (!k) throw new TRPCError({ code: 'NOT_FOUND', message: 'Class not found.' });
+          if (k.status !== 'active') throw new TRPCError({ code: 'CONFLICT', message: 'That class is archived.' });
+        }
+        patch.classId = cid;
+      }
       db.update(students).set(patch).where(eq(students.id, s.id)).run();
+      // Renaming a child can change the household label, which is derived from the children's surnames.
+      if (patch.fullName !== undefined) {
+        db.update(families).set({ name: familyLabel(s.familyId), updatedAt: now() }).where(eq(families.id, s.familyId)).run();
+      }
       const action = input.status && input.status !== s.status ? `student.${input.status === 'withdrawn' ? 'withdraw' : 'reinstate'}` : 'student.update';
       audit(auditActor(ctx), action, { entity: 'student', entityId: s.id, detail: { fields: Object.keys(patch).filter((k) => k !== 'updatedAt') } });
       return { ok: true as const };
     }),
 
-  /** Move a student into another family — the "add siblings" path. Guardians and emergency
-   *  contacts attach to the FAMILY, so linking a student to their siblings' family is what makes
-   *  the parent/guardian details apply to them; nothing is copied per-student.
+  /**
+   * Link two students as siblings. This replaced "move to family": an office thinks in terms of
+   * "these two are brother and sister", never "move this child into household fam_x1".
    *
-   *  Invoices and payments belong to the STUDENT (0.39.0), so a move takes their billing history with
-   *  them rather than stranding it on a household they have left — a debt nobody is looking at is
-   *  worse than one that follows the child. No money row is rewritten; only the child's family
-   *  changes. Audited both sides. */
-  studentSetFamily: adminProcedure.input(z.object({ studentId: ID, familyId: ID })).mutation(({ ctx, input }) => {
+   * It MERGES the two households rather than moving one child, because sibling-hood is transitive —
+   * if A and B are siblings then everyone already in A's household is in B's too. Guardians and
+   * emergency contacts hang off the household, so merging is exactly what makes one child's parent
+   * details apply to the other; nothing is copied per-student. The emptied household is then removed,
+   * so linking cannot leave a stranded record behind.
+   *
+   * Invoices and payments belong to the STUDENT (0.39.0), so billing history follows each child
+   * untouched — no money row is rewritten.
+   *
+   * It REFUSES when the household being absorbed has card/autopay state, because those hang off that
+   * family's Stripe Customer and quietly re-pointing them at another customer is not something to do
+   * behind an office's back. Rare in practice: linking happens when children are enrolled, long
+   * before a parent saves a card.
+   */
+  studentLinkSiblings: adminProcedure.input(z.object({ studentId: ID, siblingStudentId: ID })).mutation(({ ctx, input }) => {
+    if (input.studentId === input.siblingStudentId) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Pick a different student to link them to.' });
+    }
     const s = requireStudent(input.studentId);
-    requireFamily(input.familyId);
-    if (s.familyId === input.familyId) return { ok: true as const, moved: false };
-    db.update(students).set({ familyId: input.familyId, updatedAt: now() }).where(eq(students.id, s.id)).run();
-    audit(auditActor(ctx), 'student.setFamily', { entity: 'student', entityId: s.id, detail: { from: s.familyId, to: input.familyId } });
-    return { ok: true as const, moved: true };
+    const sib = requireStudent(input.siblingStudentId);
+    if (s.familyId === sib.familyId) return { ok: true as const, merged: false, familyId: s.familyId };
+
+    // `s` joins `sib`'s household — keeping the target stable means linking a new child to an
+    // established family never disturbs that family's id, guardians or Stripe customer.
+    const from = s.familyId;
+    const to = sib.familyId;
+    const blockers: string[] = [];
+    const fromFam = requireFamily(from);
+    if (fromFam.stripeCustomerId) blockers.push('a Stripe customer');
+    if (db.select({ id: paymentMethods.id }).from(paymentMethods).where(eq(paymentMethods.familyId, from)).get()) blockers.push('saved cards');
+    if (db.select({ familyId: autopayEnrollments.familyId }).from(autopayEnrollments).where(eq(autopayEnrollments.familyId, from)).get()) blockers.push('autopay');
+    if (db.select({ id: autopayRuns.id }).from(autopayRuns).where(eq(autopayRuns.familyId, from)).get()) blockers.push('autopay history');
+    if (blockers.length) {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: `This student’s household has ${blockers.join(' and ')} set up, so it can’t be merged automatically. Remove those first, or link the other student instead.`,
+      });
+    }
+
+    const moved = db.transaction((tx) => {
+      const kids = tx.update(students).set({ familyId: to, updatedAt: now() }).where(eq(students.familyId, from)).run().changes;
+      // A guardian already on the target household would violate the (guardian, family) primary key.
+      const already = new Set(tx.select({ guardianId: guardianFamilies.guardianId }).from(guardianFamilies).where(eq(guardianFamilies.familyId, to)).all().map((g) => g.guardianId));
+      for (const link of tx.select().from(guardianFamilies).where(eq(guardianFamilies.familyId, from)).all()) {
+        if (already.has(link.guardianId)) tx.delete(guardianFamilies).where(and(eq(guardianFamilies.guardianId, link.guardianId), eq(guardianFamilies.familyId, from))).run();
+        else tx.update(guardianFamilies).set({ familyId: to }).where(and(eq(guardianFamilies.guardianId, link.guardianId), eq(guardianFamilies.familyId, from))).run();
+      }
+      const contacts = tx.update(emergencyContacts).set({ familyId: to, updatedAt: now() }).where(eq(emergencyContacts.familyId, from)).run().changes;
+      // Empty now, and nothing money-side ever referenced it — see the guard above.
+      tx.delete(families).where(eq(families.id, from)).run();
+      tx.update(families).set({ name: familyLabel(to, tx), updatedAt: now() }).where(eq(families.id, to)).run();
+      return { kids, contacts };
+    });
+    audit(auditActor(ctx), 'student.linkSiblings', { entity: 'student', entityId: s.id, detail: { from, to, movedStudents: moved.kids, movedContacts: moved.contacts } });
+    return { ok: true as const, merged: true, familyId: to };
+  }),
+
+  /**
+   * Undo a link: move ONE child out into a household of their own. The counterpart to the merge
+   * above, for the case the merge is meant to serve — someone linked the wrong two children.
+   *
+   * Their own billing history follows them (it is per-student). What does NOT follow is the
+   * guardians, because those belong to the household they are leaving; the office re-adds whoever
+   * actually belongs to the new one. Refusing to guess is right here — silently copying a guardian
+   * onto a household they may have no relationship with is worse than an empty contact list.
+   */
+  studentUnlinkSiblings: adminProcedure.input(z.object({ studentId: ID })).mutation(({ ctx, input }) => {
+    const s = requireStudent(input.studentId);
+    const siblings = db.select({ id: students.id }).from(students).where(and(eq(students.familyId, s.familyId), ne(students.id, s.id))).all().length;
+    if (!siblings) return { ok: true as const, moved: false, familyId: s.familyId };
+    const fid = db.transaction((tx) => {
+      const id = rid('fam');
+      const ts = now();
+      tx.insert(families).values({ id, name: 'Family', status: 'active', createdAt: ts, updatedAt: ts }).run();
+      tx.update(students).set({ familyId: id, updatedAt: ts }).where(eq(students.id, s.id)).run();
+      tx.update(families).set({ name: familyLabel(id, tx), updatedAt: ts }).where(eq(families.id, id)).run();
+      tx.update(families).set({ name: familyLabel(s.familyId, tx), updatedAt: ts }).where(eq(families.id, s.familyId)).run();
+      return id;
+    });
+    audit(auditActor(ctx), 'student.unlinkSiblings', { entity: 'student', entityId: s.id, detail: { from: s.familyId, to: fid } });
+    return { ok: true as const, moved: true, familyId: fid };
   }),
 
   // ── CSV import ───────────────────────────────────────────────────────────────

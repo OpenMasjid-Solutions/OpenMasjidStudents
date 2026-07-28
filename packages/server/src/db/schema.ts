@@ -38,8 +38,9 @@ export const users = sqliteTable('users', {
   role: text('role').$type<Role>().notNull(),
   status: text('status').$type<'active' | 'disabled'>().notNull().default('active'),
   displayName: text('display_name'),
-  /** Staff contact + admin-only notes. */
-  phone: text('phone'),
+  /** Admin-only notes. Staff carry NO phone number: the app never contacts staff by phone, so
+   *  holding one would be personal data collected for no purpose. Phone numbers live only on
+   *  guardians and emergency contacts, where there is a reason to ring them (§14 minimisation). */
   staffNotes: text('staff_notes'),
   /** Staff are forced to set a new password on first login (CLAUDE.md §12). */
   mustChangePassword: integer('must_change_password', { mode: 'boolean' }).notNull().default(false),
@@ -185,8 +186,19 @@ export const students = sqliteTable(
     familyId: text('family_id')
       .notNull()
       .references(() => families.id, { onDelete: 'restrict' }),
-    firstName: text('first_name').notNull(),
-    lastName: text('last_name').notNull(),
+    /**
+     * The child's name as the office writes it — ONE field, not a first/last pair.
+     *
+     * Madrasa families do not reliably split into two western halves: a nasab ("Yusuf ibn
+     * Ibrahim"), a compound given name, a mononym, or a name written in Arabic script all had to
+     * be mangled to fit two boxes. Storing what was actually typed means the statement, the
+     * kiosk confirmation and the register all read the way the family reads it.
+     *
+     * Two derived things still need parts of it, and both take them at the point of use rather
+     * than storing a split (see people/names.ts): the Student ID prefix uses the FIRST word, and
+     * the household label uses the LAST. Deriving keeps one field authoritative.
+     */
+    fullName: text('full_name').notNull(),
     dob: text('dob'), // optional ISO date (YYYY-MM-DD); minimal by design (§14)
     status: text('status').$type<'active' | 'withdrawn'>().notNull().default('active'),
     notes: text('notes'),

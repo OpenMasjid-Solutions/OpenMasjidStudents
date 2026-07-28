@@ -11,7 +11,7 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, asc, desc, inArray } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
-import { feePlans, studentFees, students, families, invoices, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
+import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
@@ -136,6 +136,39 @@ export const billingRouter = router({
     return { ok: true as const };
   }),
 
+  /**
+   * Whether a fee plan can be deleted outright, and what goes with it.
+   *
+   * `invoice_items.fee_plan_id` is the line that says WHY a bill said what it said. A plan named on
+   * a raised invoice is part of that invoice's meaning, so deleting it would rewrite history — that
+   * one is archived, not deleted. A plan that has never been billed is just a wrong row.
+   */
+  feePlanDeletable: adminOrFinanceProcedure.input(z.object({ id: ID })).query(({ input }) => {
+    if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.id)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
+    const billed = db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.feePlanId, input.id)).all().length;
+    return {
+      deletable: billed === 0,
+      invoiceLines: billed,
+      assignedStudents: db.select({ id: studentFees.id }).from(studentFees).where(eq(studentFees.feePlanId, input.id)).all().length,
+    };
+  }),
+
+  /** Delete a fee plan for good. Refuses once it appears on any invoice (see `feePlanDeletable`);
+   *  its student assignments are configuration and go with it. */
+  feePlanDelete: adminOrFinanceProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.id)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
+    if (db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.feePlanId, input.id)).all().length) {
+      throw new TRPCError({ code: 'CONFLICT', message: 'This plan has been billed, so it’s part of your invoice history and can’t be deleted. Archive it instead.' });
+    }
+    let unassigned = 0;
+    db.transaction((tx) => {
+      unassigned = tx.delete(studentFees).where(eq(studentFees.feePlanId, input.id)).run().changes;
+      tx.delete(feePlans).where(eq(feePlans.id, input.id)).run();
+    });
+    audit(auditActor(ctx), 'feePlan.delete', { entity: 'feePlan', entityId: input.id, detail: { unassigned } });
+    return { ok: true as const, unassigned };
+  }),
+
   // ── Per-student fee assignment + per-family discount ─────────────────────────
   /** A family's active students, each with the fee plan(s) assigned (one row per assignment;
    *  a student with no fee still appears once, with null fee fields). */
@@ -143,8 +176,7 @@ export const billingRouter = router({
     const rows = db
       .select({
         studentId: students.id,
-        firstName: students.firstName,
-        lastName: students.lastName,
+        fullName: students.fullName,
         feeId: studentFees.id,
         feePlanId: feePlans.id,
         feePlanName: feePlans.name,
@@ -157,7 +189,7 @@ export const billingRouter = router({
       .leftJoin(studentFees, eq(studentFees.studentId, students.id))
       .leftJoin(feePlans, eq(feePlans.id, studentFees.feePlanId))
       .where(and(eq(students.familyId, input.familyId), eq(students.status, 'active')))
-      .orderBy(asc(students.firstName))
+      .orderBy(asc(students.fullName))
       .all();
     // Surface the amount that will actually be billed so the UI never has to re-derive it.
     return rows.map((r) => ({ ...r, effectiveAmountCents: r.feeId ? (r.overrideAmountCents ?? r.amountCents) : null }));
@@ -325,8 +357,7 @@ export const billingRouter = router({
       const studentRows = db
         .select({
           id: students.id,
-          firstName: students.firstName,
-          lastName: students.lastName,
+          fullName: students.fullName,
           status: students.status,
           dob: students.dob,
           studentCode: students.studentCode,
@@ -334,6 +365,7 @@ export const billingRouter = router({
           familyName: families.name,
           classId: students.classId,
           className: classes.name,
+          courseId: classes.courseId,
           courseName: courses.name,
         })
         .from(students)
@@ -341,7 +373,7 @@ export const billingRouter = router({
         .leftJoin(classes, eq(classes.id, students.classId))
         .leftJoin(courses, eq(courses.id, classes.courseId))
         .where(input?.includeWithdrawn ? undefined : eq(students.status, 'active'))
-        .orderBy(asc(courses.sortOrder), asc(courses.name), asc(classes.sortOrder), asc(classes.name), asc(students.firstName))
+        .orderBy(asc(courses.sortOrder), asc(courses.name), asc(classes.sortOrder), asc(classes.name), asc(students.fullName))
         .all();
 
       // Monthly fee total per student (override wins), so the "Paying" column matches what a month
@@ -393,13 +425,13 @@ export const billingRouter = router({
         const gs = guardiansByFamily.get(s.familyId) ?? [];
         return {
           studentId: s.id,
-          firstName: s.firstName,
-          lastName: s.lastName,
+          fullName: s.fullName,
           status: s.status,
           familyId: s.familyId,
           familyName: s.familyName,
           classId: s.classId,
           className: s.className,
+          courseId: s.courseId,
           courseName: s.courseName,
           monthlyAmountCents: m?.amountCents ?? 0,
           feeNote: m?.note ?? null,
@@ -462,8 +494,7 @@ export const billingRouter = router({
         rows = db
           .select({
             occurredAt: payments.occurredAt,
-            firstName: students.firstName,
-            lastName: students.lastName,
+            fullName: students.fullName,
             studentCode: students.studentCode,
             familyName: families.name,
             amountCents: payments.amountCents,
@@ -477,20 +508,20 @@ export const billingRouter = router({
           .innerJoin(families, eq(families.id, students.familyId))
           .orderBy(desc(payments.occurredAt))
           .all()
-          .map((p) => [csvDate(p.occurredAt), `${p.firstName} ${p.lastName}`.trim(), p.studentCode, p.familyName, csvMoney(p.amountCents), currency, p.channel, p.memo, p.by, p.reversalOf ? 'yes' : '']);
+          .map((p) => [csvDate(p.occurredAt), p.fullName, p.studentCode, p.familyName, csvMoney(p.amountCents), currency, p.channel, p.memo, p.by, p.reversalOf ? 'yes' : '']);
       } else if (input.dataset === 'invoices') {
         header = ['Period', 'Label', 'Student', 'Student ID', 'Family', 'Due', 'Total', 'Paid', 'Outstanding', 'Currency', 'Status'];
         rows = db
-          .select({ id: invoices.id, periodKey: invoices.periodKey, label: invoices.label, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode, familyName: families.name, dueDate: invoices.dueDate, status: invoices.status })
+          .select({ id: invoices.id, periodKey: invoices.periodKey, label: invoices.label, fullName: students.fullName, studentCode: students.studentCode, familyName: families.name, dueDate: invoices.dueDate, status: invoices.status })
           .from(invoices)
           .innerJoin(students, eq(students.id, invoices.studentId))
           .innerJoin(families, eq(families.id, students.familyId))
-          .orderBy(desc(invoices.periodKey), asc(students.firstName))
+          .orderBy(desc(invoices.periodKey), asc(students.fullName))
           .all()
           .map((i) => {
             const total = invoiceTotal(db, i.id);
             const paid = invoicePaid(db, i.id);
-            return [i.periodKey, i.label, `${i.firstName} ${i.lastName}`.trim(), i.studentCode, i.familyName, i.dueDate, csvMoney(total), csvMoney(paid), csvMoney(total - paid), currency, i.status];
+            return [i.periodKey, i.label, i.fullName, i.studentCode, i.familyName, i.dueDate, csvMoney(total), csvMoney(paid), csvMoney(total - paid), currency, i.status];
           });
       } else if (input.dataset === 'balances') {
         header = ['Family', 'Outstanding', 'Credit', 'Currency'];
@@ -530,8 +561,7 @@ export const billingRouter = router({
         rows = db
           .select({
             id: students.id,
-            firstName: students.firstName,
-            lastName: students.lastName,
+            fullName: students.fullName,
             studentCode: students.studentCode,
             status: students.status,
             familyId: students.familyId,
@@ -543,12 +573,12 @@ export const billingRouter = router({
           .innerJoin(families, eq(families.id, students.familyId))
           .leftJoin(classes, eq(classes.id, students.classId))
           .leftJoin(courses, eq(courses.id, classes.courseId))
-          .orderBy(asc(courses.name), asc(classes.name), asc(students.firstName))
+          .orderBy(asc(courses.name), asc(classes.name), asc(students.fullName))
           .all()
           .map((s) => {
             const gs = guardiansByFamily.get(s.familyId) ?? [];
             return [
-              `${s.firstName} ${s.lastName}`.trim(),
+              s.fullName,
               s.studentCode,
               s.status,
               s.familyName,
@@ -598,6 +628,20 @@ export const billingRouter = router({
     if (!db.select({ id: chargeItems.id }).from(chargeItems).where(eq(chargeItems.id, input.id)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Item not found.' });
     db.update(chargeItems).set({ status: 'archived', updatedAt: now() }).where(eq(chargeItems.id, input.id)).run();
     audit(auditActor(ctx), 'chargeItem.archive', { entity: 'chargeItem', entityId: input.id });
+    return { ok: true as const };
+  }),
+
+  /** Delete a charge item outright. Refuses while any charge still points at it — a charge holds its
+   *  own label/amount snapshot, but the `charge_item_id` link is how the office traces "which item
+   *  was this?", and RESTRICT would block the delete anyway. Archive covers the rest. */
+  chargeItemDelete: adminOrFinanceProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    if (!db.select({ id: chargeItems.id }).from(chargeItems).where(eq(chargeItems.id, input.id)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Item not found.' });
+    const used = db.select({ id: charges.id }).from(charges).where(eq(charges.chargeItemId, input.id)).all().length;
+    if (used) {
+      throw new TRPCError({ code: 'CONFLICT', message: `This item has been charged to ${used} student${used === 1 ? '' : 's'}, so it’s part of your billing history and can’t be deleted. Archive it instead.` });
+    }
+    db.delete(chargeItems).where(eq(chargeItems.id, input.id)).run();
+    audit(auditActor(ctx), 'chargeItem.delete', { entity: 'chargeItem', entityId: input.id });
     return { ok: true as const };
   }),
 
@@ -659,8 +703,7 @@ export const billingRouter = router({
         .select({
           id: charges.id,
           studentId: charges.studentId,
-          firstName: students.firstName,
-          lastName: students.lastName,
+          fullName: students.fullName,
           label: charges.label,
           amountCents: charges.amountCents,
           note: charges.note,
@@ -694,7 +737,7 @@ export const billingRouter = router({
   /** ONE STUDENT's record: their balance, their invoices, their payments. This is the window finance
    *  works in — recording an in-person payment happens here, against the child it was paid for. */
   studentBilling: adminOrFinanceProcedure.input(z.object({ studentId: ID })).query(({ input }) => {
-    const s = db.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode, familyId: students.familyId }).from(students).where(eq(students.id, input.studentId)).get();
+    const s = db.select({ id: students.id, fullName: students.fullName, studentCode: students.studentCode, familyId: students.familyId }).from(students).where(eq(students.id, input.studentId)).get();
     if (!s) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
     return {
       student: s,
@@ -708,10 +751,10 @@ export const billingRouter = router({
    *  plus each child's own, and every invoice/payment tagged with the child it belongs to. */
   familyBilling: adminOrFinanceProcedure.input(z.object({ familyId: ID })).query(({ input }) => {
     const kids = db
-      .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode, status: students.status })
+      .select({ id: students.id, fullName: students.fullName, studentCode: students.studentCode, status: students.status })
       .from(students)
       .where(eq(students.familyId, input.familyId))
-      .orderBy(asc(students.firstName))
+      .orderBy(asc(students.fullName))
       .all();
     const kidIds = kids.map((k) => k.id);
     return {

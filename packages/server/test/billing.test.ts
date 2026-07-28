@@ -28,8 +28,8 @@ async function scenario(plan: { name: string; amountCents: number; cadence: 'mon
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const p = await admin.billing.feePlanCreate(plan);
-  const s1 = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: p.id });
-  const s2 = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Sara', lastName: 'Ismail', feePlanId: p.id });
+  const s1 = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: p.id });
+  const s2 = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Sara Ismail', feePlanId: p.id });
   return { admin, familyId: fam.id, s1: s1.id, s2: s2.id, planId: p.id };
 }
 

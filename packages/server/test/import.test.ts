@@ -8,20 +8,34 @@
  *  - a file with ANY bad row commits NOTHING (a half-imported billing roster is worse than a
  *    rejected file)
  *  - classes and fee plans are never invented from a spreadsheet — an unknown name is a row error
- *  - families ARE created on demand, and two rows naming the same family become siblings
- *  - a guardian repeated across sibling rows is linked once, not duplicated
+ *  - EVERY ROW GETS ITS OWN HOUSEHOLD. The import does not work siblings out from the file and never
+ *    joins an existing family; that is done afterwards with `studentLinkSiblings`, where the decision
+ *    is visible on a record instead of buried in a 200-row spreadsheet.
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { freshApp, makeCtx } from './harness';
 import { paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, students, classes, courses, families, terms, schoolYears, users, auditLog } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
-import { parseAmountCents } from '../src/people/import';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
+/**
+ * Imported DYNAMICALLY, after freshApp() has pointed DATA_DIR at a temp directory.
+ *
+ * `src/people/import` pulls in `src/db`, which opens the database AT MODULE LOAD. As a static
+ * import at the top of this file it therefore opened the real DATA_DIR database before the harness
+ * could redirect it, and the suite then ran its migrations against the developer's actual data.
+ * Harmless until a migration rebuilt a populated table, at which point every test in this file
+ * failed in `beforeAll`. The harness header calls this out; this file was the one exception.
+ */
+let parseAmountCents: typeof import('../src/people/import').parseAmountCents;
+
 const caller = (role: Role, opts: { origin?: 'lan' | 'tunnel' } = {}) =>
   app.appRouter.createCaller(makeCtx({ origin: opts.origin ?? 'lan', session: { role, source: 'local', username: role, userId: `usr_${role}` } }).ctx);
 
-beforeAll(async () => { app = await freshApp(); });
+beforeAll(async () => {
+  app = await freshApp();
+  ({ parseAmountCents } = await import('../src/people/import'));
+});
 beforeEach(() => {
   const { db } = app.dbmod;
   for (const t of [paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, students, classes, courses, families, terms, schoolYears, users, auditLog]) db.delete(t).run();
@@ -54,47 +68,42 @@ describe('importTemplate', () => {
   it('exposes the canonical columns with required flags and match aliases', async () => {
     const { admin } = await base();
     const t = await admin.people.importTemplate();
-    expect(t.find((f) => f.key === 'firstName')).toMatchObject({ required: true });
+    expect(t.find((f) => f.key === 'fullName')).toMatchObject({ required: true });
     expect(t.find((f) => f.key === 'amount')!.aliases).toContain('paying');
     expect(t.map((f) => f.key)).toContain('guardianPhone');
   });
 });
 
 describe('preview catches problems before anything is written', () => {
-  it('accepts a clean file and groups siblings into one new family', async () => {
+  it('accepts a clean file', async () => {
     const { admin, planId } = await base();
     const r = await admin.people.importPreview({
       defaultFeePlanId: planId,
-      rows: [
-        { firstName: 'Yusuf', lastName: 'Ismail', familyName: 'Ismail' },
-        { firstName: 'Sara', lastName: 'Ismail', familyName: 'Ismail' },
-      ],
+      rows: [{ fullName: 'Yusuf Ismail' }, { fullName: 'Sara Ismail' }],
     });
     expect(r.okCount).toBe(2);
     expect(r.errorCount).toBe(0);
-    expect(r.newFamilies).toEqual(['Ismail']); // one family for both siblings
   });
 
-  it('defaults the family label to "<last name> family" when the column is absent', async () => {
-    const { admin, planId } = await base();
-    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ firstName: 'Yusuf', lastName: 'Ismail' }] });
-    expect(r.rows[0].resolved!.familyName).toBe('Ismail family');
+  it('offers no family column at all — grouping is not something a spreadsheet decides', async () => {
+    const { admin } = await base();
+    const keys = (await admin.people.importTemplate()).map((f) => f.key);
+    expect(keys).not.toContain('familyName');
+    // Nor is a surname column quietly repurposed as one.
+    for (const f of await admin.people.importTemplate()) {
+      if (f.key !== 'fullName') expect(f.aliases).not.toContain('surname');
+    }
   });
 
-  it('reuses an EXISTING family instead of creating a duplicate', async () => {
+  it('requires a name — one field now, so blank or whitespace-only is the only way to miss it', async () => {
     const { admin, planId } = await base();
-    await admin.people.familyCreate({ name: 'Ismail' });
-    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ firstName: 'Yusuf', lastName: 'Ismail', familyName: 'ismail' }] });
-    expect(r.rows[0].resolved!.familyExists).toBe(true);
-    expect(r.newFamilies).toEqual([]);
-  });
-
-  it('requires both names', async () => {
-    const { admin, planId } = await base();
-    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ firstName: '', lastName: 'X' }, { firstName: 'A', lastName: '' }] });
+    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ fullName: '' }, { fullName: '   ' }, { fullName: 'Bilal' }] });
     expect(r.errorCount).toBe(2);
-    expect(r.rows[0].errors[0]).toMatch(/First name/);
-    expect(r.rows[1].errors[0]).toMatch(/Last name/);
+    expect(r.rows[0].errors[0]).toMatch(/Name is required/);
+    expect(r.rows[1].errors[0]).toMatch(/Name is required/);
+    // A single-word name is NOT an error: plenty of children have one, and demanding a surname is
+    // exactly the assumption this change removed.
+    expect(r.rows[2].ok).toBe(true);
   });
 
   it('refuses an unknown class or fee plan rather than inventing one from a typo', async () => {
@@ -102,8 +111,8 @@ describe('preview catches problems before anything is written', () => {
     const r = await admin.people.importPreview({
       defaultFeePlanId: planId,
       rows: [
-        { firstName: 'A', lastName: 'B', className: 'Hifz 9' },
-        { firstName: 'C', lastName: 'D', feePlanName: 'Nonexistent plan' },
+        { fullName: 'A B', className: 'Hifz 9' },
+        { fullName: 'C D', feePlanName: 'Nonexistent plan' },
       ],
     });
     expect(r.rows[0].errors[0]).toMatch(/Class "Hifz 9" does not exist/);
@@ -114,20 +123,20 @@ describe('preview catches problems before anything is written', () => {
     const { admin, planId } = await base();
     const other = await admin.structure.courseCreate({ name: 'Nazrah' });
     await admin.structure.classCreate({ courseId: other.id, name: 'Hifz 1' }); // same class name, different course
-    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ firstName: 'A', lastName: 'B', className: 'Hifz 1' }] });
+    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ fullName: 'A B', className: 'Hifz 1' }] });
     expect(r.rows[0].errors[0]).toMatch(/more than one course/);
     // Naming the course disambiguates it.
-    const ok = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ firstName: 'A', lastName: 'B', className: 'Hifz 1', courseName: 'Nazrah' }] });
+    const ok = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ fullName: 'A B', className: 'Hifz 1', courseName: 'Nazrah' }] });
     expect(ok.errorCount).toBe(0);
   });
 
   it('requires SOME fee plan — a per-row column or an import-wide default', async () => {
     const { admin, planId } = await base();
-    const none = await admin.people.importPreview({ rows: [{ firstName: 'A', lastName: 'B' }] });
+    const none = await admin.people.importPreview({ rows: [{ fullName: 'A B' }] });
     expect(none.rows[0].errors[0]).toMatch(/No fee plan/);
-    const viaColumn = await admin.people.importPreview({ rows: [{ firstName: 'A', lastName: 'B', feePlanName: 'Monthly tuition' }] });
+    const viaColumn = await admin.people.importPreview({ rows: [{ fullName: 'A B', feePlanName: 'Monthly tuition' }] });
     expect(viaColumn.errorCount).toBe(0);
-    const viaDefault = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ firstName: 'A', lastName: 'B' }] });
+    const viaDefault = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ fullName: 'A B' }] });
     expect(viaDefault.errorCount).toBe(0);
   });
 
@@ -136,9 +145,9 @@ describe('preview catches problems before anything is written', () => {
     const r = await admin.people.importPreview({
       defaultFeePlanId: planId,
       rows: [
-        { firstName: 'A', lastName: 'B', amount: '350 ACH' },
-        { firstName: 'C', lastName: 'D', dob: '03/04/2015' },
-        { firstName: 'E', lastName: 'F', guardianEmail: 'not-an-email' },
+        { fullName: 'A B', amount: '350 ACH' },
+        { fullName: 'C D', dob: '03/04/2015' },
+        { fullName: 'E F', guardianEmail: 'not-an-email' },
       ],
     });
     expect(r.rows[0].errors[0]).toMatch(/not a number/);
@@ -154,8 +163,8 @@ describe('commit is all-or-nothing', () => {
       admin.people.importCommit({
         defaultFeePlanId: planId,
         rows: [
-          { firstName: 'Good', lastName: 'Row' },
-          { firstName: '', lastName: 'Bad' },
+          { fullName: 'Good Row' },
+          { fullName: '' }, // the whole file must be rejected because of this one
         ],
       }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
@@ -163,57 +172,64 @@ describe('commit is all-or-nothing', () => {
     expect(app.dbmod.db.select().from(families).all()).toHaveLength(0);
   });
 
-  it('imports a roster: families, classes, per-row amounts, and one guardian across siblings', async () => {
+  it('imports a roster: one household per row, classes, per-row amounts, guardians', async () => {
     const { admin, planId, classId } = await base();
     const r = await admin.people.importCommit({
       defaultFeePlanId: planId,
       rows: [
-        { firstName: 'Yusuf', lastName: 'Ismail', familyName: 'Ismail', className: 'Hifz 1', amount: '350', guardianName: 'Abu Yusuf', guardianPhone: '555-0001' },
-        { firstName: 'Sara', lastName: 'Ismail', familyName: 'Ismail', className: 'Hifz 1', amount: '$700', guardianName: 'Abu Yusuf', guardianPhone: '555-0001' },
-        { firstName: 'Bilal', lastName: 'Farooqi', className: 'Hifz 1' },
+        { fullName: 'Yusuf Ismail', className: 'Hifz 1', amount: '350', guardianName: 'Abu Yusuf', guardianPhone: '555-0001' },
+        { fullName: 'Sara Ismail', className: 'Hifz 1', amount: '$700', guardianName: 'Abu Yusuf', guardianPhone: '555-0001' },
+        { fullName: 'Bilal Farooqi', className: 'Hifz 1' },
       ],
     });
-    expect(r).toMatchObject({ created: 3, familiesCreated: 2, guardiansCreated: 1 });
+    // Three children, three households, and a guardian record per row that named one. Two rows
+    // naming the same parent are NOT merged — linking the children afterwards is what does that.
+    expect(r).toMatchObject({ created: 3, familiesCreated: 3, guardiansCreated: 2 });
     expect(r.students).toHaveLength(3);
     for (const s of r.students) expect(s.studentCode).toMatch(/^[A-Z]{3}\d{4}$/);
     expect(new Set(r.students.map((s) => s.studentCode)).size).toBe(3); // Student IDs unique
 
-    // Siblings really share one family.
     const grouped = await admin.structure.studentsByClass();
-    const ismail = grouped.filter((g) => g.familyName === 'Ismail');
-    expect(ismail).toHaveLength(2);
-    expect(new Set(ismail.map((g) => g.familyId)).size).toBe(1);
-    expect(ismail.every((g) => g.classId === classId)).toBe(true);
+    expect(new Set(grouped.map((g) => g.familyId)).size).toBe(3);
+    expect(grouped.every((g) => g.classId === classId)).toBe(true);
+    // Each household is labelled from its own child, exactly as the UI would label it.
+    expect(grouped.map((g) => g.familyName).sort()).toEqual(['Farooqi family', 'Ismail family', 'Ismail family']);
 
-    // The Amount column became a per-student override. Billing the household now produces ONE INVOICE
-    // PER CHILD — 350 and 700 — which together still come to the 1050 the family owes.
-    const familyId = ismail[0].familyId;
-    await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
-    const billing = await admin.billing.familyBilling({ familyId });
-    expect(billing.invoices.map((i) => i.totalCents).sort((x, y) => x - y)).toEqual([35000, 70000]);
-    expect(billing.balance.owedCents).toBe(105000);
+    // The Amount column became a per-student override, and each child is billed their own figure.
+    const yusuf = grouped.find((g) => g.fullName === 'Yusuf Ismail')!;
+    const sara = grouped.find((g) => g.fullName === 'Sara Ismail')!;
+    for (const g of [yusuf, sara]) await admin.billing.generateFamily({ familyId: g.familyId, periodKey: '2026-07', label: 'Jul' });
+    expect((await admin.billing.studentBilling({ studentId: yusuf.id })).invoices[0].totalCents).toBe(35000);
+    expect((await admin.billing.studentBilling({ studentId: sara.id })).invoices[0].totalCents).toBe(70000);
 
     // Bilal had no Amount, so he falls back to the plan's own 35000.
-    const bilal = grouped.find((g) => g.firstName === 'Bilal')!;
+    const bilal = grouped.find((g) => g.fullName === 'Bilal Farooqi')!;
     await admin.billing.generateFamily({ familyId: bilal.familyId, periodKey: '2026-07', label: 'Jul' });
-    expect((await admin.billing.familyBilling({ familyId: bilal.familyId })).invoices[0].totalCents).toBe(35000);
+    expect((await admin.billing.studentBilling({ studentId: bilal.id })).invoices[0].totalCents).toBe(35000);
+
+    // …and once the office links the two Ismails, one balance covers both.
+    await admin.people.studentLinkSiblings({ studentId: yusuf.id, siblingStudentId: sara.id });
+    expect((await admin.billing.familyBilling({ familyId: sara.familyId })).balance.owedCents).toBe(105000);
   });
 
-  it('links a new student to an existing family so guardians already on file apply', async () => {
+  it('never joins an existing household, even one that looks like an obvious match', async () => {
     const { admin, planId } = await base();
-    const fam = await admin.people.familyCreate({ name: 'Ismail' });
-    await admin.people.guardianCreate({ familyId: fam.id, name: 'Abu Yusuf', phone: '555-9' });
-    const r = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ firstName: 'Sara', lastName: 'Ismail', familyName: 'Ismail', guardianName: 'Abu Yusuf' }] });
-    // The guardian was already on the family, so nothing new was created.
-    expect(r.guardiansCreated).toBe(0);
-    const detail = await admin.people.familyGet({ id: fam.id });
+    const existing = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: planId });
+    await admin.people.guardianCreate({ familyId: existing.familyId, name: 'Abu Yusuf', phone: '555-9' });
+
+    await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Sara Ismail', guardianName: 'Abu Yusuf' }] });
+
+    // Same surname, same parent name — and still a separate household, because two unrelated
+    // children sharing a surname must never end up sharing guardians and a balance by accident.
+    const detail = await admin.people.familyGet({ id: existing.familyId });
     expect(detail.students).toHaveLength(1);
-    expect(detail.guardians).toHaveLength(1);
+    expect(detail.students[0].fullName).toBe('Yusuf Ismail');
+    expect(app.dbmod.db.select().from(families).all()).toHaveLength(2);
   });
 
   it('audits counts only — never names or Student IDs', async () => {
     const { admin, planId } = await base();
-    const r = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ firstName: 'Yusuf', lastName: 'Ismail' }] });
+    const r = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }] });
     const entry = app.dbmod.db.select().from(auditLog).all().find((e) => e.action === 'student.import')!;
     const detail = JSON.stringify(entry.detail ?? {});
     expect(detail).toContain('"created":1');
@@ -224,7 +240,7 @@ describe('commit is all-or-nothing', () => {
 
 describe('walls', () => {
   it('import is admin-only and LAN-only', async () => {
-    const rows = [{ firstName: 'A', lastName: 'B' }];
+    const rows = [{ fullName: 'A B' }];
     await expect(caller('finance').people.importPreview({ rows })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(caller('finance').people.importCommit({ rows })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(caller('admin', { origin: 'tunnel' }).people.importCommit({ rows })).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -233,24 +249,35 @@ describe('walls', () => {
   /** A bill belongs to the CHILD since 0.39.0, so moving a child between households carries their
    *  billing with them. That is the right answer: an unpaid bill stranded on a household the child
    *  has left is a debt nobody is looking at. The invoice rows themselves are never rewritten. */
-  it('moving a student between families is admin-only and takes their billing with them', async () => {
+  it('linking siblings is admin-only and takes a child’s billing with them', async () => {
     const { admin, planId } = await base();
-    const a = await admin.people.familyCreate({ name: 'A fam' });
-    const b = await admin.people.familyCreate({ name: 'B fam' });
-    const s = await admin.people.studentCreate({ familyId: a.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
-    // Bill the child while they are on family A, then move them to B.
-    await admin.billing.generateFamily({ familyId: a.id, periodKey: '2026-07', label: 'Jul' });
-    const invId = (await admin.billing.studentBilling({ studentId: s.id })).invoices[0].id;
-    const moved = await admin.people.studentSetFamily({ studentId: s.id, familyId: b.id });
-    expect(moved.moved).toBe(true);
-    // The child's own record is unchanged — same invoice, same id, still owed.
-    const after = await admin.billing.studentBilling({ studentId: s.id });
+    // Two children added separately, so each starts in a household of their own.
+    const a = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: planId });
+    const b = await admin.people.studentAdd({ fullName: 'Maryam Ismail', feePlanId: planId });
+    expect(a.familyId).not.toBe(b.familyId);
+
+    // Bill Yusuf BEFORE the link, so we can prove the debt survives the merge.
+    await admin.billing.generateFamily({ familyId: a.familyId, periodKey: '2026-07', label: 'Jul' });
+    const invId = (await admin.billing.studentBilling({ studentId: a.id })).invoices[0].id;
+
+    await expect(caller('finance').people.studentLinkSiblings({ studentId: a.id, siblingStudentId: b.id })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    const r = await admin.people.studentLinkSiblings({ studentId: a.id, siblingStudentId: b.id });
+    expect(r.merged).toBe(true);
+    expect(r.familyId).toBe(b.familyId); // the sibling's household is the one that survives
+
+    // The child's own record is untouched — same invoice, same id, still owed. Money is per student,
+    // so a regrouping of households cannot rewrite it.
+    const after = await admin.billing.studentBilling({ studentId: a.id });
     expect(after.invoices).toHaveLength(1);
     expect(after.invoices[0].id).toBe(invId);
     expect(after.balance.owedCents).toBe(35000);
-    // A has nothing left to show (no children); B now shows the child and their debt.
-    expect((await admin.billing.familyBilling({ familyId: a.id })).invoices).toHaveLength(0);
-    expect((await admin.billing.familyBilling({ familyId: b.id })).balance.owedCents).toBe(35000);
-    await expect(caller('finance').people.studentSetFamily({ studentId: s.id, familyId: a.id })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    // One household now, holding both children and the debt.
+    const merged = await admin.billing.familyBilling({ familyId: b.familyId });
+    expect(merged.students).toHaveLength(2);
+    expect(merged.balance.owedCents).toBe(35000);
+    // …and the emptied one is gone rather than left behind as a stray record.
+    expect((await admin.people.directory()).some((f) => f.id === a.familyId)).toBe(false);
   });
 });

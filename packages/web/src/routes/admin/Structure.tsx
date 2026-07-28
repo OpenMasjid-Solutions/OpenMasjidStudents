@@ -53,7 +53,11 @@ export function Structure() {
   const classArchive = trpc.structure.classArchive.useMutation();
 
   const thisYear = new Date().getFullYear();
-  const [newYear, setNewYear] = useState({ label: '', startYear: String(thisYear), startMonth: '4', endMonth: '3' });
+  /** The months start UNSET. They used to default to Apr → Mar, which is the commonest madrasa year
+   *  but silently decided the billing calendar for anyone who did not notice the dropdowns — and a
+   *  wrong start month generates a wrong set of invoice periods. Making it an explicit choice costs
+   *  two clicks once per year. */
+  const [newYear, setNewYear] = useState({ label: '', startYear: String(thisYear), startMonth: '', endMonth: '' });
   const [yearEdit, setYearEdit] = useState<YearEdit | null>(null);
 
   /** Which year's terms are shown. Defaults to the current year once the list loads. */
@@ -102,7 +106,7 @@ export function Structure() {
   // ── School years ────────────────────────────────────────────────────────────
   async function addYear(e: FormEvent) {
     e.preventDefault();
-    if (!newYear.label.trim()) return;
+    if (!newYear.label.trim() || !newYear.startMonth || !newYear.endMonth) return;
     await run(
       () =>
         yearCreate.mutateAsync({
@@ -112,7 +116,7 @@ export function Structure() {
           endMonth: Number(newYear.endMonth),
           makeCurrent: true,
         }),
-      () => setNewYear({ label: '', startYear: String(thisYear), startMonth: '4', endMonth: '3' }),
+      () => setNewYear({ label: '', startYear: String(thisYear), startMonth: '', endMonth: '' }),
     );
     await refreshYears();
   }
@@ -244,7 +248,7 @@ export function Structure() {
       {/* ── School years ───────────────────────────────────────────────────── */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head">
-          <h2><CalendarRange size={16} style={{ verticalAlign: '-2px', marginInlineEnd: '0.35rem' }} />{t('structure.years')}</h2>
+          <h2><CalendarRange size={16} />{t('structure.years')}</h2>
         </div>
         <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('structure.yearsHint')}</p>
 
@@ -349,17 +353,19 @@ export function Structure() {
           </div>
           <div className="field">
             <label className="label">{t('structure.from')}</label>
-            <select className="input glass-inset" value={newYear.startMonth} onChange={(e) => setNewYear({ ...newYear, startMonth: e.target.value })}>
+            <select className="input glass-inset" value={newYear.startMonth} onChange={(e) => setNewYear({ ...newYear, startMonth: e.target.value })} required>
+              <option value="">{t('common.select')}</option>
               {MONTH_NAMES.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
             </select>
           </div>
           <div className="field">
             <label className="label">{t('structure.to')}</label>
-            <select className="input glass-inset" value={newYear.endMonth} onChange={(e) => setNewYear({ ...newYear, endMonth: e.target.value })}>
+            <select className="input glass-inset" value={newYear.endMonth} onChange={(e) => setNewYear({ ...newYear, endMonth: e.target.value })} required>
+              <option value="">{t('common.select')}</option>
               {MONTH_NAMES.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
             </select>
           </div>
-          <button type="submit" className="btn btn--primary" disabled={yearCreate.isPending || !newYear.label.trim()}>{t('structure.addYear')}</button>
+          <button type="submit" className="btn btn--primary" disabled={yearCreate.isPending || !newYear.label.trim() || !newYear.startMonth || !newYear.endMonth}>{t('structure.addYear')}</button>
           <p className="hint">{t('structure.wrapHint')}</p>
         </form>
       </section>
@@ -428,7 +434,7 @@ export function Structure() {
       {/* ── Courses & classes ──────────────────────────────────────────────── */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head">
-          <h2><Layers size={16} style={{ verticalAlign: '-2px', marginInlineEnd: '0.35rem' }} />{t('structure.courses')}</h2>
+          <h2><Layers size={16} />{t('structure.courses')}</h2>
         </div>
         <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('structure.coursesHint')}</p>
 

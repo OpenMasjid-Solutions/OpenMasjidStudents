@@ -50,7 +50,7 @@ async function seed() {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 5000, cadence: 'monthly' });
-  const s1 = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  const s1 = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
   await admin.billing.recordManualPayment({ studentId: s1.id, amountCents: 2000, channel: 'cash', occurredAt: '2026-07-03' });
   return { admin, familyId: fam.id, studentId: s1.id };
@@ -85,7 +85,7 @@ describe('buildFamilyStatementHtml', () => {
     const { db } = app.dbmod;
     const ts = new Date();
     db.insert(families).values({ id: 'fam_ord', name: 'Order Fam', status: 'active', createdAt: ts, updatedAt: ts }).run();
-    db.insert(students).values({ id: 'stu_ord', familyId: 'fam_ord', firstName: 'Ord', lastName: 'Fam', status: 'active', studentCode: 'ORD9000', createdAt: ts, updatedAt: ts }).run();
+    db.insert(students).values({ id: 'stu_ord', familyId: 'fam_ord', fullName: 'Ord Fam', status: 'active', studentCode: 'ORD9000', createdAt: ts, updatedAt: ts }).run();
     // A dated, genuinely-due invoice and an undated one, both open with a positive balance.
     const mk = (id: string, label: string, due: string | null) => {
       db.insert(invoices).values({ id, studentId: 'stu_ord', label, periodKey: id, dueDate: due, status: 'open', createdAt: ts, updatedAt: ts }).run();
@@ -101,7 +101,7 @@ describe('buildFamilyStatementHtml', () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Test' });
     const p = await admin.billing.feePlanCreate({ name: 'T', amountCents: 1000, cadence: 'monthly' });
-    await admin.people.studentCreate({ familyId: fam.id, firstName: '<script>alert(1)</script>', lastName: 'X', feePlanId: p.id });
+    await admin.people.studentCreate({ familyId: fam.id, fullName: '<script>alert(1)</script> X', feePlanId: p.id });
     const html = (await statements.buildFamilyStatementHtml(fam.id, 'http://h'))!;
     expect(html).not.toContain('<script>alert(1)</script>');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');

@@ -63,7 +63,7 @@ export function MassApply({ currency }: { currency: string }) {
   const students = useMemo(() => {
     const rows = roster.data ?? [];
     const needle = q.trim().toLowerCase();
-    return needle ? rows.filter((r) => `${r.firstName} ${r.lastName} ${r.familyName}`.toLowerCase().includes(needle)) : rows;
+    return needle ? rows.filter((r) => `${r.fullName} ${r.familyName}`.toLowerCase().includes(needle)) : rows;
   }, [roster.data, q]);
 
   /** How many students this target currently resolves to — shown before applying, so nobody mass
@@ -274,7 +274,7 @@ export function MassApply({ currency }: { currency: string }) {
                 students.map((s) => (
                   <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.2rem 0', cursor: 'pointer' }}>
                     <input type="checkbox" checked={picked.has(s.id)} onChange={() => toggle(s.id)} />
-                    <span>{s.firstName} {s.lastName}</span>
+                    <span>{s.fullName}</span>
                     <span className="muted" style={{ fontSize: '0.82rem' }}>
                       {s.className ? `${s.courseName ?? '—'} · ${s.className}` : t('students.unplaced')}
                     </span>

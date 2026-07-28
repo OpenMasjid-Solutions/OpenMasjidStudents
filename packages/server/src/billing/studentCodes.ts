@@ -32,6 +32,7 @@ import { randomInt } from 'node:crypto';
 import { eq, isNull } from 'drizzle-orm';
 import { db } from '../db';
 import { students } from '../db/schema';
+import { givenName } from '../people/names';
 import { makeLog } from '../logger';
 
 const log = makeLog('studentCodes');
@@ -42,9 +43,11 @@ export const FALLBACK_PREFIX = 'STU';
 /** `YUS1234` — 3 uppercase letters then exactly 4 digits. Used to validate typed input. */
 export const STUDENT_CODE_RE = /^[A-Z]{3}[0-9]{4}$/;
 
-/** The three-letter prefix for a first name. Always returns exactly 3 chars of A-Z. */
-export function codePrefix(firstName: string): string {
-  const letters = firstName
+/** The three-letter prefix for a name. Letters are taken across the WHOLE name, not just the first
+ *  word — "Al Amin" gives ALA rather than a padded ALX, which is both nicer and what a compound
+ *  given name deserves. Always returns exactly 3 chars of A-Z. */
+export function codePrefix(fullName: string): string {
+  const letters = fullName
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '') // the combining marks NFD just split off (Yūsuf → Yusuf)
     .toUpperCase()
@@ -63,8 +66,8 @@ export function normalizeStudentCode(input: string): string {
  * — only if that prefix is genuinely saturated — falls back to other prefixes so student creation can
  * never hard-fail on a full prefix. 10k per prefix means a real madrasa never reaches the fallback.
  */
-export function generateUniqueStudentCode(firstName: string): string {
-  const prefix = codePrefix(firstName);
+export function generateUniqueStudentCode(fullName: string): string {
+  const prefix = codePrefix(fullName);
   const taken = (code: string) => !!db.select({ id: students.id }).from(students).where(eq(students.studentCode, code)).get();
 
   for (let i = 0; i < 200; i++) {
@@ -94,10 +97,10 @@ export function generateUniqueStudentCode(firstName: string): string {
 export function backfillStudentCodes(): number {
   let filled = 0;
   try {
-    const rows = db.select({ id: students.id, firstName: students.firstName }).from(students).where(isNull(students.studentCode)).all();
+    const rows = db.select({ id: students.id, fullName: students.fullName }).from(students).where(isNull(students.studentCode)).all();
     for (const r of rows) {
       try {
-        db.update(students).set({ studentCode: generateUniqueStudentCode(r.firstName), updatedAt: new Date() }).where(eq(students.id, r.id)).run();
+        db.update(students).set({ studentCode: generateUniqueStudentCode(r.fullName), updatedAt: new Date() }).where(eq(students.id, r.id)).run();
         filled++;
       } catch (e) {
         // One bad row must not abandon the rest.

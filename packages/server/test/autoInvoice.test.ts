@@ -34,7 +34,7 @@ async function seed(opts: { withYear?: boolean; startYear?: number | null } = {}
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
   if (opts.withYear !== false) {
     const y = await admin.structure.schoolYearCreate({ label: '2026–2027', startYear: 2026, startMonth: 4, endMonth: 3, makeCurrent: true });
     if (opts.startYear === null) app.dbmod.db.update(schoolYears).set({ startYear: null }).run();
@@ -130,7 +130,7 @@ describe('when enabled', () => {
   it('bills only monthly plans — a per-term plan is not swept into a month run', async () => {
     const { admin, famId } = await seed();
     const term = await admin.billing.feePlanCreate({ name: 'Term fee', amountCents: 9000, cadence: 'per_term' });
-    const s2 = await admin.people.studentCreate({ familyId: famId, firstName: 'Maryam', lastName: 'Ismail', feePlanId: term.id });
+    const s2 = await admin.people.studentCreate({ familyId: famId, fullName: 'Maryam Ismail', feePlanId: term.id });
     void s2;
     auto.runAutoInvoice(JULY_15);
     const lines = app.dbmod.db.select().from(invoiceItems).all();

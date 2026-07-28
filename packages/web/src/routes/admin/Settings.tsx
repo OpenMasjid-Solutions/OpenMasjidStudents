@@ -27,6 +27,43 @@ export function Settings() {
     await utils.settings.get.invalidate();
     setSchool(null);
   }
+  // School logo. Read in the browser as a data URI and sent as one — the server re-checks the magic
+  // bytes, so nothing here is trusted; this is just the least fiddly way to move a small image
+  // through tRPC without adding a multipart route for one field.
+  const logoSet = trpc.settings.logoSet.useMutation();
+  const [logoMsg, setLogoMsg] = useState<string | null>(null);
+  const LOGO_MAX_BYTES = 512 * 1024;
+
+  async function pickLogo(file: File | null) {
+    setLogoMsg(null);
+    if (!file) return;
+    // Checked here too so an oversized file fails instantly and locally, rather than after the
+    // browser has base64'd a 10 MB photo and pushed it at the server.
+    if (file.size > LOGO_MAX_BYTES) return setLogoMsg(t('settings.logoTooBig'));
+    try {
+      const dataUri = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = () => reject(new Error('read_failed'));
+        r.readAsDataURL(file);
+      });
+      await logoSet.mutateAsync({ dataUri });
+      await utils.settings.get.invalidate();
+    } catch (e) {
+      setLogoMsg((e as Error).message);
+    }
+  }
+
+  async function clearLogo() {
+    setLogoMsg(null);
+    try {
+      await logoSet.mutateAsync({ dataUri: null });
+      await utils.settings.get.invalidate();
+    } catch (e) {
+      setLogoMsg((e as Error).message);
+    }
+  }
+
   async function toggleSelfReg() {
     await saveSettings.mutateAsync({ selfRegistration: !appSettings.data?.selfRegistration });
     await utils.settings.get.invalidate();
@@ -155,6 +192,27 @@ export function Settings() {
               <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={!!appSettings.data.selfRegistration} onChange={toggleSelfReg} />
               <span>{t('settings.selfRegistration')}<br /><span className="hint">{t('settings.selfRegistrationHint')}</span></span>
             </label>
+
+            {/* Logo — goes on printed statements and outgoing email. */}
+            <div className="inline-form glass-inset" style={{ alignItems: 'center' }}>
+              <div className="field" style={{ flex: '0 0 auto' }}>
+                <span className="label">{t('settings.logo')}</span>
+                {appSettings.data.logo ? (
+                  <img src={appSettings.data.logo} alt="" style={{ maxHeight: '3rem', maxWidth: '10rem', width: 'auto', height: 'auto', display: 'block' }} />
+                ) : (
+                  <span className="muted" style={{ fontSize: '0.88rem' }}>{t('settings.logoNone')}</span>
+                )}
+              </div>
+              <div className="field" style={{ flex: '1 1 14rem' }}>
+                <label className="label" htmlFor="logo-file">{t('settings.logoUpload')}</label>
+                <input id="logo-file" className="input glass-inset" type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => void pickLogo(e.target.files?.[0] ?? null)} disabled={logoSet.isPending} />
+                <span className="hint">{t('settings.logoHint')}</span>
+              </div>
+              {appSettings.data.logo && (
+                <button type="button" className="btn btn--ghost" onClick={() => void clearLogo()} disabled={logoSet.isPending}>{t('common.remove')}</button>
+              )}
+            </div>
+            {logoMsg && <p className="form-error">{logoMsg}</p>}
           </>
         )}
       </section>

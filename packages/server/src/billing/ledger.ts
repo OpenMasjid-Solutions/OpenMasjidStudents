@@ -145,28 +145,17 @@ export function recordPayment(input: RecordInput, actor: Actor): { paymentId: st
         refreshStatus(tx, a.invoiceId);
       }
     } else {
-      // Auto: oldest-due-first across THIS STUDENT's non-void invoices with a positive balance.
-      const open = tx
-        .select({ id: invoices.id, dueDate: invoices.dueDate, createdAt: invoices.createdAt })
-        .from(invoices)
-        .where(eq(invoices.studentId, input.studentId))
-        // Oldest-due-first. SQLite sorts NULL before any value, so an undated invoice would
-        // otherwise jump the queue ahead of a genuinely-due one — push NULLs last (§11.2/§16).
-        .orderBy(sql`${invoices.dueDate} is null`, asc(invoices.dueDate), asc(invoices.createdAt))
-        .all();
-      let remaining = input.amountCents;
-      for (const inv of open) {
-        if (remaining <= 0) break;
-        const status = tx.select({ status: invoices.status }).from(invoices).where(eq(invoices.id, inv.id)).get()?.status;
-        if (status === 'void') continue;
-        const bal = invoiceTotal(tx, inv.id) - invoicePaid(tx, inv.id);
-        if (bal <= 0) continue;
-        const amt = Math.min(remaining, bal);
-        tx.insert(paymentAllocations).values({ id: rid('pal'), paymentId, invoiceId: inv.id, amountCents: amt, createdAt: ts }).run();
-        remaining -= amt;
-        allocated += amt;
-        refreshStatus(tx, inv.id);
-      }
+      // Auto: re-derive the whole student's mapping oldest-due-first, which places this payment and
+      // simultaneously picks up any earlier money that was left unattached (see `reallocateStudent`).
+      // One rule, one implementation — the alternative was a second allocation loop here that could
+      // drift from the one used everywhere else.
+      reallocateStudent(tx, input.studentId);
+      allocated = tx
+        .select({ a: paymentAllocations.amountCents })
+        .from(paymentAllocations)
+        .where(eq(paymentAllocations.paymentId, paymentId))
+        .all()
+        .reduce((s, r) => s + r.a, 0);
     }
   });
   // A payment that clears the FAMILY's balance (via ANY channel — portal, manual, autopay, Fabric)
@@ -180,6 +169,83 @@ export function recordPayment(input: RecordInput, actor: Actor): { paymentId: st
     db.update(autopayEnrollments).set({ failureCount: 0, nextAttemptAt: null, updatedAt: new Date() }).where(eq(autopayEnrollments.familyId, famId)).run();
   }
   return { paymentId, duplicate: false, allocatedCents: allocated, creditCents: input.amountCents - allocated };
+}
+
+/**
+ * Re-derive which of a student's payments cover which of their invoices, oldest-due-first.
+ *
+ * WHY THIS EXISTS. A balance is derived (invoiced − paid), but an invoice's STATUS — and therefore
+ * every ✓ in the year grid, every "open invoice" on a statement, and what autopay decides is due —
+ * comes from `payment_allocations`. Those two drifted apart in one very common case: money paid
+ * before the bill existed. A parent handing over $1,400 against a $350/month fee had $350 attached
+ * to the month that existed and $1,050 left sitting as credit, and when May, June and July were
+ * generated later NOTHING attached that credit to them. Their balance said paid; the grid said
+ * unpaid. That is the "it only ticks some of the months" bug.
+ *
+ * Allocation is a DERIVED mapping, not a money movement, so the honest fix is to recompute it from
+ * scratch whenever the inputs change (an invoice is raised, a charge lands, an invoice is voided)
+ * rather than to patch it incrementally. Payments themselves are never touched — §9's immutability
+ * is about the payment rows, and those are read-only here.
+ *
+ * The rule is the same one used everywhere else: oldest-due-first. That is what makes a one-off
+ * charge behave the way an office expects — adding it to an earlier invoice pulls money back off a
+ * later month automatically, and that month correctly reverts to unpaid so it gets chased.
+ *
+ * REVERSALS ARE LEFT ALONE. A reversed payment and its mirror both keep their allocations, which
+ * sum to zero on the invoice, so they neither hold money down nor get handed out again.
+ *
+ * Returns the number of cents now attached to invoices.
+ */
+export function reallocateStudent(tx: Tx, studentId: string): number {
+  const all = tx.select({ id: payments.id, amountCents: payments.amountCents, reversalOf: payments.reversalOf, occurredAt: payments.occurredAt, createdAt: payments.createdAt }).from(payments).where(eq(payments.studentId, studentId)).all();
+  const reversed = new Set(all.map((p) => p.reversalOf).filter((x): x is string => !!x));
+  /** Live money: not a reversal row, and not itself reversed. */
+  const live = all
+    .filter((p) => !p.reversalOf && !reversed.has(p.id) && p.amountCents > 0)
+    .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime() || a.createdAt.getTime() - b.createdAt.getTime());
+  const liveIds = new Set(live.map((p) => p.id));
+
+  const touched = new Set<string>();
+  // Clear the mapping for live payments only, remembering which invoices that affects so their
+  // status is re-derived even if nothing is re-attached to them.
+  for (const a of tx.select({ id: paymentAllocations.id, paymentId: paymentAllocations.paymentId, invoiceId: paymentAllocations.invoiceId }).from(paymentAllocations).all()) {
+    if (!liveIds.has(a.paymentId)) continue;
+    touched.add(a.invoiceId);
+    tx.delete(paymentAllocations).where(eq(paymentAllocations.id, a.id)).run();
+  }
+
+  const open = tx
+    .select({ id: invoices.id, status: invoices.status })
+    .from(invoices)
+    .where(eq(invoices.studentId, studentId))
+    // NULL due dates last, exactly as recordPayment orders them (SQLite sorts NULL first).
+    .orderBy(sql`${invoices.dueDate} is null`, asc(invoices.dueDate), asc(invoices.createdAt))
+    .all();
+
+  const ts = new Date();
+  let applied = 0;
+  let p = 0;
+  let left = live.length ? live[0].amountCents : 0;
+  for (const inv of open) {
+    if (inv.status === 'void') continue;
+    let need = invoiceTotal(tx, inv.id) - invoicePaid(tx, inv.id);
+    while (need > 0 && p < live.length) {
+      if (left <= 0) {
+        p++;
+        left = p < live.length ? live[p].amountCents : 0;
+        continue;
+      }
+      const amt = Math.min(need, left);
+      tx.insert(paymentAllocations).values({ id: rid('pal'), paymentId: live[p].id, invoiceId: inv.id, amountCents: amt, createdAt: ts }).run();
+      need -= amt;
+      left -= amt;
+      applied += amt;
+      touched.add(inv.id);
+    }
+    touched.add(inv.id);
+  }
+  for (const id of touched) refreshStatus(tx, id);
+  return applied;
 }
 
 /** One student's share of a split payment. */
@@ -237,7 +303,7 @@ export function splitAcrossFamily(familyId: string, amountCents: number, preferS
 
 /** A family's first child by first name — the documented tie-break for where stray credit lands. */
 function firstChildByName(familyId: string): string | undefined {
-  return db.select({ id: students.id }).from(students).where(eq(students.familyId, familyId)).orderBy(asc(students.firstName)).all()[0]?.id;
+  return db.select({ id: students.id }).from(students).where(eq(students.familyId, familyId)).orderBy(asc(students.fullName)).all()[0]?.id;
 }
 
 export interface SplitResult {
@@ -310,6 +376,10 @@ export function reversePayment(paymentId: string, actor: Actor): { reversalId: s
       tx.insert(paymentAllocations).values({ id: rid('pal'), paymentId: reversalId, invoiceId: a.invoiceId, amountCents: -a.amountCents, createdAt: ts }).run();
       refreshStatus(tx, a.invoiceId);
     }
+    // The reversed pair nets to zero on the invoices it touched, re-opening them. Any OTHER money
+    // the student has should now shuffle forward to cover the oldest of those — otherwise reversing
+    // an old payment leaves a newer month ticked while the month before it sits unpaid.
+    reallocateStudent(tx, orig.studentId);
   });
   return { reversalId };
 }

@@ -34,7 +34,7 @@ async function seed() {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
   return { admin, familyId: fam.id, studentId: s.id, planId: plan.id };
 }
 
@@ -154,7 +154,7 @@ describe('bulk apply over the course → class grouping', () => {
     const plan = await admin.billing.feePlanCreate({ name: 'Base', amountCents: 1000, cadence: 'monthly' });
     const mk = async (name: string, classId: string) => {
       const fam = await admin.people.familyCreate({ name });
-      const s = await admin.people.studentCreate({ familyId: fam.id, firstName: name, lastName: 'X', feePlanId: plan.id, classId });
+      const s = await admin.people.studentCreate({ familyId: fam.id, fullName: `${name} X`, feePlanId: plan.id, classId });
       return s.id;
     };
     return { admin, course: course.id, c1: c1.id, c2: c2.id, a: await mk('A', c1.id), b: await mk('B', c1.id), c: await mk('C', c2.id), d: await mk('D', c2.id) };

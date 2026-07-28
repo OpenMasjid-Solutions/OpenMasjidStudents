@@ -86,13 +86,14 @@ describe('toCsv', () => {
 describe('billing.exportCsv end to end', () => {
   async function seed() {
     const admin = caller('admin');
-    // A SURNAME and a memo that are both formula payloads — the realistic hostile case. The surname
-    // is the right place for it now: household labels are derived from it (0.39.0), so one hostile
-    // last name reaches the student sheet, the payments sheet and the balances sheet.
+    // A NAME and a memo that are both formula payloads — the realistic hostile case. The whole name
+    // is the payload (a single token) on purpose: household labels are derived from the children's
+    // names, so one hostile name has to stay defused on the student sheet, the payments sheet AND
+    // the balances sheet, where it arrives a second time as the derived family label.
     const fam = await admin.people.familyCreate({ name: 'Placeholder' });
     await admin.people.guardianCreate({ familyId: fam.id, name: '@evil', phone: '+15550100', email: 'a@test.org' });
     const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-    const stu = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: '=cmd|/c calc', feePlanId: plan.id });
+    const stu = await admin.people.studentCreate({ familyId: fam.id, fullName: '=cmd|/c', feePlanId: plan.id });
     await admin.billing.generatePeriod({ periodKey: '2026-07', label: 'Tuition — Jul 2026' });
     await admin.billing.recordManualPayment({ studentId: stu.id, amountCents: 2500, channel: 'ach', occurredAt: '2026-07-15', memo: '=DANGER()' });
     return { admin, famId: fam.id, studentId: stu.id };
@@ -108,7 +109,7 @@ describe('billing.exportCsv end to end', () => {
     }
   });
 
-  it('escapes a hostile family name AND a hostile memo in the payments sheet', async () => {
+  it('escapes a hostile student name AND a hostile memo in the payments sheet', async () => {
     const { admin } = await seed();
     const r = await admin.billing.exportCsv({ dataset: 'payments' });
     // Neither payload may appear as a live formula — i.e. never immediately after a delimiter/quote.

@@ -62,7 +62,7 @@ export const staffRouter = router({
    *  Parent accounts are excluded by role; they belong to a family, not to this screen. */
   list: adminProcedure.query(() =>
     db
-      .select({ id: users.id, username: users.username, displayName: users.displayName, role: users.role, status: users.status, phone: users.phone, mustChangePassword: users.mustChangePassword })
+      .select({ id: users.id, username: users.username, displayName: users.displayName, role: users.role, status: users.status, mustChangePassword: users.mustChangePassword })
       .from(users)
       .where(inArray(users.role, ['admin', 'finance']))
       .orderBy(users.role, users.username)
@@ -70,7 +70,7 @@ export const staffRouter = router({
   ),
 
   create: adminProcedure
-    .input(z.object({ username: USERNAME, displayName: z.string().trim().max(120).optional(), role: STAFF_ROLE, phone: z.string().trim().max(40).optional(), tempPassword: TEMP_PW }))
+    .input(z.object({ username: USERNAME, displayName: z.string().trim().max(120).optional(), role: STAFF_ROLE, tempPassword: TEMP_PW }))
     .mutation(async ({ ctx, input }) => {
       if (db.select({ id: users.id }).from(users).where(eq(users.username, input.username)).get()) {
         throw new TRPCError({ code: 'CONFLICT', message: 'That username is already taken.' });
@@ -78,7 +78,7 @@ export const staffRouter = router({
       const id = rid('usr');
       const ts = now();
       db.insert(users)
-        .values({ id, username: input.username, passwordHash: await hashPassword(input.tempPassword), role: input.role, status: 'active', displayName: input.displayName?.trim() || input.username, phone: input.phone?.trim() || null, mustChangePassword: true, createdAt: ts, updatedAt: ts })
+        .values({ id, username: input.username, passwordHash: await hashPassword(input.tempPassword), role: input.role, status: 'active', displayName: input.displayName?.trim() || input.username, mustChangePassword: true, createdAt: ts, updatedAt: ts })
         .run();
       audit(auditActor(ctx), 'staff.create', { entity: 'user', entityId: id, detail: { role: input.role, username: input.username } });
       return { id };

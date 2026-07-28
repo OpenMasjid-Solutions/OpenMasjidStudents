@@ -27,7 +27,7 @@ export function FamilyHome() {
   /** The child an invoice or payment belongs to. */
   const kidName = (fam: (typeof data.families)[number], studentId: string) => {
     const s = fam.students.find((k) => k.id === studentId);
-    return s ? `${s.firstName} ${s.lastName}`.trim() : '';
+    return s ? s.fullName : '';
   };
 
   return (
@@ -46,7 +46,11 @@ export function FamilyHome() {
                 {owed ? money(fam.balance.owedCents) : credit ? money(fam.balance.creditCents) : money(0)}
               </div>
               <div className="sub">{owed ? t('family.due') : credit ? t('family.inCredit') : t('family.allSettled')}</div>
-              {owed && payConfigQ.data?.ready && (
+              {/* Offered even when nothing is due: a parent who wants to pay the term up front, or
+                  top up before travelling, should not have to wait for an invoice to exist. PayNow
+                  re-words itself for that case; the money lands as credit and the next invoices
+                  generated absorb it. */}
+              {payConfigQ.data?.ready && (
                 <PayNow familyId={fam.id} owedCents={fam.balance.owedCents} currency={data.currency} onPaid={() => void utils.portal.myFamily.invalidate()} />
               )}
             </div>
@@ -61,7 +65,7 @@ export function FamilyHome() {
                   {fam.students.map((s) => (
                     <div key={s.id} className="kid-row glass">
                       <span className="kid-name">
-                        {s.firstName} {s.lastName}
+                        {s.fullName}
                         {/* Each child has their own bill now, so say what each one owes. The big card
                             above is still the single figure the parent pays. */}
                         <span className="kid-sub">

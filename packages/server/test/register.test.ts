@@ -41,7 +41,7 @@ async function scenario() {
   const a = admin();
   const fam = await a.people.familyCreate({ name: 'Ismail' });
   const plan = await a.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  const s = await a.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  const s = await a.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
   await a.people.guardianCreate({ familyId: fam.id, name: 'Abu Yusuf', email: 'Abu@Example.com' });
   return { studentCode: s.studentCode };
 }

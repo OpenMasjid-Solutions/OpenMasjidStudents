@@ -24,7 +24,7 @@ export function Staff() {
   const setStatus = trpc.staff.setStatus.useMutation();
   const setRole = trpc.staff.setRole.useMutation();
   const resetPw = trpc.staff.resetPassword.useMutation();
-  const [f, setF] = useState<{ username: string; displayName: string; phone: string; tempPassword: string; role: StaffRole }>({ username: '', displayName: '', phone: '', tempPassword: '', role: 'finance' });
+  const [f, setF] = useState<{ username: string; displayName: string; tempPassword: string; role: StaffRole }>({ username: '', displayName: '', tempPassword: '', role: 'finance' });
   const [err, setErr] = useState('');
   /** The account having its password reset, with the new temporary one. */
   const [pwFor, setPwFor] = useState<{ id: string; username: string; tempPassword: string } | null>(null);
@@ -34,8 +34,8 @@ export function Staff() {
     setErr('');
     if (!f.username.trim() || f.tempPassword.length < MIN_PW) return setErr(t('staff.formHint'));
     try {
-      await create.mutateAsync({ username: f.username.trim(), displayName: f.displayName.trim() || undefined, role: f.role, phone: f.phone.trim() || undefined, tempPassword: f.tempPassword });
-      setF({ username: '', displayName: '', phone: '', tempPassword: '', role: 'finance' });
+      await create.mutateAsync({ username: f.username.trim(), displayName: f.displayName.trim() || undefined, role: f.role, tempPassword: f.tempPassword });
+      setF({ username: '', displayName: '', tempPassword: '', role: 'finance' });
       await utils.staff.list.invalidate();
     } catch (e2) {
       setErr((e2 as Error).message);
@@ -135,7 +135,6 @@ export function Staff() {
             </select>
           </div>
           <div className="field"><label className="label">{t('staff.name')}</label><input className="input glass-inset" value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} /></div>
-          <div className="field"><label className="label">{t('staff.phone')}</label><input className="input glass-inset" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></div>
           <div className="field"><label className="label">{t('staff.tempPassword')}</label><input className="input glass-inset" type="text" value={f.tempPassword} onChange={(e) => setF({ ...f, tempPassword: e.target.value })} placeholder={t('staff.tempHint')} /></div>
           <button type="submit" className="btn btn--primary" disabled={create.isPending}>{t('staff.add')}</button>
           <p className="hint">{t('staff.roleHint')}</p>

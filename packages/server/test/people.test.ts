@@ -41,12 +41,12 @@ describe('writes are admin-only; reads are admin | finance', () => {
   it('admin creates a family + student with a Student ID, visible in the directory', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Ismail family' });
-    const st = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: await aPlan(admin) });
+    const st = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: await aPlan(admin) });
     expect(st.studentCode).toBe('YUS' + st.studentCode.slice(3)); // prefix from the first name
     expect(st.studentCode).toMatch(/^[A-Z]{3}\d{4}$/);
     const dir = await admin.people.directory();
     expect(dir).toHaveLength(1);
-    expect(dir[0].students[0].firstName).toBe('Yusuf');
+    expect(dir[0].students[0].fullName).toBe('Yusuf Ismail');
   });
 
   it('finance can READ the directory but cannot create', async () => {
@@ -78,7 +78,7 @@ describe('student IDs', () => {
     for (let i = 0; i < 25; i++) {
       // Same first three letters every time, so all 25 compete for one prefix — the case where a
       // careless generator would collide.
-      const s = await admin.people.studentCreate({ familyId: fam.id, firstName: `Sami${i}`, lastName: 'X', feePlanId });
+      const s = await admin.people.studentCreate({ familyId: fam.id, fullName: `Sami${i} X`, feePlanId });
       codes.add(s.studentCode);
     }
     expect(codes.size).toBe(25);
@@ -89,7 +89,7 @@ describe('records + audit', () => {
   it('withdraw is audited as student.withdraw; guardians + emergency contacts attach; admin sees the Student ID on the record', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Fam' });
-    const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'A', lastName: 'B', feePlanId: await aPlan(admin) });
+    const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'A B', feePlanId: await aPlan(admin) });
     await admin.people.studentUpdate({ id: s.id, status: 'withdrawn' });
     await admin.people.guardianCreate({ familyId: fam.id, name: 'Abu Yusuf', phone: '555-1', relation: 'father', isEmergencyContact: true });
     await admin.people.emergencyContactAdd({ familyId: fam.id, name: 'Neighbour', phone: '555-2' });
@@ -129,7 +129,7 @@ describe('records + audit', () => {
 describe('studentAdd — student-first, no family naming', () => {
   it('creates a household for a first child and labels it from their surname', async () => {
     const admin = caller('admin');
-    const r = await admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: await aPlan(admin) });
+    const r = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: await aPlan(admin) });
     expect(r.familyLabel).toBe('Ismail family');
     expect(r.studentCode).toMatch(/^YUS\d{4}$/);
     const detail = await admin.people.familyGet({ id: r.familyId });
@@ -140,10 +140,10 @@ describe('studentAdd — student-first, no family naming', () => {
   it('links a sibling into the SAME household, so guardians already on file apply to them', async () => {
     const admin = caller('admin');
     const planId = await aPlan(admin);
-    const first = await admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
+    const first = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: planId });
     await admin.people.guardianCreate({ familyId: first.familyId, name: 'Abu Yusuf', phone: '555-1' });
 
-    const sibling = await admin.people.studentAdd({ firstName: 'Maryam', lastName: 'Ismail', feePlanId: planId, linkToStudentId: first.id });
+    const sibling = await admin.people.studentAdd({ fullName: 'Maryam Ismail', feePlanId: planId, linkToStudentId: first.id });
     expect(sibling.familyId).toBe(first.familyId);
     // Nothing was copied — the guardian is simply on the household both children are in.
     const detail = await admin.people.familyGet({ id: first.familyId });
@@ -155,8 +155,8 @@ describe('studentAdd — student-first, no family naming', () => {
   it('without a link, two children of the same surname are separate households', async () => {
     const admin = caller('admin');
     const planId = await aPlan(admin);
-    const a = await admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
-    const b = await admin.people.studentAdd({ firstName: 'Bilal', lastName: 'Ismail', feePlanId: planId });
+    const a = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: planId });
+    const b = await admin.people.studentAdd({ fullName: 'Bilal Ismail', feePlanId: planId });
     // Same surname is NOT evidence of the same family — two unrelated Ismails must not share guardians.
     expect(b.familyId).not.toBe(a.familyId);
   });
@@ -164,8 +164,8 @@ describe('studentAdd — student-first, no family naming', () => {
   it('a household of step-siblings is labelled with both surnames, not one of them', async () => {
     const admin = caller('admin');
     const planId = await aPlan(admin);
-    const first = await admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
-    const step = await admin.people.studentAdd({ firstName: 'Bilal', lastName: 'Farooqi', feePlanId: planId, linkToStudentId: first.id });
+    const first = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: planId });
+    const step = await admin.people.studentAdd({ fullName: 'Bilal Farooqi', feePlanId: planId, linkToStudentId: first.id });
     // Picking one child's surname to stand for the household would be wrong in exactly this case.
     // Sorted, so the label depends on who is in the household and not on who was added first.
     expect(step.familyLabel).toBe('Farooqi / Ismail');
@@ -173,7 +173,7 @@ describe('studentAdd — student-first, no family naming', () => {
 
   it('still requires a fee plan — a student on no plan is never invoiced', async () => {
     const admin = caller('admin');
-    await expect(admin.people.studentAdd({ firstName: 'Yusuf', lastName: 'Ismail', feePlanId: 'plan_nope' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: 'plan_nope' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
     // …and nothing was left behind by the failed attempt.
     expect(await admin.people.directory()).toHaveLength(0);
   });
@@ -181,7 +181,7 @@ describe('studentAdd — student-first, no family naming', () => {
   it('is admin-only and LAN-only', async () => {
     const admin = caller('admin');
     const planId = await aPlan(admin);
-    await expect(caller('finance').people.studentAdd({ firstName: 'X', lastName: 'Y', feePlanId: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(caller('admin', 'tunnel').people.studentAdd({ firstName: 'X', lastName: 'Y', feePlanId: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller('finance').people.studentAdd({ fullName: 'X Y', feePlanId: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller('admin', 'tunnel').people.studentAdd({ fullName: 'X Y', feePlanId: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

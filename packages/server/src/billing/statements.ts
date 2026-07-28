@@ -18,7 +18,7 @@ import { db } from '../db';
 import { families, students, invoices, payments } from '../db/schema';
 import { formatMoney } from '../db/money';
 import { familyBalance, studentBalance, invoiceTotal, invoicePaid } from './ledger';
-import { getSchoolName, getCurrency } from '../settings';
+import { getSchoolName, getCurrency, getSchoolLogo } from '../settings';
 
 /** Only admin (LAN) and finance (LAN + tunnel) may print statements (§5 permission matrix). */
 export function canServeStatement(role: Role, origin: Origin): boolean {
@@ -57,6 +57,9 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   if (!fam) return null;
 
   const schoolName = getSchoolName();
+  // Inlined rather than fetched from /api/logo: a statement is printed, sometimes from a machine
+  // that is not on the network, and a broken image box on a letterhead is worse than no logo.
+  const logo = getSchoolLogo();
   const currency = getCurrency();
   const money = (c: number) => formatMoney(c, currency);
   const bal = familyBalance(familyId);
@@ -64,16 +67,16 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   // Every child on the family, not just the active ones: a withdrawn child's unpaid bill is still
   // owed, and a statement that hid it would understate the total the parent is being asked for.
   const kids = db
-    .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode, status: students.status })
+    .select({ id: students.id, fullName: students.fullName, studentCode: students.studentCode, status: students.status })
     .from(students)
     .where(eq(students.familyId, familyId))
-    .orderBy(students.firstName)
+    .orderBy(students.fullName)
     .all();
   const kidIds = kids.map((k) => k.id);
 
   // Invoices and payments are per student now, so both carry the child's name — on a household
   // statement "Tuition — Jul" appearing three times is only useful if you can tell whose is whose.
-  const nameOf = new Map(kids.map((k) => [k.id, `${k.firstName} ${k.lastName}`.trim()]));
+  const nameOf = new Map(kids.map((k) => [k.id, k.fullName]));
 
   const openInvs = !kidIds.length
     ? []
@@ -147,6 +150,10 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   .btn { font: inherit; padding: 8px 16px; border: 1px solid var(--teal); background: var(--teal); color: #fff; border-radius: 8px; cursor: pointer; }
   header { border-bottom: 2px solid var(--teal); padding-bottom: 12px; margin-bottom: 18px; }
   h1 { font-size: 22px; color: var(--teal); margin: 0; }
+  /* The masjid's own logo on its letterhead. Height-capped so a large upload can't push the
+     statement onto a second page, and it must survive a black-and-white photocopier (§15). */
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo { max-height: 56px; max-width: 200px; width: auto; height: auto; }
   .sub { color: var(--muted); margin-top: 2px; }
   .meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; }
   .fam { font-size: 17px; font-weight: 700; }
@@ -174,8 +181,13 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
 <div class="sheet">
   <div class="toolbar"><button class="btn" onclick="window.print()">Print</button></div>
   <header>
-    <h1>${esc(schoolName)}</h1>
-    <div class="sub">Family statement</div>
+    <div class="brand">
+      ${logo ? `<img class="logo" src="${logo}" alt="" />` : ''}
+      <div>
+        <h1>${esc(schoolName)}</h1>
+        <div class="sub">Family statement</div>
+      </div>
+    </div>
     <div class="meta"><span class="fam">${esc(fam.name)}</span><span class="muted">Printed ${esc(printedOn)}</span></div>
   </header>
 

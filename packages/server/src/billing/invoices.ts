@@ -23,7 +23,7 @@ import { and, eq, asc, ne, or, isNull } from 'drizzle-orm';
 import { db } from '../db';
 import { invoices, invoiceItems, studentFees, students, feePlans, charges } from '../db/schema';
 import { rid } from '../db/ids';
-import { refreshStatus, type Tx } from './ledger';
+import { refreshStatus, reallocateStudent, type Tx } from './ledger';
 
 /** Which kind of period is being generated. Drives the cadence gate. */
 export type PeriodKind = 'month' | 'term';
@@ -135,6 +135,10 @@ export function generateForStudent(studentId: string, opts: GenerateOpts): { inv
       tx.insert(invoiceItems).values({ id: rid('iti'), invoiceId: invId, description: l.description, amountCents: l.amountCents, studentId: l.studentId, feePlanId: l.feePlanId, createdAt: ts }).run();
     }
     for (const c of chs) writeChargeLine(tx, invId, c, ts);
+    // Money the family already handed over covers this month the moment it is billed. Without this
+    // an advance payment stayed as an unattached credit and the new invoice showed up unpaid — right
+    // balance, wrong invoice status, and a ✗ in the year grid for a month that IS paid.
+    reallocateStudent(tx, studentId);
     created = true;
   });
 
@@ -144,7 +148,7 @@ export function generateForStudent(studentId: string, opts: GenerateOpts): { inv
 /** Generate invoices for every student on one family. The "bill this household" action — a parent
  *  thinks in households even though each child now gets their own bill. */
 export function generateForFamily(familyId: string, opts: GenerateOpts): { created: number; invoiceIds: string[] } {
-  const kids = db.select({ id: students.id }).from(students).where(and(eq(students.familyId, familyId), eq(students.status, 'active'))).orderBy(asc(students.firstName)).all();
+  const kids = db.select({ id: students.id }).from(students).where(and(eq(students.familyId, familyId), eq(students.status, 'active'))).orderBy(asc(students.fullName)).all();
   const invoiceIds: string[] = [];
   let created = 0;
   for (const k of kids) {
@@ -187,6 +191,12 @@ export function attachChargeToExistingInvoice(chargeId: string): { attached: boo
     writeChargeLine(tx, inv.id, { id: c.id, studentId: c.studentId, label: c.label, amountCents: c.amountCents }, ts);
     tx.update(invoices).set({ updatedAt: ts }).where(eq(invoices.id, inv.id)).run();
     refreshStatus(tx, inv.id);
+    // A charge on a family sitting on an advance balance should come OUT of that balance first —
+    // that is what a parent means by "we've already paid ahead". Re-deriving oldest-due-first does
+    // it: the charge's invoice is older than the months the advance was covering, so it takes its
+    // money back off the newest covered month. If that leaves the month short it correctly returns
+    // to open, which is what puts it back on the statement and in front of autopay.
+    reallocateStudent(tx, c.studentId);
   });
   return { attached: true, invoiceId: inv.id };
 }

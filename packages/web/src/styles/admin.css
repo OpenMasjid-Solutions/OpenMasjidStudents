@@ -121,6 +121,59 @@
 .section {
   margin-block-end: 1.5rem;
 }
+
+/* ── Course filter buttons ────────────────────────────────────────────────────
+   A row of toggles above the roster; "All" is the resting state. Scrolls sideways rather than
+   wrapping into a tall block when a madrasa runs many courses. */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding-block: 0.15rem;
+  margin-block-end: 0.75rem;
+  scrollbar-width: thin;
+}
+.filter-bar .btn {
+  flex-shrink: 0;
+}
+.filter-bar .btn.is-active {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+/* The count chip inherits the button's colour when that button is the active one, so it does not
+   sit there at 60% opacity looking disabled. */
+.filter-bar .btn.is-active .chip {
+  opacity: 1;
+  color: inherit;
+  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+/* ── Course → class roster grouping ───────────────────────────────────────────
+   A course is the outer card; its classes are stacked inside with a rule between them, so the
+   nesting is visible without indenting the tables themselves (which would waste width on a phone). */
+.course-group {
+  padding: 1rem 1.1rem;
+  margin-block-end: 0.9rem;
+}
+.class-group + .class-group {
+  margin-block-start: 0.9rem;
+  padding-block-start: 0.9rem;
+  border-block-start: 1px solid var(--color-border);
+}
+.class-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-block-end: 0.4rem;
+}
+.class-group-head h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--color-ink-muted);
+}
 .section-head {
   display: flex;
   align-items: center;
@@ -130,6 +183,22 @@
 .section-head h2 {
   margin: 0;
   font-size: 1.05rem;
+}
+/* Headings that carry a lucide icon.
+   Tailwind's Preflight sets `svg { display: block }`, which turns an inline icon inside a heading
+   into a block and pushes the text onto its own line — that is why School Years / Courses / Classes
+   were rendering two-line. Laying the heading out as a flex row fixes it for good and no longer
+   depends on per-icon `vertical-align` nudges. */
+.section-head h2,
+.section-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-inline-size: 0;
+}
+.section-head h2 > svg,
+.section-head h3 > svg {
+  flex-shrink: 0;
 }
 .section-head .spacer {
   flex: 1;
@@ -353,6 +422,15 @@
   text-align: center;
   font-size: 0.78rem;
   color: var(--color-ink-muted);
+}
+
+/* The class heading nested under a course heading. Same row treatment, one step quieter and
+   indented, so the Course → Class hierarchy is readable at a glance in a dense grid. */
+.year-group--class td {
+  font-size: 0.76rem !important;
+  font-weight: 550 !important;
+  padding-inline-start: 1.6rem !important;
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent) !important;
 }
 
 .year-group td {

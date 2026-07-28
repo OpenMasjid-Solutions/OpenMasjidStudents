@@ -34,10 +34,10 @@ export const portalRouter = router({
     const list: FamilyView[] = famIds.map((fid) => {
       const fam = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.id, fid)).get();
       const kids = db
-        .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, studentCode: students.studentCode })
+        .select({ id: students.id, fullName: students.fullName, studentCode: students.studentCode })
         .from(students)
         .where(and(eq(students.familyId, fid), eq(students.status, 'active')))
-        .orderBy(students.firstName)
+        .orderBy(students.fullName)
         .all();
       const kidIds = kids.map((k) => k.id);
       // Invoices and payments are per child now, so each row says which child it is for. The parent
@@ -248,7 +248,7 @@ type FamilyView = {
   /** The combined household balance — what the parent pays in one go. */
   balance: ReturnType<typeof familyBalance>;
   /** Each child, with their own balance: bills are per child, so "what does Maryam owe?" is answerable. */
-  students: { id: string; firstName: string; lastName: string; studentCode: string | null; balance: ReturnType<typeof studentBalance> }[];
+  students: { id: string; fullName: string; studentCode: string | null; balance: ReturnType<typeof studentBalance> }[];
   invoices: { id: string; studentId: string; label: string; dueDate: string | null; balanceCents: number }[];
   payments: { id: string; studentId: string; amountCents: number; channel: string; occurredAt: Date; memo: string | null; reversalOf: string | null }[];
 };

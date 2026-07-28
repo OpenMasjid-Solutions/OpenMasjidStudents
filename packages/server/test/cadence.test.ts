@@ -34,7 +34,7 @@ async function seed(cadence: 'monthly' | 'per_term' | 'one_time', amountCents = 
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents, cadence });
-  const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id, overrideAmountCents });
+  const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id, overrideAmountCents });
   return { admin, familyId: fam.id, studentId: s.id, planId: plan.id };
 }
 

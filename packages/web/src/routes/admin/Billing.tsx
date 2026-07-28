@@ -244,7 +244,7 @@ export function Billing() {
               <tbody>
                 {chargesQ.data?.slice(0, 60).map((c) => (
                   <tr key={c.id}>
-                    <td>{c.firstName} {c.lastName}</td>
+                    <td>{c.fullName}</td>
                     <td>{c.label}{c.note && <span className="muted"> · {c.note}</span>}</td>
                     <td className={c.amountCents < 0 ? 'merit-total is-pos' : ''}>{money(c.amountCents)}</td>
                     <td>{c.periodKey ?? '—'}</td>

@@ -188,22 +188,18 @@ export function ImportStudents() {
             )}
           </div>
 
-          {preview.data.newFamilies.length > 0 && (
-            <p className="hint">{t('import.newFamilies', { names: preview.data.newFamilies.join(', ') })}</p>
-          )}
+          {/* Said before they commit, not after: an import gives every row its own household, so
+              siblings look unrelated until someone links them. */}
+          <p className="hint">{t('import.siblingsNote')}</p>
 
           <div style={{ overflowX: 'auto', maxHeight: '22rem' }}>
             <table className="data-table">
-              <thead><tr><th>#</th><th>{t('students.name')}</th><th>{t('students.family')}</th><th>{t('students.class')}</th><th>{t('directory.feePlan')}</th><th>{t('import.amount')}</th><th>{t('import.problems')}</th></tr></thead>
+              <thead><tr><th>#</th><th>{t('students.name')}</th><th>{t('students.class')}</th><th>{t('directory.feePlan')}</th><th>{t('import.amount')}</th><th>{t('import.problems')}</th></tr></thead>
               <tbody>
                 {preview.data.rows.map((r) => (
                   <tr key={r.row}>
                     <td className="muted">{r.row + 2}{/* +2: 1-based, and the header is row 1 */}</td>
-                    <td>{r.resolved ? `${r.resolved.firstName} ${r.resolved.lastName}` : '—'}</td>
-                    <td>
-                      {r.resolved?.familyName ?? '—'}
-                      {r.resolved && !r.resolved.familyExists && <span className="chip" style={{ marginInlineStart: '0.35rem' }}>{t('import.newFamily')}</span>}
-                    </td>
+                    <td>{r.resolved ? r.resolved.fullName : '—'}</td>
                     <td>{r.resolved?.className ?? '—'}</td>
                     <td>{r.resolved?.feePlanName ?? (defaultFeePlanId ? t('import.usingDefault') : '—')}</td>
                     <td>{r.resolved?.amountCents != null ? formatMoney(r.resolved.amountCents) : '—'}</td>
@@ -234,8 +230,11 @@ export function ImportStudents() {
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => window.print()}>{t('import.print')}</button>
           </div>
           <p className="hint">
-            {t('import.summary', { students: commit.data.created, families: commit.data.familiesCreated, guardians: commit.data.guardiansCreated })}
+            {t('import.summary', { students: commit.data.created, guardians: commit.data.guardiansCreated })}
           </p>
+          {/* The one follow-up action this import cannot do for them — said again here, where they
+              are looking at a finished roster of children who are all in households of their own. */}
+          <p className="hint"><strong>{t('import.siblingsNext')}</strong></p>
           <p className="hint">{t('import.idsAssigned')}</p>
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
@@ -243,7 +242,7 @@ export function ImportStudents() {
               <tbody>
                 {commit.data.students.map((s) => (
                   <tr key={s.studentId}>
-                    <td>{s.firstName} {s.lastName}</td>
+                    <td>{s.fullName}</td>
                     <td><span className="code">{s.studentCode}</span></td>
                   </tr>
                 ))}

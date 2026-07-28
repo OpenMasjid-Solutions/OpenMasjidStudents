@@ -33,6 +33,7 @@ import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../setti
 import { audit } from '../audit';
 import { notifyPlatform, raiseAlert } from './platform';
 import { normalizeStudentCode } from '../billing/studentCodes';
+import { givenName, lastInitial } from '../people/names';
 
 /** Constant-time check of the platform-proof header against our own secret. Disabled (always false)
  *  when no secret is configured — so a standalone install never accepts Fabric calls. */
@@ -117,7 +118,7 @@ export function registerFabricProvider(app: FastifyInstance): void {
     if (codeLookupLimiter.retryAfterMs(code) > 0) return reply.send({ v: CONTRACT_V, found: false });
 
     const student = code
-      ? db.select({ firstName: students.firstName, lastName: students.lastName, status: students.status, studentCode: students.studentCode }).from(students).where(eq(students.studentCode, code)).get()
+      ? db.select({ fullName: students.fullName, status: students.status, studentCode: students.studentCode }).from(students).where(eq(students.studentCode, code)).get()
       : undefined;
     if (!student || student.status !== 'active') {
       failCode(code);
@@ -128,8 +129,9 @@ export function registerFabricProvider(app: FastifyInstance): void {
       v: CONTRACT_V,
       found: true,
       // Deliberately minimal, and deliberately NOT the family id — confirming a name must not become
-      // a way to address a family.
-      student: { studentCode: student.studentCode, firstName: student.firstName, lastInitial: (student.lastName || '').charAt(0) },
+      // a way to address a family. The student's name is one field internally; it is SPLIT here so the
+      // response keeps giving out a given name and a single initial, never the family's surname (§14).
+      student: { studentCode: student.studentCode, firstName: givenName(student.fullName), lastInitial: lastInitial(student.fullName) },
     });
   });
 
@@ -153,7 +155,7 @@ export function registerFabricProvider(app: FastifyInstance): void {
 
     const student = code
       ? db
-          .select({ id: students.id, firstName: students.firstName, lastName: students.lastName, familyId: students.familyId, status: students.status })
+          .select({ id: students.id, familyId: students.familyId, status: students.status })
           .from(students)
           .where(eq(students.studentCode, code))
           .get()
@@ -165,7 +167,7 @@ export function registerFabricProvider(app: FastifyInstance): void {
     codeLookupLimiter.succeed(code);
 
     const fam = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.id, student.familyId)).get();
-    const kids = db.select({ id: students.id, studentCode: students.studentCode, firstName: students.firstName, lastName: students.lastName }).from(students).where(and(eq(students.familyId, student.familyId), eq(students.status, 'active'))).all();
+    const kids = db.select({ id: students.id, studentCode: students.studentCode, fullName: students.fullName }).from(students).where(and(eq(students.familyId, student.familyId), eq(students.status, 'active'))).all();
     const currency = getCurrency();
     const kidIds = kids.map((k) => k.id);
     const famBal = familyBalance(student.familyId);
@@ -198,8 +200,8 @@ export function registerFabricProvider(app: FastifyInstance): void {
         students: kids.map((k) => ({
           studentId: k.id,
           studentCode: k.studentCode,
-          firstName: k.firstName,
-          lastInitial: (k.lastName || '').charAt(0),
+          firstName: givenName(k.fullName),
+          lastInitial: lastInitial(k.fullName),
           balanceCents: studentBalance(k.id).owedCents,
         })),
         balanceCents: famBal.owedCents,

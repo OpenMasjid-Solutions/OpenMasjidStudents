@@ -15,8 +15,8 @@ import { useWindows } from './Windows';
 
 /** Admin sections (Dock is generic; this union just types the admin shell's state). */
 export type Section = 'dashboard' | 'students' | 'year' | 'structure' | 'billing' | 'staff' | 'settings';
-/** Finance sections — finance runs billing, and reads the year view (§5). */
-export type FinanceSection = 'billing' | 'year';
+/** Finance sections — finance runs billing, and READS the year view and the student roster (§5). */
+export type FinanceSection = 'billing' | 'year' | 'students';
 
 export interface DockItem {
   id: string;
@@ -37,6 +37,7 @@ export const ADMIN_ITEMS: DockItem[] = [
 
 export const FINANCE_ITEMS: DockItem[] = [
   { id: 'billing', icon: <Wallet size={20} />, labelKey: 'nav.billing' },
+  { id: 'students', icon: <GraduationCap size={20} />, labelKey: 'nav.students' },
   { id: 'year', icon: <CalendarRange size={20} />, labelKey: 'nav.year' },
 ];
 

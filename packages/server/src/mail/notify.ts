@@ -6,9 +6,9 @@
  * SMTP is unconfigured (returns false / 0) — callers degrade gracefully. Nothing here throws or logs
  * PII. The parent-portal link uses OPENMASJID_PUBLIC_URL when set (empty → no button, still valid).
  */
-import { getSchoolName } from '../settings';
+import { getSchoolName, getSchoolLogo } from '../settings';
 import { guardianEmailsForFamily } from './recipients';
-import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail } from './templates';
+import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail, setEmailLogoUrl } from './templates';
 import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
 import { fabricConfigured } from '../config';
@@ -45,6 +45,19 @@ export function mailAvailable(): boolean {
   return fabricConfigured();
 }
 
+/**
+ * Point the templates at the current logo, right before building one.
+ *
+ * Resolved per send rather than cached at boot for two reasons: an admin can upload or change the
+ * logo at any moment, and the public base URL only appears once OpenMasjidOS turns Remote access on
+ * — so a value captured at startup would frequently be a stale null. Both lookups are trivial (one
+ * settings row, one in-memory string).
+ */
+function refreshEmailLogo(): void {
+  const base = portalBase();
+  setEmailLogoUrl(base && getSchoolLogo() ? `${base.replace(/\/+$/, '')}/api/logo` : null);
+}
+
 /** One email, through the platform. Returns false when it did not actually send. */
 async function deliver(to: string, subject: string, text: string, html?: string): Promise<boolean> {
   return sendPlatformEmail(to, subject, text, html);
@@ -63,6 +76,7 @@ export async function sendInvite(email: string, url: string, guardianName: strin
   // immediately. A missing public URL is an OpenMasjidOS Remote-access setting.
   if (!mailAvailable()) return { sent: false, skipped: 'no_transport' };
   if (!portalBase()) return { sent: false, skipped: 'no_public_url' };
+  refreshEmailLogo();
   const m = inviteEmail(getSchoolName(), guardianName, url);
   return { sent: await deliver(email, m.subject, m.text, m.html) };
 }
@@ -71,6 +85,7 @@ export async function sendInvite(email: string, url: string, guardianName: strin
 export async function sendReset(email: string, url: string): Promise<MailOutcome> {
   if (!mailAvailable()) return { sent: false, skipped: 'no_transport' };
   if (!portalBase()) return { sent: false, skipped: 'no_public_url' };
+  refreshEmailLogo();
   const m = resetEmail(getSchoolName(), url);
   return { sent: await deliver(email, m.subject, m.text, m.html) };
 }
@@ -81,6 +96,7 @@ export async function sendReceipt(familyId: string, amountFormatted: string): Pr
   if (!mailAvailable()) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
+  refreshEmailLogo();
   const m = receiptEmail(getSchoolName(), amountFormatted, portalHome());
   // The platform endpoint takes one recipient per call.
   let n = 0;
@@ -94,6 +110,7 @@ export async function sendAutopayFailure(familyId: string, final: boolean): Prom
   if (!mailAvailable()) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
+  refreshEmailLogo();
   const m = autopayFailureEmail(getSchoolName(), portalHome(), final);
   let n = 0;
   for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;

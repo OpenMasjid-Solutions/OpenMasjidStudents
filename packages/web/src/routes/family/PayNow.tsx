@@ -46,10 +46,14 @@ export function PayNow({ familyId, owedCents, currency, onPaid }: { familyId: st
     );
   }
 
+  // Nothing due right now → this is a parent paying AHEAD. Same flow, honest wording: they are
+  // topping up a balance, not settling a bill, and the money sits as credit their next invoice eats.
+  const payingAhead = owedCents <= 0;
+
   if (!open) {
     return (
       <button type="button" className="btn btn--primary btn--block" style={{ marginBlockStart: '0.75rem' }} onClick={() => setOpen(true)}>
-        {t('family.payNow')}
+        {payingAhead ? t('family.payAhead') : t('family.payNow')}
       </button>
     );
   }
@@ -58,6 +62,7 @@ export function PayNow({ familyId, owedCents, currency, onPaid }: { familyId: st
     <form onSubmit={start} style={{ marginBlockStart: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
       <label className="label">{t('family.payAmount', { currency: currency.toUpperCase() })}</label>
       <input className="input glass-inset" type="number" step="0.01" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+      {payingAhead && <p className="hint">{t('family.payAheadHint')}</p>}
       {error && <p className="form-error">{error}</p>}
       <button type="submit" className="btn btn--primary btn--block" disabled={create.isPending}>{create.isPending ? t('auth.working') : t('family.continueToCard')}</button>
     </form>

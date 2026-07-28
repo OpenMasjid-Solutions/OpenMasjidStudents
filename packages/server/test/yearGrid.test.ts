@@ -62,12 +62,12 @@ async function seed() {
   const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 35000, cadence: 'monthly' });
 
   const ismail = await admin.people.familyCreate({ name: 'Ismail' });
-  const yusuf = await admin.people.studentCreate({ familyId: ismail.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id, classId: cls.id });
-  const sara = await admin.people.studentCreate({ familyId: ismail.id, firstName: 'Sara', lastName: 'Ismail', feePlanId: plan.id, overrideAmountCents: 70000, feeNote: 'ACH', classId: cls.id });
+  const yusuf = await admin.people.studentCreate({ familyId: ismail.id, fullName: 'Yusuf Ismail', feePlanId: plan.id, classId: cls.id });
+  const sara = await admin.people.studentCreate({ familyId: ismail.id, fullName: 'Sara Ismail', feePlanId: plan.id, overrideAmountCents: 70000, feeNote: 'ACH', classId: cls.id });
   await admin.people.guardianCreate({ familyId: ismail.id, name: 'Abu Yusuf', phone: '(901) 949-2646', email: 'abu@example.com' });
 
   const farooqi = await admin.people.familyCreate({ name: 'Farooqi' });
-  await admin.people.studentCreate({ familyId: farooqi.id, firstName: 'Bilal', lastName: 'Farooqi', feePlanId: plan.id, classId: cls.id });
+  await admin.people.studentCreate({ familyId: farooqi.id, fullName: 'Bilal Farooqi', feePlanId: plan.id, classId: cls.id });
 
   return { admin, ismailId: ismail.id, farooqiId: farooqi.id, planId: plan.id, yusufId: yusuf.id, saraId: sara.id };
 }
@@ -81,15 +81,15 @@ describe('yearGrid', () => {
     expect(g.months).toHaveLength(12);
     expect(g.months[0].periodKey).toBe('2026-04');
     expect(g.rows).toHaveLength(3);
-    expect(g.rows.map((r) => r.firstName).sort()).toEqual(['Bilal', 'Sara', 'Yusuf']);
+    expect(g.rows.map((r) => r.fullName).sort()).toEqual(['Bilal Farooqi', 'Sara Ismail', 'Yusuf Ismail']);
     expect(g.rows.every((r) => r.className === 'Hifz 1' && r.courseName === 'Hifz')).toBe(true);
   });
 
   it('the Paying column is the student\'s effective monthly amount, with its note', async () => {
     const { admin } = await seed();
     const g = await admin.billing.yearGrid();
-    const yusuf = g.rows.find((r) => r.firstName === 'Yusuf')!;
-    const sara = g.rows.find((r) => r.firstName === 'Sara')!;
+    const yusuf = g.rows.find((r) => r.fullName === 'Yusuf Ismail')!;
+    const sara = g.rows.find((r) => r.fullName === 'Sara Ismail')!;
     expect(yusuf.monthlyAmountCents).toBe(35000); // plan amount
     expect(sara.monthlyAmountCents).toBe(70000); // override wins
     expect(sara.feeNote).toBe('ACH');
@@ -101,28 +101,28 @@ describe('yearGrid', () => {
     const { admin, ismailId, yusufId } = await seed();
     const at = async (first: string, period: string) => {
       const g = await admin.billing.yearGrid();
-      return g.rows.find((r) => r.firstName === first)!.cells.find((c) => c.periodKey === period)!;
+      return g.rows.find((r) => r.fullName === first)!.cells.find((c) => c.periodKey === period)!;
     };
 
-    expect((await at('Yusuf', '2026-04')).status).toBe('none');
+    expect((await at('Yusuf Ismail', '2026-04')).status).toBe('none');
     await admin.billing.generateFamily({ familyId: ismailId, periodKey: '2026-04', label: 'Apr' });
-    expect((await at('Yusuf', '2026-04')).status).toBe('open');
-    expect((await at('Yusuf', '2026-04')).totalCents).toBe(35000); // his own bill, not the household's
+    expect((await at('Yusuf Ismail', '2026-04')).status).toBe('open');
+    expect((await at('Yusuf Ismail', '2026-04')).totalCents).toBe(35000); // his own bill, not the household's
 
     // Pay Yusuf only: his cell advances and Sara's does NOT.
     await admin.billing.recordManualPayment({ studentId: yusufId, amountCents: 20000, channel: 'cash', occurredAt: '2026-04-05' });
-    expect((await at('Yusuf', '2026-04')).status).toBe('partial');
-    expect((await at('Sara', '2026-04')).status).toBe('open');
+    expect((await at('Yusuf Ismail', '2026-04')).status).toBe('partial');
+    expect((await at('Sara Ismail', '2026-04')).status).toBe('open');
     await admin.billing.recordManualPayment({ studentId: yusufId, amountCents: 15000, channel: 'zelle', occurredAt: '2026-04-09' });
-    expect((await at('Yusuf', '2026-04')).status).toBe('paid');
+    expect((await at('Yusuf Ismail', '2026-04')).status).toBe('paid');
     // Sara is still open on her own 70000 — the sibling's payment did not touch her.
-    const sara = await at('Sara', '2026-04');
+    const sara = await at('Sara Ismail', '2026-04');
     expect(sara.status).toBe('open');
     expect(sara.totalCents).toBe(70000);
     // A different family is untouched.
-    expect((await at('Bilal', '2026-04')).status).toBe('none');
+    expect((await at('Bilal Farooqi', '2026-04')).status).toBe('none');
     // A later month is still unbilled.
-    expect((await at('Yusuf', '2026-05')).status).toBe('none');
+    expect((await at('Yusuf Ismail', '2026-05')).status).toBe('none');
   });
 
   it('a voided invoice reads as void, not paid', async () => {
@@ -131,7 +131,7 @@ describe('yearGrid', () => {
     const invId = (await admin.billing.familyBilling({ familyId: ismailId })).invoices[0].id;
     await admin.billing.voidInvoice({ id: invId });
     const g = await admin.billing.yearGrid();
-    expect(g.rows.find((r) => r.firstName === 'Yusuf')!.cells.find((c) => c.periodKey === '2026-04')!.status).toBe('void');
+    expect(g.rows.find((r) => r.fullName === 'Yusuf Ismail')!.cells.find((c) => c.periodKey === '2026-04')!.status).toBe('void');
   });
 
   it('asks for a start year when the year predates the start_year column', async () => {
@@ -157,7 +157,7 @@ describe('optional columns are opt-in', () => {
     const { admin } = await seed();
     const g = await admin.billing.yearGrid();
     expect(g.columns).toEqual(['guardianPhones']);
-    const yusuf = g.rows.find((r) => r.firstName === 'Yusuf')!;
+    const yusuf = g.rows.find((r) => r.fullName === 'Yusuf Ismail')!;
     expect(yusuf.extra.guardianPhones).toEqual(['(901) 949-2646']);
     // Absent from the payload entirely, not merely blank.
     expect('studentCode' in yusuf.extra).toBe(false);
@@ -170,7 +170,7 @@ describe('optional columns are opt-in', () => {
     await admin.billing.yearViewColumnsSet({ columns: ['studentId', 'balance', 'guardianNames'] });
     const g = await admin.billing.yearGrid();
     expect(g.columns.sort()).toEqual(['balance', 'guardianNames', 'studentId']);
-    const yusuf = g.rows.find((r) => r.firstName === 'Yusuf')!;
+    const yusuf = g.rows.find((r) => r.fullName === 'Yusuf Ismail')!;
     expect(yusuf.extra.studentCode).toMatch(/^[A-Z]{3}\d{4}$/);
     expect(yusuf.extra.guardianNames).toEqual(['Abu Yusuf']);
     expect(typeof yusuf.extra.balanceCents).toBe('number');
@@ -187,15 +187,15 @@ describe('optional columns are opt-in', () => {
     await admin.billing.yearViewColumnsSet({ columns: ['balance'] });
     await admin.billing.generateFamily({ familyId: ismailId, periodKey: '2026-04', label: 'Apr' });
     let g = await admin.billing.yearGrid();
-    expect(g.rows.find((r) => r.firstName === 'Yusuf')!.extra.balanceCents).toBe(35000); // his plan
-    expect(g.rows.find((r) => r.firstName === 'Sara')!.extra.balanceCents).toBe(70000); // her override
-    expect(g.rows.find((r) => r.firstName === 'Bilal')!.extra.balanceCents).toBe(0); // never billed
+    expect(g.rows.find((r) => r.fullName === 'Yusuf Ismail')!.extra.balanceCents).toBe(35000); // his plan
+    expect(g.rows.find((r) => r.fullName === 'Sara Ismail')!.extra.balanceCents).toBe(70000); // her override
+    expect(g.rows.find((r) => r.fullName === 'Bilal Farooqi')!.extra.balanceCents).toBe(0); // never billed
 
     // Paying one child moves only that child's figure.
     await admin.billing.recordManualPayment({ studentId: yusufId, amountCents: 35000, channel: 'cash', occurredAt: '2026-04-05' });
     g = await admin.billing.yearGrid();
-    expect(g.rows.find((r) => r.firstName === 'Yusuf')!.extra.balanceCents).toBe(0);
-    expect(g.rows.find((r) => r.firstName === 'Sara')!.extra.balanceCents).toBe(70000);
+    expect(g.rows.find((r) => r.fullName === 'Yusuf Ismail')!.extra.balanceCents).toBe(0);
+    expect(g.rows.find((r) => r.fullName === 'Sara Ismail')!.extra.balanceCents).toBe(70000);
   });
 });
 

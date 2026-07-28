@@ -13,7 +13,7 @@
  */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
 import { schoolYears, terms, courses, classes, students, families } from '../db/schema';
@@ -103,6 +103,27 @@ export const structureRouter = router({
     db.update(schoolYears).set({ status: 'archived', updatedAt: now() }).where(eq(schoolYears.id, input.id)).run();
     audit(auditActor(ctx), 'schoolYear.archive', { entity: 'schoolYear', entityId: input.id });
     return { ok: true as const };
+  }),
+
+  /**
+   * Delete a school year outright — the "I typed it wrong" case, as opposed to archiving a year that
+   * really happened. Its terms go with it (they are that year's own structure and nothing else
+   * points at them).
+   *
+   * A year holds no money: invoices key off a `YYYY-MM` period string, not a year row, so removing
+   * one cannot orphan a bill. What it CAN do is change which months the grid shows, so the current
+   * year is refused — make another current first, exactly as archiving requires.
+   */
+  schoolYearDelete: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    const y = requireSchoolYear(input.id);
+    if (y.isCurrent) throw new TRPCError({ code: 'CONFLICT', message: 'Make another year current before deleting this one.' });
+    let removedTerms = 0;
+    db.transaction((tx) => {
+      removedTerms = tx.delete(terms).where(eq(terms.schoolYearId, input.id)).run().changes;
+      tx.delete(schoolYears).where(eq(schoolYears.id, input.id)).run();
+    });
+    audit(auditActor(ctx), 'schoolYear.delete', { entity: 'schoolYear', entityId: input.id, detail: { removedTerms } });
+    return { ok: true as const, removedTerms };
   }),
 
   // ── Terms (optional — only for per-term tuition) ─────────────────────────────
@@ -196,6 +217,43 @@ export const structureRouter = router({
     return { ok: true as const };
   }),
 
+  /**
+   * Delete a course and its classes for good — for one added by mistake, where archiving just leaves
+   * clutter behind a toggle.
+   *
+   * Courses and classes are GROUPING, not money: no invoice, payment or charge references either, so
+   * nothing in the ledger can be orphaned by this. The one live reference is `students.class_id`
+   * (RESTRICT), so the students in those classes are unplaced first — the same thing archiving does,
+   * and the reason a delete cannot simply be a `DELETE`.
+   *
+   * Reported back so the caller can say "3 students are now unplaced" rather than have it happen
+   * silently; `courseDeletable` lets the UI warn BEFORE the click.
+   */
+  courseDeletable: adminProcedure.input(z.object({ id: ID })).query(({ input }) => {
+    requireCourse(input.id);
+    const classIds = db.select({ id: classes.id }).from(classes).where(eq(classes.courseId, input.id)).all().map((c) => c.id);
+    return {
+      classes: classIds.length,
+      students: classIds.length ? db.select({ id: students.id }).from(students).where(inArray(students.classId, classIds)).all().length : 0,
+    };
+  }),
+
+  courseDelete: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    requireCourse(input.id);
+    let unplaced = 0;
+    let removedClasses = 0;
+    db.transaction((tx) => {
+      const classIds = tx.select({ id: classes.id }).from(classes).where(eq(classes.courseId, input.id)).all().map((c) => c.id);
+      if (classIds.length) {
+        unplaced = tx.update(students).set({ classId: null, updatedAt: now() }).where(inArray(students.classId, classIds)).run().changes;
+        removedClasses = tx.delete(classes).where(eq(classes.courseId, input.id)).run().changes;
+      }
+      tx.delete(courses).where(eq(courses.id, input.id)).run();
+    });
+    audit(auditActor(ctx), 'course.delete', { entity: 'course', entityId: input.id, detail: { removedClasses, unplaced } });
+    return { ok: true as const, removedClasses, unplaced };
+  }),
+
   classCreate: adminProcedure.input(z.object({ courseId: ID, name: NAME, sortOrder: SORT.optional() })).mutation(({ ctx, input }) => {
     requireCourse(input.courseId);
     const id = rid('cls');
@@ -229,6 +287,19 @@ export const structureRouter = router({
     return { ok: true as const, unplaced };
   }),
 
+  /** Delete one class for good, unplacing its students first (see `courseDelete` for why that is
+   *  required and why no money can be orphaned). */
+  classDelete: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    requireClass(input.id);
+    let unplaced = 0;
+    db.transaction((tx) => {
+      unplaced = tx.update(students).set({ classId: null, updatedAt: now() }).where(eq(students.classId, input.id)).run().changes;
+      tx.delete(classes).where(eq(classes.id, input.id)).run();
+    });
+    audit(auditActor(ctx), 'class.delete', { entity: 'class', entityId: input.id, detail: { unplaced } });
+    return { ok: true as const, unplaced };
+  }),
+
   /** Place (or unplace, with `classId: null`) a student. Admin-only, like the rest of the roster. */
   setStudentClass: adminProcedure.input(z.object({ studentId: ID, classId: ID.nullable() })).mutation(({ ctx, input }) => {
     if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) {
@@ -248,8 +319,7 @@ export const structureRouter = router({
     const rows = db
       .select({
         id: students.id,
-        firstName: students.firstName,
-        lastName: students.lastName,
+        fullName: students.fullName,
         status: students.status,
         familyId: students.familyId,
         familyName: families.name,
@@ -263,7 +333,7 @@ export const structureRouter = router({
       .leftJoin(classes, eq(classes.id, students.classId))
       .leftJoin(courses, eq(courses.id, classes.courseId))
       .where(input?.includeWithdrawn ? undefined : eq(students.status, 'active'))
-      .orderBy(asc(courses.sortOrder), asc(courses.name), asc(classes.sortOrder), asc(classes.name), asc(students.firstName))
+      .orderBy(asc(courses.sortOrder), asc(courses.name), asc(classes.sortOrder), asc(classes.name), asc(students.fullName))
       .all();
     return rows;
   }),

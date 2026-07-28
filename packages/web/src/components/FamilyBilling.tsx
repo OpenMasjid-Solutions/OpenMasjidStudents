@@ -45,7 +45,7 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
   /** Whose invoice / payment this is. Every row carries a child now, so the tables say so. */
   const nameOf = (studentId: string) => {
     const s = (billing.data?.students ?? []).find((k) => k.id === studentId);
-    return s ? `${s.firstName} ${s.lastName}`.trim() : '';
+    return s ? s.fullName : '';
   };
 
   const refresh = async () => {
@@ -123,7 +123,7 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
       }
     >();
     for (const r of fees.data ?? []) {
-      const g = m.get(r.studentId) ?? { name: `${r.firstName} ${r.lastName}`.trim(), fees: [] };
+      const g = m.get(r.studentId) ?? { name: r.fullName, fees: [] };
       if (r.feeId && r.feePlanId) {
         g.fees.push({
           feeId: r.feeId,
@@ -237,7 +237,7 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
               <tbody>
                 {chargesQ.data?.map((c) => (
                   <tr key={c.id}>
-                    <td>{c.firstName} {c.lastName}</td>
+                    <td>{c.fullName}</td>
                     <td>{c.label}{c.note && <span className="muted"> · {c.note}</span>}</td>
                     <td className={c.amountCents < 0 ? 'merit-total is-pos' : ''}>{money(c.amountCents)}</td>
                     <td>{c.periodKey ?? '—'}</td>
@@ -344,7 +344,7 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
               <option value="">{t('billing.chooseStudent')}</option>
               {(billing.data?.students ?? []).map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.firstName} {s.lastName}{s.balance.owedCents > 0 ? ` — ${money(s.balance.owedCents)} ${t('billing.owed')}` : ''}
+                  {s.fullName}{s.balance.owedCents > 0 ? ` — ${money(s.balance.owedCents)} ${t('billing.owed')}` : ''}
                 </option>
               ))}
             </select>

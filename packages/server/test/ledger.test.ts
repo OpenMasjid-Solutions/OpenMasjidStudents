@@ -38,7 +38,7 @@ function mkFamily(kids: string[] = ['stu_1']) {
   const ts = new Date();
   db.insert(families).values({ id: FAM, name: 'Fam', status: 'active', createdAt: ts, updatedAt: ts }).run();
   kids.forEach((id, i) => {
-    db.insert(students).values({ id, familyId: FAM, firstName: `Kid${i}`, lastName: 'X', status: 'active', studentCode: `KID${1000 + i}`, createdAt: ts, updatedAt: ts }).run();
+    db.insert(students).values({ id, familyId: FAM, fullName: `Kid${i} X`, status: 'active', studentCode: `KID${1000 + i}`, createdAt: ts, updatedAt: ts }).run();
   });
   return kids;
 }

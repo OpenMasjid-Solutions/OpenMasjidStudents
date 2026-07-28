@@ -30,7 +30,7 @@ describe('writeSnapshot', () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Ismail' });
     const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 35000, cadence: 'monthly' });
-    await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+    await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
 
     const r = snap.writeSnapshot();
     expect(r.ok).toBe(true);
@@ -49,8 +49,8 @@ describe('writeSnapshot', () => {
     const probe = new Database(file, { readonly: true });
     try {
       expect((probe.pragma('integrity_check') as { integrity_check: string }[])[0].integrity_check).toBe('ok');
-      const row = probe.prepare('select first_name as f from students limit 1').get() as { f: string };
-      expect(row.f).toBe('Yusuf');
+      const row = probe.prepare('select full_name as f from students limit 1').get() as { f: string };
+      expect(row.f).toBe('Yusuf Ismail');
     } finally {
       probe.close();
     }

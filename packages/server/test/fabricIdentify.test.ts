@@ -45,8 +45,8 @@ async function seed() {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  const a = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
-  const b = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Maryam', lastName: 'Ismail', feePlanId: plan.id });
+  const a = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
+  const b = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Maryam Ismail', feePlanId: plan.id });
   await admin.billing.generatePeriod({ periodKey: '2026-07', label: 'Tuition — Jul 2026' });
   return { famId: fam.id, a: { id: a.id, code: a.studentCode }, b: { id: b.id, code: b.studentCode } };
 }
@@ -134,6 +134,8 @@ describe('lookup by studentCode — the paying step', () => {
     expect(body.found).toBe(true);
     expect(body.matchedStudent.id).toBe(s.a.id);
     // Both children, so the kiosk can offer the sibling WITHOUT the parent typing their ID.
+    // `firstName` is the CONTRACT field (§11.2) — derived from the one stored name, and still only
+    // a given name plus an initial, never the family's surname.
     const names = body.family.students.map((k) => k.firstName).sort();
     expect(names).toEqual(['Maryam', 'Yusuf']);
     const sib = body.family.students.find((k) => k.firstName === 'Maryam')!;

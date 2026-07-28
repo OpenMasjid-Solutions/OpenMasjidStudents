@@ -22,18 +22,26 @@ import type { Tx } from '../billing/ledger';
 import { families, students, guardians, guardianFamilies, feePlans, studentFees, classes, courses } from '../db/schema';
 import { rid } from '../db/ids';
 import { generateUniqueStudentCode } from '../billing/studentCodes';
+import { displayName } from './names';
+import { familyLabel } from './household';
 
 /** The canonical import fields. The web dialog fetches this to build the blank template AND to
  *  auto-match incoming headers, so there is exactly one source of truth for the column set.
  *
  *  THERE IS DELIBERATELY NO ID FIELD. Student IDs are always minted by this app: an ID pays tuition,
- *  so it must be unique per install and derived from the child's own first name, neither of which a
+ *  so it must be unique per install and derived from the child's own given name, neither of which a
  *  spreadsheet can guarantee. A file that carries an "ID" column has nothing to map it to, so it is
- *  ignored; the dialog lists ignored columns rather than dropping them silently. */
+ *  ignored; the dialog lists ignored columns rather than dropping them silently.
+ *
+ *  THERE IS ALSO NO FAMILY COLUMN. An import gives every row its own household, and siblings are
+ *  linked afterwards on the student's record (`people.studentLinkSiblings`). Grouping from a
+ *  spreadsheet sounded helpful and was not: matching on a surname marries unrelated children who
+ *  happen to share one, matching on a typed group key means the office maintains a second name for
+ *  something it never names anywhere else, and either way a mistake is buried in a 200-row file
+ *  instead of visible on a record. Linking two children takes one click and is unambiguous, so the
+ *  import does the part a spreadsheet is good at and leaves the judgement to a person. */
 export const IMPORT_FIELDS = [
-  { key: 'firstName', label: 'First name', required: true, aliases: ['first', 'first name', 'firstname', 'given name', 'name'] },
-  { key: 'lastName', label: 'Last name', required: true, aliases: ['last', 'last name', 'lastname', 'surname', 'family name'] },
-  { key: 'familyName', label: 'Family', required: false, aliases: ['family', 'household', 'family label'] },
+  { key: 'fullName', label: 'Full name', required: true, aliases: ['name', 'full name', 'fullname', 'student', 'student name', 'first name', 'child', 'child name'] },
   { key: 'dob', label: 'Date of birth', required: false, aliases: ['dob', 'birthdate', 'date of birth', 'birth date'] },
   { key: 'className', label: 'Class', required: false, aliases: ['class', 'section', 'level', 'grade'] },
   { key: 'courseName', label: 'Course', required: false, aliases: ['course', 'program', 'programme'] },
@@ -48,9 +56,7 @@ export const IMPORT_FIELDS = [
 export type ImportFieldKey = (typeof IMPORT_FIELDS)[number]['key'];
 
 export interface ImportRow {
-  firstName?: string;
-  lastName?: string;
-  familyName?: string;
+  fullName?: string;
   dob?: string;
   className?: string;
   courseName?: string;
@@ -68,10 +74,7 @@ export interface RowResult {
   errors: string[];
   /** What the row resolved to, for the dialog's preview. */
   resolved: {
-    firstName: string;
-    lastName: string;
-    familyName: string;
-    familyExists: boolean;
+    fullName: string;
     className: string | null;
     feePlanName: string | null;
     amountCents: number | null;
@@ -83,8 +86,6 @@ export interface ValidateResult {
   rows: RowResult[];
   okCount: number;
   errorCount: number;
-  /** Families that would be created (deduped) — the dialog shows this as the sibling grouping. */
-  newFamilies: string[];
 }
 
 const norm = (v: string | undefined | null): string => (v ?? '').trim();
@@ -102,12 +103,11 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Everything the validator needs, read once so a 500-row import is not 500× the queries. */
 function lookups(tx: Tx) {
-  const fams = tx.select({ id: families.id, name: families.name }).from(families).all();
   const plans = tx.select({ id: feePlans.id, name: feePlans.name }).from(feePlans).where(eq(feePlans.status, 'active')).all();
   const cls = tx.select({ id: classes.id, name: classes.name, courseId: classes.courseId }).from(classes).where(eq(classes.status, 'active')).all();
   const crs = tx.select({ id: courses.id, name: courses.name }).from(courses).where(eq(courses.status, 'active')).all();
+  // No family lookup: an import never matches an existing household, it always makes a new one.
   return {
-    familyByName: new Map(fams.map((f) => [key(f.name), f.id])),
     planByName: new Map(plans.map((p) => [key(p.name), p.id])),
     classes: cls,
     courseById: new Map(crs.map((c) => [c.id, c.name])),
@@ -137,20 +137,12 @@ function resolveClass(L: ReturnType<typeof lookups>, className: string, courseNa
 export function validateRows(rows: ImportRow[], opts: { defaultFeePlanId?: string | null }): ValidateResult {
   const L = lookups(db);
   const defaultPlanOk = opts.defaultFeePlanId ? !!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, opts.defaultFeePlanId)).get() : false;
-  // Family names invented by this import, so two sibling rows agree on one new family.
-  const pendingFamilies = new Set<string>();
   const out: RowResult[] = [];
 
   rows.forEach((r, i) => {
     const errors: string[] = [];
-    const firstName = norm(r.firstName);
-    const lastName = norm(r.lastName);
-    if (!firstName) errors.push('First name is required.');
-    if (!lastName) errors.push('Last name is required.');
-
-    const familyName = norm(r.familyName) || (lastName ? `${lastName} family` : '');
-    const familyExists = !!familyName && L.familyByName.has(key(familyName));
-    if (familyName && !familyExists) pendingFamilies.add(familyName);
+    const fullName = norm(r.fullName);
+    if (!fullName) errors.push('Name is required.');
 
     const dob = norm(r.dob);
     if (dob && !ISO_DATE.test(dob)) errors.push(`Date of birth "${dob}" must be YYYY-MM-DD.`);
@@ -187,10 +179,7 @@ export function validateRows(rows: ImportRow[], opts: { defaultFeePlanId?: strin
       resolved: errors.length
         ? null
         : {
-            firstName,
-            lastName,
-            familyName,
-            familyExists,
+            fullName,
             className,
             feePlanName,
             amountCents: amt === 'bad' ? null : amt,
@@ -203,7 +192,6 @@ export function validateRows(rows: ImportRow[], opts: { defaultFeePlanId?: strin
     rows: out,
     okCount: out.filter((r) => r.ok).length,
     errorCount: out.filter((r) => !r.ok).length,
-    newFamilies: [...pendingFamilies].sort(),
   };
 }
 
@@ -213,7 +201,7 @@ export interface CommitResult {
   guardiansCreated: number;
   /** The generated Student IDs, so the admin can print them straight after an import. `studentId` is
    *  the internal row id; `studentCode` is the ID a parent types (never logged or audited — §14). */
-  students: { row: number; studentId: string; firstName: string; lastName: string; studentCode: string }[];
+  students: { row: number; studentId: string; fullName: string; studentCode: string }[];
 }
 
 /** Commit an import. Re-validates first and THROWS if anything is wrong, so the whole file either
@@ -225,26 +213,21 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
   const result: CommitResult = { created: 0, familiesCreated: 0, guardiansCreated: 0, students: [] };
   const ts = new Date();
 
+  const touchedFamilies = new Set<string>();
+
   db.transaction((tx) => {
     const L = lookups(tx);
-    // Guardians already on a family, so a repeated parent across sibling rows is linked once.
-    const guardianOnFamily = new Map<string, string>(); // `${familyId}|${guardianKey}` → guardianId
-    for (const g of tx.select({ id: guardians.id, name: guardians.name, familyId: guardianFamilies.familyId }).from(guardianFamilies).innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId)).all()) {
-      guardianOnFamily.set(`${g.familyId}|${key(g.name)}`, g.id);
-    }
 
     rows.forEach((r, i) => {
-      const firstName = norm(r.firstName);
-      const lastName = norm(r.lastName);
-      const familyName = norm(r.familyName) || `${lastName} family`;
+      const fullName = displayName(norm(r.fullName));
 
-      let familyId = L.familyByName.get(key(familyName));
-      if (!familyId) {
-        familyId = rid('fam');
-        tx.insert(families).values({ id: familyId, name: familyName, status: 'active', createdAt: ts, updatedAt: ts }).run();
-        L.familyByName.set(key(familyName), familyId);
-        result.familiesCreated++;
-      }
+      // ONE HOUSEHOLD PER ROW. An import never guesses that two children are siblings; the office
+      // links them afterwards, where the decision is visible and reversible. The stored name is a
+      // placeholder overwritten by the derived label below.
+      const familyId = rid('fam');
+      tx.insert(families).values({ id: familyId, name: 'Family', status: 'active', createdAt: ts, updatedAt: ts }).run();
+      result.familiesCreated++;
+      touchedFamilies.add(familyId);
 
       const rawClass = norm(r.className);
       let classId: string | null = null;
@@ -261,14 +244,13 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
       const studentId = rid('stu');
       // The kiosk ID is always generated here and never taken from the spreadsheet — an imported ID
       // could collide with an existing child's or be chosen to impersonate one.
-      const studentCode = generateUniqueStudentCode(firstName);
+      const studentCode = generateUniqueStudentCode(fullName);
       const dob = norm(r.dob);
       tx.insert(students)
         .values({
           id: studentId,
           familyId,
-          firstName,
-          lastName,
+          fullName,
           dob: dob || null,
           status: 'active',
           notes: norm(r.note) || null,
@@ -280,21 +262,27 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
         .run();
       tx.insert(studentFees).values({ id: rid('stf'), studentId, feePlanId, overrideAmountCents, note: null, createdAt: ts, updatedAt: ts }).run();
 
+      // One household per row means one guardian per row — there is no cross-row dedupe to do. Two
+      // rows naming the same parent get a guardian record each; linking the children afterwards
+      // merges the households, and the duplicate is then visible on one record where it can be
+      // removed. That is a better place for it than a silent match inside the import.
       const gName = norm(r.guardianName);
       if (gName) {
-        const gk = `${familyId}|${key(gName)}`;
-        if (!guardianOnFamily.has(gk)) {
-          const gid = rid('grd');
-          tx.insert(guardians).values({ id: gid, name: gName, phone: norm(r.guardianPhone) || null, email: norm(r.guardianEmail) || null, createdAt: ts, updatedAt: ts }).run();
-          tx.insert(guardianFamilies).values({ guardianId: gid, familyId, relation: null, isEmergencyContact: false, createdAt: ts }).run();
-          guardianOnFamily.set(gk, gid);
-          result.guardiansCreated++;
-        }
+        const gid = rid('grd');
+        tx.insert(guardians).values({ id: gid, name: gName, phone: norm(r.guardianPhone) || null, email: norm(r.guardianEmail) || null, createdAt: ts, updatedAt: ts }).run();
+        tx.insert(guardianFamilies).values({ guardianId: gid, familyId, relation: null, isEmergencyContact: false, createdAt: ts }).run();
+        result.guardiansCreated++;
       }
 
       result.created++;
-      result.students.push({ row: i, studentId, firstName, lastName, studentCode });
+      result.students.push({ row: i, studentId, fullName, studentCode });
     });
+
+    // Each new household takes the label derived from its child, so an imported record reads exactly
+    // like one added through the UI instead of keeping the placeholder above.
+    for (const familyId of touchedFamilies) {
+      tx.update(families).set({ name: familyLabel(familyId, tx), updatedAt: ts }).where(eq(families.id, familyId)).run();
+    }
   });
 
   return result;

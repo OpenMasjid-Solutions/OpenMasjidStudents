@@ -23,6 +23,7 @@ import { registerStatementRoutes } from './billing/statementRoutes';
 import { registerFabricProvider } from './fabric/provider';
 import { refreshSiteInfo } from './fabric/platform';
 import { backfillStudentCodes } from './billing/studentCodes';
+import { getSchoolLogo, parseLogoDataUri } from './settings';
 import { loadStripeKeys } from './payments/stripe';
 import { startSchedulers } from './payments/scheduler';
 import { stripBasePath } from './http/basePath';
@@ -99,6 +100,30 @@ async function main(): Promise<void> {
 
   // Fabric provider /fabric/billing/* (§11): secret-gated, tunnel-blocked; the students/billing capability.
   registerFabricProvider(app);
+
+  /**
+   * The school logo, as an image. Deliberately UNAUTHENTICATED, like the appearance relay: a
+   * madrasa's own logo is public branding, not data about anybody, and email is the reason this
+   * route exists at all — the platform's mail endpoint takes no attachments, so an emailed
+   * statement or receipt can only show the logo by fetching an absolute URL. Printed statements
+   * don't use this route; they inline the bytes so a sheet prints correctly with no network.
+   *
+   * The stored value is re-validated (magic bytes) on the way out, so the content type served is
+   * one we have actually verified rather than whatever a settings row claims (§14).
+   */
+  app.get('/api/logo', async (_req, reply) => {
+    const logo = getSchoolLogo();
+    const parsed = logo ? parseLogoDataUri(logo) : null;
+    if (!parsed) return reply.code(404).send({ error: 'no_logo' });
+    return reply
+      .header('content-type', parsed.mime)
+      .header('content-security-policy', "default-src 'none'; sandbox")
+      .header('x-content-type-options', 'nosniff')
+      // Short cache: an admin who replaces the logo should see it change, but a busy statement page
+      // shouldn't refetch it per render.
+      .header('cache-control', 'public, max-age=300')
+      .send(parsed.bytes);
+  });
 
   // Same-origin appearance relay (CLAUDE.md §15). The parent portal + staff surfaces INHERIT the OS
   // dashboard's wallpaper + light/dark. The OS exposes GET /api/public/appearance (theme/wallpaper/

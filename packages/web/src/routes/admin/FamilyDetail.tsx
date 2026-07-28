@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
-/** One family's record (window content): students (Student ID + withdraw + delete + move),
- *  guardians, emergency contacts. */
+/** One household's record (window content) — what opens when you click a student. Everything the
+ *  office needs about that child in one place: their siblings (with Student IDs), the guardians the
+ *  household shares, and its emergency contacts.
+ *
+ *  `readOnly` is finance's view (§5): they read names, contact details and Student IDs, and can do
+ *  none of the writing — no adding students, no linking siblings, no withdrawing or deleting. The
+ *  server enforces the same walls; this stops finance being shown controls that would only fail. */
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pencil } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 
-export function FamilyDetail({ familyId }: { familyId: string }) {
+export function FamilyDetail({ familyId, readOnly = false }: { familyId: string; readOnly?: boolean }) {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
   const q = trpc.people.familyGet.useQuery({ id: familyId });
@@ -38,17 +43,48 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
   // A student MUST be put on a fee plan at creation — one with no plan is silently skipped by
   // invoice generation, which is how a child stops being billed without anyone noticing.
   const feePlans = trpc.billing.feePlanList.useQuery();
-  // Every OTHER family, for the "move to a sibling's family" action below.
-  const allFamilies = trpc.people.directory.useQuery();
-  const otherFamilies = allFamilies.data?.filter((f) => f.id !== familyId).map((f) => ({ id: f.id, name: f.name }));
-  const setFamily = trpc.people.studentSetFamily.useMutation();
 
-  async function moveStudent(studentId: string, toFamilyId: string) {
-    await setFamily.mutateAsync({ studentId, familyId: toFamilyId });
-    await refresh();
+  /** Linking siblings, which replaced "move to family". An office thinks "these two are brother and
+   *  sister", never "move this child into household fam_x1" — so the control names another STUDENT.
+   *  Merging the two households is what makes one child's guardians apply to the other. */
+  const siblingOptions = trpc.people.siblingOptions.useQuery();
+  const linkSiblings = trpc.people.studentLinkSiblings.useMutation();
+  const unlinkSiblings = trpc.people.studentUnlinkSiblings.useMutation();
+  const [linkFor, setLinkFor] = useState('');
+  const [linkTo, setLinkTo] = useState('');
+  const [linkErr, setLinkErr] = useState('');
+
+  async function submitLink(e: FormEvent) {
+    e.preventDefault();
+    if (!linkFor || !linkTo) return;
+    setLinkErr('');
+    try {
+      await linkSiblings.mutateAsync({ studentId: linkFor, siblingStudentId: linkTo });
+      setLinkFor('');
+      setLinkTo('');
+      await refresh();
+      await utils.people.siblingOptions.invalidate();
+      await utils.structure.studentsByClass.invalidate();
+    } catch (err) {
+      setLinkErr((err as Error).message);
+    }
   }
+
+  async function unlink(studentId: string, name: string) {
+    if (!window.confirm(t('directory.confirmUnlink', { name }))) return;
+    setLinkErr('');
+    try {
+      await unlinkSiblings.mutateAsync({ studentId });
+      await refresh();
+      await utils.people.siblingOptions.invalidate();
+      await utils.structure.studentsByClass.invalidate();
+    } catch (err) {
+      setLinkErr((err as Error).message);
+    }
+  }
+
   const [showStudent, setShowStudent] = useState(false);
-  const [stu, setStu] = useState({ firstName: '', lastName: '', dob: '', feePlanId: '' });
+  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '' });
   const [showGuardian, setShowGuardian] = useState(false);
   const [grd, setGrd] = useState({ name: '', phone: '', email: '', relation: '', emergency: false });
   const [showEC, setShowEC] = useState(false);
@@ -56,9 +92,9 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
 
   async function submitStudent(e: FormEvent) {
     e.preventDefault();
-    if (!stu.firstName.trim() || !stu.lastName.trim() || !stu.feePlanId) return;
-    await addStudent.mutateAsync({ familyId, firstName: stu.firstName.trim(), lastName: stu.lastName.trim(), dob: stu.dob || undefined, feePlanId: stu.feePlanId });
-    setStu({ firstName: '', lastName: '', dob: '', feePlanId: '' });
+    if (!stu.fullName.trim() || !stu.feePlanId) return;
+    await addStudent.mutateAsync({ familyId, fullName: stu.fullName.trim(), dob: stu.dob || undefined, feePlanId: stu.feePlanId });
+    setStu({ fullName: '', dob: '', feePlanId: '' });
     setShowStudent(false);
     await refresh();
   }
@@ -158,7 +194,7 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
         <div className="section-head">
           <h2>{t('directory.students')}</h2>
           <span className="spacer" />
-          <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowStudent((v) => !v)}>{t('directory.addStudent')}</button>
+          {!readOnly && <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowStudent((v) => !v)}>{t('directory.addStudent')}</button>}
         </div>
         {students.length === 0 ? (
           <p className="muted" style={{ fontSize: '0.9rem' }}>{t('directory.noStudents')}</p>
@@ -169,32 +205,26 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
               <tbody>
                 {students.map((s) => (
                   <tr key={s.id}>
-                    <td>{s.firstName} {s.lastName}</td>
+                    <td>{s.fullName}</td>
                     {/* The ID a parent types to pay, at the kiosk or on the donation site. Read it out
                         freely — it is printed on the statement and is not a secret. */}
                     <td><span className="code">{s.studentCode ?? '—'}</span></td>
                     <td>{s.status === 'withdrawn' ? <span className="chip is-muted">{t('directory.withdrawn')}</span> : <span className="chip">{t('directory.active')}</span>}</td>
                     <td className="actions">
-                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
-                      {/* Delete is for a mistake — a duplicate or a child who never enrolled. A student
-                          who has been billed is part of the invoice history and can only be withdrawn,
-                          so ask the server first and say why rather than offering a button that fails. */}
-                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => askDelete(s.id, `${s.firstName} ${s.lastName}`.trim())}>{t('common.delete')}</button>
-                      {/* Moving a student to a sibling's family is how guardians start applying to
-                          them — guardians hang off the FAMILY, so nothing is copied per-student. */}
-                      <select
-                        className="input glass-inset"
-                        style={{ width: 'auto', minWidth: '9rem', padding: '0.2rem 0.35rem' }}
-                        value=""
-                        onChange={(e) => { if (e.target.value) void moveStudent(s.id, e.target.value); }}
-                        aria-label={t('directory.moveToFamily')}
-                        disabled={setFamily.isPending}
-                      >
-                        <option value="">{t('directory.moveToFamily')}</option>
-                        {(otherFamilies ?? []).map((f) => (
-                          <option key={f.id} value={f.id}>{f.name}</option>
-                        ))}
-                      </select>
+                      {!readOnly && (
+                        <>
+                          <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
+                          {/* Delete is for a mistake — a duplicate or a child who never enrolled. A student
+                              who has been billed is part of the invoice history and can only be withdrawn,
+                              so ask the server first and say why rather than offering a button that fails. */}
+                          <button type="button" className="btn btn--ghost btn--sm" onClick={() => askDelete(s.id, s.fullName)}>{t('common.delete')}</button>
+                          {students.length > 1 && (
+                            <button type="button" className="btn btn--ghost btn--sm" onClick={() => unlink(s.id, s.fullName)} disabled={unlinkSiblings.isPending}>
+                              {t('directory.unlinkSibling')}
+                            </button>
+                          )}
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -209,8 +239,7 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
         )}
         {showStudent && (
           <form className="inline-form glass-inset" onSubmit={submitStudent}>
-            <div className="field"><label className="label">{t('directory.firstName')}</label><input className="input glass-inset" value={stu.firstName} onChange={(e) => setStu({ ...stu, firstName: e.target.value })} autoFocus /></div>
-            <div className="field"><label className="label">{t('directory.lastName')}</label><input className="input glass-inset" value={stu.lastName} onChange={(e) => setStu({ ...stu, lastName: e.target.value })} /></div>
+            <div className="field" style={{ flex: '2 1 14rem' }}><label className="label">{t('directory.fullName')}</label><input className="input glass-inset" value={stu.fullName} onChange={(e) => setStu({ ...stu, fullName: e.target.value })} autoFocus /></div>
             <div className="field"><label className="label">{t('directory.dob')}</label><input type="date" className="input glass-inset" value={stu.dob} onChange={(e) => setStu({ ...stu, dob: e.target.value })} /></div>
             <div className="field">
               <label className="label">{t('directory.feePlan')}</label>
@@ -233,7 +262,7 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
         <div className="section-head">
           <h2>{t('directory.guardians')}</h2>
           <span className="spacer" />
-          <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowGuardian((v) => !v)}>{t('directory.addGuardian')}</button>
+          {!readOnly && <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowGuardian((v) => !v)}>{t('directory.addGuardian')}</button>}
         </div>
         {guardians.length === 0 ? (
           <p className="muted" style={{ fontSize: '0.9rem' }}>{t('directory.noGuardians')}</p>
@@ -256,9 +285,13 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
                   <span className="chip is-muted">{t('directory.noAccount')}</span>
                 )}
                 <span className="spacer" style={{ marginInlineStart: 'auto' }} />
-                <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGuardianEdit({ id: g.guardianId, name: g.name, phone: g.phone ?? '', email: g.email ?? '' })}>
-                  <Pencil size={13} /> {t('common.edit')}
-                </button>
+                {/* Editing a guardian is a people write, so admin only. Invites and resets below are
+                    NOT — finance runs parent accounts (§5), so those stay available to them. */}
+                {!readOnly && (
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGuardianEdit({ id: g.guardianId, name: g.name, phone: g.phone ?? '', email: g.email ?? '' })}>
+                    <Pencil size={13} /> {t('common.edit')}
+                  </button>
+                )}
                 {g.hasAccount ? (
                   <button type="button" className="btn btn--ghost btn--sm" onClick={() => sendReset(g.guardianId)} disabled={guardianReset.isPending || !g.canSendReset}>
                     {t('directory.sendReset')}
@@ -311,7 +344,7 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
         <div className="section-head">
           <h2>{t('directory.emergencyContacts')}</h2>
           <span className="spacer" />
-          <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowEC((v) => !v)}>{t('directory.addContact')}</button>
+          {!readOnly && <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowEC((v) => !v)}>{t('directory.addContact')}</button>}
         </div>
         {emergencyContacts.length === 0 ? (
           <p className="muted" style={{ fontSize: '0.9rem' }}>{t('directory.noContacts')}</p>
@@ -335,6 +368,39 @@ export function FamilyDetail({ familyId }: { familyId: string }) {
           </form>
         )}
       </section>
+
+      {/* Link siblings — at the bottom, because it is the thing you reach for after reading the
+          record and realising a child belongs with another. Picking a STUDENT, not a household:
+          "Yusuf is Maryam's brother" is what the office knows. */}
+      {!readOnly && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head">
+            <h2>{t('directory.linkSiblings')}</h2>
+          </div>
+          <p className="hint" style={{ marginBlockStart: 0 }}>{t('directory.linkSiblingsHint')}</p>
+          <form className="inline-form glass-inset" onSubmit={submitLink}>
+            <div className="field" style={{ flex: '1 1 12rem' }}>
+              <label className="label" htmlFor="link-for">{t('directory.linkWhich')}</label>
+              <select id="link-for" className="input glass-inset" value={linkFor} onChange={(e) => setLinkFor(e.target.value)}>
+                <option value="">{t('directory.selectStudent')}</option>
+                {students.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+              </select>
+            </div>
+            <div className="field" style={{ flex: '1 1 14rem' }}>
+              <label className="label" htmlFor="link-to">{t('directory.linkTo')}</label>
+              <select id="link-to" className="input glass-inset" value={linkTo} onChange={(e) => setLinkTo(e.target.value)}>
+                <option value="">{t('directory.selectSibling')}</option>
+                {(siblingOptions.data ?? [])
+                  // Only children OUTSIDE this household: linking to someone already in it is a no-op.
+                  .filter((s) => !students.some((own) => own.id === s.id))
+                  .map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+              </select>
+            </div>
+            <button type="submit" className="btn btn--primary" disabled={linkSiblings.isPending || !linkFor || !linkTo}>{t('directory.link')}</button>
+          </form>
+          {linkErr && <p className="form-error">{linkErr}</p>}
+        </section>
+      )}
     </div>
   );
 }

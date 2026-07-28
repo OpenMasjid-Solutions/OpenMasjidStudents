@@ -29,7 +29,7 @@
   gap: 0.5rem;
   font-weight: 650;
   font-size: 1.02rem;
-  color: var(--color-text, #eaf3ee);
+  color: var(--color-ink);
 }
 .family-topbar .brand .mark { color: var(--color-gold, #d4af37); display: inline-flex; }
 .family-topbar .spacer { margin-inline-start: auto; }
@@ -48,7 +48,7 @@
 
 .fam-hello { margin: 0.25rem 0 0.25rem; }
 .fam-hello h1 { font-size: 1.35rem; margin: 0; }
-.fam-hello p { color: var(--color-text-muted, #9fb4aa); margin: 0.15rem 0 0; font-size: 0.92rem; }
+.fam-hello p { color: var(--color-ink-muted); margin: 0.15rem 0 0; font-size: 0.92rem; }
 
 /* Big balance card — the first thing a parent looks for. */
 .balance-card {
@@ -56,17 +56,17 @@
   border-radius: 18px;
   text-align: center;
 }
-.balance-card .lbl { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-muted, #9fb4aa); }
+.balance-card .lbl { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-ink-muted); }
 .balance-card .amt { font-size: 2.4rem; font-weight: 750; margin: 0.35rem 0 0; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .balance-card .amt.owed { color: var(--color-danger, #e5645b); }
 .balance-card .amt.credit, .balance-card .amt.settled { color: var(--color-success, #46c99a); }
-.balance-card .sub { color: var(--color-text-muted, #9fb4aa); font-size: 0.9rem; margin-top: 0.35rem; }
+.balance-card .sub { color: var(--color-ink-muted); font-size: 0.9rem; margin-top: 0.35rem; }
 
 .fam-section h2 {
   font-size: 0.82rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--color-text-muted, #9fb4aa);
+  color: var(--color-ink-muted);
   margin: 0.25rem 0 0.6rem;
 }
 
@@ -80,36 +80,36 @@
 }
 .kid-row .kid-name { font-weight: 600; display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
 /* What this child owes, under their name — bills are per child, so each row carries its own figure. */
-.kid-row .kid-sub { font-weight: 500; font-size: 0.78rem; color: var(--color-text-muted, #9fb4aa); }
+.kid-row .kid-sub { font-weight: 500; font-size: 0.78rem; color: var(--color-ink-muted); }
 .kid-row .kid-code {
   margin-inline-start: auto;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   letter-spacing: 0.14em;
   font-weight: 700;
   font-size: 1.02rem;
-  color: var(--color-text, #eaf3ee);
+  color: var(--color-ink);
 }
-.kid-row .kid-code .code-lbl { display: block; font-family: inherit; font-size: 0.62rem; letter-spacing: 0.06em; color: var(--color-text-muted, #9fb4aa); text-align: end; font-weight: 600; }
+.kid-row .kid-code .code-lbl { display: block; font-family: inherit; font-size: 0.62rem; letter-spacing: 0.06em; color: var(--color-ink-muted); text-align: end; font-weight: 600; }
 
 .list-row .row-main { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
 .list-row .row-title { font-weight: 550; }
-.list-row .row-sub { font-size: 0.82rem; color: var(--color-text-muted, #9fb4aa); }
+.list-row .row-sub { font-size: 0.82rem; color: var(--color-ink-muted); }
 .list-row .row-amt { margin-inline-start: auto; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .list-row .row-amt.neg { color: var(--color-danger, #e5645b); }
 .list-row .row-amt.pos { color: var(--color-success, #46c99a); }
 
-.fam-empty { color: var(--color-text-muted, #9fb4aa); font-size: 0.92rem; padding: 0.5rem 0.25rem; }
+.fam-empty { color: var(--color-ink-muted); font-size: 0.92rem; padding: 0.5rem 0.25rem; }
 /* A one-line explainer under a list — how to actually use the Student IDs above it. */
-.fam-hint { color: var(--color-text-muted, #9fb4aa); font-size: 0.85rem; line-height: 1.45; margin: 0.5rem 0.25rem 0; }
+.fam-hint { color: var(--color-ink-muted); font-size: 0.85rem; line-height: 1.45; margin: 0.5rem 0.25rem 0; }
 
 /* Attendance tallies — four compact stat cards. */
 .att-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-block-end: 0.7rem; }
 .att-stat { border-radius: 12px; padding: 0.6rem 0.35rem; text-align: center; }
 .att-stat .n { font-size: 1.35rem; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1; }
-.att-stat .k { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-muted, #9fb4aa); margin-block-start: 0.2rem; }
+.att-stat .k { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-ink-muted); margin-block-start: 0.2rem; }
 .att-present .n { color: var(--color-success, #46c99a); }
 .att-late .n { color: var(--color-gold, #d4af37); }
-.att-excused .n { color: var(--color-text, #eaf3ee); }
+.att-excused .n { color: var(--color-ink); }
 .att-absent .n { color: var(--color-danger, #e5645b); }
 
 .att-chip { margin-inline-start: auto; font-size: 0.72rem; }

@@ -33,7 +33,7 @@ async function seed() {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
-  const s = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
   return { admin, famId: fam.id, planId: plan.id, studentId: s.id };
 }
 
@@ -96,7 +96,7 @@ describe('studentDelete', () => {
     const { admin, famId, planId, studentId } = await seed();
     await admin.people.studentDelete({ studentId });
     // Creating another Yusuf must not trip the unique index on student_code.
-    const again = await admin.people.studentCreate({ familyId: famId, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: planId });
+    const again = await admin.people.studentCreate({ familyId: famId, fullName: 'Yusuf Ismail', feePlanId: planId });
     expect(app.dbmod.db.select().from(students).where(eq(students.id, again.id)).get()!.studentCode).toMatch(/^YUS\d{4}$/);
   });
 

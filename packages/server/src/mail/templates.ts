@@ -19,9 +19,29 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/** A shared, restrained HTML shell — a heading, body paragraphs, and an optional call-to-action
- *  button. No remote images, no web fonts (many clients block them); system font stack only. */
+/**
+ * The masjid's logo for the top of an email, as an absolute URL.
+ *
+ * Set once at boot / on settings change (see mail/notify.ts). It is a MODULE-LEVEL value rather than
+ * a parameter threaded through every builder because the logo is chrome, not content — no caller
+ * should have to think about it.
+ *
+ * It has to be a URL, not the inlined bytes the printed statement uses: the platform's mail endpoint
+ * accepts no attachments, so there is no `cid:` to reference, and mail clients (Gmail especially)
+ * drop `data:` images. Null when no logo is set or the install has no public URL yet, in which case
+ * the emails simply have no image — never a broken one.
+ */
+let emailLogoUrl: string | null = null;
+export function setEmailLogoUrl(url: string | null): void {
+  emailLogoUrl = url;
+}
+
+/** A shared, restrained HTML shell — the logo, a heading, body paragraphs, and an optional
+ *  call-to-action button. No web fonts (many clients block them); system font stack only. */
 function shell(heading: string, paragraphs: string[], cta?: { label: string; url: string }, footer?: string): string {
+  // `alt=""` on purpose: the school name is already the heading, so a client with images off should
+  // show nothing here rather than repeat it.
+  const logo = emailLogoUrl ? `<p style="margin:0 0 18px;"><img src="${esc(emailLogoUrl)}" alt="" style="max-height:48px;max-width:180px;width:auto;height:auto;border:0;" /></p>` : '';
   const body = paragraphs.map((p) => `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#1f2d28;">${p}</p>`).join('');
   const button = cta
     ? `<p style="margin:22px 0;"><a href="${esc(cta.url)}" style="background:#1FA37A;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:8px;font-size:15px;font-weight:600;display:inline-block;">${esc(cta.label)}</a></p>`
@@ -29,6 +49,7 @@ function shell(heading: string, paragraphs: string[], cta?: { label: string; url
   const foot = footer ? `<p style="margin:18px 0 0;font-size:12px;line-height:1.5;color:#8a978f;">${esc(footer)}</p>` : '';
   return [
     '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;">',
+    logo,
     `<h1 style="font-size:19px;line-height:1.35;color:#0E1814;margin:0 0 16px;">${esc(heading)}</h1>`,
     body,
     button,

@@ -26,7 +26,60 @@ export const SETTING_KEYS = {
   autoInvoiceDay: 'auto_invoice_day', // day of month (1-28+) to generate on; clamped to the month.
   autoInvoiceDueDay: 'auto_invoice_due_day', // optional day of month to set as the invoice due date.
   autoInvoiceLast: 'auto_invoice_last', // the last periodKey generated — the job's own idempotency.
+  // The masjid's own logo, stored as a `data:` URI so it travels with the DB and needs no file
+  // handling or attachment plumbing. Bounded and magic-byte checked on the way in (§14).
+  schoolLogo: 'school_logo',
 } as const;
+
+/** Image types a logo may be. Kept to the three that every browser, print path and mail client
+ *  renders — no SVG, which is script-capable and would be served back to browsers. */
+export const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
+/** Decoded bytes. Comfortably more than a crisp letterhead logo needs, small enough that it can sit
+ *  in a settings row and be inlined into a print sheet without bloating it. */
+export const LOGO_MAX_BYTES = 512 * 1024;
+
+/**
+ * The school logo as a `data:` URI, or null. Validated on read as well as write: the value is
+ * interpolated into printed HTML and served from an HTTP route, so a row edited by hand (or
+ * surviving from an older build) must not become a way to inject something else.
+ */
+export function getSchoolLogo(): string | null {
+  const v = getSetting(SETTING_KEYS.schoolLogo);
+  return v && parseLogoDataUri(v) ? v : null;
+}
+
+/** Split a logo data URI into its parts, or null if it is not one we accept. */
+export function parseLogoDataUri(value: string): { mime: (typeof LOGO_TYPES)[number]; bytes: Buffer } | null {
+  const m = /^data:([a-z/+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(value.trim());
+  if (!m) return null;
+  const mime = m[1] as (typeof LOGO_TYPES)[number];
+  if (!LOGO_TYPES.includes(mime)) return null;
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(m[2], 'base64');
+  } catch {
+    return null;
+  }
+  if (!bytes.length || bytes.length > LOGO_MAX_BYTES) return null;
+  // Magic bytes, not the declared type: the content-type in a data URI is caller-supplied text, and
+  // this value is later served with that type on a real HTTP response (§14 attachment rules).
+  const isPng = bytes.length > 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isWebp = bytes.length > 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+  const actual = isPng ? 'image/png' : isJpeg ? 'image/jpeg' : isWebp ? 'image/webp' : null;
+  if (!actual || actual !== mime) return null;
+  return { mime, bytes };
+}
+
+/** Save or clear the logo. Throws on anything that is not an accepted image. */
+export function setSchoolLogo(dataUri: string | null): void {
+  if (!dataUri) {
+    setSetting(SETTING_KEYS.schoolLogo, '');
+    return;
+  }
+  if (!parseLogoDataUri(dataUri)) throw new Error('invalid_logo');
+  setSetting(SETTING_KEYS.schoolLogo, dataUri.trim());
+}
 
 export interface AutoInvoiceConfig {
   enabled: boolean;

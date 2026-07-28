@@ -38,7 +38,7 @@ async function familyWithInvoice(amount = 5000, due = '2026-06-01') {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: amount, cadence: 'monthly' });
-  const stu = await admin.people.studentCreate({ familyId: fam.id, firstName: 'Yusuf', lastName: 'Ismail', feePlanId: plan.id });
+  const stu = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-06', label: 'Tuition — Jun 2026', dueDate: due });
   studentOf.set(fam.id, stu.id);
   return fam.id;
@@ -184,7 +184,7 @@ describe('reconcile — with mocked Stripe search', () => {
     // actually unblocks it.
     const ts = new Date();
     db.insert(families).values({ id: 'fam_missing', name: 'Late', createdAt: ts, updatedAt: ts }).run();
-    db.insert(students).values({ id: 'stu_late', familyId: 'fam_missing', firstName: 'Late', lastName: 'Arrival', status: 'active', studentCode: 'LAT9001', createdAt: ts, updatedAt: ts }).run();
+    db.insert(students).values({ id: 'stu_late', familyId: 'fam_missing', fullName: 'Late Arrival', status: 'active', studentCode: 'LAT9001', createdAt: ts, updatedAt: ts }).run();
     const r2 = await recon.reconcile(sysActor);
     expect(r2.recorded).toBe(1);
     expect(rowsForPi('pi_bad')).toHaveLength(1);

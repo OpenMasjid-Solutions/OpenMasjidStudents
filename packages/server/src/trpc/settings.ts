@@ -8,7 +8,7 @@ import { isNotNull } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
 import { families, paymentMethods, autopayEnrollments } from '../db/schema';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount } from '../settings';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo } from '../settings';
 import { audit } from '../audit';
 import { mailAvailable } from '../mail/notify';
 import { portalBase } from '../auth/invites';
@@ -24,7 +24,26 @@ export const settingsRouter = router({
     currency: getCurrency(),
     selfRegistration: getSelfRegistrationEnabled(),
     externalPayments: getExternalPaymentsEnabled(),
+    logo: getSchoolLogo(),
   })),
+
+  /**
+   * Upload (or clear, with `null`) the school logo — it goes on printed statements and every
+   * outgoing email, so a family sees the madrasa's own mark rather than generic text.
+   *
+   * The browser sends a `data:` URI it built from the chosen file. The server re-validates by MAGIC
+   * BYTES rather than trusting the declared type, because this value is later served back over HTTP
+   * with that content type (§14). Anything else is refused with a sentence the admin can act on.
+   */
+  logoSet: adminProcedure.input(z.object({ dataUri: z.string().max(1_400_000).nullable() })).mutation(({ ctx, input }) => {
+    try {
+      setSchoolLogo(input.dataUri);
+    } catch {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'That file isn’t a PNG, JPEG or WebP image under 512 KB. Try exporting it again.' });
+    }
+    audit(auditActor(ctx), input.dataUri ? 'settings.logoSet' : 'settings.logoClear', { entity: 'settings' });
+    return { ok: true as const };
+  }),
 
   set: adminProcedure
     .input(z.object({ schoolName: z.string().trim().max(160).optional(), currency: z.enum(['usd', 'cad', 'gbp', 'eur']).optional(), selfRegistration: z.boolean().optional(), externalPayments: z.boolean().optional() }))
