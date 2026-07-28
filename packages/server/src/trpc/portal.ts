@@ -14,7 +14,7 @@ import { router, parentProcedure } from './trpc';
 import { db } from '../db';
 import { families, students, invoices, payments, paymentMethods, autopayEnrollments } from '../db/schema';
 import { familyBalance, studentBalance, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit } from '../billing/ledger';
-import { formatMoney } from '../db/money';
+import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getCurrency } from '../settings';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
 import { stripeClient, stripeReady, publishableKey } from '../payments/stripe';
@@ -82,7 +82,7 @@ export const portalRouter = router({
   /** Create a PaymentIntent for a chosen amount against one of the parent's families (§13.2). Card
    *  data never touches our server — the browser confirms with Elements, then calls confirmPayment
    *  (below) which records it. This just mints the intent against the admin-chosen Stripe account. */
-  createPayment: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64), amountCents: z.number().int().min(100).max(100_000_000) })).mutation(async ({ ctx, input }) => {
+  createPayment: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64), amountCents: z.number().int().min(MIN_PAYMENT_CENTS).max(100_000_000) })).mutation(async ({ ctx, input }) => {
     assertFamilyAccess(ctx, input.familyId);
     const stripe = stripeClient();
     if (!stripe) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Card payments are temporarily unavailable.' });

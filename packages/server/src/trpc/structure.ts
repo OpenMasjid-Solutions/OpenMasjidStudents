@@ -321,6 +321,9 @@ export const structureRouter = router({
         id: students.id,
         fullName: students.fullName,
         status: students.status,
+        /** For the Age column. Sent as the stored 'YYYY-MM-DD' and turned into years in the browser,
+         *  because "how old are they today" depends on the reader's date, not the server's. */
+        dob: students.dob,
         familyId: students.familyId,
         familyName: families.name,
         classId: students.classId,

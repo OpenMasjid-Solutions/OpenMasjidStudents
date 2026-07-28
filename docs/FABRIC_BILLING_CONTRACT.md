@@ -45,6 +45,20 @@ to confirm the name, then `lookup`. Until you ship that, your `lookup` calls **4
 silently half-work. `info`, `record-payment` and `check` are unchanged and still accept `"v": 1`, so an
 un-upgraded build keeps its money path; only the lookup screen breaks. Responses always carry `"v": 2`.
 
+### 11.0a Additive since v2 — 0.41.0 (no version bump, nothing breaks)
+
+Two new response fields. A consumer that ignores them keeps working exactly as it does today; a
+consumer that reads them can finally show a parent the truth about their account.
+
+| Field | Where | What it's for |
+| --- | --- | --- |
+| `allowAdvance`, `minAmountCents` | `info` | Paying when **nothing is due** is allowed. Offer the amount field at a zero balance; floor it at `minAmountCents`. See §11.2 `info`. |
+| `creditCents` | `lookup` — household, `matchedStudent`, and each child | Money already paid ahead. Pairs with `balanceCents`; at most one of the two is non-zero. See §11.2 `lookup`. |
+
+Both exist because a *derived* balance of `0` is ambiguous — square, paid ahead, or "you can't pay
+here" — and a consumer had no way to tell those apart. **Donations and Kiosk should pick both up
+together:** they are the two halves of one screen (what you owe / what you've paid ahead / pay anyway).
+
 ### 11.1 Transport (all four repos must agree)
 
 - Consumers (Donations, Kiosk) call the **OS broker**, never this app directly:
@@ -61,9 +75,22 @@ un-upgraded build keeps its money path; only the lookup screen breaks. Responses
 ```jsonc
 { "v": 2 }
 → { "v": 2, "enabled": true, "schoolName": "An-Noor Weekend School", "currency": "usd",
-    "tagline": "Pay tuition with your child's Student ID" }
+    "tagline": "Pay tuition with your child's Student ID",
+    "allowAdvance": true, "minAmountCents": 100 }
 // "enabled": false (setup incomplete or external payments turned off by admin) → consumers hide the campaign
 ```
+
+**`allowAdvance` (added 0.41.0, additive — no version bump).** A parent may pay **any amount at any
+time, including when nothing is due**. Tuition is not a donation appeal: families pay a term up front,
+hand over cash at the start of Ramadan, or clear the year in one go. Money beyond the open invoices is
+held as that child's credit and absorbed by their next invoice.
+
+**What a consumer must do:** offer a free amount field even when `lookup` returns `balanceCents: 0` —
+pre-fill the balance when there is one, but never disable the field or hide the campaign because the
+balance is zero. `minAmountCents` is the floor to enforce on that field (it matches the parent portal's
+own minimum and sits above what Stripe would refuse). This is advertised rather than assumed because a
+consumer has no other way to tell "nothing due" from "cannot pay here" — the two look identical in a
+`lookup` response.
 
 **`POST /fabric/billing/identify`** — echo back **who a typed Student ID belongs to**, so a consumer can
 ask "is this the right child?" before showing a balance or taking money. **Call this first**; it is the
@@ -98,18 +125,19 @@ paid alongside. **Breaking at v2:** `name` and `pin` are gone (§11.0).
 { "v": 2, "studentCode": "YUS1234" }
 // 200 (found)
 { "v": 2, "found": true,
-  "matchedStudent": { "id": "stu_1", "balanceCents": 20000 },   // the child whose ID was typed
+  // the child whose ID was typed
+  "matchedStudent": { "id": "stu_1", "balanceCents": 20000, "creditCents": 0 },
   "family": {
     "id": "fam_x1", "label": "Ismail family",
     // NEVER full last names, DOB, or contact info. `studentId` + `studentCode` let a kiosk offer a
     // SIBLING and pay for them without the parent typing that child's ID.
     // `balanceCents` per child is new at v2: with one bill per child, "pay for Maryam" needs to know
-    // what Maryam owes, not just the household total.
-    "students": [{ "studentId": "stu_1", "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I", "balanceCents": 20000 },
-                 { "studentId": "stu_2", "studentCode": "MAR8802", "firstName": "Maryam", "lastInitial": "I", "balanceCents": 15000 }],
-    "balanceCents": 35000, "currency": "usd",   // the household total — what a parent pays in one go
+    // what Maryam owes, not just the household total. `creditCents` is per child for the same reason.
+    "students": [{ "studentId": "stu_1", "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I", "balanceCents": 20000, "creditCents": 0 },
+                 { "studentId": "stu_2", "studentCode": "MAR8802", "firstName": "Maryam", "lastInitial": "I", "balanceCents": 0, "creditCents": 5000 }],
+    "balanceCents": 20000, "creditCents": 0, "currency": "usd",   // the household total — what a parent pays in one go
     // Every open invoice across the family, each tagged with the child it belongs to.
-    "openInvoices": [{ "id": "inv_9", "studentId": "stu_2", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 15000 }]
+    "openInvoices": [{ "id": "inv_9", "studentId": "stu_1", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 20000 }]
   } }
 // 200 (not found) — same shape, same latency, whatever actually mismatched (no enumeration oracle):
 // unknown ID, withdrawn student, locked ID, or external payments switched off
@@ -122,6 +150,27 @@ paid alongside. **Breaking at v2:** `name` and `pin` are gone (§11.0).
 > child's `studentId` from that list. Do not call `lookup` before the parent has confirmed the name —
 > the confirmation is the safeguard. A parent paying for several children is ONE charge with a
 > `students[]` breakdown on `record-payment` — see below.
+
+**`creditCents` (added 0.41.0, additive — no version bump).** Every place `lookup` reports a
+`balanceCents` it now also reports a `creditCents`: the household total, `matchedStudent`, and each
+child. **Both are non-negative, and at most one of the pair is ever non-zero.**
+
+Why it exists: a balance here is *derived* (`invoiced − paid`), so `balanceCents: 0` means two different
+things — square, or paid ahead. A consumer rendering only the balance tells a parent who has already
+paid the year that there is nothing to see, and once an advance settles its invoice the credit is the
+**only** signal left, since `openInvoices` is then empty.
+
+**What a consumer should render:**
+
+| State | Show |
+| --- | --- |
+| `balanceCents > 0` | "Balance due: $200.00" — pre-fill the amount field with it |
+| `creditCents > 0` | "$50.00 credit on the account" — amount field blank, still payable (`info.allowAdvance`) |
+| both `0` | "Nothing due" — amount field blank, still payable |
+
+Per-child values matter for the same reason the per-child balances do: with one bill per child, a
+household total cannot say *which* child is ahead. Nothing is stored — the credit is derived like the
+balance, and the child's next invoice absorbs it.
 
 **`POST /fabric/billing/record-payment`** — record an external payment. **Idempotent.** Still accepts
 `"v": 1` so an un-upgraded consumer never loses its money path.

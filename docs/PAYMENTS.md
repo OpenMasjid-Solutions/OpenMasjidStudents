@@ -29,6 +29,22 @@
 - **13.5 Failure doctrine** — no tunnel/webhook → reconciliation (§11.4) within a day; Stripe down →
   pay-now + autopay pause visibly, everything else unaffected.
 
+## Paying ahead (every channel)
+
+A parent may pay **any amount at any time, including when nothing is due** — a term up front, cash at
+the start of Ramadan, the whole year in one go. There is no stored-credit table: `balance =
+invoiced − paid`, so money beyond the open invoices simply reads as that child's credit, and
+`ledger.reallocateStudent` hands it to the next invoice the moment one exists.
+
+The floor is `MIN_PAYMENT_CENTS` in `db/money.ts` — **one** constant, enforced on portal pay-now and
+advertised to the kiosk and donation site as `info.minAmountCents`, so the three cannot drift apart. It
+is deliberately NOT enforced on `record-payment`, which writes down money a consumer has *already*
+taken; refusing a 50¢ charge somebody really made would lose it, not prevent it.
+
+Consumer-side note: a kiosk or donation site must offer its amount field even at a zero balance. The
+`info.allowAdvance` flag exists to tell it so — see
+[`FABRIC_BILLING_CONTRACT.md`](./FABRIC_BILLING_CONTRACT.md) §11.2.
+
 ## Ledger invariants (see `billing/ledger.ts`)
 
 - All money in **integer cents**. Balances **derived, never stored**. Payments **immutable** (corrections = reversal rows).

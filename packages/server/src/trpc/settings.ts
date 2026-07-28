@@ -10,11 +10,10 @@ import { db } from '../db';
 import { families, paymentMethods, autopayEnrollments } from '../db/schema';
 import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo } from '../settings';
 import { audit } from '../audit';
-import { mailAvailable } from '../mail/notify';
+import { mailAvailable, sendTestEmail } from '../mail/notify';
 import { portalBase } from '../auth/invites';
-import { cachedPublicUrl, sendPlatformEmail } from '../fabric/platform';
+import { cachedPublicUrl } from '../fabric/platform';
 import { fabricConfigured, config } from '../config';
-import { testEmail } from '../mail/templates';
 import { stripeReady, stripeAccountId, loadStripeKeys } from '../payments/stripe';
 import { fetchStripeAccounts } from '../fabric/platform';
 
@@ -92,13 +91,16 @@ export const settingsRouter = router({
    *
    * The platform answers HTTP 200 with `{sent:false, reason}` when it has no provider configured, so a
    * failure here is reported as a real failure rather than a cheerful success.
+   *
+   * It goes through `sendTestEmail` in mail/notify.ts rather than composing here, so the test carries
+   * the school's logo exactly like a real invite or receipt — the whole point is seeing what a parent
+   * will see.
    */
   mailTest: adminProcedure.input(z.object({ to: z.string().trim().email().max(320) })).mutation(async ({ ctx, input }) => {
     if (!fabricConfigured()) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'This app isn’t connected to OpenMasjidOS yet, so it can’t send email.' });
     }
-    const m = testEmail(getSchoolName());
-    const sent = await sendPlatformEmail(input.to, m.subject, m.text, m.html);
+    const sent = await sendTestEmail(input.to);
     audit(auditActor(ctx), 'settings.mailTest', { entity: 'settings', detail: { sent } });
     if (!sent) {
       throw new TRPCError({

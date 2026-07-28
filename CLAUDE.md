@@ -54,7 +54,7 @@ Think: **"the madrasa's tuition & fee desk, in one container the masjid owns —
 ### ✅ In scope (v1)
 
 **People (the billing subjects)**
-- Students (**one `fullName` field** — not a first/last pair, since many madrasa names do not split into two western halves; DOB optional, status active/withdrawn, notes). **Adding people starts with a STUDENT** (`people.studentAdd`) — there is no "add a family" step and nobody is ever asked to NAME a family (0.39.0). A household is formed by linking a new child to an existing sibling (`linkToStudentId` when adding, `people.studentLinkSiblings` afterwards — which MERGES the two households; `studentUnlinkSiblings` undoes it). Its label is DERIVED from the children's surnames (`familyLabel`, in people/household.ts): one surname → "Ismail family", several → "Farooqi / Ismail", sorted so it never depends on who was added first. **guardians** (name, phone, email) attach to the HOUSEHOLD, which is exactly why linking a sibling is what makes the parent details apply to them — nothing is copied per student. **emergency contacts** (flag guardians and/or add extra contacts per household).
+- Students (**one `fullName` field** — not a first/last pair, since many madrasa names do not split into two western halves; DOB optional, status active/withdrawn, notes). **Adding people starts with a STUDENT** (`people.studentAdd`) — there is no "add a family" step and nobody is ever asked to NAME a family (0.39.0). A household is formed by linking a new child to an existing sibling (`linkToStudentId` when adding, `people.familyAddSibling` afterwards — pick the household on screen plus the child to bring into it, which MERGES the two households; `studentUnlinkSiblings` undoes it). Its label is DERIVED from the children's surnames (`familyLabel`, in people/household.ts): one surname → "Ismail family", several → "Farooqi / Ismail", sorted so it never depends on who was added first. **guardians** (name, phone, email) attach to the HOUSEHOLD, which is exactly why linking a sibling is what makes the parent details apply to them — nothing is copied per student. **emergency contacts** (flag guardians and/or add extra contacts per household).
 - **Student IDs**: every student gets an **auto-generated Student ID at registration** — the first three letters of their name + 4 digits (`YUS1234`), UNIQUE per install. It is how a parent pays at the Donations site / Kiosk and one half of the portal self-registration door. **There is no PIN** (removed v0.39.0): the only thing a stranger with someone else’s ID can do is pay their tuition, so the compensating controls are an on-screen name confirmation plus a hard per-ID lockout, not a shared secret (§11.2, §14). IDs are printed on statements next to each child.
 
 **Finance (billing — the whole app)**
@@ -374,8 +374,11 @@ The compose **must reference** the Fabric env vars in `environment:` (`${VAR}` s
 ```jsonc
 { "v": 1 }
 → { "v": 1, "enabled": true, "schoolName": "An-Noor Weekend School", "currency": "usd",
-    "tagline": "Pay tuition with your child's Student ID" }
+    "tagline": "Pay tuition with your child's Student ID",
+    "allowAdvance": true, "minAmountCents": 100 }   // 0.41.0, additive
 // "enabled": false (setup incomplete or external payments turned off by admin) → consumers hide the campaign
+// allowAdvance: a parent may pay when NOTHING is due (a term up front, a Ramadan lump sum) — consumers
+// must offer the amount field at a zero balance, floored at minAmountCents. See the contract doc §11.0a.
 ```
 
 **`POST /fabric/billing/identify`** — echo back WHO a typed Student ID belongs to, so a consumer can ask "is this the right child?" **before** any balance appears. Call it first; that confirmation is what replaced the PIN. Returns a first name + last initial and nothing else — no balance, no invoices, no siblings, not even the family id.
@@ -394,13 +397,17 @@ The compose **must reference** the Fabric env vars in `environment:` (`${VAR}` s
 // so probing through whichever endpoint answers faster gains nothing.
 // 200 (found)
 { "v": 2, "found": true,
-  "matchedStudent": { "id": "stu_1" },
+  "matchedStudent": { "id": "stu_1", "balanceCents": 20000, "creditCents": 0 },
   "family": {
     "id": "fam_x1", "label": "Ismail family",
-    "students": [{ "firstName": "Yusuf", "lastInitial": "I" }],   // NEVER full last names, DOB, or contact info
-    "balanceCents": 35000, "currency": "usd",
-    "openInvoices": [{ "id": "inv_9", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 15000 }]
+    // NEVER full last names, DOB, or contact info. Per-child balance + credit, because bills are per child.
+    "students": [{ "studentId": "stu_1", "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I", "balanceCents": 20000, "creditCents": 0 }],
+    "balanceCents": 20000, "creditCents": 0, "currency": "usd",
+    "openInvoices": [{ "id": "inv_9", "studentId": "stu_1", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 20000 }]
   } }
+// creditCents (0.41.0, additive): money paid ahead. Non-negative, and at most one of the pair is
+// non-zero — a DERIVED balance of 0 means "square" OR "paid ahead", and once an advance settles its
+// invoice the credit is the only signal left (openInvoices is empty by then).
 // 200 (not found) — same shape, same latency, whatever actually mismatched (no enumeration oracle)
 { "v": 2, "found": false }
 ```

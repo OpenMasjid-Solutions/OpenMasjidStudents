@@ -9,7 +9,7 @@
  *    rejected file)
  *  - classes and fee plans are never invented from a spreadsheet — an unknown name is a row error
  *  - EVERY ROW GETS ITS OWN HOUSEHOLD. The import does not work siblings out from the file and never
- *    joins an existing family; that is done afterwards with `studentLinkSiblings`, where the decision
+ *    joins an existing family; that is done afterwards with `familyAddSibling`, where the decision
  *    is visible on a record instead of buried in a 200-row spreadsheet.
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
@@ -208,7 +208,7 @@ describe('commit is all-or-nothing', () => {
     expect((await admin.billing.studentBilling({ studentId: bilal.id })).invoices[0].totalCents).toBe(35000);
 
     // …and once the office links the two Ismails, one balance covers both.
-    await admin.people.studentLinkSiblings({ studentId: yusuf.id, siblingStudentId: sara.id });
+    await admin.people.familyAddSibling({ familyId: sara.familyId, studentId: yusuf.id });
     expect((await admin.billing.familyBilling({ familyId: sara.familyId })).balance.owedCents).toBe(105000);
   });
 
@@ -260,11 +260,11 @@ describe('walls', () => {
     await admin.billing.generateFamily({ familyId: a.familyId, periodKey: '2026-07', label: 'Jul' });
     const invId = (await admin.billing.studentBilling({ studentId: a.id })).invoices[0].id;
 
-    await expect(caller('finance').people.studentLinkSiblings({ studentId: a.id, siblingStudentId: b.id })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller('finance').people.familyAddSibling({ familyId: b.familyId, studentId: a.id })).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
-    const r = await admin.people.studentLinkSiblings({ studentId: a.id, siblingStudentId: b.id });
+    const r = await admin.people.familyAddSibling({ familyId: b.familyId, studentId: a.id });
     expect(r.merged).toBe(true);
-    expect(r.familyId).toBe(b.familyId); // the sibling's household is the one that survives
+    expect(r.familyId).toBe(b.familyId); // the household on screen is the one that survives
 
     // The child's own record is untouched — same invoice, same id, still owed. Money is per student,
     // so a regrouping of households cannot rewrite it.

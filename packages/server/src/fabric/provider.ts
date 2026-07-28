@@ -28,7 +28,7 @@ import { config } from '../config';
 import { classifyOrigin } from '../security/origin';
 import { codeLookupLimiter } from '../security/rateLimit';
 import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit } from '../billing/ledger';
-import { formatMoney } from '../db/money';
+import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../settings';
 import { audit } from '../audit';
 import { notifyPlatform, raiseAlert } from './platform';
@@ -86,12 +86,33 @@ export function registerFabricProvider(app: FastifyInstance): void {
     return true;
   };
 
-  // info — what a consumer needs to render the tuition campaign shell.
+  /**
+   * info — what a consumer needs to render the tuition campaign shell.
+   *
+   * `allowAdvance` is the answer to "may a parent pay when nothing is due?" — and it is YES, always.
+   * Tuition is not a donation appeal: parents pay a term up front, hand over cash at the start of
+   * Ramadan, or clear the year in one go. This app has recorded that correctly since 0.40.0 (money
+   * beyond the open invoices sits as that child's credit and the next invoice absorbs it), so a
+   * consumer that greys out its amount field at a zero balance is refusing money the school wants.
+   *
+   * It is advertised rather than assumed because a consumer has no other way to know: `lookup`
+   * returning `balanceCents: 0` looks exactly like "there is nothing to pay here". `minAmountCents`
+   * is the floor a consumer should put on its amount input — matching the parent portal's own
+   * minimum, and comfortably above what Stripe will refuse to charge.
+   */
   app.post('/fabric/billing/info', async (req, reply) => {
     if (!gate(req, reply)) return;
     const parsed = z.object({ v: V }).safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'invalid', message: 'Bad request.' } });
-    return reply.send({ v: CONTRACT_V, enabled: getExternalPaymentsEnabled(), schoolName: getSchoolName(), currency: getCurrency(), tagline: 'Pay tuition with your child’s Student ID' });
+    return reply.send({
+      v: CONTRACT_V,
+      enabled: getExternalPaymentsEnabled(),
+      schoolName: getSchoolName(),
+      currency: getCurrency(),
+      tagline: 'Pay tuition with your child’s Student ID',
+      allowAdvance: true,
+      minAmountCents: MIN_PAYMENT_CENTS,
+    });
   });
 
   /**
@@ -136,7 +157,8 @@ export function registerFabricProvider(app: FastifyInstance): void {
   });
 
   /**
-   * lookup — resolve a typed student ID to a balance + the siblings it can be paid alongside.
+   * lookup — resolve a typed student ID to a balance (or a credit) + the siblings it can be paid
+   * alongside.
    *
    * v2: the ID is the whole credential. There is no `name` and no `pin` any more — a consumer calls
    * `identify` first so the parent confirms the child by name, then calls this. Uniform `found:false`
@@ -185,10 +207,11 @@ export function registerFabricProvider(app: FastifyInstance): void {
       .map((i) => ({ id: i.id, studentId: i.studentId, label: i.label, dueDate: i.dueDate, balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id) }))
       .filter((i) => i.balanceCents > 0);
 
+    const matched = studentBalance(student.id);
     return reply.send({
       v: CONTRACT_V,
       found: true,
-      matchedStudent: { id: student.id, balanceCents: studentBalance(student.id).owedCents },
+      matchedStudent: { id: student.id, balanceCents: matched.owedCents, creditCents: matched.creditCents },
       family: {
         id: fam?.id ?? student.familyId,
         label: fam?.name ?? '',
@@ -197,14 +220,30 @@ export function registerFabricProvider(app: FastifyInstance): void {
         // kiosk can show a sibling and pay for them WITHOUT the parent typing that child's ID.
         // `balanceCents` per child is new at v2: with one bill per child, "pay for Maryam" needs to
         // know what Maryam owes, not just the household total.
-        students: kids.map((k) => ({
-          studentId: k.id,
-          studentCode: k.studentCode,
-          firstName: givenName(k.fullName),
-          lastInitial: lastInitial(k.fullName),
-          balanceCents: studentBalance(k.id).owedCents,
-        })),
+        students: kids.map((k) => {
+          const b = studentBalance(k.id);
+          return {
+            studentId: k.id,
+            studentCode: k.studentCode,
+            firstName: givenName(k.fullName),
+            lastInitial: lastInitial(k.fullName),
+            balanceCents: b.owedCents,
+            creditCents: b.creditCents,
+          };
+        }),
         balanceCents: famBal.owedCents,
+        /**
+         * Money paid beyond what has been billed — a term paid up front, a Ramadan lump sum.
+         *
+         * Sent alongside `balanceCents` because ONE number cannot carry both without lying: this app
+         * derives a balance as invoiced − paid, so a family £150 ahead and a family exactly square
+         * both come out as `balanceCents: 0`, and a kiosk showing only that tells a parent who has
+         * already paid the year that they owe nothing — true, but not what they came to check.
+         *
+         * Both fields are non-negative and at most one is ever non-zero. There is no stored credit
+         * table: it is derived like everything else, and the child's next invoice absorbs it.
+         */
+        creditCents: famBal.creditCents,
         currency,
         openInvoices: open,
       },

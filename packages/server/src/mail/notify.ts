@@ -8,7 +8,7 @@
  */
 import { getSchoolName, getSchoolLogo } from '../settings';
 import { guardianEmailsForFamily } from './recipients';
-import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail, setEmailLogoUrl } from './templates';
+import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail, testEmail, setEmailLogoUrl } from './templates';
 import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
 import { fabricConfigured } from '../config';
@@ -102,6 +102,22 @@ export async function sendReceipt(familyId: string, amountFormatted: string): Pr
   let n = 0;
   for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
   return n;
+}
+
+/**
+ * The admin's "send test" probe — through here, not straight to the transport.
+ *
+ * The point of the test is to show an admin what a parent will actually receive, so it has to be built
+ * the same way every real email is: same shell, same logo refresh. Sent from the router instead, it
+ * quietly came out as the only email with no letterhead, and the logo looked broken when it wasn't.
+ *
+ * Returns false when the platform accepted the call but did not send (§ mail is a capability signal,
+ * not proof of delivery) — the caller turns that into an actionable message.
+ */
+export async function sendTestEmail(to: string): Promise<boolean> {
+  refreshEmailLogo();
+  const m = testEmail(getSchoolName());
+  return deliver(to, m.subject, m.text, m.html);
 }
 
 /** Email an autopay-failure notice to a family's guardians (§13.3). `final` = the third strike (autopay

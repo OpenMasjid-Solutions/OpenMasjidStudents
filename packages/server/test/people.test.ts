@@ -119,6 +119,26 @@ describe('records + audit', () => {
     // linking the same guardian to the same family twice is a conflict
     await expect(admin.people.guardianLinkFamily({ guardianId: g.id, familyId: famB.id })).rejects.toMatchObject({ code: 'CONFLICT' });
   });
+
+  /** The relationship is a property of the guardian↔household LINK, not of the person — the same
+   *  father can be "father" in one household and nothing in particular in another. */
+  it('edits the relation for ONE household, leaving the same guardian’s other household alone', async () => {
+    const admin = caller('admin');
+    const famA = await admin.people.familyCreate({ name: 'A' });
+    const famB = await admin.people.familyCreate({ name: 'B' });
+    const g = await admin.people.guardianCreate({ familyId: famA.id, name: 'Abu Yusuf', relation: 'other' });
+    await admin.people.guardianLinkFamily({ guardianId: g.id, familyId: famB.id, relation: 'relative' });
+
+    await admin.people.guardianUpdate({ id: g.id, phone: '(555) 123-4567', familyId: famA.id, relation: 'father' });
+    expect((await admin.people.familyGet({ id: famA.id })).guardians[0]).toMatchObject({ relation: 'father', phone: '(555) 123-4567' });
+    expect((await admin.people.familyGet({ id: famB.id })).guardians[0].relation).toBe('relative');
+
+    // A relation with no household to apply it to is a caller bug, not a silent no-op.
+    await expect(admin.people.guardianUpdate({ id: g.id, relation: 'mother' })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // ...and neither is one for a household the guardian is not on.
+    const famC = await admin.people.familyCreate({ name: 'C' });
+    await expect(admin.people.guardianUpdate({ id: g.id, familyId: famC.id, relation: 'mother' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
 });
 
 /**

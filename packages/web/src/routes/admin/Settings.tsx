@@ -198,7 +198,15 @@ export function Settings() {
               <div className="field" style={{ flex: '0 0 auto' }}>
                 <span className="label">{t('settings.logo')}</span>
                 {appSettings.data.logo ? (
-                  <img src={appSettings.data.logo} alt="" style={{ maxHeight: '3rem', maxWidth: '10rem', width: 'auto', height: 'auto', display: 'block' }} />
+                  // `alignSelf` is the fix, not decoration: `.field` is a flex COLUMN, so the default
+                  // `stretch` was setting the image's width to the field's while `max-height` held the
+                  // height down — which is exactly what squashed a wide logo. `object-fit` keeps it
+                  // honest if a future layout constrains both axes.
+                  <img
+                    src={appSettings.data.logo}
+                    alt=""
+                    style={{ maxHeight: '3rem', maxWidth: '10rem', width: 'auto', height: 'auto', display: 'block', alignSelf: 'flex-start', objectFit: 'contain' }}
+                  />
                 ) : (
                   <span className="muted" style={{ fontSize: '0.88rem' }}>{t('settings.logoNone')}</span>
                 )}
@@ -213,6 +221,10 @@ export function Settings() {
               )}
             </div>
             {logoMsg && <p className="form-error">{logoMsg}</p>}
+            {/* The one case where an uploaded logo genuinely won't appear: an email has to LOAD the
+                image from a web address, and there isn't one until Remote access is on. Said here
+                rather than left to be discovered as "the logo is broken in email". */}
+            {appSettings.data.logo && !link.data?.publicUrl && <p className="hint">{t('settings.logoEmailNeedsUrl')}</p>}
           </>
         )}
       </section>

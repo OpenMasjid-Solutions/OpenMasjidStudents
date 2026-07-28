@@ -14,6 +14,7 @@ import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Users, Upload } from 'lucide-react';
 import { staggerContainer, staggerItem } from '../../lib/motion';
+import { ageFromDob } from '../../lib/age';
 import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
 import { useWindows } from '../../components/Windows';
@@ -24,7 +25,10 @@ type Row = {
   id: string;
   fullName: string;
   status: 'active' | 'withdrawn';
+  dob: string | null;
   familyId: string;
+  /** Not a column — the household label titles the window a row opens, and search matches it so
+   *  typing a surname still finds every sibling. */
   familyName: string;
   classId: string | null;
   className: string | null;
@@ -254,7 +258,9 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
                       <thead>
                         <tr>
                           <th>{t('students.name')}</th>
-                          <th>{t('students.family')}</th>
+                          {/* Age, not the date of birth: on a roster the useful question is "is this
+                              child in the right class", and that is a number you can scan down. */}
+                          <th>{t('students.age')}</th>
                           <th>{t('students.class')}</th>
                           <th>{t('students.status')}</th>
                         </tr>
@@ -267,7 +273,7 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
                                 {s.fullName}
                               </button>
                             </td>
-                            <td>{s.familyName}</td>
+                            <td>{ageFromDob(s.dob) ?? <span className="muted">—</span>}</td>
                             <td>
                               {readOnly ? (
                                 <span>{s.className ?? t('students.unplaced')}</span>

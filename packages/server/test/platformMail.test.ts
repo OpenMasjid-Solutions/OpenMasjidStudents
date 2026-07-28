@@ -152,6 +152,44 @@ describe('an unsent platform email must not be reported as emailed', () => {
   });
 });
 
+/**
+ * The admin's test send has one job: show what a parent will receive. It used to be composed in the
+ * settings router, which meant it was the ONE email built without refreshing the logo — so an admin
+ * who had just uploaded their logo got a test with no letterhead and reasonably concluded the upload
+ * was broken.
+ */
+describe('the test email is built like a real one', () => {
+  beforeEach(async () => {
+    // An email logo has to be an absolute URL (mail clients drop `data:` images), so the public URL
+    // must be known first — otherwise this passes for the wrong reason.
+    const info = await platform.refreshSiteInfo();
+    expect(info?.publicUrl).toBe('https://masjid.test/students');
+    calls = [];
+  });
+
+  it('carries the school logo in the same shell as an invite or a receipt', async () => {
+    const settings = await import('../src/settings');
+    const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    settings.setSchoolLogo(`data:image/png;base64,${Buffer.concat([PNG, Buffer.alloc(16, 7)]).toString('base64')}`);
+    try {
+      reply = { status: 200, json: { sent: true } };
+      expect(await notify.sendTestEmail('admin@test.org')).toBe(true);
+      const html = String(calls.at(-1)?.body.html ?? '');
+      expect(html).toContain('https://masjid.test/students/api/logo');
+      // Same shell as every other template, not a bare line of text.
+      expect(html).toContain('Email is working');
+    } finally {
+      settings.setSchoolLogo(null);
+    }
+  });
+
+  it('has no image at all — never a broken one — when no logo is set', async () => {
+    reply = { status: 200, json: { sent: true } };
+    await notify.sendTestEmail('admin@test.org');
+    expect(String(calls.at(-1)?.body.html ?? '')).not.toContain('<img');
+  });
+});
+
 describe('POST /api/fabric/alert — the id field is `alert`, not `id`', () => {
   it('puts the alert id in `alert` (sending `id` makes the platform 400 and the alert vanish)', async () => {
     reply = { status: 200, json: { delivered: true } };

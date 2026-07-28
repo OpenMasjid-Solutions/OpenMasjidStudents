@@ -44,6 +44,14 @@ const OPT_NAME = z.string().trim().max(120).optional();
 const PHONE = z.string().trim().max(40).optional();
 const EMAIL = z.string().trim().max(200).optional();
 const NOTES = z.string().max(4000).optional();
+/** A guardian's or contact's relationship to the child.
+ *
+ *  Free text on purpose, though the guardian form now offers a fixed FOUR (father / mother /
+ *  relative / other, stored as those lowercase codes and translated for display). Two reasons not to
+ *  make this a zod enum: rows written before 0.41.0 hold whatever the office typed ("Dad", "Uncle"),
+ *  and a stricter column would make editing such a guardian's phone number fail on a field nobody
+ *  touched. Emergency contacts stay genuinely free text — "neighbour", "aunt on the next street" is
+ *  the useful answer there, not one of four. */
 const RELATION = z.string().trim().max(60).optional();
 const DOB = z
   .string()
@@ -368,14 +376,19 @@ export const peopleRouter = router({
     }),
 
   /**
-   * Link two students as siblings. This replaced "move to family": an office thinks in terms of
-   * "these two are brother and sister", never "move this child into household fam_x1".
+   * Add a student to THIS household as a sibling — the one sibling control the office uses.
    *
-   * It MERGES the two households rather than moving one child, because sibling-hood is transitive —
-   * if A and B are siblings then everyone already in A's household is in B's too. Guardians and
-   * emergency contacts hang off the household, so merging is exactly what makes one child's parent
-   * details apply to the other; nothing is copied per-student. The emptied household is then removed,
-   * so linking cannot leave a stranded record behind.
+   * It takes the household you are already looking at plus the child to bring into it, because that
+   * is the whole of what the office knows: you have a record open, and this other child belongs on
+   * it. (Until 0.41.0 this asked for a source student as well — "which of these is the sibling of
+   * whom" — which was a question with no useful answer: every student on the record shares one
+   * household already, so any of them gave the same result.)
+   *
+   * It MERGES the joining child's household into this one rather than moving the child alone, because
+   * sibling-hood is transitive — if A and B are siblings then everyone already in A's household is in
+   * B's too. Guardians and emergency contacts hang off the household, so merging is exactly what makes
+   * this family's parent details apply to the child who joins; nothing is copied per-student. The
+   * emptied household is then removed, so linking cannot leave a stranded record behind.
    *
    * Invoices and payments belong to the STUDENT (0.39.0), so billing history follows each child
    * untouched — no money row is rewritten.
@@ -385,18 +398,14 @@ export const peopleRouter = router({
    * behind an office's back. Rare in practice: linking happens when children are enrolled, long
    * before a parent saves a card.
    */
-  studentLinkSiblings: adminProcedure.input(z.object({ studentId: ID, siblingStudentId: ID })).mutation(({ ctx, input }) => {
-    if (input.studentId === input.siblingStudentId) {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Pick a different student to link them to.' });
-    }
+  familyAddSibling: adminProcedure.input(z.object({ familyId: ID, studentId: ID })).mutation(({ ctx, input }) => {
     const s = requireStudent(input.studentId);
-    const sib = requireStudent(input.siblingStudentId);
-    if (s.familyId === sib.familyId) return { ok: true as const, merged: false, familyId: s.familyId };
+    const to = requireFamily(input.familyId).id;
+    if (s.familyId === to) return { ok: true as const, merged: false, familyId: to };
 
-    // `s` joins `sib`'s household — keeping the target stable means linking a new child to an
-    // established family never disturbs that family's id, guardians or Stripe customer.
+    // The household on screen is the one that SURVIVES: it is the record the office is reading, with
+    // the guardians and Stripe customer they can see. The joining child's household is absorbed.
     const from = s.familyId;
-    const to = sib.familyId;
     const blockers: string[] = [];
     const fromFam = requireFamily(from);
     if (fromFam.stripeCustomerId) blockers.push('a Stripe customer');
@@ -406,7 +415,7 @@ export const peopleRouter = router({
     if (blockers.length) {
       throw new TRPCError({
         code: 'CONFLICT',
-        message: `This student’s household has ${blockers.join(' and ')} set up, so it can’t be merged automatically. Remove those first, or link the other student instead.`,
+        message: `This student’s household has ${blockers.join(' and ')} set up, so it can’t be merged automatically. Remove those first — or open that household and add these children to it instead, which merges it the other way round.`,
       });
     }
 
@@ -562,8 +571,11 @@ export const peopleRouter = router({
       return { id };
     }),
 
+  /** Edit a guardian. `relation` needs a `familyId` alongside it: a guardian can span households
+   *  (a father of children in two families after a remarriage), so the relationship is a property of
+   *  the LINK, not of the person — updating it without saying which household would be guesswork. */
   guardianUpdate: adminProcedure
-    .input(z.object({ id: ID, name: OPT_NAME, phone: PHONE, email: EMAIL }))
+    .input(z.object({ id: ID, name: OPT_NAME, phone: PHONE, email: EMAIL, familyId: ID.optional(), relation: RELATION }))
     .mutation(({ ctx, input }) => {
       const g = db.select().from(guardians).where(eq(guardians.id, input.id)).get();
       if (!g) throw new TRPCError({ code: 'NOT_FOUND', message: 'Guardian not found.' });
@@ -572,6 +584,19 @@ export const peopleRouter = router({
       if (input.phone !== undefined) patch.phone = blankToNull(input.phone);
       if (input.email !== undefined) patch.email = blankToNull(input.email);
       db.update(guardians).set(patch).where(eq(guardians.id, g.id)).run();
+      if (input.relation !== undefined) {
+        if (!input.familyId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Say which household the relationship is in.' });
+        const link = db
+          .select({ guardianId: guardianFamilies.guardianId })
+          .from(guardianFamilies)
+          .where(and(eq(guardianFamilies.guardianId, g.id), eq(guardianFamilies.familyId, input.familyId)))
+          .get();
+        if (!link) throw new TRPCError({ code: 'NOT_FOUND', message: 'That guardian isn’t on this household.' });
+        db.update(guardianFamilies)
+          .set({ relation: blankToNull(input.relation) })
+          .where(and(eq(guardianFamilies.guardianId, g.id), eq(guardianFamilies.familyId, input.familyId)))
+          .run();
+      }
       audit(auditActor(ctx), 'guardian.update', { entity: 'guardian', entityId: g.id });
       return { ok: true as const };
     }),

@@ -9,8 +9,22 @@
  *  server enforces the same walls; this stops finance being shown controls that would only fail. */
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Pencil } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
+import { formatUsPhone } from '../../lib/phone';
+
+/** What a guardian is to the child. Four choices rather than an open box: an office typing "Dad",
+ *  "father" and "Father" into three records made the column unusable for anything. Stored as these
+ *  lowercase codes and translated for display, so the DB never holds a locale-specific label. */
+const RELATIONS = ['father', 'mother', 'relative', 'other'] as const;
+
+/** A relation for display. Anything not in the list — free text from before 0.41.0 — is shown as it
+ *  was typed, because "Uncle" is still the truth about that guardian. */
+function relationLabel(t: TFunction, raw: string | null | undefined): string {
+  if (!raw) return '';
+  return t(`relation.${raw}`, { defaultValue: raw });
+}
 
 export function FamilyDetail({ familyId, readOnly = false }: { familyId: string; readOnly?: boolean }) {
   const { t } = useTranslation();
@@ -36,7 +50,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const [mailNote, setMailNote] = useState<Record<string, string>>({});
   /** The guardian being edited. Editing matters beyond tidiness: a reset can only be emailed to a
    *  guardian who HAS an email, and without this there was no way to add one. */
-  const [guardianEdit, setGuardianEdit] = useState<{ id: string; name: string; phone: string; email: string } | null>(null);
+  const [guardianEdit, setGuardianEdit] = useState<{ id: string; name: string; phone: string; email: string; relation: string } | null>(null);
   /** Why a delete was refused — shown as text, since it is the useful half of the interaction. */
   const [deleteErr, setDeleteErr] = useState('');
 
@@ -44,24 +58,22 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   // invoice generation, which is how a child stops being billed without anyone noticing.
   const feePlans = trpc.billing.feePlanList.useQuery();
 
-  /** Linking siblings, which replaced "move to family". An office thinks "these two are brother and
-   *  sister", never "move this child into household fam_x1" — so the control names another STUDENT.
-   *  Merging the two households is what makes one child's guardians apply to the other. */
+  /** Adding a sibling to THIS household — one choice, the child to bring in. It used to ask which
+   *  student on this record they were a sibling OF, which was a question with no useful answer: every
+   *  child here already shares one household, so any answer gave the same result. */
   const siblingOptions = trpc.people.siblingOptions.useQuery();
-  const linkSiblings = trpc.people.studentLinkSiblings.useMutation();
+  const addSibling = trpc.people.familyAddSibling.useMutation();
   const unlinkSiblings = trpc.people.studentUnlinkSiblings.useMutation();
-  const [linkFor, setLinkFor] = useState('');
-  const [linkTo, setLinkTo] = useState('');
+  const [siblingId, setSiblingId] = useState('');
   const [linkErr, setLinkErr] = useState('');
 
-  async function submitLink(e: FormEvent) {
+  async function submitAddSibling(e: FormEvent) {
     e.preventDefault();
-    if (!linkFor || !linkTo) return;
+    if (!siblingId) return;
     setLinkErr('');
     try {
-      await linkSiblings.mutateAsync({ studentId: linkFor, siblingStudentId: linkTo });
-      setLinkFor('');
-      setLinkTo('');
+      await addSibling.mutateAsync({ familyId, studentId: siblingId });
+      setSiblingId('');
       await refresh();
       await utils.people.siblingOptions.invalidate();
       await utils.structure.studentsByClass.invalidate();
@@ -167,6 +179,10 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
       // '' clears the field server-side (blankToNull), which is how a wrong number is removed.
       phone: guardianEdit.phone,
       email: guardianEdit.email.trim(),
+      // The relationship belongs to the guardian↔household LINK, so the server needs to know which
+      // household — a guardian can be on more than one.
+      familyId,
+      relation: guardianEdit.relation,
     });
     setGuardianEdit(null);
     await refresh();
@@ -271,8 +287,8 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
             {guardians.map((g) => (
               <div key={g.guardianId} className="glass-inset" style={{ padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-button)', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <strong>{g.name}</strong>
-                {g.relation && <span className="muted">· {g.relation}</span>}
-                {g.phone && <span className="muted">· {g.phone}</span>}
+                {g.relation && <span className="muted">· {relationLabel(t, g.relation)}</span>}
+                {g.phone && <span className="muted">· {formatUsPhone(g.phone)}</span>}
                 {g.email && <span className="muted">· {g.email}</span>}
                 {g.isEmergencyContact && <span className="chip is-accent">{t('directory.emergency')}</span>}
                 {/* Whether they took up a portal account decides which action is useful: an invite for
@@ -288,7 +304,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 {/* Editing a guardian is a people write, so admin only. Invites and resets below are
                     NOT — finance runs parent accounts (§5), so those stay available to them. */}
                 {!readOnly && (
-                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGuardianEdit({ id: g.guardianId, name: g.name, phone: g.phone ?? '', email: g.email ?? '' })}>
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGuardianEdit({ id: g.guardianId, name: g.name, phone: formatUsPhone(g.phone), email: g.email ?? '', relation: g.relation ?? '' })}>
                     <Pencil size={13} /> {t('common.edit')}
                   </button>
                 )}
@@ -318,7 +334,19 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
         {guardianEdit && (
           <form className="inline-form glass-inset" onSubmit={saveGuardian}>
             <div className="field"><label className="label">{t('directory.name')}</label><input className="input glass-inset" value={guardianEdit.name} onChange={(e) => setGuardianEdit({ ...guardianEdit, name: e.target.value })} autoFocus /></div>
-            <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" value={guardianEdit.phone} onChange={(e) => setGuardianEdit({ ...guardianEdit, phone: e.target.value })} /></div>
+            <div className="field">
+              <label className="label">{t('directory.relation')}</label>
+              <select className="input glass-inset" value={guardianEdit.relation} onChange={(e) => setGuardianEdit({ ...guardianEdit, relation: e.target.value })}>
+                <option value="">—</option>
+                {/* Free text from before the dropdown ("Uncle") is offered as itself, so opening the
+                    form to fix a phone number cannot quietly overwrite what the office recorded. */}
+                {guardianEdit.relation && !RELATIONS.some((r) => r === guardianEdit.relation) && (
+                  <option value={guardianEdit.relation}>{guardianEdit.relation}</option>
+                )}
+                {RELATIONS.map((r) => <option key={r} value={r}>{t(`relation.${r}`)}</option>)}
+              </select>
+            </div>
+            <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" type="tel" inputMode="tel" autoComplete="tel" value={guardianEdit.phone} onChange={(e) => setGuardianEdit({ ...guardianEdit, phone: formatUsPhone(e.target.value) })} /></div>
             <div className="field"><label className="label">{t('directory.email')}</label><input className="input glass-inset" type="email" value={guardianEdit.email} onChange={(e) => setGuardianEdit({ ...guardianEdit, email: e.target.value })} /></div>
             <button type="submit" className="btn btn--primary" disabled={updateGuardian.isPending}>{t('common.save')}</button>
             <button type="button" className="btn btn--ghost" onClick={() => setGuardianEdit(null)}>{t('common.cancel')}</button>
@@ -328,8 +356,14 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
         {showGuardian && (
           <form className="inline-form glass-inset" onSubmit={submitGuardian}>
             <div className="field"><label className="label">{t('directory.name')}</label><input className="input glass-inset" value={grd.name} onChange={(e) => setGrd({ ...grd, name: e.target.value })} autoFocus /></div>
-            <div className="field"><label className="label">{t('directory.relation')}</label><input className="input glass-inset" value={grd.relation} onChange={(e) => setGrd({ ...grd, relation: e.target.value })} /></div>
-            <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" value={grd.phone} onChange={(e) => setGrd({ ...grd, phone: e.target.value })} /></div>
+            <div className="field">
+              <label className="label">{t('directory.relation')}</label>
+              <select className="input glass-inset" value={grd.relation} onChange={(e) => setGrd({ ...grd, relation: e.target.value })}>
+                <option value="">—</option>
+                {RELATIONS.map((r) => <option key={r} value={r}>{t(`relation.${r}`)}</option>)}
+              </select>
+            </div>
+            <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" type="tel" inputMode="tel" autoComplete="tel" value={grd.phone} onChange={(e) => setGrd({ ...grd, phone: formatUsPhone(e.target.value) })} /></div>
             <div className="field"><label className="label">{t('directory.email')}</label><input className="input glass-inset" value={grd.email} onChange={(e) => setGrd({ ...grd, email: e.target.value })} /></div>
             <label className="hint" style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
               <input type="checkbox" checked={grd.emergency} onChange={(e) => setGrd({ ...grd, emergency: e.target.checked })} /> {t('directory.isEmergency')}
@@ -353,8 +387,8 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
             {emergencyContacts.map((c) => (
               <div key={c.id} className="glass-inset" style={{ padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-button)' }}>
                 <strong>{c.name}</strong>
-                {c.relation && <span className="muted"> · {c.relation}</span>}
-                {c.phone && <span className="muted"> · {c.phone}</span>}
+                {c.relation && <span className="muted"> · {relationLabel(t, c.relation)}</span>}
+                {c.phone && <span className="muted"> · {formatUsPhone(c.phone)}</span>}
               </div>
             ))}
           </div>
@@ -362,41 +396,36 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
         {showEC && (
           <form className="inline-form glass-inset" onSubmit={submitEC}>
             <div className="field"><label className="label">{t('directory.name')}</label><input className="input glass-inset" value={ec.name} onChange={(e) => setEc({ ...ec, name: e.target.value })} autoFocus /></div>
-            <div className="field"><label className="label">{t('directory.relation')}</label><input className="input glass-inset" value={ec.relation} onChange={(e) => setEc({ ...ec, relation: e.target.value })} /></div>
-            <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" value={ec.phone} onChange={(e) => setEc({ ...ec, phone: e.target.value })} /></div>
+            {/* Free text here, unlike a guardian: "neighbour", "aunt two doors down" is the useful
+                answer for whoever the office would actually ring, not one of four. */}
+            <div className="field"><label className="label">{t('directory.relation')}</label><input className="input glass-inset" value={ec.relation} onChange={(e) => setEc({ ...ec, relation: e.target.value })} placeholder={t('directory.relationPlaceholder')} /></div>
+            <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" type="tel" inputMode="tel" autoComplete="tel" value={ec.phone} onChange={(e) => setEc({ ...ec, phone: formatUsPhone(e.target.value) })} /></div>
             <button type="submit" className="btn btn--primary" disabled={addEC.isPending}>{t('common.save')}</button>
           </form>
         )}
       </section>
 
-      {/* Link siblings — at the bottom, because it is the thing you reach for after reading the
-          record and realising a child belongs with another. Picking a STUDENT, not a household:
-          "Yusuf is Maryam's brother" is what the office knows. */}
+      {/* Add a sibling — at the bottom, because it is the thing you reach for after reading the
+          record and realising a child belongs on it. One choice: which child. The household you are
+          looking at is the one they join, so there is nothing else to say. */}
       {!readOnly && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head">
-            <h2>{t('directory.linkSiblings')}</h2>
+            <h2>{t('directory.addSibling')}</h2>
           </div>
-          <p className="hint" style={{ marginBlockStart: 0 }}>{t('directory.linkSiblingsHint')}</p>
-          <form className="inline-form glass-inset" onSubmit={submitLink}>
-            <div className="field" style={{ flex: '1 1 12rem' }}>
-              <label className="label" htmlFor="link-for">{t('directory.linkWhich')}</label>
-              <select id="link-for" className="input glass-inset" value={linkFor} onChange={(e) => setLinkFor(e.target.value)}>
+          <p className="hint" style={{ marginBlockStart: 0 }}>{t('directory.addSiblingHint')}</p>
+          <form className="inline-form glass-inset" onSubmit={submitAddSibling}>
+            <div className="field" style={{ flex: '1 1 16rem' }}>
+              <label className="label" htmlFor="add-sibling">{t('directory.siblingStudent')}</label>
+              <select id="add-sibling" className="input glass-inset" value={siblingId} onChange={(e) => setSiblingId(e.target.value)}>
                 <option value="">{t('directory.selectStudent')}</option>
-                {students.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
-              </select>
-            </div>
-            <div className="field" style={{ flex: '1 1 14rem' }}>
-              <label className="label" htmlFor="link-to">{t('directory.linkTo')}</label>
-              <select id="link-to" className="input glass-inset" value={linkTo} onChange={(e) => setLinkTo(e.target.value)}>
-                <option value="">{t('directory.selectSibling')}</option>
                 {(siblingOptions.data ?? [])
-                  // Only children OUTSIDE this household: linking to someone already in it is a no-op.
+                  // Only children OUTSIDE this household: the ones already here have nothing to join.
                   .filter((s) => !students.some((own) => own.id === s.id))
                   .map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
               </select>
             </div>
-            <button type="submit" className="btn btn--primary" disabled={linkSiblings.isPending || !linkFor || !linkTo}>{t('directory.link')}</button>
+            <button type="submit" className="btn btn--primary" disabled={addSibling.isPending || !siblingId}>{t('directory.addSiblingAction')}</button>
           </form>
           {linkErr && <p className="form-error">{linkErr}</p>}
         </section>

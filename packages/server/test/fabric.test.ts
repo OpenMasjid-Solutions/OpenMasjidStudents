@@ -73,6 +73,15 @@ describe('info (§11.2)', () => {
     expect(r.json()).toMatchObject({ v: 2, enabled: true, currency: 'usd' });
     expect(typeof r.json().schoolName).toBe('string');
   });
+
+  it('tells a consumer that paying ahead is allowed, and the floor to put on its amount field', async () => {
+    // Without this a kiosk has no way to tell "nothing due" from "cannot pay here", so it greys out
+    // the amount field on a zero balance — refusing money the school wants (a parent paying a term up
+    // front). Asserted because it is a promise to three other repos, not an implementation detail.
+    const r = (await call('info', { v: 2 })).json();
+    expect(r.allowAdvance).toBe(true);
+    expect(r.minAmountCents).toBe(100);
+  });
 });
 
 describe('lookup (§11.2)', () => {
@@ -92,10 +101,29 @@ describe('lookup (§11.2)', () => {
         { firstName: 'Sara', lastInitial: 'I' },
       ]),
     );
-    // Each sibling entry exposes exactly these five fields and nothing more — `balanceCents` is new
-    // at v2 so a kiosk can show what each child owes.
-    for (const k of r.family.students) expect(Object.keys(k).sort()).toEqual(['balanceCents', 'firstName', 'lastInitial', 'studentCode', 'studentId']);
+    // Each sibling entry exposes exactly these six fields and nothing more — `balanceCents` and
+    // `creditCents` so a kiosk can show what each child owes, or has already paid ahead.
+    for (const k of r.family.students) expect(Object.keys(k).sort()).toEqual(['balanceCents', 'creditCents', 'firstName', 'lastInitial', 'studentCode', 'studentId']);
     expect(JSON.stringify(r)).not.toContain('Ismail"'); // no bare "Ismail" last-name value in the payload
+  });
+
+  it('reports a credit, so "paid ahead" cannot read as "nothing to see here"', async () => {
+    const { familyId, studentId, code } = await seed(); // one $50 invoice
+    // Pay $80 against a $50 bill: $50 settles it, $30 is credit against the next one.
+    await caller('admin').billing.recordManualPayment({ studentId, amountCents: 8000, channel: 'cash', occurredAt: '2026-07-10' });
+
+    const r = (await call('lookup', { v: 2, studentCode: code })).json();
+    expect(r.family.balanceCents).toBe(0);
+    expect(r.family.creditCents).toBe(3000);
+    expect(r.matchedStudent).toMatchObject({ id: studentId, balanceCents: 0, creditCents: 3000 });
+    // Per child too — with one bill each, the household total cannot say which child is ahead.
+    expect(r.family.students.find((k: { studentId: string }) => k.studentId === studentId)).toMatchObject({ balanceCents: 0, creditCents: 3000 });
+    // The two are complementary: never both non-zero, so a consumer shows one or the other.
+    for (const k of r.family.students) expect(Math.min(k.balanceCents, k.creditCents)).toBe(0);
+    // A settled invoice is no longer "open", so the credit is the ONLY signal left that money is on
+    // the account — which is exactly why it has to be on the wire.
+    expect(r.family.openInvoices).toHaveLength(0);
+    expect((await caller('admin').billing.familyBilling({ familyId })).balance.creditCents).toBe(3000);
   });
 
   it('accepts the ID as typed — lowercase and punctuation are normalised away', async () => {
@@ -128,6 +156,26 @@ describe('record-payment + check (§11.3/§11.4)', () => {
     // check.
     expect((await call('check', { v: 2, idempotencyKey: 'pi_TEST123' })).json()).toMatchObject({ v: 2, recorded: true, paymentId: first.paymentId });
     expect((await call('check', { v: 2, idempotencyKey: 'nope' })).json()).toEqual({ v: 2, recorded: false });
+  });
+
+  it('takes money at the kiosk when NOTHING is due, and holds it as that child’s credit', async () => {
+    // The paying-ahead case, end to end through the contract: a parent hands over a term's tuition in
+    // Ramadan, before a single invoice for it exists. The consumer's own UI decides whether to offer
+    // the amount field (see `info.allowAdvance`) — this proves the money lands correctly when it does.
+    const admin = caller('admin');
+    const fam = await admin.people.familyCreate({ name: 'Ismail family' });
+    const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 5000, cadence: 'monthly' });
+    const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
+    expect((await admin.billing.familyBilling({ familyId: fam.id })).balance.owedCents).toBe(0);
+
+    const r = (await call('record-payment', { v: 2, idempotencyKey: 'pi_AHEAD', familyId: fam.id, amountCents: 15000, channel: 'kiosk' })).json();
+    expect(r).toMatchObject({ recorded: true, duplicate: false });
+    // Credit on the child, not a number parked on the household — and the next bills consume it.
+    expect((await admin.billing.studentBilling({ studentId: s.id })).balance.creditCents).toBe(15000);
+    await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-08', label: 'Tuition — Aug 2026', dueDate: '2026-08-01' });
+    const after = await admin.billing.studentBilling({ studentId: s.id });
+    expect(after.invoices[0].status).toBe('paid');
+    expect(after.balance.creditCents).toBe(10000);
   });
 
   it('unknown family → 404 family_not_found', async () => {

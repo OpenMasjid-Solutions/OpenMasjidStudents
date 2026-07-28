@@ -16,6 +16,7 @@ import { Users, Settings2, Printer } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
 import { formatMoney } from '../../lib/money';
+import { formatUsPhone } from '../../lib/phone';
 import { useWindows } from '../../components/Windows';
 import { FamilyDetail } from './FamilyDetail';
 
@@ -224,7 +225,9 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                         {enabled.includes('dob') && <td>{r.extra.dob ?? ''}</td>}
                         {enabled.includes('balance') && <td className="tnum">{formatMoney(r.extra.balanceCents ?? 0, g.currency)}</td>}
                         {enabled.includes('guardianNames') && <td>{(r.extra.guardianNames ?? []).join(', ')}</td>}
-                        {enabled.includes('guardianPhones') && <td style={{ whiteSpace: 'nowrap' }}>{(r.extra.guardianPhones ?? []).join(', ')}</td>}
+                        {/* Formatted here too, so a number typed as 5551234567 years ago reads the
+                            same as one entered today (lib/phone.ts leaves non-US numbers alone). */}
+                        {enabled.includes('guardianPhones') && <td style={{ whiteSpace: 'nowrap' }}>{(r.extra.guardianPhones ?? []).map(formatUsPhone).join(', ')}</td>}
                         {enabled.includes('guardianEmails') && <td>{(r.extra.guardianEmails ?? []).join(', ')}</td>}
                       </tr>
                     </Fragment>
