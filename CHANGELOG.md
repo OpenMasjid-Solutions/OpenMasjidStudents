@@ -9,6 +9,8 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.40.0]
+
 ### Fixed
 
 - **A lump sum now marks every month it pays for.** Paying $1,400 against a $350/month fee settles
