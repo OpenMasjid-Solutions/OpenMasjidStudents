@@ -9,6 +9,48 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.41.0]
+
+### Added
+
+- **The kiosk and the donation site can now take a payment when nothing is due, and can show a
+  credit.** Paying a term up front, or handing over a lump sum at the start of Ramadan, has always
+  been recorded correctly here — the money sits as that child's credit and their next invoice absorbs
+  it. What was missing was any way for the other two apps to *know* that: a balance is worked out as
+  billed-minus-paid, so a family who has paid the year ahead and a family who is exactly square both
+  looked like "nothing to pay". Tuition lookups now report a **credit** alongside the balance (for the
+  household, the child whose ID was typed, and each sibling), and the campaign info says outright that
+  paying ahead is allowed, with the minimum amount to accept. Donations and Kiosk pick these up on
+  their side; nothing about the money path changed, so an un-updated build keeps working.
+- **Age on the student list.** Birthdays were being collected and never shown anywhere. Worked out in
+  the browser from today's date, so it is never a day out.
+
+### Changed
+
+- **Adding a sibling is one choice now.** It used to ask which child on the record the new one was a
+  sibling *of* — a question with no useful answer, since everyone on a record already shares one
+  household. Open a student, pick the child to bring in, done: they inherit the guardians and emergency
+  contacts on that record. It also fixes a real fault in the old flow, which merged the *other* way and
+  left the window you were looking at pointing at a household it had just deleted.
+- **"Relation" for a guardian is a dropdown** — Father, Mother, Relative, Other — instead of an open
+  box that collected "Dad", "father" and "Father" as three different answers. Anything typed before is
+  kept and still shown as it was written. Emergency contacts keep the open box on purpose: "neighbour,
+  two doors down" is the useful answer there.
+- **Phone numbers format themselves** as `(555) 123-4567`, as you type and everywhere they are shown —
+  including numbers entered years ago, with no data migration. A number that isn't a ten-digit US one
+  (an overseas grandparent, an extension) is left exactly as it was entered rather than mangled.
+- **The Family column is gone from the student list**, replaced by Age. The household is still what
+  opens when you click a student, and searching a surname still finds every sibling.
+
+### Fixed
+
+- **The school logo no longer appears squashed** in Settings after uploading it. The preview was being
+  stretched to the width of its column while its height was held down.
+- **The test email carries the logo**, like every real email the app sends. It was the one message built
+  outside the shared email path, so it skipped the letterhead — which looked like a broken upload.
+  Settings now also explains the one case where a logo genuinely cannot appear in email: it has to load
+  from a web address, so Remote access must be on. Statements always show it.
+
 ## [0.40.0]
 
 ### Fixed

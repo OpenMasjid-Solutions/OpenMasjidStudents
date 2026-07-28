@@ -4,7 +4,7 @@ id: students
 name: OpenMasjid Students
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
-version: 0.40.0
+version: 0.41.0
 author: OpenMasjid-Solutions
 license: AGPL-3.0-only
 icon: icon.svg
@@ -23,7 +23,8 @@ description: |
   Tuition can also be paid with a **child's Student ID** on the masjid's **OpenMasjid
   Donations** site and **OpenMasjid Kiosk**: type the ID, check the name it shows, then pay
   for any of your children from that one screen. Those payments flow straight into the same
-  ledger over the OpenMasjidOS Fabric.
+  ledger over the OpenMasjidOS Fabric. Families can **pay ahead** — a term or a year at a
+  time, even with nothing due — and the credit comes off their next invoice automatically.
 
   Works fully on the masjid network on its own; parent and finance access can also go over
   the OpenMasjidOS internet uplink. (Admin stays on the masjid network by design.)
