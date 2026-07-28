@@ -350,7 +350,7 @@ ports:
     label: Web interface
 ```
 
-The compose **must reference** the Fabric env vars in `environment:` (`${VAR}` substitution — forget one and the Fabric silently no-ops): `OPENMASJID_APP_ID`, `OPENMASJID_BASE_URL`, `OPENMASJID_APP_SECRET`, and `OPENMASJID_PUBLIC_URL` (tunnel URL; empty when not exposed — var name owned by the OS work order, keep in sync). The compose `image:` line is **digest-pinned per release** — `ghcr.io/openmasjid-solutions/openmasjid-students@sha256:<digest>` (§19), never a floating tag. SMTP is **not** manifest settings — it's an in-app admin settings page (host/port/user/password/from), stored in the DB, secrets never logged.
+The compose **must reference** the Fabric env vars in `environment:` (`${VAR}` substitution — forget one and the Fabric silently no-ops): `OPENMASJID_APP_ID`, `OPENMASJID_BASE_URL`, `OPENMASJID_APP_SECRET`, and `OPENMASJID_PUBLIC_URL` (tunnel URL; empty when not exposed — var name owned by the OS work order, keep in sync). The compose `image:` line is **digest-pinned per release** — `ghcr.io/openmasjid-solutions/openmasjidstudents:<semver>@sha256:<digest>` (§19), never a floating tag. SMTP is **not** manifest settings — it's an in-app admin settings page (host/port/user/password/from), stored in the DB, secrets never logged.
 
 ---
 
@@ -556,7 +556,7 @@ npm run dev         # server + web, hot reload (server :8080; Vite :5173 proxyin
 npm run build       # typecheck + build web and server
 npm run lint        # eslint + tsc --noEmit
 npm run test        # vitest (ledger, fabric contract, webhook, autopay ladder, origin policy, finals math, dataset registry, admissions input)
-npm run image       # build & tag ghcr.io/openmasjid-solutions/openmasjid-students:dev
+npm run image       # build & tag ghcr.io/openmasjid-solutions/openmasjidstudents:dev
 ```
 
 Dev: `.env` with fake Fabric vars; curl fixtures for `/fabric/billing/*`; **Stripe test mode + `stripe listen --forward-to localhost:8080/api/stripe/webhook`** for the payment paths; a tiny mock of `/api/auth/session` + `/api/fabric/stripe` in `packages/server/test/`. Simulate tunnel origin locally by sending `cf-ray: dev` to exercise the origin policy.
