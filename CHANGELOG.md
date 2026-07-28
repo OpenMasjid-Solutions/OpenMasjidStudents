@@ -9,6 +9,81 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+### Fixed
+
+- **A lump sum now marks every month it pays for.** Paying $1,400 against a $350/month fee settles
+  four months, not some of them. The balance was always right; the *months* were not, and the year
+  view reads the months — so an office could see "nothing owed" on the account and unpaid squares in
+  the grid at the same time.
+  - The cause: a bill's paid/unpaid state comes from which payments are attached to it, and money
+    handed over **before** a bill existed was never attached to it afterwards. So the month that was
+    already invoiced got ticked and everything paid for in advance did not.
+  - Attaching is now re-derived, oldest bill first, whenever an invoice or a charge changes. Money
+    paid ahead lands on each month as it is generated, with no second entry from the office.
+- **Light mode was unreadable, and now isn't.** Every wallpaper was a dark one, including in light
+  mode, so light mode painted its pale panels over a near-black background and wrote dark text on the
+  muddy grey that produced — on every tab at once. Each wallpaper now has a light counterpart that
+  keeps its colour (ocean is still blue, forest still green), and the text on the desktop follows the
+  theme. The parent portal had a related bug of its own: thirteen places asked for a colour that was
+  never defined and silently fell back to near-white, which was invisible on a light background.
+- **"School Years", "Courses" and "Classes" no longer wrap their icon onto its own line.** The
+  underlying cause was a global rule making every icon a block; the headings now lay their icon and
+  text out as one row, so it cannot come back.
+- **A migration that would have failed on a real install.** Rebuilding a table means dropping it, and
+  the safety switch the generated migration relies on does nothing where it sits — so this upgrade
+  worked on an empty database and would have refused to start on any install with a single student
+  on file. The switch is now thrown where it actually applies, with a check afterwards that reports
+  anything a migration orphaned. Verified against a populated database, not just a fresh one.
+
+### Added
+
+- **Pay ahead.** Parents can now add money to their account when nothing is due — the portal offers
+  it rather than hiding the button until a bill exists, and the kiosk and donation site could always
+  take it. It is held as credit and comes off the next invoices automatically.
+- **A one-off charge comes out of an advance balance first.** Add a book fee to a family who has paid
+  the term up front and it is taken from what they have already paid, oldest bill first. If that
+  leaves a month short, the month goes back to unpaid so it is chased normally, and the family is
+  billed for the difference — nothing is quietly written off or double-charged.
+- **Permanent delete, alongside archive** — for the mistakes an office actually makes: a course
+  added twice, a fee plan with a typo, a school year entered wrong. The line is the same one the app
+  draws everywhere: configuration can be deleted, money history cannot. A fee plan that has appeared
+  on an invoice archives instead, and says why. Deleting a course or class unplaces its students
+  rather than deleting them, and tells you how many before you click.
+- **Link siblings**, on the student's own record — replacing "move to family". You pick the other
+  *student*, which is how an office thinks about it, and the two households merge, so the guardians
+  and emergency contacts on either side apply to both. **Move out** undoes it. Nobody names a family
+  at any point.
+- **Finance can open the Students tab, read-only** — profiles, contact details, Student IDs and
+  balances, with no way to add a student, place them in a class, link siblings or edit a record.
+- **A school logo**, uploaded in Settings and used on printed statements and every email the app
+  sends. PNG/JPEG/WebP up to 512 KB, checked by content rather than by what the file claims to be.
+
+### Changed
+
+- **Students have ONE name field.** "First name" and "Last name" are gone, replaced by **Full name**.
+  Plenty of the names a madrasa enrols do not split into two western halves — a compound given name,
+  a nasab, a mononym — and the form was quietly mangling them. Existing names are joined together on
+  upgrade, so nothing is lost and nothing needs re-typing.
+  - The Student ID still reads the way it always did (`YUS1234`), and now handles a compound name
+    better: "Al Amin" gives `ALA` rather than a padded `ALX`.
+  - The kiosk and donation site are **unaffected** — the tuition contract still sends a given name
+    and a last initial, still never a full surname, both now derived from the one field.
+  - CSV import takes a single **Name** column.
+- **CSV import no longer tries to work out siblings**, and says so before and after you commit. Every
+  row becomes one student in a household of their own; you link brothers and sisters afterwards on
+  either child's record. Guessing from the file was the wrong trade in both directions — matching on
+  a surname marries unrelated children who happen to share one, and a typed "family" column means
+  the office maintains a name for something it never names anywhere else. Either way the mistake
+  ends up buried in a 200-row spreadsheet instead of visible on a record, and linking two children
+  is one click.
+- **The student directory and the year view are organised Course → Class → Student**, with course
+  buttons across the top and **All** selected by default.
+- **Staff accounts no longer have a phone number.** The app never rings staff, so holding one was
+  personal data collected for no reason. Guardian and emergency-contact numbers are untouched.
+- **A new school year no longer assumes April–March.** Both months start unset and must be chosen —
+  the old default silently decided the billing calendar for anyone who did not notice the dropdowns,
+  and a wrong start month generates a whole year of wrong invoice periods.
+
 ## [0.39.0]
 
 ### Removed

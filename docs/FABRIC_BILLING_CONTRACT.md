@@ -74,6 +74,12 @@ confirmation step that replaced the PIN, not an optional nicety.
 { "v": 2, "studentCode": "YUS1234" }
 // 200 (found) — a first name + last initial and NOTHING else
 { "v": 2, "found": true, "student": { "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" } }
+// NOTE (no contract change): this app now stores ONE name per student rather than a first/last
+// pair, because plenty of the names a madrasa enrols do not split into two western halves. The wire
+// fields are unchanged and still mean the same thing — `firstName` is the first word of that name
+// and `lastInitial` is the first letter of the last word, so a consumer needs no update and the
+// promise that a full family name is never returned still holds. A child recorded under a single
+// name (no surname) comes back with `lastInitial: ""`; render just the given name in that case.
 // 200 (not found) — unknown code, withdrawn student, locked code, or external payments switched off
 { "v": 2, "found": false }
 ```
