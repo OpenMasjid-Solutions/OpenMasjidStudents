@@ -9,6 +9,63 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.42.0]
+
+### Added
+
+- **After a CSV import, the app now offers you the siblings to link.** An import deliberately gives
+  every row its own household — guessing a family from a spreadsheet and getting it wrong would merge
+  two families' money — but that left 120 children in 120 households and a parent with four separate
+  balances. The step after importing now shows the likely families and links each one on a click, and
+  it distinguishes the two kinds of guess honestly: children whose guardians **share a phone number or
+  email** are almost certainly siblings and come pre-ticked, while children who only **share a surname**
+  start unticked, because three unrelated Ismail families in one roster is completely normal. It is also
+  reachable any time from the Students tab, so a roster imported months ago can be tidied up now.
+- **Linking siblings folds duplicate guardian records into one.** A father with three children arrived
+  from a CSV as three separate people; linking the children stacked all three copies on the record.
+  They now merge into a single guardian, and blanks are filled rather than overwritten — if one copy had
+  the phone and another the email, the survivor keeps both. A guardian who has a parent portal login is
+  never removed silently.
+- **Mass enrolment.** Pick a class under Courses & classes and tick everyone who belongs in it, instead
+  of setting the class one student at a time from the roster. The per-student way still works.
+- **Guardians and emergency contacts can be deleted**, not only edited. Deleting tells you what will
+  actually happen first: a guardian on two households is only removed from this one, and one with a
+  parent portal account loses that login — which is worth a sentence, not a surprise.
+- **What's new** — this changelog, in the app, under the account menu.
+- **The year view has a labelled, tappable column per number**: Father's, Mother's, Other and
+  Emergency, plus father's and mother's email. Tap a number to call it or an address to email it, which
+  turns the page into the office's call list on a phone. "Other" covers guardians with no relation
+  recorded, including everyone a CSV import created, so no number disappears. Installs that had the old
+  combined "Phone" column keep the same numbers, in the new columns, with nothing to reconfigure.
+
+### Changed
+
+- **Fee plans are admin-only now.** Finance still reads them — no invoice screen means anything without
+  the plan names — but creating, archiving and deleting them is the office's decision. Archiving a plan
+  silently unassigns every student on it, and deleting is permanent.
+- **Getting rid of a fee plan says which is possible.** The × used to archive silently; it now deletes a
+  plan that has never been billed and archives one that has, explaining why and how many students stop
+  being billed for it either way.
+- **The sibling picker lets you type.** Both the "add a sibling" control and the one in the add-student
+  form are now search boxes that are still dropdowns: click for the whole list, type to narrow it. Rows
+  show the Student ID and household, because a madrasa really does enrol two children with the same name.
+- **The "emergency contact" tick is gone from the add-guardian form** — there is a whole Emergency
+  contacts section right below it, and two ways to say the same thing meant ticking the box and then
+  wondering why nobody appeared in that list. Guardians flagged before this release keep their badge.
+- **Phones are tappable on a household record too**, and formatted consistently everywhere.
+- **The mobile view drops what a phone cannot do and fixes what it can.** CSV export and CSV import are
+  hidden on a phone — a downloaded spreadsheet has nothing to open it, and there is no file to pick.
+  Records open as full-screen sheets rather than as a small draggable box with the desktop showing
+  around it, and the sheet clears the browser's own toolbar so the last row of a list is reachable.
+
+### Fixed
+
+- **Deleting a student who had paid in advance failed with a database error.** The check that decides
+  whether a student can be deleted counted invoices but not payments, so a child with an advance payment
+  and nothing billed looked deletable and then wasn't. Money that has arrived is part of your records:
+  those students are withdrawn instead — which stops all future billing — and the refusal now says so,
+  including what to do if the payment really belonged to another child.
+
 ## [0.41.0]
 
 ### Added
