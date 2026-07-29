@@ -7,6 +7,11 @@ packages/server/public
 docs
 screenshots
 *.md
+# ...EXCEPT the changelog. The web build INLINES it: WhatsNew.tsx imports CHANGELOG.md with `?raw` so
+# the release notes in the app always match the running build. Excluded, `npm run build` fails inside
+# Docker ("Could not resolve ../../../../CHANGELOG.md?raw") while passing on a laptop, where the file
+# is obviously there — a failure only CI can see. Keep the negation.
+!CHANGELOG.md
 .claude
 .vscode
 .idea
