@@ -82,6 +82,44 @@ describe('studentDelete', () => {
     await expect(admin.people.studentDelete({ studentId })).rejects.toThrow(/billed|withdrawn/i);
   });
 
+  /**
+   * The gap that shipped in 0.41.0: a child with an advance payment and NOTHING billed passed the
+   * precheck, and the delete then died on the RESTRICT constraint — handing the office a raw
+   * "FOREIGN KEY constraint failed" (§15: never). Money that arrived is money on the books, whether or
+   * not a bill exists for it.
+   */
+  it('refuses a student who has been PAID for, even with nothing billed — and never with a raw DB error', async () => {
+    const { admin, studentId } = await seed();
+    await admin.billing.recordManualPayment({ studentId, amountCents: 7000, channel: 'cash', occurredAt: '2026-03-20' });
+
+    const info = await admin.people.studentDeletable({ studentId });
+    expect(info).toMatchObject({ deletable: false, payments: 1, invoiceLines: 0, invoices: 0 });
+
+    const err = await admin.people.studentDelete({ studentId }).catch((e) => e as Error);
+    expect((err as { code?: string }).code).toBe('CONFLICT');
+    expect(err.message).not.toMatch(/FOREIGN KEY|constraint/i);
+    expect(err.message).toContain('withdrawn');
+    // Still there, money intact.
+    expect(app.dbmod.db.select().from(students).where(eq(students.id, studentId)).all()).toHaveLength(1);
+    expect(app.dbmod.db.select().from(payments).where(eq(payments.studentId, studentId)).all()).toHaveLength(1);
+  });
+
+  it('still refuses once the payment has been reversed — the pair is the story of the money', async () => {
+    const { admin, studentId } = await seed();
+    const p = await admin.billing.recordManualPayment({ studentId, amountCents: 7000, channel: 'cash', occurredAt: '2026-03-20' });
+    await admin.billing.reversePayment({ paymentId: p.paymentId });
+    expect((await admin.people.studentDeletable({ studentId })).deletable).toBe(false);
+    await expect(admin.people.studentDelete({ studentId })).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  /** Withdrawal is what the refusals point at, so it has to actually do the job it promises. */
+  it('withdrawing really does stop the billing that delete would have stopped', async () => {
+    const { admin, famId, studentId } = await seed();
+    await admin.people.studentUpdate({ id: studentId, status: 'withdrawn' });
+    await admin.billing.generateFamily({ familyId: famId, periodKey: '2026-07', label: 'Jul' });
+    expect((await admin.billing.studentBilling({ studentId })).invoices).toHaveLength(0);
+  });
+
   it('refuses a billed student and points at withdrawal instead', async () => {
     const { admin, studentId } = await seed();
     await admin.billing.generatePeriod({ periodKey: '2026-07', label: 'Tuition — Jul 2026' });

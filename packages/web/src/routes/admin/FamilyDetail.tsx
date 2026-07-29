@@ -10,9 +10,10 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { Pencil } from 'lucide-react';
+import { Pencil, Trash2 } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
-import { formatUsPhone } from '../../lib/phone';
+import { formatUsPhone, telHref } from '../../lib/phone';
+import { StudentPicker } from '../../components/StudentPicker';
 
 /** What a guardian is to the child. Four choices rather than an open box: an office typing "Dad",
  *  "father" and "Father" into three records made the column unusable for anything. Stored as these
@@ -40,6 +41,8 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const updateStudent = trpc.people.studentUpdate.useMutation();
   const addGuardian = trpc.people.guardianCreate.useMutation();
   const updateGuardian = trpc.people.guardianUpdate.useMutation();
+  const removeGuardian = trpc.people.guardianRemove.useMutation();
+  const removeContact = trpc.people.emergencyContactRemove.useMutation();
   const deleteStudent = trpc.people.studentDelete.useMutation();
   const addEC = trpc.people.emergencyContactAdd.useMutation();
   const invite = trpc.auth.inviteCreate.useMutation();
@@ -53,6 +56,8 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const [guardianEdit, setGuardianEdit] = useState<{ id: string; name: string; phone: string; email: string; relation: string } | null>(null);
   /** Why a delete was refused — shown as text, since it is the useful half of the interaction. */
   const [deleteErr, setDeleteErr] = useState('');
+  /** The same, for the guardian and contact rows below. */
+  const [guardianErr, setGuardianErr] = useState('');
 
   // A student MUST be put on a fee plan at creation — one with no plan is silently skipped by
   // invoice generation, which is how a child stops being billed without anyone noticing.
@@ -98,7 +103,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const [showStudent, setShowStudent] = useState(false);
   const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '' });
   const [showGuardian, setShowGuardian] = useState(false);
-  const [grd, setGrd] = useState({ name: '', phone: '', email: '', relation: '', emergency: false });
+  const [grd, setGrd] = useState({ name: '', phone: '', email: '', relation: '' });
   const [showEC, setShowEC] = useState(false);
   const [ec, setEc] = useState({ name: '', phone: '', relation: '' });
 
@@ -113,8 +118,8 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   async function submitGuardian(e: FormEvent) {
     e.preventDefault();
     if (!grd.name.trim()) return;
-    await addGuardian.mutateAsync({ familyId, name: grd.name.trim(), phone: grd.phone || undefined, email: grd.email || undefined, relation: grd.relation || undefined, isEmergencyContact: grd.emergency });
-    setGrd({ name: '', phone: '', email: '', relation: '', emergency: false });
+    await addGuardian.mutateAsync({ familyId, name: grd.name.trim(), phone: grd.phone || undefined, email: grd.email || undefined, relation: grd.relation || undefined });
+    setGrd({ name: '', phone: '', email: '', relation: '' });
     setShowGuardian(false);
     await refresh();
   }
@@ -158,7 +163,14 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     try {
       const info = await utils.people.studentDeletable.fetch({ studentId });
       if (!info.deletable) {
-        setDeleteErr(t('directory.deleteBlocked', { name, count: info.invoiceLines + info.invoicedCharges }));
+        // Money that ARRIVED and money that was BILLED are different problems with different fixes,
+        // so they get different sentences — "reverse the payment first" is useless advice to someone
+        // whose actual blocker is an invoice.
+        setDeleteErr(
+          info.payments > 0 && info.invoiceLines + info.invoicedCharges + info.invoices === 0
+            ? t('directory.deleteBlockedPaid', { name, count: info.payments })
+            : t('directory.deleteBlocked', { name, count: info.invoiceLines + info.invoicedCharges + info.invoices }),
+        );
         return;
       }
       const extra = info.feeAssignments + info.pendingCharges;
@@ -186,6 +198,41 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     });
     setGuardianEdit(null);
     await refresh();
+  }
+
+  /**
+   * Delete a guardian, having first asked the server what that will actually mean here.
+   *
+   * Three different sentences, because they are three different consequences: unlinked from this
+   * household but kept for another; deleted outright; or deleted along with their portal login. The
+   * last one is the reason this asks the server at all rather than just confirming and posting.
+   */
+  async function askRemoveGuardian(guardianId: string, name: string) {
+    setGuardianErr('');
+    try {
+      const info = await utils.people.guardianRemovable.fetch({ guardianId, familyId });
+      const msg = info.deletesAccount
+        ? t('directory.confirmGuardianDeleteAccount', { name })
+        : info.deletesPerson
+          ? t('directory.confirmGuardianDelete', { name })
+          : t('directory.confirmGuardianUnlink', { name, count: info.otherFamilies });
+      if (!window.confirm(msg)) return;
+      await removeGuardian.mutateAsync({ guardianId, familyId });
+      await refresh();
+    } catch (err) {
+      setGuardianErr((err as Error).message);
+    }
+  }
+
+  async function askRemoveContact(id: string, name: string) {
+    setGuardianErr('');
+    if (!window.confirm(t('directory.confirmContactDelete', { name }))) return;
+    try {
+      await removeContact.mutateAsync({ id });
+      await refresh();
+    } catch (err) {
+      setGuardianErr((err as Error).message);
+    }
   }
 
   async function sendReset(guardianId: string) {
@@ -288,8 +335,11 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               <div key={g.guardianId} className="glass-inset" style={{ padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-button)', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <strong>{g.name}</strong>
                 {g.relation && <span className="muted">· {relationLabel(t, g.relation)}</span>}
-                {g.phone && <span className="muted">· {formatUsPhone(g.phone)}</span>}
-                {g.email && <span className="muted">· {g.email}</span>}
+                {/* Tappable: the office rings a parent from this screen, and on a phone that should be
+                    one tap rather than a copy-paste. The href is built from the digits, never from the
+                    formatted text (lib/phone.ts). */}
+                {g.phone && <a className="muted" href={`tel:${telHref(g.phone)}`}>· {formatUsPhone(g.phone)}</a>}
+                {g.email && <a className="muted" href={`mailto:${g.email}`}>· {g.email}</a>}
                 {g.isEmergencyContact && <span className="chip is-accent">{t('directory.emergency')}</span>}
                 {/* Whether they took up a portal account decides which action is useful: an invite for
                     someone who never signed up, a reset for someone who did and forgot. */}
@@ -304,9 +354,14 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 {/* Editing a guardian is a people write, so admin only. Invites and resets below are
                     NOT — finance runs parent accounts (§5), so those stay available to them. */}
                 {!readOnly && (
-                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGuardianEdit({ id: g.guardianId, name: g.name, phone: formatUsPhone(g.phone), email: g.email ?? '', relation: g.relation ?? '' })}>
-                    <Pencil size={13} /> {t('common.edit')}
-                  </button>
+                  <>
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGuardianEdit({ id: g.guardianId, name: g.name, phone: formatUsPhone(g.phone), email: g.email ?? '', relation: g.relation ?? '' })}>
+                      <Pencil size={13} /> {t('common.edit')}
+                    </button>
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={() => void askRemoveGuardian(g.guardianId, g.name)} disabled={removeGuardian.isPending}>
+                      <Trash2 size={13} /> {t('common.delete')}
+                    </button>
+                  </>
                 )}
                 {g.hasAccount ? (
                   <button type="button" className="btn btn--ghost btn--sm" onClick={() => sendReset(g.guardianId)} disabled={guardianReset.isPending || !g.canSendReset}>
@@ -329,6 +384,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               </div>
             ))}
             <p className="hint">{t('directory.inviteHint')}</p>
+            {guardianErr && <p className="form-error">{guardianErr}</p>}
           </div>
         )}
         {guardianEdit && (
@@ -365,9 +421,10 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
             </div>
             <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" type="tel" inputMode="tel" autoComplete="tel" value={grd.phone} onChange={(e) => setGrd({ ...grd, phone: formatUsPhone(e.target.value) })} /></div>
             <div className="field"><label className="label">{t('directory.email')}</label><input className="input glass-inset" value={grd.email} onChange={(e) => setGrd({ ...grd, email: e.target.value })} /></div>
-            <label className="hint" style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
-              <input type="checkbox" checked={grd.emergency} onChange={(e) => setGrd({ ...grd, emergency: e.target.checked })} /> {t('directory.isEmergency')}
-            </label>
+            {/* No "emergency contact" tick here any more: there is a whole Emergency contacts section
+                directly below, and two ways to say the same thing meant an office ticking the box then
+                wondering why nobody appeared in that list. Guardians flagged before 0.42.0 still show
+                their badge. */}
             <button type="submit" className="btn btn--primary" disabled={addGuardian.isPending}>{t('common.save')}</button>
           </form>
         )}
@@ -385,10 +442,16 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {emergencyContacts.map((c) => (
-              <div key={c.id} className="glass-inset" style={{ padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-button)' }}>
+              <div key={c.id} className="glass-inset" style={{ padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-button)', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <strong>{c.name}</strong>
-                {c.relation && <span className="muted"> · {relationLabel(t, c.relation)}</span>}
-                {c.phone && <span className="muted"> · {formatUsPhone(c.phone)}</span>}
+                {c.relation && <span className="muted">· {relationLabel(t, c.relation)}</span>}
+                {c.phone && <a className="muted" href={`tel:${telHref(c.phone)}`}>· {formatUsPhone(c.phone)}</a>}
+                <span className="spacer" style={{ marginInlineStart: 'auto' }} />
+                {!readOnly && (
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => void askRemoveContact(c.id, c.name)} disabled={removeContact.isPending}>
+                    <Trash2 size={13} /> {t('common.delete')}
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -415,15 +478,18 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
           </div>
           <p className="hint" style={{ marginBlockStart: 0 }}>{t('directory.addSiblingHint')}</p>
           <form className="inline-form glass-inset" onSubmit={submitAddSibling}>
-            <div className="field" style={{ flex: '1 1 16rem' }}>
-              <label className="label" htmlFor="add-sibling">{t('directory.siblingStudent')}</label>
-              <select id="add-sibling" className="input glass-inset" value={siblingId} onChange={(e) => setSiblingId(e.target.value)}>
-                <option value="">{t('directory.selectStudent')}</option>
-                {(siblingOptions.data ?? [])
-                  // Only children OUTSIDE this household: the ones already here have nothing to join.
-                  .filter((s) => !students.some((own) => own.id === s.id))
-                  .map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
-              </select>
+            <div style={{ flex: '1 1 18rem' }}>
+              {/* Type or browse — a roster of three hundred is not something anyone scrolls a
+                  <select> through, and the office often knows the name but not where it sits. */}
+              <StudentPicker
+                id="add-sibling"
+                label={t('directory.siblingStudent')}
+                students={siblingOptions.data ?? []}
+                value={siblingId}
+                onChange={setSiblingId}
+                // Only children OUTSIDE this household: the ones already here have nothing to join.
+                exclude={students.map((own) => own.id)}
+              />
             </div>
             <button type="submit" className="btn btn--primary" disabled={addSibling.isPending || !siblingId}>{t('directory.addSiblingAction')}</button>
           </form>

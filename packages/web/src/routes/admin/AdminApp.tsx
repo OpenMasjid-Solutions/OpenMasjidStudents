@@ -33,7 +33,7 @@ export function AdminApp() {
         ) : section === 'structure' ? (
           <Structure />
         ) : section === 'billing' ? (
-          <Billing />
+          <Billing canManagePlans />
         ) : section === 'staff' ? (
           <Staff />
         ) : (

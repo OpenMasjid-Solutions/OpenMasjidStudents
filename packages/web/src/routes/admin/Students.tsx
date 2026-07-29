@@ -20,6 +20,8 @@ import { trpc } from '../../lib/trpc';
 import { useWindows } from '../../components/Windows';
 import { FamilyDetail } from './FamilyDetail';
 import { ImportStudents } from './ImportStudents';
+import { StudentPicker } from '../../components/StudentPicker';
+import { SiblingSuggestions } from '../../components/SiblingSuggestions';
 
 type Row = {
   id: string;
@@ -78,6 +80,9 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
 
   const openImport = () =>
     open({ title: t('students.import'), wide: true, dedupeKey: 'import:students', icon: <Upload size={15} />, node: <ImportStudents /> });
+
+  const openSiblings = () =>
+    open({ title: t('siblings.title'), wide: true, dedupeKey: 'siblings:suggest', icon: <Users size={15} />, node: <SiblingSuggestions /> });
 
   async function submitStudent(e: FormEvent) {
     e.preventDefault();
@@ -167,7 +172,10 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
         <span className="spacer" />
         {!readOnly && (
           <>
-            <button type="button" className="btn btn--ghost" onClick={openImport}>{t('students.import')}</button>
+            {/* Reachable outside the import too: an install that imported before 0.42.0 has households
+                that were never linked, and this is where someone goes looking for them. */}
+            <button type="button" className="btn btn--ghost" onClick={openSiblings}>{t('siblings.title')}</button>
+            <button type="button" className="btn btn--ghost no-mobile" onClick={openImport}>{t('students.import')}</button>
             <button type="button" className="btn btn--primary" onClick={() => setAdding((v) => !v)}>{t('directory.addStudent')}</button>
           </>
         )}
@@ -198,12 +206,18 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
               {classOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
           </div>
-          {/* The sibling link. This is the ONLY way households are formed — nobody names a family. */}
-          <div className="field" style={{ flex: '1 1 13rem' }}><label className="label" htmlFor="stu-sibling">{t('students.linkSibling')}</label>
-            <select id="stu-sibling" className="input glass-inset" value={stu.linkToStudentId} onChange={(e) => setStu({ ...stu, linkToStudentId: e.target.value })}>
-              <option value="">{t('students.noSibling')}</option>
-              {(siblings.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
-            </select>
+          {/* The sibling link. This is the ONLY way households are formed — nobody names a family.
+              Type-to-search, because by the time a school has three hundred children a dropdown of
+              every one of them is not a way to find a brother. */}
+          <div style={{ flex: '1 1 15rem' }}>
+            <StudentPicker
+              id="stu-sibling"
+              label={t('students.linkSibling')}
+              placeholder={t('students.noSibling')}
+              students={siblings.data ?? []}
+              value={stu.linkToStudentId}
+              onChange={(id) => setStu({ ...stu, linkToStudentId: id })}
+            />
             <span className="hint">{t('students.linkSiblingHint')}</span>
           </div>
           <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>

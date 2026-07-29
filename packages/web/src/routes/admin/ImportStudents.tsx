@@ -11,8 +11,17 @@ import { useTranslation } from 'react-i18next';
 import { trpc } from '../../lib/trpc';
 import { parseCsv, autoMatchColumns, toCsv, downloadCsv } from '../../lib/csv';
 import { formatMoney } from '../../lib/money';
+import { SiblingSuggestions } from '../../components/SiblingSuggestions';
 
-type Step = 'pick' | 'map' | 'preview' | 'done';
+/**
+ * `siblings` sits between the commit and the finished roster on purpose.
+ *
+ * The import cannot work out households itself — that is a deliberate refusal, since a wrong guess
+ * merges two families' money. But leaving it there means 120 children in 120 households, and a parent
+ * with four separate balances. So the moment the rows land, while the names are still on screen, the
+ * office is shown the likely families and confirms them. Skippable, and reachable later from Students.
+ */
+type Step = 'pick' | 'map' | 'preview' | 'siblings' | 'done';
 
 export function ImportStudents() {
   const { t } = useTranslation();
@@ -81,8 +90,11 @@ export function ImportStudents() {
       utils.structure.studentsByClass.invalidate(),
       utils.structure.courseTree.invalidate(),
       utils.people.directory.invalidate(),
+      utils.people.siblingOptions.invalidate(),
+      // The suggestions are computed from what was just written, so they must not come from cache.
+      utils.people.siblingSuggestions.invalidate(),
     ]);
-    setStep('done');
+    setStep('siblings');
   }
 
   return (
@@ -221,20 +233,32 @@ export function ImportStudents() {
         </section>
       )}
 
-      {/* ── Step 4: done — the generated Student IDs ────────────────────── */}
+      {/* ── Step 4: siblings — the households the import deliberately did not guess ──── */}
+      {step === 'siblings' && commit.data && (
+        <>
+          <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+            <div className="section-head">
+              <h2>{t('import.imported')}</h2>
+              <span className="chip">{t('import.summaryShort', { count: commit.data.created })}</span>
+            </div>
+            <p className="hint" style={{ marginBlockStart: 0 }}>{t('import.siblingsStepIntro')}</p>
+          </section>
+          <SiblingSuggestions onDone={() => setStep('done')} doneLabel={t('import.toIds')} />
+        </>
+      )}
+
+      {/* ── Step 5: done — the generated Student IDs ────────────────────── */}
       {step === 'done' && commit.data && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head">
             <h2>{t('import.done')}</h2>
             <span className="spacer" />
-            <button type="button" className="btn btn--ghost btn--sm" onClick={() => window.print()}>{t('import.print')}</button>
+            <button type="button" className="btn btn--ghost btn--sm no-print" onClick={() => setStep('siblings')}>{t('import.backToSiblings')}</button>
+            <button type="button" className="btn btn--ghost btn--sm no-print" onClick={() => window.print()}>{t('import.print')}</button>
           </div>
           <p className="hint">
             {t('import.summary', { students: commit.data.created, guardians: commit.data.guardiansCreated })}
           </p>
-          {/* The one follow-up action this import cannot do for them — said again here, where they
-              are looking at a finished roster of children who are all in households of their own. */}
-          <p className="hint"><strong>{t('import.siblingsNext')}</strong></p>
           <p className="hint">{t('import.idsAssigned')}</p>
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">

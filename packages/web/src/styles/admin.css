@@ -782,3 +782,206 @@
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Student picker (components/StudentPicker.tsx) ─────────────────────────────
+   A text input with a dropdown list under it: type to narrow, click to browse.
+   The list is absolutely positioned so it overlays whatever follows instead of
+   pushing the form around as it filters. */
+.picker-control {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  position: relative;
+}
+.picker-control .input {
+  flex: 1;
+  /* Room for the chevron / clear button sitting on the end edge. */
+  padding-inline-end: 2.2rem;
+}
+.picker-btn {
+  position: absolute;
+  inset-inline-end: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  border: none;
+  background: none;
+  border-radius: var(--radius-button);
+  color: var(--color-ink-muted);
+  cursor: pointer;
+}
+.picker-btn:hover { color: var(--color-ink); background: var(--glass-bg-inset); }
+.picker-list {
+  position: absolute;
+  z-index: 40;
+  inset-inline: 0;
+  /* Below the input, allowing for the label above it. */
+  top: 100%;
+  margin-block-start: 0.25rem;
+  max-block-size: 16rem;
+  overflow-y: auto;
+  padding: 0.25rem;
+  border-radius: var(--radius-card);
+  list-style: none;
+}
+.picker-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  inline-size: 100%;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  background: none;
+  border-radius: var(--radius-button);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.picker-row.is-active,
+.picker-row:hover { background: var(--glass-bg-inset); }
+.picker-name { font-weight: 600; }
+.picker-sub { font-size: 0.85rem; }
+.picker-empty {
+  padding: 0.6rem;
+  color: var(--color-ink-faint);
+  font-size: 0.9rem;
+}
+@media (max-width: 700px) {
+  /* Thumb-sized rows, and a taller list since there is more vertical room than width. */
+  .picker-row { padding-block: 0.7rem; }
+  .picker-list { max-block-size: 60vh; }
+}
+
+/* Contact columns in the year grid: tappable numbers, one per line, never wrapped mid-number. */
+.year-contact { white-space: nowrap; }
+.contact-link {
+  color: inherit;
+  text-decoration: none;
+  border-block-end: 1px dotted var(--color-ink-faint);
+}
+.contact-link:hover { color: var(--color-primary); border-block-end-color: currentColor; }
+@media print {
+  /* On paper a dotted underline is noise — the number is just text there. */
+  .contact-link { border-block-end: none; }
+}
+
+/* ── Pick list (ClassEnrol, the import sibling step) ───────────────────────────
+   A checkbox list that has to stay readable at three hundred rows and tappable on
+   a phone: the whole row is the label, so anywhere in it toggles. */
+.pick-list {
+  list-style: none;
+  margin: 0.6rem 0;
+  padding: 0;
+  max-block-size: 26rem;
+  overflow-y: auto;
+  border-radius: var(--radius-card);
+}
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-button);
+  cursor: pointer;
+}
+.pick-row:hover { background: var(--glass-bg-inset); }
+.pick-row.is-picked { background: color-mix(in oklab, var(--color-primary) 14%, transparent); }
+.pick-row.is-done { cursor: default; color: var(--color-ink-muted); }
+.pick-name { font-weight: 600; }
+@media (max-width: 700px) {
+  .pick-row { padding-block: 0.75rem; }
+  .pick-list { max-block-size: 55vh; }
+}
+
+/* ── What's new (release notes) ────────────────────────────────────────────────
+   A page of prose inside a window: readable measure, restrained headings, and the
+   nested bullets our changelog uses for the "why" under a change. */
+.whats-new { display: grid; gap: 0.9rem; }
+.wn-summary {
+  cursor: pointer;
+  color: var(--color-ink-muted);
+  font-size: 0.88rem;
+  padding-block: 0.25rem;
+}
+.wn-summary:hover { color: var(--color-ink); }
+.wn-group {
+  margin: 0.5rem 0 0.3rem;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-gold);
+}
+.wn-list {
+  margin: 0;
+  padding-inline-start: 1.1rem;
+  display: grid;
+  gap: 0.45rem;
+  max-width: 62ch;
+  line-height: 1.55;
+}
+.wn-list code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.9em;
+  padding: 0.05em 0.3em;
+  border-radius: 4px;
+  background: var(--glass-bg-inset);
+}
+.wn-sub {
+  margin-block-start: 0.35rem;
+  color: var(--color-ink-muted);
+  font-size: 0.94em;
+}
+
+/* ── Phone: hide what a phone cannot do, and make windows behave like sheets ───
+   The rule for `.no-mobile` is narrow on purpose: it is for actions that are not
+   merely cramped on a phone but MEANINGLESS there — downloading a spreadsheet
+   with nothing to open it, or picking a CSV off a device that has no file to
+   pick. Anything that is just tight gets laid out better instead of hidden; a
+   feature you can only reach at a desk is a feature an office cannot rely on. */
+@media (max-width: 700px) {
+  .no-mobile { display: none !important; }
+}
+
+@media (max-width: 700px) {
+  /* A record you opened should own the screen. A 34rem box you drag by its title
+     bar is a desk idea; on a phone it leaves content squeezed into the middle
+     with the desktop showing around it.
+
+     `!important` is doing real work here: the window manager writes inline
+     left/top the moment a pointer drags the header, and one stray thumb on the
+     title would otherwise strand the sheet half off-screen with no way back. */
+  .win-pos,
+  .win-pos--center {
+    left: 0 !important;
+    top: 0 !important;
+    right: 0;
+    transform: none !important;
+  }
+  .win,
+  .win--wide {
+    inline-size: 100vw;
+    max-inline-size: 100vw;
+    /* dvh, not vh: with vh the sheet sits under the browser's own toolbar and the
+       last row of every list is unreachable. */
+    block-size: 100dvh;
+    max-block-size: 100dvh;
+    border-radius: 0;
+  }
+  /* Dragging is meaningless when the sheet fills the screen — say so with the cursor
+     and give the traffic lights a thumb-sized row. */
+  .win-head {
+    cursor: default;
+    padding-block: 0.9rem;
+  }
+  /* Clear the floating dock so the last button in a window is not trapped under it. */
+  .win-body { padding: 0.9rem 0.95rem 6rem; }
+
+  /* The window's own content uses the same page rhythm as a tab, so section padding
+     that reads as generous on a desktop just eats the width here. */
+  .win-body .section { padding: 0.8rem 0.85rem !important; }
+}

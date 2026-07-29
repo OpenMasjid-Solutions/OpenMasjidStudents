@@ -132,4 +132,22 @@ describe('walls', () => {
     expect(r.find((f) => f.id === familyId)).toBeTruthy();
     void admin;
   });
+
+  /**
+   * 0.42.0 (Hasan's call): finance RUNS the billing but does not decide WHAT the madrasa charges.
+   * Archiving a plan silently unassigns every student on it and deleting one is permanent, so all
+   * three writes sit behind the admin wall while the list stays readable — no invoice screen means
+   * anything without the plan names.
+   */
+  it('fee plans: finance can read them but cannot create, archive or delete one', async () => {
+    const { planId } = await scenario();
+    const finance = caller('finance');
+    expect(Array.isArray(await finance.billing.feePlanList())).toBe(true);
+    await expect(finance.billing.feePlanCreate({ name: 'Sneaky', amountCents: 100, cadence: 'monthly' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(finance.billing.feePlanArchive({ id: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(finance.billing.feePlanDelete({ id: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(finance.billing.feePlanDeletable({ id: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Nothing happened: the plan is still there and still assigned.
+    expect((await caller('admin').billing.feePlanList()).some((p) => p.id === planId)).toBe(true);
+  });
 });

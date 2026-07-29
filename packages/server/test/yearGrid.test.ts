@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { freshApp, makeCtx } from './harness';
-import { paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, students, classes, courses, families, terms, schoolYears, users, auditLog, settings } from '../src/db/schema';
+import { paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, emergencyContacts, students, classes, courses, families, terms, schoolYears, users, auditLog, settings } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 import { schoolYearMonths } from '../src/billing/schoolYear';
 
@@ -23,7 +23,7 @@ const caller = (role: Role, opts: { origin?: 'lan' | 'tunnel' } = {}) =>
 beforeAll(async () => { app = await freshApp(); });
 beforeEach(() => {
   const { db } = app.dbmod;
-  for (const t of [paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, students, classes, courses, families, terms, schoolYears, users, auditLog, settings]) db.delete(t).run();
+  for (const t of [paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, emergencyContacts, students, classes, courses, families, terms, schoolYears, users, auditLog, settings]) db.delete(t).run();
 });
 
 describe('schoolYearMonths', () => {
@@ -153,16 +153,67 @@ describe('yearGrid', () => {
 });
 
 describe('optional columns are opt-in', () => {
-  it('defaults to guardian phones and nothing else', async () => {
+  it('defaults to the three phone columns and nothing else', async () => {
     const { admin } = await seed();
     const g = await admin.billing.yearGrid();
-    expect(g.columns).toEqual(['guardianPhones']);
+    expect(g.columns).toEqual(['fatherPhone', 'motherPhone', 'otherPhone']);
     const yusuf = g.rows.find((r) => r.fullName === 'Yusuf Ismail')!;
-    expect(yusuf.extra.guardianPhones).toEqual(['(901) 949-2646']);
+    // The seeded guardian has no relation recorded — as every CSV-imported one does — so their number
+    // lands in "other" rather than disappearing off the page.
+    expect(yusuf.extra.otherPhone).toEqual(['(901) 949-2646']);
+    expect(yusuf.extra.fatherPhone).toEqual([]);
     // Absent from the payload entirely, not merely blank.
     expect('studentCode' in yusuf.extra).toBe(false);
     expect('dob' in yusuf.extra).toBe(false);
     expect('balanceCents' in yusuf.extra).toBe(false);
+  });
+
+  /**
+   * One labelled column per number (0.42.0). The office wants to know WHOSE number it is about to
+   * ring, which a single comma-separated cell could never say.
+   */
+  it('files each number under the right heading, and keeps unlabelled ones in "other"', async () => {
+    const { admin, ismailId } = await seed();
+    await admin.people.guardianCreate({ familyId: ismailId, name: 'Abu Yusuf', phone: '(555) 111-1111', email: 'dad@test.org', relation: 'father' });
+    // Free text from before the dropdown existed still classifies — offices type "Mom", not "mother".
+    await admin.people.guardianCreate({ familyId: ismailId, name: 'Umm Yusuf', phone: '5552222222', email: 'mum@test.org', relation: 'Mom' });
+    await admin.people.emergencyContactAdd({ familyId: ismailId, name: 'Uncle Bilal', phone: '555-333-3333' });
+    await admin.billing.yearViewColumnsSet({ columns: ['fatherPhone', 'motherPhone', 'otherPhone', 'emergencyPhone', 'fatherEmail', 'motherEmail'] });
+
+    const yusuf = (await admin.billing.yearGrid()).rows.find((r) => r.fullName === 'Yusuf Ismail')!;
+    expect(yusuf.extra.fatherPhone).toEqual(['(555) 111-1111']);
+    expect(yusuf.extra.motherPhone).toEqual(['5552222222']);
+    expect(yusuf.extra.otherPhone).toEqual(['(901) 949-2646']); // the relation-less guardian from seed()
+    expect(yusuf.extra.emergencyPhone).toEqual(['555-333-3333']);
+    expect(yusuf.extra.fatherEmail).toEqual(['dad@test.org']);
+    expect(yusuf.extra.motherEmail).toEqual(['mum@test.org']);
+    // A sibling shares the household, so they share the numbers.
+    const sara = (await admin.billing.yearGrid()).rows.find((r) => r.fullName === 'Sara Ismail')!;
+    expect(sara.extra.fatherPhone).toEqual(['(555) 111-1111']);
+    // ...and an unrelated household gets none of them.
+    const bilal = (await admin.billing.yearGrid()).rows.find((r) => r.fullName === 'Bilal Farooqi')!;
+    expect(bilal.extra.fatherPhone).toEqual([]);
+    expect(bilal.extra.emergencyPhone).toEqual([]);
+  });
+
+  it('shows one number once, however differently the same digits were typed', async () => {
+    const { admin, ismailId } = await seed();
+    // The office recorded the father's mobile twice, punctuated differently, on two guardian rows.
+    await admin.people.guardianCreate({ familyId: ismailId, name: 'Abu Yusuf', phone: '(555) 111-1111', relation: 'father' });
+    await admin.people.guardianCreate({ familyId: ismailId, name: 'Abu Yusuf (work)', phone: '5551111111', relation: 'father' });
+    await admin.billing.yearViewColumnsSet({ columns: ['fatherPhone'] });
+    const yusuf = (await admin.billing.yearGrid()).rows.find((r) => r.fullName === 'Yusuf Ismail')!;
+    expect(yusuf.extra.fatherPhone).toEqual(['(555) 111-1111']);
+  });
+
+  /** An install that had the old combined column keeps seeing the same numbers, in labelled columns,
+   *  with no migration and no visit to Settings. */
+  it('translates the pre-0.42.0 saved column names on read', async () => {
+    const { admin } = await seed();
+    app.dbmod.db.insert(settings).values({ key: 'year_view_columns', value: JSON.stringify(['guardianPhones', 'studentId']), updatedAt: new Date() }).run();
+    const g = await admin.billing.yearGrid();
+    expect(g.columns).toEqual(['fatherPhone', 'motherPhone', 'otherPhone', 'studentId']);
+    expect(g.rows.find((r) => r.fullName === 'Yusuf Ismail')!.extra.otherPhone).toEqual(['(901) 949-2646']);
   });
 
   it('includes a column only once an admin switches it on', async () => {
@@ -204,8 +255,8 @@ describe('walls', () => {
     await seed();
     const finance = caller('finance');
     expect((await finance.billing.yearGrid()).rows).toHaveLength(3);
-    expect((await finance.billing.yearViewColumnsGet()).enabled).toEqual(['guardianPhones']);
-    await expect(finance.billing.yearViewColumnsSet({ columns: ['guardianEmails'] })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect((await finance.billing.yearViewColumnsGet()).enabled).toEqual(['fatherPhone', 'motherPhone', 'otherPhone']);
+    await expect(finance.billing.yearViewColumnsSet({ columns: ['fatherEmail'] })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it('a parent cannot read the grid, and admin over the tunnel is refused', async () => {

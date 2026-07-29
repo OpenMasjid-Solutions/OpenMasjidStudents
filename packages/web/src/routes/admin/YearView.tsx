@@ -16,11 +16,21 @@ import { Users, Settings2, Printer } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
 import { formatMoney } from '../../lib/money';
-import { formatUsPhone } from '../../lib/phone';
+import { formatUsPhone, telHref } from '../../lib/phone';
 import { useWindows } from '../../components/Windows';
 import { FamilyDetail } from './FamilyDetail';
 
 const UNPLACED = '__unplaced';
+
+/**
+ * The contact columns, in the order an office would work down them: father, mother, anyone else on the
+ * household, then the emergency number. Each is its own column with its own heading — a single "guardian
+ * phones" cell full of commas could not tell you whose number you were about to ring.
+ *
+ * `other` catches guardians with no relation recorded, which is every guardian a CSV import created.
+ * Without it their number would simply not appear on the page.
+ */
+const CONTACT_COLUMNS = ['fatherPhone', 'motherPhone', 'otherPhone', 'emergencyPhone', 'fatherEmail', 'motherEmail', 'otherEmail'] as const;
 
 export function YearView({ canConfigure }: { canConfigure: boolean }) {
   const { t } = useTranslation();
@@ -169,8 +179,10 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                   {enabled.includes('dob') && <th>{t('year.col_dob')}</th>}
                   {enabled.includes('balance') && <th>{t('year.col_balance')}</th>}
                   {enabled.includes('guardianNames') && <th>{t('year.col_guardianNames')}</th>}
-                  {enabled.includes('guardianPhones') && <th>{t('year.col_guardianPhones')}</th>}
-                  {enabled.includes('guardianEmails') && <th>{t('year.col_guardianEmails')}</th>}
+                  {/* One labelled column per number, in the order an office would ring them. */}
+                  {CONTACT_COLUMNS.filter((c) => enabled.includes(c)).map((c) => (
+                    <th key={c}>{t(`year.col_${c}`)}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -225,10 +237,23 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                         {enabled.includes('dob') && <td>{r.extra.dob ?? ''}</td>}
                         {enabled.includes('balance') && <td className="tnum">{formatMoney(r.extra.balanceCents ?? 0, g.currency)}</td>}
                         {enabled.includes('guardianNames') && <td>{(r.extra.guardianNames ?? []).join(', ')}</td>}
-                        {/* Formatted here too, so a number typed as 5551234567 years ago reads the
-                            same as one entered today (lib/phone.ts leaves non-US numbers alone). */}
-                        {enabled.includes('guardianPhones') && <td style={{ whiteSpace: 'nowrap' }}>{(r.extra.guardianPhones ?? []).map(formatUsPhone).join(', ')}</td>}
-                        {enabled.includes('guardianEmails') && <td>{(r.extra.guardianEmails ?? []).join(', ')}</td>}
+                        {/* Tappable numbers and addresses. Formatted for display (lib/phone.ts leaves
+                            non-US numbers alone) but the href is built from the digits — see telHref.
+                            On a phone this page becomes the office's call list, which is the point. */}
+                        {CONTACT_COLUMNS.filter((c) => enabled.includes(c)).map((c) => (
+                          <td key={c} className={c.endsWith('Phone') ? 'year-contact' : undefined}>
+                            {(r.extra[c] ?? []).map((v, n) => (
+                              <Fragment key={v}>
+                                {n > 0 && <br />}
+                                {c.endsWith('Phone') ? (
+                                  <a href={`tel:${telHref(v)}`} className="contact-link">{formatUsPhone(v)}</a>
+                                ) : (
+                                  <a href={`mailto:${v}`} className="contact-link">{v}</a>
+                                )}
+                              </Fragment>
+                            ))}
+                          </td>
+                        ))}
                       </tr>
                     </Fragment>
                   );

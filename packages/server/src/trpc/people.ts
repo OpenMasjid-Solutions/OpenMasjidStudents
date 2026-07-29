@@ -22,6 +22,8 @@ import {
   feePlans,
   studentFees,
   invoiceItems,
+  invoices,
+  payments,
   charges,
   classes,
   guardianUsers,
@@ -33,7 +35,8 @@ import {
 import { rid } from '../db/ids';
 import { generateUniqueStudentCode } from '../billing/studentCodes';
 import { displayName } from '../people/names';
-import { familyLabel } from '../people/household';
+import { familyLabel, mergeDuplicateGuardians, mergeDuplicateContacts } from '../people/household';
+import { suggestSiblingGroups } from '../people/siblingSuggest';
 import type { Tx } from '../billing/ledger';
 import { audit } from '../audit';
 import { IMPORT_FIELDS, validateRows, commitRows, type ImportRow } from '../people/import';
@@ -327,12 +330,19 @@ export const peopleRouter = router({
       return { ...r, familyId, familyLabel: familyLabel(familyId) };
     }),
 
-  /** Candidate siblings to link a new student to — every active student, with their household label,
-   *  so the add dialog can offer "shares a family with…". */
+  /**
+   * Candidate siblings to link a new student to — every active student.
+   *
+   * Carries the Student ID and the household label as well as the name, because the picker is a
+   * type-to-search list and a madrasa really does enrol two children called Muhammad Ali. A name alone
+   * makes those two rows indistinguishable at the moment of choosing, which is the one moment it
+   * matters; the ID disambiguates them and the household says who they are already with.
+   */
   siblingOptions: adminOrFinanceProcedure.query(() =>
     db
-      .select({ id: students.id, fullName: students.fullName, familyId: students.familyId })
+      .select({ id: students.id, fullName: students.fullName, studentCode: students.studentCode, familyId: students.familyId, familyName: families.name })
       .from(students)
+      .innerJoin(families, eq(families.id, students.familyId))
       .where(eq(students.status, 'active'))
       .orderBy(students.fullName)
       .all(),
@@ -430,11 +440,93 @@ export const peopleRouter = router({
       const contacts = tx.update(emergencyContacts).set({ familyId: to, updatedAt: now() }).where(eq(emergencyContacts.familyId, from)).run().changes;
       // Empty now, and nothing money-side ever referenced it — see the guard above.
       tx.delete(families).where(eq(families.id, from)).run();
+      // The `already` check above only catches the SAME guardian row on both households. After a CSV
+      // import the same father exists as two different rows, one per child, so linking the children
+      // produced "Abu Yusuf · Abu Yusuf" on the record. Fold those together here — see
+      // mergeDuplicateGuardians for why matching by name is safe inside one household and nowhere else.
+      const dupes = mergeDuplicateGuardians(tx, to);
+      const dedupedContacts = mergeDuplicateContacts(tx, to);
       tx.update(families).set({ name: familyLabel(to, tx), updatedAt: now() }).where(eq(families.id, to)).run();
-      return { kids, contacts };
+      return { kids, contacts, dupes: dupes.merged, dedupedContacts };
     });
-    audit(auditActor(ctx), 'student.linkSiblings', { entity: 'student', entityId: s.id, detail: { from, to, movedStudents: moved.kids, movedContacts: moved.contacts } });
-    return { ok: true as const, merged: true, familyId: to };
+    audit(auditActor(ctx), 'student.linkSiblings', {
+      entity: 'student',
+      entityId: s.id,
+      detail: { from, to, movedStudents: moved.kids, movedContacts: moved.contacts, mergedGuardians: moved.dupes, mergedContacts: moved.dedupedContacts },
+    });
+    // The counts come back so the UI can say "…and merged 2 duplicate guardian records", rather than
+    // the office noticing on their own that a row they expected to see twice is now there once.
+    return { ok: true as const, merged: true, familyId: to, mergedGuardians: moved.dupes, mergedContacts: moved.dedupedContacts };
+  }),
+
+  /**
+   * Sibling suggestions for children who are alone in their household — the job a CSV import leaves.
+   *
+   * A query with no input: "alone in their household" is the population that needs checking, whether
+   * the import ran five seconds or three months ago. See people/siblingSuggest.ts for why contact
+   * matches and surname matches are reported as separate strengths of evidence.
+   */
+  siblingSuggestions: adminProcedure.query(() => suggestSiblingGroups()),
+
+  /**
+   * Link a whole suggested group in one action — accept the suggestion, not two children at a time.
+   *
+   * Everyone joins the household of the FIRST child by name, chosen only because it has to be
+   * deterministic. The merge is the same one `familyAddSibling` performs (guardians and contacts come
+   * across, duplicates fold together, emptied households go), done once per joining child inside a
+   * single transaction so a half-linked group cannot exist.
+   *
+   * It REFUSES if any household in the group carries card/autopay state, for the same reason
+   * `familyAddSibling` does: those hang off that family's Stripe customer. Newly imported children
+   * never have any, so in the flow this exists for it never fires.
+   */
+  linkSiblingGroup: adminProcedure.input(z.object({ studentIds: z.array(ID).min(2).max(50) })).mutation(({ ctx, input }) => {
+    const kids = input.studentIds.map((id) => requireStudent(id));
+    const families_ = [...new Set(kids.map((k) => k.familyId))];
+    if (families_.length < 2) return { ok: true as const, familyId: kids[0].familyId, linked: 0, mergedGuardians: 0, mergedContacts: 0 };
+
+    // Deterministic survivor: the alphabetically first child's household. Nothing else distinguishes
+    // them — they are all single-child households a moment out of a spreadsheet.
+    const anchor = [...kids].sort((a, b) => a.fullName.localeCompare(b.fullName))[0];
+    const to = anchor.familyId;
+    const from = families_.filter((f) => f !== to);
+
+    for (const f of from) {
+      const blockers: string[] = [];
+      const fam = requireFamily(f);
+      if (fam.stripeCustomerId) blockers.push('a Stripe customer');
+      if (db.select({ id: paymentMethods.id }).from(paymentMethods).where(eq(paymentMethods.familyId, f)).get()) blockers.push('saved cards');
+      if (db.select({ familyId: autopayEnrollments.familyId }).from(autopayEnrollments).where(eq(autopayEnrollments.familyId, f)).get()) blockers.push('autopay');
+      if (db.select({ id: autopayRuns.id }).from(autopayRuns).where(eq(autopayRuns.familyId, f)).get()) blockers.push('autopay history');
+      if (blockers.length) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: `One of these students’ households has ${blockers.join(' and ')} set up, so it can’t be merged automatically. Link the others, then sort that one out by hand.`,
+        });
+      }
+    }
+
+    const res = db.transaction((tx) => {
+      const ts = now();
+      for (const f of from) {
+        tx.update(students).set({ familyId: to, updatedAt: ts }).where(eq(students.familyId, f)).run();
+        const already = new Set(tx.select({ guardianId: guardianFamilies.guardianId }).from(guardianFamilies).where(eq(guardianFamilies.familyId, to)).all().map((g) => g.guardianId));
+        for (const link of tx.select().from(guardianFamilies).where(eq(guardianFamilies.familyId, f)).all()) {
+          if (already.has(link.guardianId)) tx.delete(guardianFamilies).where(and(eq(guardianFamilies.guardianId, link.guardianId), eq(guardianFamilies.familyId, f))).run();
+          else tx.update(guardianFamilies).set({ familyId: to }).where(and(eq(guardianFamilies.guardianId, link.guardianId), eq(guardianFamilies.familyId, f))).run();
+        }
+        tx.update(emergencyContacts).set({ familyId: to, updatedAt: ts }).where(eq(emergencyContacts.familyId, f)).run();
+        tx.delete(families).where(eq(families.id, f)).run();
+      }
+      // Once, at the end: the same father arriving from four rows collapses to one record here.
+      const dupes = mergeDuplicateGuardians(tx, to);
+      const dedupedContacts = mergeDuplicateContacts(tx, to);
+      tx.update(families).set({ name: familyLabel(to, tx), updatedAt: ts }).where(eq(families.id, to)).run();
+      return { mergedGuardians: dupes.merged, mergedContacts: dedupedContacts };
+    });
+
+    audit(auditActor(ctx), 'student.linkSiblingGroup', { entity: 'family', entityId: to, detail: { students: kids.length, households: from.length, ...res } });
+    return { ok: true as const, familyId: to, linked: kids.length, ...res };
   }),
 
   /**
@@ -499,26 +591,40 @@ export const peopleRouter = router({
   /**
    * Can this student be deleted outright, and if not, why not?
    *
-   * Three tables reference `students`, all ON DELETE RESTRICT, and they are not equal:
+   * FIVE tables reference `students`, all ON DELETE RESTRICT, and they are not equal:
    *   - `student_fees` is CONFIGURATION — which plans they carry. Deleting it with them is correct.
-   *   - `invoice_items` is MONEY HISTORY — a line on an invoice that was actually raised. Removing a
-   *     student who appears on an invoice would silently change what that invoice says it was for,
-   *     which is exactly the immutability §9 protects.
+   *   - `invoice_items` and `invoices` are MONEY HISTORY — a bill that was actually raised. Removing a
+   *     student who appears on one would silently change what that invoice says it was for, which is
+   *     exactly the immutability §9 protects.
+   *   - `payments` is MONEY THAT ARRIVED. Even with nothing billed — a parent paying a term ahead —
+   *     that row is the masjid's record of cash it received, and no tidying-up of a student list is
+   *     worth erasing it.
    *   - `charges` is either: a `pending`/`void` charge is not yet money and goes with them; an
    *     `invoiced` one is money history and blocks.
    *
    * So: delete is for a mistake (wrong name typed, duplicate row, a child who never actually
-   * enrolled). A student who has ever been billed is withdrawn, not deleted. Exposed as its own query
-   * so the office sees the reason BEFORE clicking, instead of hitting a refusal.
+   * enrolled). A student who has ever been billed OR paid is withdrawn, not deleted — which stops all
+   * future billing, since invoice generation only ever looks at `active` students.
+   *
+   * `payments` and `invoices` were missing from this check until 0.42.0, so a child with an advance
+   * payment reported `deletable: true` and the delete then died on the constraint — surfacing a raw
+   * "FOREIGN KEY constraint failed" to the office (§15: never).
    */
   studentDeletable: adminProcedure.input(z.object({ studentId: ID })).query(({ input }) => {
     const s = requireStudent(input.studentId);
     const invoiceLines = db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.studentId, s.id)).all().length;
     const invoicedCharges = db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), eq(charges.status, 'invoiced'))).all().length;
+    const bills = db.select({ id: invoices.id }).from(invoices).where(eq(invoices.studentId, s.id)).all().length;
+    // Every payment row, INCLUDING reversals: a reversed payment nets to zero but the pair is still
+    // the story of money that came in and went back out, and that story is the ledger.
+    const paymentRows = db.select({ id: payments.id }).from(payments).where(eq(payments.studentId, s.id)).all().length;
     return {
-      deletable: invoiceLines === 0 && invoicedCharges === 0,
+      deletable: invoiceLines === 0 && invoicedCharges === 0 && bills === 0 && paymentRows === 0,
       invoiceLines,
       invoicedCharges,
+      /** Invoices raised for them, and payments recorded against them — both block. */
+      invoices: bills,
+      payments: paymentRows,
       /** Config rows that will be removed along with them. */
       feeAssignments: db.select({ id: studentFees.id }).from(studentFees).where(eq(studentFees.studentId, s.id)).all().length,
       pendingCharges: db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), ne(charges.status, 'invoiced'))).all().length,
@@ -537,10 +643,20 @@ export const peopleRouter = router({
     const s = requireStudent(input.studentId);
     const invoiceLines = db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.studentId, s.id)).all().length;
     const invoicedCharges = db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), eq(charges.status, 'invoiced'))).all().length;
-    if (invoiceLines > 0 || invoicedCharges > 0) {
+    const bills = db.select({ id: invoices.id }).from(invoices).where(eq(invoices.studentId, s.id)).all().length;
+    const paymentRows = db.select({ id: payments.id }).from(payments).where(eq(payments.studentId, s.id)).all().length;
+    if (invoiceLines > 0 || invoicedCharges > 0 || bills > 0) {
       throw new TRPCError({
         code: 'CONFLICT',
-        message: 'This student has been billed, so their record is part of your invoice history and can’t be deleted. Mark them withdrawn instead.',
+        message: 'This student has been billed, so their record is part of your invoice history and can’t be deleted. Mark them withdrawn instead — that stops all future billing and keeps the history intact.',
+      });
+    }
+    // Money that arrived is not ours to delete, even when nothing was ever billed (a term paid in
+    // advance). Withdrawal is the right move; the payment stays on the books where it belongs.
+    if (paymentRows > 0) {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'A payment has been recorded for this student, so their record is part of your payment history and can’t be deleted. Mark them withdrawn instead — that stops all future billing. If the payment belongs to a different child, reverse it first, then record it against the right one.',
       });
     }
     let removedFees = 0;
@@ -620,6 +736,91 @@ export const peopleRouter = router({
       audit(auditActor(ctx), 'guardian.link', { entity: 'guardian', entityId: input.guardianId, detail: { familyId: input.familyId } });
       return { ok: true as const };
     }),
+
+  /**
+   * What removing this guardian from this household would actually do — asked before the click.
+   *
+   * Three outcomes, and the office must be told which one they are about to get:
+   *  - the guardian is on ANOTHER household too → they are only unlinked from this one, and the person
+   *    (and their login) carries on for that other family;
+   *  - they are on this household only → the person is deleted;
+   *  - they are on this household only AND have a parent portal login → the login goes with them,
+   *    because `guardian_users` cascades and a login with no family attached can sign in and see
+   *    nothing. That is worth a sentence, not a surprise.
+   */
+  guardianRemovable: adminProcedure.input(z.object({ guardianId: ID, familyId: ID })).query(({ input }) => {
+    const g = db.select({ id: guardians.id, name: guardians.name }).from(guardians).where(eq(guardians.id, input.guardianId)).get();
+    if (!g) throw new TRPCError({ code: 'NOT_FOUND', message: 'Guardian not found.' });
+    const otherFamilies = db
+      .select({ familyId: guardianFamilies.familyId })
+      .from(guardianFamilies)
+      .where(and(eq(guardianFamilies.guardianId, g.id), ne(guardianFamilies.familyId, input.familyId)))
+      .all().length;
+    const account = db
+      .select({ userId: users.id, status: users.status })
+      .from(guardianUsers)
+      .innerJoin(users, eq(users.id, guardianUsers.userId))
+      .where(eq(guardianUsers.guardianId, g.id))
+      .get();
+    return {
+      name: g.name,
+      otherFamilies,
+      /** True when this is their last household, so the person themself goes. */
+      deletesPerson: otherFamilies === 0,
+      hasAccount: !!account,
+      accountStatus: account?.status ?? null,
+      /** True when the parent's portal login goes too — only ever alongside deleting the person. */
+      deletesAccount: otherFamilies === 0 && !!account,
+    };
+  }),
+
+  /**
+   * Remove a guardian from a household — unlink if they belong elsewhere too, delete outright if this
+   * was their only one. See `guardianRemovable` for which of the two will happen.
+   *
+   * A guardian carries no money, so there is nothing here to protect the way `studentDelete` protects
+   * invoices: contact details are corrections, not history. The one consequence worth handling is the
+   * portal login, which is deleted with the person rather than left orphaned — `sessions` cascades off
+   * `users`, so an open browser session dies with it, and `payments.recorded_by_user_id` is a plain
+   * column (not a foreign key), so who-recorded-what survives untouched in the ledger.
+   */
+  guardianRemove: adminProcedure.input(z.object({ guardianId: ID, familyId: ID })).mutation(({ ctx, input }) => {
+    const g = db.select({ id: guardians.id }).from(guardians).where(eq(guardians.id, input.guardianId)).get();
+    if (!g) throw new TRPCError({ code: 'NOT_FOUND', message: 'Guardian not found.' });
+    const link = db
+      .select({ guardianId: guardianFamilies.guardianId })
+      .from(guardianFamilies)
+      .where(and(eq(guardianFamilies.guardianId, g.id), eq(guardianFamilies.familyId, input.familyId)))
+      .get();
+    if (!link) throw new TRPCError({ code: 'NOT_FOUND', message: 'That guardian isn’t on this household.' });
+
+    const res = db.transaction((tx) => {
+      tx.delete(guardianFamilies).where(and(eq(guardianFamilies.guardianId, g.id), eq(guardianFamilies.familyId, input.familyId))).run();
+      const elsewhere = tx.select({ familyId: guardianFamilies.familyId }).from(guardianFamilies).where(eq(guardianFamilies.guardianId, g.id)).get();
+      if (elsewhere) return { unlinkedOnly: true as const, deletedAccount: false };
+      // Their last household: take the person, and the login that pointed at them.
+      const accountIds = tx.select({ userId: guardianUsers.userId }).from(guardianUsers).where(eq(guardianUsers.guardianId, g.id)).all().map((r) => r.userId);
+      tx.delete(guardians).where(eq(guardians.id, g.id)).run(); // cascades guardian_families + guardian_users
+      let deletedAccount = false;
+      for (const userId of accountIds) {
+        // Only if that login has no OTHER guardian to stand for — a shared account across households
+        // is unusual but must not be cut off from a family it still belongs to.
+        const stillLinked = tx.select({ guardianId: guardianUsers.guardianId }).from(guardianUsers).where(eq(guardianUsers.userId, userId)).get();
+        if (!stillLinked) {
+          tx.delete(users).where(eq(users.id, userId)).run();
+          deletedAccount = true;
+        }
+      }
+      return { unlinkedOnly: false as const, deletedAccount };
+    });
+
+    audit(auditActor(ctx), res.unlinkedOnly ? 'guardian.unlink' : 'guardian.delete', {
+      entity: 'guardian',
+      entityId: g.id,
+      detail: { familyId: input.familyId, deletedAccount: res.deletedAccount },
+    });
+    return { ok: true as const, ...res };
+  }),
 
   guardianUnlinkFamily: adminProcedure.input(z.object({ guardianId: ID, familyId: ID })).mutation(({ ctx, input }) => {
     db.delete(guardianFamilies)

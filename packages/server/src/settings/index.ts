@@ -112,24 +112,57 @@ export function getAutoInvoiceLast(): string | null {
   return getSetting(SETTING_KEYS.autoInvoiceLast);
 }
 
-/** Optional columns the admin can switch on in the year view, beyond the fixed
- *  name / paying / month grid. */
-export const YEAR_VIEW_COLUMNS = ['studentId', 'dob', 'guardianNames', 'guardianPhones', 'guardianEmails', 'balance'] as const;
+/**
+ * Optional columns the admin can switch on in the year view, beyond the fixed name / paying / month
+ * grid.
+ *
+ * Contact details are split ONE COLUMN PER NUMBER (0.42.0) rather than the old single "guardian
+ * phones" cell that crammed every number in behind a comma. A column headed "Father's" that you can
+ * tap to ring is worth more to an office than a list, and a labelled column is the only way to know
+ * whose number you are about to call. `other` is not a leftover: a guardian with no relation recorded —
+ * every CSV-imported one — still has to appear somewhere, and dropping them would silently lose the
+ * only number the school has.
+ */
+export const YEAR_VIEW_COLUMNS = [
+  'studentId',
+  'dob',
+  'guardianNames',
+  'fatherPhone',
+  'motherPhone',
+  'otherPhone',
+  'emergencyPhone',
+  'fatherEmail',
+  'motherEmail',
+  'otherEmail',
+  'balance',
+] as const;
 export type YearViewColumn = (typeof YEAR_VIEW_COLUMNS)[number];
 
-/** Which optional columns the year view shows. Defaults to guardian phone numbers — the column an
- *  office actually keeps beside a payment grid. Everything else is opt-in, so a page that gets
- *  printed and left on a desk carries only what the admin asked for (§14). */
+/** What the two pre-0.42.0 combined columns become, so an install that had them keeps showing exactly
+ *  the same information the morning after an update — just in labelled columns. */
+const LEGACY_COLUMNS: Record<string, YearViewColumn[]> = {
+  guardianPhones: ['fatherPhone', 'motherPhone', 'otherPhone'],
+  guardianEmails: ['fatherEmail', 'motherEmail', 'otherEmail'],
+};
+
+/** Phone numbers, in labelled columns — what an office keeps beside a payment grid. Everything else is
+ *  opt-in, so a page that gets printed and left on a desk carries only what the admin asked for (§14). */
+const DEFAULT_YEAR_VIEW_COLUMNS: YearViewColumn[] = ['fatherPhone', 'motherPhone', 'otherPhone'];
+
+/** Which optional columns the year view shows. Saved values from before 0.42.0 are translated on read
+ *  (see LEGACY_COLUMNS) rather than migrated in the database: a settings row is cheap to reinterpret,
+ *  and doing it here means there is exactly one place that knows the old names. */
 export function getYearViewColumns(): YearViewColumn[] {
   const raw = getSetting(SETTING_KEYS.yearViewColumns);
-  if (!raw) return ['guardianPhones'];
+  if (!raw) return [...DEFAULT_YEAR_VIEW_COLUMNS];
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return ['guardianPhones'];
+    if (!Array.isArray(parsed)) return [...DEFAULT_YEAR_VIEW_COLUMNS];
+    const expanded = parsed.flatMap((c) => (typeof c === 'string' && LEGACY_COLUMNS[c] ? LEGACY_COLUMNS[c] : [c]));
     // Filter against the allow-list so a stale/hand-edited row can never widen what is exposed.
-    return parsed.filter((c): c is YearViewColumn => (YEAR_VIEW_COLUMNS as readonly unknown[]).includes(c));
+    return [...new Set(expanded.filter((c): c is YearViewColumn => (YEAR_VIEW_COLUMNS as readonly unknown[]).includes(c)))];
   } catch {
-    return ['guardianPhones'];
+    return [...DEFAULT_YEAR_VIEW_COLUMNS];
   }
 }
 

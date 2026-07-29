@@ -5,7 +5,7 @@
  * finished one — and the load-bearing rule is that it never eats a number it doesn't recognise.
  */
 import { describe, it, expect } from 'vitest';
-import { formatUsPhone } from './phone';
+import { formatUsPhone, telHref } from './phone';
 
 describe('formatUsPhone', () => {
   it('formats a 10-digit US number however it was written', () => {
@@ -47,5 +47,21 @@ describe('formatUsPhone', () => {
   it('is stable — formatting an already-formatted number changes nothing', () => {
     expect(formatUsPhone('(555) 123-4567')).toBe('(555) 123-4567');
     expect(formatUsPhone(formatUsPhone('5551234567'))).toBe('(555) 123-4567');
+  });
+});
+
+describe('telHref', () => {
+  it('strips the formatting a dialler might choke on', () => {
+    expect(telHref('(555) 123-4567')).toBe('5551234567');
+    expect(telHref('555.123.4567 ')).toBe('5551234567');
+  });
+
+  it('keeps a country code the person typed', () => {
+    expect(telHref('+44 20 7946 0958')).toBe('+442079460958');
+  });
+
+  it('is empty for nothing, so no dead link is rendered', () => {
+    expect(telHref(null)).toBe('');
+    expect(telHref('')).toBe('');
   });
 });

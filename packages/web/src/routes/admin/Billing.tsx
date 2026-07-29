@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /** Billing (admin + finance): fee-plan definitions, a period invoice-generation action, and a
- *  families-with-balances overview that opens each family's billing as a window. */
+ *  families-with-balances overview that opens each family's billing as a window.
+ *
+ *  `canManagePlans` is the admin/finance line (§5): finance runs the billing — generate invoices,
+ *  record payments, chase balances — but WHAT the madrasa charges is the office's decision, so
+ *  creating, archiving and deleting fee plans is admin-only. Finance still READS the plans, because
+ *  no invoice screen means anything without their names. The server enforces the same wall. */
 import { useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
@@ -16,7 +21,7 @@ import { formatMoney, parseCents, parseSignedCents } from '../../lib/money';
 /** The code-defined export sheets (the server owns the columns — §14, no query built from input). */
 type CsvDataset = 'payments' | 'invoices' | 'balances' | 'students';
 
-export function Billing() {
+export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
   const { open } = useWindows();
@@ -26,6 +31,7 @@ export function Billing() {
   const overview = trpc.billing.familiesOverview.useQuery();
   const planCreate = trpc.billing.feePlanCreate.useMutation();
   const planArchive = trpc.billing.feePlanArchive.useMutation();
+  const planDelete = trpc.billing.feePlanDelete.useMutation();
   const genPeriod = trpc.billing.generatePeriod.useMutation();
   const reconcileStatusQ = trpc.billing.reconcileStatus.useQuery();
   const reconcileNow = trpc.billing.reconcileNow.useMutation();
@@ -51,6 +57,7 @@ export function Billing() {
   const [itemEdit, setItemEdit] = useState<{ id: string; name: string; amount: string } | null>(null);
   const [chargeErr, setChargeErr] = useState<string | null>(null);
   const [autoMsg, setAutoMsg] = useState<string | null>(null);
+  const [planMsg, setPlanMsg] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
 
   async function addPlan(e: FormEvent) {
@@ -60,6 +67,32 @@ export function Billing() {
     await planCreate.mutateAsync({ name: plan.name.trim(), amountCents: cents, cadence: plan.cadence as 'monthly' | 'per_term' | 'one_time' });
     setPlan({ name: '', amount: '', cadence: 'monthly' });
     await utils.billing.feePlanList.invalidate();
+  }
+
+  /**
+   * Get rid of a plan — deleted outright if it has never been billed, archived if it has.
+   *
+   * The × used to archive unconditionally, which quietly left a wrong row (a typo, a duplicate) in the
+   * history forever. Ask the server which of the two is possible and say what will happen, rather than
+   * making the office guess: a plan named on a raised invoice is part of what that invoice MEANT, so it
+   * can only ever be archived. Either way every student on it is unassigned, which is the part worth
+   * warning about — they stop being billed for it.
+   */
+  async function removePlan(id: string, name: string) {
+    setPlanMsg(null);
+    try {
+      const info = await utils.billing.feePlanDeletable.fetch({ id });
+      if (info.deletable) {
+        if (!window.confirm(t('billing.confirmPlanDelete', { name, count: info.assignedStudents }))) return;
+        await planDelete.mutateAsync({ id });
+      } else {
+        if (!window.confirm(t('billing.confirmPlanArchive', { name, count: info.invoiceLines }))) return;
+        await planArchive.mutateAsync({ id });
+      }
+      await Promise.all([utils.billing.feePlanList.invalidate(), utils.billing.familiesOverview.invalidate()]);
+    } catch (e) {
+      setPlanMsg((e as Error).message);
+    }
   }
   async function runGenerate(e: FormEvent) {
     e.preventDefault();
@@ -145,9 +178,11 @@ export function Billing() {
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('nav.billing')}</h1>
         <span className="spacer" />
         {/* Export what the office needs for its own records. The server builds the CSV (and escapes
-            spreadsheet formulas); the browser just saves it. */}
+            spreadsheet formulas); the browser just saves it.
+            Hidden on a phone (`no-mobile`): a downloaded spreadsheet on a phone has nothing to open it
+            and nowhere useful to go, so the control was only ever taking up the row. */}
         <select
-          className="input glass-inset"
+          className="input glass-inset no-mobile"
           style={{ width: 'auto', minWidth: '11rem' }}
           value=""
           onChange={(e) => { if (e.target.value) void download(e.target.value as CsvDataset); }}
@@ -167,26 +202,31 @@ export function Billing() {
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head"><h2>{t('billing.feePlans')}</h2></div>
         {(plans.data ?? []).length === 0 ? (
-          <p className="muted" style={{ fontSize: '0.9rem' }}>{t('billing.noPlans')}</p>
+          <p className="muted" style={{ fontSize: '0.9rem' }}>{canManagePlans ? t('billing.noPlans') : t('billing.noPlansFinance')}</p>
         ) : (
           <div className="chip-row">
             {plans.data?.map((p) => (
               <span key={p.id} className="chip">{p.name} · {money(p.amountCents)} · {t(`billing.cad_${p.cadence}`)}
-                <button type="button" className="link-btn" style={{ marginInlineStart: '0.4rem' }} onClick={async () => { await planArchive.mutateAsync({ id: p.id }); await utils.billing.feePlanList.invalidate(); }}>×</button>
+                {canManagePlans && (
+                  <button type="button" className="link-btn" style={{ marginInlineStart: '0.4rem' }} title={t('common.remove')} onClick={() => void removePlan(p.id, p.name)}>×</button>
+                )}
               </span>
             ))}
           </div>
         )}
-        <form className="inline-form glass-inset" onSubmit={addPlan}>
-          <div className="field"><label className="label">{t('billing.planName')}</label><input className="input glass-inset" value={plan.name} onChange={(e) => setPlan({ ...plan, name: e.target.value })} /></div>
-          <div className="field" style={{ flex: '0 1 7rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" min="0" className="input glass-inset" value={plan.amount} onChange={(e) => setPlan({ ...plan, amount: e.target.value })} /></div>
-          <div className="field" style={{ flex: '0 1 9rem' }}><label className="label">{t('billing.cadence')}</label>
-            <select className="input glass-inset" value={plan.cadence} onChange={(e) => setPlan({ ...plan, cadence: e.target.value })}>
-              {['monthly', 'per_term', 'one_time'].map((c) => <option key={c} value={c}>{t(`billing.cad_${c}`)}</option>)}
-            </select>
-          </div>
-          <button type="submit" className="btn btn--primary" disabled={planCreate.isPending}>{t('billing.addPlan')}</button>
-        </form>
+        {planMsg && <p className="form-error">{planMsg}</p>}
+        {canManagePlans && (
+          <form className="inline-form glass-inset" onSubmit={addPlan}>
+            <div className="field"><label className="label">{t('billing.planName')}</label><input className="input glass-inset" value={plan.name} onChange={(e) => setPlan({ ...plan, name: e.target.value })} /></div>
+            <div className="field" style={{ flex: '0 1 7rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" min="0" className="input glass-inset" value={plan.amount} onChange={(e) => setPlan({ ...plan, amount: e.target.value })} /></div>
+            <div className="field" style={{ flex: '0 1 9rem' }}><label className="label">{t('billing.cadence')}</label>
+              <select className="input glass-inset" value={plan.cadence} onChange={(e) => setPlan({ ...plan, cadence: e.target.value })}>
+                {['monthly', 'per_term', 'one_time'].map((c) => <option key={c} value={c}>{t(`billing.cad_${c}`)}</option>)}
+              </select>
+            </div>
+            <button type="submit" className="btn btn--primary" disabled={planCreate.isPending}>{t('billing.addPlan')}</button>
+          </form>
+        )}
       </section>
 
       {/* Charge items — the catalogue one-off charges are applied from (uniform, exam fee, trip…). */}

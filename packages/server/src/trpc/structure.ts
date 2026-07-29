@@ -314,6 +314,43 @@ export const structureRouter = router({
     return { ok: true as const };
   }),
 
+  /**
+   * Place MANY students into one class at once — the enrol-a-whole-class action.
+   *
+   * The per-student dropdown on the roster is the right tool for one correction and the wrong tool for
+   * September: putting thirty children into Hifz 1 meant thirty trips through a dropdown. This takes the
+   * class and the list, in ONE transaction, so a half-finished enrolment cannot happen.
+   *
+   * Withdrawn students are skipped rather than refused: a stale browser tab can easily hold a child who
+   * left this morning, and failing the whole action over one of them would be the wrong trade. The
+   * response says how many were actually placed so the UI can be honest about it.
+   */
+  setStudentClassBulk: adminProcedure
+    .input(z.object({ studentIds: z.array(ID).min(1).max(2000), classId: ID.nullable() }))
+    .mutation(({ ctx, input }) => {
+      if (input.classId) {
+        const k = requireClass(input.classId);
+        if (k.status !== 'active') throw new TRPCError({ code: 'CONFLICT', message: 'That class is archived.' });
+      }
+      const live = new Set(
+        db
+          .select({ id: students.id })
+          .from(students)
+          .where(and(inArray(students.id, input.studentIds), eq(students.status, 'active')))
+          .all()
+          .map((r) => r.id),
+      );
+      const ids = input.studentIds.filter((id) => live.has(id));
+      if (!ids.length) return { ok: true as const, placed: 0, skipped: input.studentIds.length };
+      const ts = now();
+      db.transaction((tx) => {
+        tx.update(students).set({ classId: input.classId, updatedAt: ts }).where(inArray(students.id, ids)).run();
+      });
+      // One audit entry with the count, not thirty rows: this was one decision by one person.
+      audit(auditActor(ctx), 'student.setClassBulk', { entity: 'class', entityId: input.classId ?? 'none', detail: { classId: input.classId, placed: ids.length } });
+      return { ok: true as const, placed: ids.length, skipped: input.studentIds.length - ids.length };
+    }),
+
   /** Students grouped by course → class for the Students tab, with the unplaced bucket last. */
   studentsByClass: adminOrFinanceProcedure.input(z.object({ includeWithdrawn: z.boolean().optional() }).optional()).query(({ input }) => {
     const rows = db

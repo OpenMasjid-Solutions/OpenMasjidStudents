@@ -21,6 +21,19 @@ function digits(raw: string): string {
 }
 
 /**
+ * The same number as a `tel:` href — digits, and a leading `+` if the person wrote one.
+ *
+ * Formatting punctuation is stripped rather than passed through: parentheses and spaces are legal in
+ * `tel:` but not every dialler on a staff phone handles them, and an office tapping a number wants the
+ * call to start, not to debug it. Never build the href from the DISPLAY string for that reason.
+ */
+export function telHref(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const plus = raw.trimStart().startsWith('+') ? '+' : '';
+  return `${plus}${digits(raw)}`;
+}
+
+/**
  * Format for a US number; return the input unchanged when it isn't one.
  *
  * Used as an as-you-type mask (each keystroke re-formats the field) and as a display formatter. As a

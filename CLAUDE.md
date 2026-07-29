@@ -138,7 +138,8 @@ Every tRPC procedure declares a required role **and** allowed origin; checks liv
 | Report cards & transcripts — read (any version) | ✅ | own classes | ❌ | own kids, **published only** |
 | Admissions pipeline (incl. one-click enroll) | ✅ | ❌ | ✅ | ❌ (public form is anonymous) |
 | Report Creator | all datasets | ❌ | billing + directory datasets | ❌ |
-| Fee plans, invoices, discounts | ✅ | ❌ | ✅ | ❌ (view own invoices) |
+| **Fee plans — define / archive / delete** (0.42.0) | ✅ | ❌ | ❌ **read only** | ❌ |
+| Invoices: generate, void, one-off charges | ✅ | ❌ | ✅ | ❌ (view own invoices) |
 | Ledger / all payments — read | ✅ | ❌ | ✅ | own family only |
 | Record manual payment + proof | ✅ | ❌ | ✅ | ❌ |
 | View payment proofs | ✅ | ❌ | ✅ | ❌ (not even own) |

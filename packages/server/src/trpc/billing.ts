@@ -11,7 +11,7 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, asc, desc, inArray } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
-import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
+import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
@@ -21,6 +21,7 @@ import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
 import { getCurrency, getYearViewColumns, setYearViewColumns, YEAR_VIEW_COLUMNS, getAutoInvoice, setAutoInvoice, getAutoInvoiceLast } from '../settings';
 import { runAutoInvoice } from '../billing/autoInvoice';
+import { relationKind, dedupeNumbers, type RelationKind } from '../people/relations';
 
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
@@ -110,14 +111,34 @@ function paymentRowsFor(studentIds: string[]) {
     .all();
 }
 
+/** Distinct, non-empty email addresses from a set of guardians — compared case-insensitively, since
+ *  the same address typed twice with different capitalisation is one inbox. */
+function emails(gs: { email: string | null }[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const g of gs) {
+    const v = (g.email ?? '').trim();
+    if (!v || seen.has(v.toLowerCase())) continue;
+    seen.add(v.toLowerCase());
+    out.push(v);
+  }
+  return out;
+}
+
 export const billingRouter = router({
   /** The install currency, for money formatting in the finance UI. */
   currency: adminOrFinanceProcedure.query(() => ({ currency: getCurrency() })),
 
   // ── Fee plans ────────────────────────────────────────────────────────────────
+  //
+  // READ is finance's too — they cannot bill without knowing what the plans are, and every screen
+  // showing an invoice needs their names. WRITING them is ADMIN ONLY (0.42.0, Hasan's call): a fee
+  // plan is what the madrasa charges, which is a decision of the office, not of whoever is at the
+  // desk reconciling payments this week. Archiving one silently unassigns every student on it and
+  // deleting one is permanent, so both stay behind the same wall as the rest of the configuration.
   feePlanList: adminOrFinanceProcedure.query(() => db.select().from(feePlans).where(eq(feePlans.status, 'active')).orderBy(asc(feePlans.name)).all()),
 
-  feePlanCreate: adminOrFinanceProcedure.input(z.object({ name: NAME, amountCents: CENTS.min(1), cadence: z.enum(['monthly', 'per_term', 'one_time']) })).mutation(({ ctx, input }) => {
+  feePlanCreate: adminProcedure.input(z.object({ name: NAME, amountCents: CENTS.min(1), cadence: z.enum(['monthly', 'per_term', 'one_time']) })).mutation(({ ctx, input }) => {
     const id = rid('fee');
     const ts = now();
     db.insert(feePlans).values({ id, name: input.name, amountCents: input.amountCents, cadence: input.cadence, status: 'active', createdAt: ts, updatedAt: ts }).run();
@@ -125,7 +146,7 @@ export const billingRouter = router({
     return { id };
   }),
 
-  feePlanArchive: adminOrFinanceProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+  feePlanArchive: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
     if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.id)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
     // Archiving a plan removes it everywhere: flip the status AND drop its student assignments, so the
     // family billing page and invoice generation agree (invoices already skip non-active plans) and no
@@ -143,7 +164,7 @@ export const billingRouter = router({
    * a raised invoice is part of that invoice's meaning, so deleting it would rewrite history — that
    * one is archived, not deleted. A plan that has never been billed is just a wrong row.
    */
-  feePlanDeletable: adminOrFinanceProcedure.input(z.object({ id: ID })).query(({ input }) => {
+  feePlanDeletable: adminProcedure.input(z.object({ id: ID })).query(({ input }) => {
     if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.id)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
     const billed = db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.feePlanId, input.id)).all().length;
     return {
@@ -155,7 +176,7 @@ export const billingRouter = router({
 
   /** Delete a fee plan for good. Refuses once it appears on any invoice (see `feePlanDeletable`);
    *  its student assignments are configuration and go with it. */
-  feePlanDelete: adminOrFinanceProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+  feePlanDelete: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
     if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.id)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
     if (db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.feePlanId, input.id)).all().length) {
       throw new TRPCError({ code: 'CONFLICT', message: 'This plan has been billed, so it’s part of your invoice history and can’t be deleted. Archive it instead.' });
@@ -403,17 +424,37 @@ export const billingRouter = router({
         }
       }
 
-      // Guardian contact, only when a guardian column is actually enabled.
-      const wantsGuardians = columns.some((c) => c === 'guardianNames' || c === 'guardianPhones' || c === 'guardianEmails');
-      const guardiansByFamily = new Map<string, { name: string; phone: string | null; email: string | null }[]>();
+      // Guardian contact, only when a guardian column is actually enabled — and classified by WHO each
+      // adult is, so each number gets its own labelled, tappable column (§ settings/YEAR_VIEW_COLUMNS).
+      const wantsGuardians = columns.some((c) => c === 'guardianNames' || c.endsWith('Phone') || c.endsWith('Email'));
+      const guardiansByFamily = new Map<string, { name: string; phone: string | null; email: string | null; kind: RelationKind; isEmergency: boolean }[]>();
       if (wantsGuardians) {
         for (const g of db
-          .select({ familyId: guardianFamilies.familyId, name: guardians.name, phone: guardians.phone, email: guardians.email })
+          .select({
+            familyId: guardianFamilies.familyId,
+            name: guardians.name,
+            phone: guardians.phone,
+            email: guardians.email,
+            relation: guardianFamilies.relation,
+            isEmergency: guardianFamilies.isEmergencyContact,
+          })
           .from(guardianFamilies)
           .innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId))
           .all()) {
           if (!guardiansByFamily.has(g.familyId)) guardiansByFamily.set(g.familyId, []);
-          guardiansByFamily.get(g.familyId)!.push({ name: g.name, phone: g.phone, email: g.email });
+          guardiansByFamily.get(g.familyId)!.push({ name: g.name, phone: g.phone, email: g.email, kind: relationKind(g.relation), isEmergency: g.isEmergency });
+        }
+      }
+
+      // The emergency column reads the emergency-contacts table, plus any guardian flagged as one
+      // before that checkbox was removed in 0.42.0 — an office that ticked it should still see the
+      // number it meant to record.
+      const contactsByFamily = new Map<string, string[]>();
+      if (columns.includes('emergencyPhone')) {
+        for (const c of db.select({ familyId: emergencyContacts.familyId, phone: emergencyContacts.phone }).from(emergencyContacts).all()) {
+          if (!c.phone) continue;
+          if (!contactsByFamily.has(c.familyId)) contactsByFamily.set(c.familyId, []);
+          contactsByFamily.get(c.familyId)!.push(c.phone);
         }
       }
 
@@ -446,8 +487,17 @@ export const billingRouter = router({
             ...(columns.includes('studentId') ? { studentCode: s.studentCode } : {}),
             ...(columns.includes('dob') ? { dob: s.dob } : {}),
             ...(columns.includes('guardianNames') ? { guardianNames: gs.map((g) => g.name) } : {}),
-            ...(columns.includes('guardianPhones') ? { guardianPhones: gs.map((g) => g.phone).filter((p): p is string => !!p) } : {}),
-            ...(columns.includes('guardianEmails') ? { guardianEmails: gs.map((g) => g.email).filter((e): e is string => !!e) } : {}),
+            // One list per column: usually a single number, but a household can hold two fathers'
+            // numbers (a mobile and a work line recorded separately) and neither should be dropped.
+            ...(columns.includes('fatherPhone') ? { fatherPhone: dedupeNumbers(gs.filter((g) => g.kind === 'father').map((g) => g.phone)) } : {}),
+            ...(columns.includes('motherPhone') ? { motherPhone: dedupeNumbers(gs.filter((g) => g.kind === 'mother').map((g) => g.phone)) } : {}),
+            ...(columns.includes('otherPhone') ? { otherPhone: dedupeNumbers(gs.filter((g) => g.kind === 'other').map((g) => g.phone)) } : {}),
+            ...(columns.includes('emergencyPhone')
+              ? { emergencyPhone: dedupeNumbers([...(contactsByFamily.get(s.familyId) ?? []), ...gs.filter((g) => g.isEmergency).map((g) => g.phone)]) }
+              : {}),
+            ...(columns.includes('fatherEmail') ? { fatherEmail: emails(gs.filter((g) => g.kind === 'father')) } : {}),
+            ...(columns.includes('motherEmail') ? { motherEmail: emails(gs.filter((g) => g.kind === 'mother')) } : {}),
+            ...(columns.includes('otherEmail') ? { otherEmail: emails(gs.filter((g) => g.kind === 'other')) } : {}),
             // This child's own balance, not the household's — the row is the child.
             ...(wantsBalance ? { balanceCents: studentBalance(s.id).owedCents } : {}),
           },

@@ -8,12 +8,15 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Moon, Sun, LogOut, User } from 'lucide-react';
+import { Moon, Sun, LogOut, User, Sparkles } from 'lucide-react';
 import { trpc } from '../lib/trpc';
 import { prefsStore } from '../lib/prefs';
 import { stopFollowing } from '../lib/appearance';
 
-export function ProfileMenu({ onSignedOut }: { onSignedOut: () => void }) {
+/** `onWhatsNew` is optional because the release notes open as a WINDOW: only the staff shells have a
+ *  window manager, and the parent portal — which renders this same menu — must not be handed a button
+ *  that would throw. Passing the callback is how a shell says "I can show that". */
+export function ProfileMenu({ onSignedOut, onWhatsNew }: { onSignedOut: () => void; onWhatsNew?: () => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -42,6 +45,11 @@ export function ProfileMenu({ onSignedOut }: { onSignedOut: () => void }) {
             {isDark ? <Sun size={16} /> : <Moon size={16} />}
             {isDark ? t('profile.lightMode') : t('profile.darkMode')}
           </button>
+          {onWhatsNew && (
+            <button className="menu-item" onClick={() => { setOpen(false); onWhatsNew(); }}>
+              <Sparkles size={16} /> {t('profile.whatsNew')}
+            </button>
+          )}
           <div className="menu-sep" />
           <button className="menu-item" onClick={() => logout.mutate()}>
             <LogOut size={16} /> {t('profile.signOut')}

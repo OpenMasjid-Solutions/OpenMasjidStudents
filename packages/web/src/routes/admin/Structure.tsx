@@ -19,10 +19,12 @@
 import { useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { CalendarRange, Layers, Pencil, Plus } from 'lucide-react';
+import { CalendarRange, Layers, Pencil, Plus, UserPlus } from 'lucide-react';
 import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { MONTH_NAMES, schoolYearSpan } from '../../lib/months';
+import { useWindows } from '../../components/Windows';
+import { ClassEnrol } from '../../components/ClassEnrol';
 
 /** The in-progress edit of one school year, or null when nothing is being edited. */
 interface YearEdit {
@@ -36,6 +38,12 @@ interface YearEdit {
 export function Structure() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
+  const { open } = useWindows();
+
+  /** Mass enrolment opens as its own window: it is a list of the whole school, which does not belong
+   *  inline under a class chip. */
+  const openEnrol = (classId: string, classLabel: string) =>
+    open({ title: t('enrol.title'), wide: true, dedupeKey: `enrol:${classId}`, icon: <UserPlus size={15} />, node: <ClassEnrol classId={classId} classLabel={classLabel} /> });
 
   const years = trpc.structure.schoolYearList.useQuery();
   const tree = trpc.structure.courseTree.useQuery();
@@ -470,7 +478,19 @@ export function Structure() {
                     {c.classes.map((k) => (
                       <span key={k.id} className="chip">
                         {k.name} <span className="muted">· {t('structure.nStudents', { count: k.studentCount })}</span>
-                        <button type="button" className="link-btn" style={{ marginInlineStart: '0.35rem' }} onClick={() => move('class', k.id, c.classes, -1)} aria-label={t('structure.moveUp')}>↑</button>
+                        {/* Enrol a group into this class — the September job. The per-student dropdown
+                            on the roster stays for one-off corrections. */}
+                        <button
+                          type="button"
+                          className="link-btn"
+                          style={{ marginInlineStart: '0.35rem' }}
+                          onClick={() => openEnrol(k.id, `${c.name} · ${k.name}`)}
+                          aria-label={t('enrol.title')}
+                          title={t('enrol.title')}
+                        >
+                          <UserPlus size={12} />
+                        </button>
+                        <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => move('class', k.id, c.classes, -1)} aria-label={t('structure.moveUp')}>↑</button>
                         <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => move('class', k.id, c.classes, 1)} aria-label={t('structure.moveDown')}>↓</button>
                         <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => setRename({ kind: 'class', id: k.id, name: k.name })} aria-label={t('common.edit')}><Pencil size={12} /></button>
                         <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => doClassArchive(k.id, k.name)} aria-label={t('structure.archive')}>×</button>

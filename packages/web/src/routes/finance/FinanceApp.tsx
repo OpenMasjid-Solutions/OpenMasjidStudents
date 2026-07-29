@@ -23,7 +23,7 @@ export function FinanceApp() {
   return (
     <WindowsProvider>
       <AppShell items={FINANCE_ITEMS} active={section} onNavigate={(s) => setSection(s as FinanceSection)} onSignedOut={onSignedOut}>
-        {section === 'year' ? <YearView canConfigure={false} /> : section === 'students' ? <Students readOnly /> : <Billing />}
+        {section === 'year' ? <YearView canConfigure={false} /> : section === 'students' ? <Students readOnly /> : <Billing canManagePlans={false} />}
       </AppShell>
     </WindowsProvider>
   );
