@@ -6,6 +6,7 @@
  * resilience the platform requires (CLAUDE.md §12, OpenMasjidAPPS BUILDING_AN_APP §7).
  * Standalone (no platform) is a first-class mode: every field below can be empty.
  */
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { basePathFrom } from './http/basePath';
 
@@ -15,9 +16,33 @@ function str(v: string | undefined): string {
   return v && v.trim() !== '' ? v.trim() : '';
 }
 
+/**
+ * The running version, READ from this package's own package.json — never typed here.
+ *
+ * It was a hand-maintained literal until 0.42.1, and it drifted: the §19 release runbook lists the
+ * files to bump and this was not one of them, so 0.41.0 and 0.42.0 both shipped telling the office they
+ * were on 0.40.0. A version number that is only correct when someone remembers is not a version number,
+ * and it is the one string a masjid uses to tell whether an update actually landed.
+ *
+ * `../package.json` resolves identically in dev and in the image, because `src/` and `dist/` sit at the
+ * same depth inside `packages/server` — and the runtime stage copies that package.json anyway, since
+ * `npm ci` needs it. `test/version.test.ts` asserts this agrees with VERSION and manifest.yaml, so
+ * drift now fails CI instead of quietly misinforming a masjid.
+ *
+ * '0.0.0' rather than a plausible-looking guess if it cannot be read: unknown is honest, and visibly
+ * wrong beats confidently wrong.
+ */
+function readVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8')) as { version?: unknown };
+    return typeof pkg.version === 'string' && pkg.version ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 export const config = {
-  /** Kept in step with the repo-root VERSION file + manifest.yaml (CLAUDE.md §19). */
-  version: '0.40.0',
+  version: readVersion(),
   port: Number(env.PORT) || 8080,
   /** SQLite DB, attachments, and generated report/transcript PDFs live here. */
   dataDir: str(env.DATA_DIR) || path.resolve(process.cwd(), 'data'),

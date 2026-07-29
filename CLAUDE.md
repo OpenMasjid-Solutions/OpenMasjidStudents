@@ -582,7 +582,7 @@ Builds via `npm run build`; `tsc` + eslint clean; ledger/contract/webhook/origin
 3. ~~APK signing keystore~~ — **N/A here.** This is a web-only app; the keystore secrets (`SIGNING_KEYSTORE_BASE64` etc.) are Kiosk-specific. Do not add Android/APK steps to this repo.
 
 **The release runbook (every release, in order):**
-1. Bump the version **everywhere**: `VERSION`, `manifest.yaml`'s `version:`, root + workspace `package.json`s, and a `CHANGELOG.md` entry.
+1. Bump the version **everywhere**: `VERSION`, `manifest.yaml`'s `version:`, root + workspace `package.json`s, and a `CHANGELOG.md` entry. **The server does NOT need editing** — `config.version` reads `packages/server/package.json` at runtime (it was a hand-typed literal until 0.42.1 and drifted two releases, telling every masjid they were on 0.40.0). `packages/server/test/version.test.ts` asserts all of these agree, so a half-finished bump fails CI instead of shipping; the CHANGELOG entry is checked there too, since **What's new** in the app is built from that file.
 2. Commit on a branch; validate the build is green (CI on the branch).
 3. FF-merge to `main` and push → triggers **"Build image"** → pushes the **multi-arch** (amd64+arm64) image to GHCR.
 4. Grab the **`@sha256` digest** from that build and pin it in `docker-compose.yml`'s `image:` line.

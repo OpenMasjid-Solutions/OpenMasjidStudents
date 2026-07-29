@@ -9,6 +9,18 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.42.1]
+
+### Fixed
+
+- **The app was reporting the wrong version.** An install updated to 0.42.0 still said 0.40.0 in the
+  account menu and at the top of What's new, even with all the newer features plainly working. The
+  number was typed into the server by hand and the release checklist never listed that file, so it
+  stopped being updated after 0.40.0 — which made the one thing you'd use to confirm an update had
+  landed the one thing that couldn't be trusted. The server now reads its version from the package it
+  was built from, so it cannot drift again, and a test checks that every place a release states its
+  version agrees — including the changelog entry, since What's new is built from it.
+
 ## [0.42.0]
 
 ### Added
