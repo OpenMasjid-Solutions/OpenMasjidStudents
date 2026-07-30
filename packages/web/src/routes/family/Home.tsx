@@ -3,12 +3,13 @@
 /** Parent portal — My Family (CLAUDE.md §4/§15). Phone-first: a big balance card, the family's
  *  kids (with their Student IDs), open invoices, recent payments, pay-now, saved cards, and autopay.
  *  Everything is family-scoped server-side. */
+import { useState } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { formatMoney } from '../../lib/money';
-import { PayNow } from './PayNow';
+import { PayNow, type ChosenLine } from './PayNow';
 import { PayMethods } from './PayMethods';
 
 export function FamilyHome() {
@@ -16,6 +17,8 @@ export function FamilyHome() {
   const q = trpc.portal.myFamily.useQuery();
   const payConfigQ = trpc.portal.payConfig.useQuery();
   const utils = trpc.useUtils();
+  /** Bill lines the parent has ticked to pay, by line id. Cleared once a payment goes through. */
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
 
   if (q.isLoading) return <div className="fam-empty">{t('status.connecting')}</div>;
   // A transient failure must not masquerade as "you have no family" (which tells them to call the office).
@@ -28,6 +31,18 @@ export function FamilyHome() {
   const kidName = (fam: (typeof data.families)[number], studentId: string) => {
     const s = fam.students.find((k) => k.id === studentId);
     return s ? s.fullName : '';
+  };
+
+  /** The ticked lines of ONE household, named for the payment summary. Amounts come from the server's
+   *  own figures, never from anything held in this component. */
+  const chosenFor = (fam: (typeof data.families)[number]): ChosenLine[] =>
+    fam.invoices.flatMap((i) =>
+      i.items.filter((it) => picked[it.id] && it.balanceCents > 0).map((it) => ({ itemId: it.id, label: `${kidName(fam, i.studentId)} · ${it.label}`, amountCents: it.balanceCents })),
+    );
+
+  const onPaid = () => {
+    setPicked({});
+    void utils.portal.myFamily.invalidate();
   };
 
   return (
@@ -50,8 +65,8 @@ export function FamilyHome() {
                   top up before travelling, should not have to wait for an invoice to exist. PayNow
                   re-words itself for that case; the money lands as credit and the next invoices
                   generated absorb it. */}
-              {payConfigQ.data?.ready && (
-                <PayNow familyId={fam.id} owedCents={fam.balance.owedCents} currency={data.currency} onPaid={() => void utils.portal.myFamily.invalidate()} />
+              {payConfigQ.data?.ready && chosenFor(fam).length === 0 && (
+                <PayNow familyId={fam.id} owedCents={fam.balance.owedCents} currency={data.currency} onPaid={onPaid} />
               )}
             </div>
 
@@ -84,26 +99,61 @@ export function FamilyHome() {
               )}
             </section>
 
-            {/* Open invoices */}
+            {/* Open bills, itemised. A bill of one line reads as it always did; a bill that is tuition
+                PLUS something else says so, and each line can be paid on its own — "just the book fee"
+                is a real thing parents ask for, and it used to be impossible to express. */}
             <section className="fam-section">
               <h2>{t('family.openInvoices')}</h2>
               {fam.invoices.length === 0 ? (
                 <div className="fam-empty">{t('family.noOpenInvoices')}</div>
               ) : (
                 fam.invoices.map((i) => (
-                  <div key={i.id} className="list-row glass">
-                    <div className="row-main">
-                      {/* Whose bill it is, first: with one invoice per child, three "Tuition — Jul"
-                          rows are indistinguishable without the name. */}
-                      <span className="row-title">{kidName(fam, i.studentId)}</span>
-                      <span className="row-sub">
-                        {i.label}
-                        {i.dueDate ? ` · ${t('family.due')} ${fmtDate(new Date(`${i.dueDate}T12:00:00`).getTime())}` : ''}
-                      </span>
+                  <div key={i.id} className="bill glass">
+                    <div className="list-row" style={{ background: 'none', boxShadow: 'none', padding: 0 }}>
+                      <div className="row-main">
+                        {/* Whose bill it is, first: with one invoice per child, three "Tuition — Jul"
+                            rows are indistinguishable without the name. */}
+                        <span className="row-title">{kidName(fam, i.studentId)}</span>
+                        <span className="row-sub">
+                          {i.label}
+                          {i.dueDate ? ` · ${t('family.due')} ${fmtDate(new Date(`${i.dueDate}T12:00:00`).getTime())}` : ''}
+                        </span>
+                      </div>
+                      <span className="row-amt neg">{money(i.balanceCents)}</span>
                     </div>
-                    <span className="row-amt neg">{money(i.balanceCents)}</span>
+                    {i.items.length > 1 && (
+                      <ul className="bill-lines">
+                        {i.items.map((it) => {
+                          const payable = it.balanceCents > 0;
+                          return (
+                            <li key={it.id}>
+                              <label className={payable ? '' : 'is-muted'}>
+                                {payable && payConfigQ.data?.ready ? (
+                                  <input type="checkbox" checked={!!picked[it.id]} onChange={(e) => setPicked((p) => ({ ...p, [it.id]: e.target.checked }))} />
+                                ) : (
+                                  <span className="bill-dot" aria-hidden="true" />
+                                )}
+                                <span className="bill-line-label">
+                                  {it.label}
+                                  {it.kind !== 'tuition' && <span className="chip is-accent">{t(`billing.kind_${it.kind}`)}</span>}
+                                </span>
+                                <span className="tnum">{payable ? money(it.balanceCents) : it.kind === 'credit' ? money(it.amountCents) : t('family.linePaid')}</span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
                   </div>
                 ))
+              )}
+              {/* Ticked something? Pay exactly that, instead of the whole balance. */}
+              {chosenFor(fam).length > 0 && payConfigQ.data?.ready && (
+                <div className="pay-picked glass-raised">
+                  <span>{t('family.chosenCount', { count: chosenFor(fam).length })}</span>
+                  <button type="button" className="link-btn" onClick={() => setPicked({})}>{t('common.clear')}</button>
+                  <PayNow familyId={fam.id} owedCents={fam.balance.owedCents} currency={data.currency} chosen={chosenFor(fam)} onPaid={onPaid} />
+                </div>
               )}
             </section>
 

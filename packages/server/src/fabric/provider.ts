@@ -23,11 +23,12 @@ import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { db } from '../db';
-import { students, families, invoices, payments } from '../db/schema';
+import { students, families, invoices, invoiceItems, payments } from '../db/schema';
 import { config } from '../config';
 import { classifyOrigin } from '../security/origin';
 import { codeLookupLimiter } from '../security/rateLimit';
-import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit } from '../billing/ledger';
+import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit, type SplitShare } from '../billing/ledger';
+import { invoiceLines } from '../billing/lines';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../settings';
 import { audit } from '../audit';
@@ -64,6 +65,58 @@ function failCode(code: string): void {
 
 /** The contract version every response carries. */
 const CONTRACT_V = 2 as const;
+
+/**
+ * Turn an invoice-level allocation into the per-child split and the line-level instruction the ledger
+ * honours — a best-effort HINT, never a reason to refuse money.
+ *
+ * The contract has taken `allocations: [{invoiceId, amountCents}]` since v1, and until 0.43.0 this app
+ * parsed it and threw it away: a consumer asking for money to land on a particular bill got
+ * oldest-due-first anyway, with nothing to say so. Filling that invoice's own lines in order is what
+ * "pay this invoice" has always meant, so the intent is preserved exactly.
+ *
+ * WHY BEST-EFFORT. Stripe has already taken the card by the time this runs, and an invoice can easily
+ * be smaller than the allocation names it — the office recorded a cash payment against it between the
+ * consumer's `lookup` and its `record-payment`, or the consumer simply over-asked. Refusing the whole
+ * call there would leave a captured charge unrecorded and a consumer outbox retrying into the same
+ * deterministic 422 forever. So whatever the named lines cannot absorb becomes ordinary undirected money
+ * on that same child, which the ledger allocates oldest-due-first and holds as credit if there is
+ * nothing left to pay — exactly what the contract already promises for a surplus.
+ *
+ * Returns null when an invoice is not this family's (a real consumer bug, and a 422 is the right answer).
+ */
+/** One share per child, whatever shape the caller sent. `recordSplit` keys each row by child, so two
+ *  entries for the same child must be added together before they reach it or the second looks like a
+ *  replay of the first and is dropped. */
+function mergeShares(shares: { studentId: string; amountCents: number }[]): SplitShare[] {
+  const byStudent = new Map<string, SplitShare>();
+  for (const s of shares) {
+    const cur = byStudent.get(s.studentId) ?? { studentId: s.studentId, amountCents: 0 };
+    cur.amountCents += s.amountCents;
+    byStudent.set(s.studentId, cur);
+  }
+  return [...byStudent.values()];
+}
+
+function allocationShares(allocations: { invoiceId: string; amountCents: number }[], kidIds: Set<string>): SplitShare[] | null {
+  const byStudent = new Map<string, SplitShare>();
+  for (const a of allocations) {
+    const inv = db.select({ studentId: invoices.studentId, status: invoices.status }).from(invoices).where(eq(invoices.id, a.invoiceId)).get();
+    if (!inv || !kidIds.has(inv.studentId) || inv.status === 'void') return null;
+    const share = byStudent.get(inv.studentId) ?? { studentId: inv.studentId, amountCents: 0, directed: [] };
+    share.amountCents += a.amountCents;
+    let left = a.amountCents;
+    for (const l of invoiceLines(db, a.invoiceId)) {
+      if (left <= 0) break;
+      if (l.balanceCents <= 0) continue; // settled, or a credit line — nothing to point money at
+      const take = Math.min(left, l.balanceCents);
+      share.directed!.push({ itemId: l.itemId, amountCents: take });
+      left -= take;
+    }
+    byStudent.set(inv.studentId, share);
+  }
+  return [...byStudent.values()];
+}
 
 /** Accepted REQUEST versions. v1 is still taken because `info`, `record-payment` and `check` are
  *  byte-identical between v1 and v2 — refusing them would break the money path of a Donations/Kiosk
@@ -204,7 +257,28 @@ export function registerFabricProvider(app: FastifyInstance): void {
             .all()
         : []
     )
-      .map((i) => ({ id: i.id, studentId: i.studentId, label: i.label, dueDate: i.dueDate, balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id) }))
+      .map((i) => ({
+        id: i.id,
+        studentId: i.studentId,
+        label: i.label,
+        dueDate: i.dueDate,
+        balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id),
+        /**
+         * WHAT THE BILL IS MADE OF (0.43.0, additive) — one entry per line, so a consumer can list
+         * "Monthly tuition $200" and "Book fee $50" instead of one $250 lump the parent has to accept
+         * whole. `kind` is what makes them presentable separately, and `itemId` is what a parent's
+         * choice is sent back as (see record-payment's `lines`).
+         *
+         * The arithmetic a consumer can rely on: these `balanceCents` add up to the invoice's own
+         * `balanceCents`. A credit line (a bursary, a correction) reports 0 because its value is
+         * already deducted from the lines above it — so summing what the parent ticked is always safe.
+         *
+         * EVERY line of the bill is listed, including any already settled (`balanceCents: 0`) — a
+         * parent looking at a part-paid bill should see what is already dealt with. A consumer offering
+         * things to pay should show only the lines with a balance.
+         */
+        items: invoiceLines(db, i.id).map((l) => ({ id: l.itemId, label: l.label, kind: l.kind, amountCents: l.amountCents, balanceCents: l.balanceCents })),
+      }))
       .filter((i) => i.balanceCents > 0);
 
     const matched = studentBalance(student.id);
@@ -262,6 +336,15 @@ export function registerFabricProvider(app: FastifyInstance): void {
    * than merely accepted, which matters because this is the money path — see the `v: 1` note at the
    * top of the file. `paymentId` in the response is the FIRST row written, kept so a v1 consumer that
    * stores it still gets something meaningful; `payments[]` carries the full per-child truth.
+   *
+   * 0.43.0 — `lines`: the parent ticked specific things to pay ("just the book fee"). It supersedes
+   * `students`, because the lines say whose bills they are, and it is HONOURED rather than merely
+   * accepted: the choice is stored on the payment and re-applied every time allocation is recomputed,
+   * so the line the parent chose still reads as settled on next month's statement.
+   *
+   * `allocations` (invoice-level, in the contract since v1) was parsed and then IGNORED before 0.43.0 —
+   * every such payment was silently allocated oldest-due-first instead. It now works, normalised into
+   * the same line mechanism by filling the invoice's own lines in order.
    */
   app.post('/fabric/billing/record-payment', async (req, reply) => {
     if (!gate(req, reply)) return;
@@ -278,6 +361,9 @@ export function registerFabricProvider(app: FastifyInstance): void {
         externalRef: z.record(z.unknown()).optional(),
         /** Per-child amounts, when the parent chose them. Must sum to `amountCents`. */
         students: z.array(z.object({ studentId: z.string().min(1).max(64), amountCents: z.number().int().min(1).max(100_000_000) })).max(50).optional(),
+        /** The exact LINES the parent chose to pay (0.43.0). Must sum to `amountCents`; supersedes
+         *  `students`, since a line already says which child's bill it is. */
+        lines: z.array(z.object({ itemId: z.string().min(1).max(64), amountCents: z.number().int().min(1).max(100_000_000) })).max(200).optional(),
         allocations: z.array(z.object({ invoiceId: z.string().min(1).max(64), amountCents: z.number().int().min(1).max(100_000_000) })).max(100).optional(),
         payerNote: z.string().max(200).optional(),
       })
@@ -295,6 +381,20 @@ export function registerFabricProvider(app: FastifyInstance): void {
     // money twice (§9: a replay is a no-op).
     const already = recordedSplit(d.idempotencyKey);
     if (already.length) {
+      // A charge covering several children is written one row per child and NOT in one transaction, so a
+      // crash (or a throw on the second child) can leave it half recorded. Presence alone cannot tell
+      // that apart from a complete replay, and answering "recorded" to a short one loses a sibling's
+      // money silently — the consumer settles its outbox and reconciliation skips the PI as seen. We
+      // still answer as a replay, because re-deriving here is what would double-charge; but the masjid
+      // is told, so it can be corrected by hand rather than discovered in a year-end total.
+      const recordedCents = already.reduce((s, p) => s + p.amountCents, 0);
+      if (recordedCents < d.amountCents) {
+        void raiseAlert(
+          'payment-short',
+          `A tuition payment of ${formatMoney(d.amountCents, getCurrency())} was only partly recorded (${formatMoney(recordedCents, getCurrency())}). Check the family's record and enter the difference by hand.`,
+          { title: 'Tuition payment partly recorded' },
+        );
+      }
       return reply.send({
         v: CONTRACT_V,
         recorded: true,
@@ -306,16 +406,55 @@ export function registerFabricProvider(app: FastifyInstance): void {
 
     // An explicit split must belong to THIS family and add up — otherwise a consumer bug could park a
     // payment on another household's child, which no later correction would make obvious.
-    let shares;
-    if (d.students?.length) {
-      const kidIds = new Set(familyStudentIds(d.familyId));
+    let shares: SplitShare[];
+    const kidIds = new Set(familyStudentIds(d.familyId));
+    if (d.lines?.length) {
+      // Lines carry their own child, so they define the split as well as the instruction. Anything that
+      // does not resolve to a live bill of THIS family is a 422 rather than a silent reallocation —
+      // "we ignored what you asked for" is the failure this replaced.
+      const byStudent = new Map<string, SplitShare>();
+      let total = 0;
+      for (const l of d.lines) {
+        const owner = db
+          .select({ studentId: invoices.studentId, status: invoices.status, itemAmount: invoiceItems.amountCents })
+          .from(invoiceItems)
+          .innerJoin(invoices, eq(invoices.id, invoiceItems.invoiceId))
+          .where(eq(invoiceItems.id, l.itemId))
+          .get();
+        if (!owner || !kidIds.has(owner.studentId) || owner.status === 'void' || l.amountCents > owner.itemAmount) {
+          return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'A line does not belong to an open bill of that family.' } });
+        }
+        const cur = byStudent.get(owner.studentId) ?? { studentId: owner.studentId, amountCents: 0, directed: [] };
+        cur.amountCents += l.amountCents;
+        cur.directed!.push({ itemId: l.itemId, amountCents: l.amountCents });
+        byStudent.set(owner.studentId, cur);
+        total += l.amountCents;
+      }
+      if (total !== d.amountCents) {
+        return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'The chosen lines must add up to amountCents.' } });
+      }
+      shares = [...byStudent.values()];
+    } else if (d.allocations?.length) {
+      const fromAllocations = allocationShares(d.allocations, kidIds);
+      if (!fromAllocations) {
+        return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'An invoice does not belong to that family.' } });
+      }
+      if (fromAllocations.reduce((s, x) => s + x.amountCents, 0) !== d.amountCents) {
+        return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'The allocations must add up to amountCents.' } });
+      }
+      shares = fromAllocations;
+    } else if (d.students?.length) {
       if (d.students.some((s) => !kidIds.has(s.studentId))) {
         return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'A student does not belong to that family.' } });
       }
       if (d.students.reduce((s, x) => s + x.amountCents, 0) !== d.amountCents) {
         return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'The per-student amounts must add up to amountCents.' } });
       }
-      shares = d.students;
+      // Merged by child, NOT taken as given. A consumer that builds one entry per open invoice sends the
+      // same studentId twice for a child with two bills; each row would then be keyed
+      // `${idempotencyKey}:${studentId}` and the second would be swallowed as a replay of the first —
+      // part of a real charge silently dropped while the response said it was recorded.
+      shares = mergeShares(d.students);
     } else {
       shares = splitAcrossFamily(d.familyId, d.amountCents, d.studentId ?? null);
     }

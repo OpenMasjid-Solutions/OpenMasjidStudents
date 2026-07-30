@@ -12,8 +12,9 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, desc, inArray } from 'drizzle-orm';
 import { router, parentProcedure } from './trpc';
 import { db } from '../db';
-import { families, students, invoices, payments, paymentMethods, autopayEnrollments } from '../db/schema';
-import { familyBalance, studentBalance, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit } from '../billing/ledger';
+import { families, students, invoices, invoiceItems, payments, paymentMethods, autopayEnrollments } from '../db/schema';
+import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit, type SplitShare } from '../billing/ledger';
+import { invoiceLines, type LineKind } from '../billing/lines';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getCurrency } from '../settings';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
@@ -23,6 +24,42 @@ import { sendReceipt } from '../mail/notify';
 import { makeLog } from '../logger';
 
 const payLog = makeLog('portal');
+
+/**
+ * Turn the lines a parent ticked into a per-child split carrying each child's instruction — or null if
+ * they do not describe this payment, in which case the caller falls back to oldest-due-first.
+ *
+ * Null rather than an error on purpose. By the time this runs, Stripe has already taken the money: a
+ * throw here would leave a real charge unrecorded over a mismatched tick list. The lines must belong to
+ * this family and add up to exactly what was taken; anything else is a stale screen, and the honest
+ * response is to record the money the default way rather than to guess at the intent or lose it.
+ */
+function lineShares(familyId: string, lines: { itemId: string; amountCents: number }[], amountCents: number): SplitShare[] | null {
+  if (!lines.length) return null;
+  if (lines.reduce((s, l) => s + l.amountCents, 0) !== amountCents) {
+    payLog.warn('ignoring chosen lines — they do not add up to the amount charged', { familyId, lines: lines.length });
+    return null;
+  }
+  const kidIds = new Set(familyStudentIds(familyId));
+  const byStudent = new Map<string, SplitShare>();
+  for (const l of lines) {
+    const owner = db
+      .select({ studentId: invoices.studentId, status: invoices.status, itemAmount: invoiceItems.amountCents })
+      .from(invoiceItems)
+      .innerJoin(invoices, eq(invoices.id, invoiceItems.invoiceId))
+      .where(eq(invoiceItems.id, l.itemId))
+      .get();
+    if (!owner || !kidIds.has(owner.studentId) || owner.status === 'void' || l.amountCents > owner.itemAmount) {
+      payLog.warn('ignoring chosen lines — one does not belong to an open bill of this family', { familyId });
+      return null;
+    }
+    const cur = byStudent.get(owner.studentId) ?? { studentId: owner.studentId, amountCents: 0, directed: [] };
+    cur.amountCents += l.amountCents;
+    cur.directed!.push({ itemId: l.itemId, amountCents: l.amountCents });
+    byStudent.set(owner.studentId, cur);
+  }
+  return [...byStudent.values()];
+}
 
 export const portalRouter = router({
   /** Everything the My-Family home needs, for each family this parent is linked to. */
@@ -52,7 +89,22 @@ export const portalRouter = router({
               .all()
           : []
       )
-        .map((i) => ({ id: i.id, studentId: i.studentId, label: i.label, dueDate: i.dueDate, balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id) }))
+        .map((i) => ({
+          id: i.id,
+          studentId: i.studentId,
+          label: i.label,
+          dueDate: i.dueDate,
+          balanceCents: invoiceTotal(db, i.id) - invoicePaid(db, i.id),
+          // WHAT THE BILL IS MADE OF (0.43.0). A parent looking at "Tuition — Feb 2027 · $250" could
+          // not see that $50 of it was the book fee, and had no way to pay just that. These add up to
+          // the invoice's own balance (a credit line reports 0 — its value is already deducted), so the
+          // portal can total whatever the parent ticks without a special case.
+          //
+          // EVERY line, including the ones already settled: a parent who paid the book fee last week
+          // needs to see that it is dealt with, and dropping it would read as the payment having gone
+          // missing. `balanceCents: 0` is what marks it done.
+          items: invoiceLines(db, i.id).map((l) => ({ id: l.itemId, label: l.label, kind: l.kind, amountCents: l.amountCents, balanceCents: l.balanceCents })),
+        }))
         .filter((i) => i.balanceCents > 0)
         .sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999'));
       const pays = kidIds.length
@@ -117,7 +169,17 @@ export const portalRouter = router({
    *  OURS and belongs to THIS family, and record it to the ledger if it succeeded. Idempotent
    *  (idempotency key = the PI id); the daily reconciliation (§11.4) is the backstop if the browser
    *  never calls this (e.g. the tab was closed). */
-  confirmPayment: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64), paymentIntentId: z.string().min(1).max(255) })).mutation(async ({ ctx, input }) => {
+  confirmPayment: parentProcedure
+    .input(
+      z.object({
+        familyId: z.string().min(1).max(64),
+        paymentIntentId: z.string().min(1).max(255),
+        /** The lines the parent ticked (0.43.0). Honoured only when they add up to what Stripe actually
+         *  took — otherwise this falls back to oldest-due-first, which is the documented default. */
+        lines: z.array(z.object({ itemId: z.string().min(1).max(64), amountCents: z.number().int().min(1).max(100_000_000) })).max(200).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
     assertFamilyAccess(ctx, input.familyId);
     const stripe = stripeClient();
     if (!stripe) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Card payments are temporarily unavailable.' });
@@ -143,9 +205,16 @@ export const portalRouter = router({
       // One card charge, one ledger row per child: the parent paid a single household amount, and it
       // is spread over their children's open invoices oldest-due-first. Reconciliation (§11.4) uses
       // the same split, so a lost confirm-on-return lands identically when the daily job replays it.
+      //
+      // Unless the parent said WHICH lines they were paying, in which case those lines define both the
+      // split and the instruction stored with each row (§ billing/ledger.ts). Reconciliation cannot know
+      // about the ticks — it only ever sees the Stripe charge — so this is the one path where the two
+      // differ, and it is the right way round: the parent's choice wins when we have it, and the backstop
+      // still lands the money correctly if this call never happens.
+      const chosen = lineShares(input.familyId, input.lines ?? [], amount);
       const res = recordSplit(
         { channel: 'portal', occurredAt: new Date(), idempotencyKey: pi.id, memo: null, externalRef: { stripePaymentIntentId: pi.id, stripeChargeId: (pi.latest_charge as string) ?? null } },
-        splitAcrossFamily(input.familyId, amount),
+        chosen ?? splitAcrossFamily(input.familyId, amount),
         { userId: ctx.session.userId ?? null, role: 'portal', name: 'portal' },
       );
       if (!res.duplicate) {
@@ -249,6 +318,14 @@ type FamilyView = {
   balance: ReturnType<typeof familyBalance>;
   /** Each child, with their own balance: bills are per child, so "what does Maryam owe?" is answerable. */
   students: { id: string; fullName: string; studentCode: string | null; balance: ReturnType<typeof studentBalance> }[];
-  invoices: { id: string; studentId: string; label: string; dueDate: string | null; balanceCents: number }[];
+  /** Each open bill, with the lines it is made of so the parent can pay one of them (0.43.0). */
+  invoices: {
+    id: string;
+    studentId: string;
+    label: string;
+    dueDate: string | null;
+    balanceCents: number;
+    items: { id: string; label: string; kind: LineKind; amountCents: number; balanceCents: number }[];
+  }[];
   payments: { id: string; studentId: string; amountCents: number; channel: string; occurredAt: Date; memo: string | null; reversalOf: string | null }[];
 };

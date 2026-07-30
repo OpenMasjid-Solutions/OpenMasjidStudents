@@ -39,7 +39,8 @@
     "newPassword": "New password",
     "changeTitle": "Set a new password",
     "changeSubtitle": "Please choose a new password to continue.",
-    "changeSubmit": "Update password"
+    "changeSubmit": "Update password",
+    "parentUsernameIsEmail": "Parents: your username is your email address."
   },
   "home": {
     "title": "You’re signed in",
@@ -59,7 +60,8 @@
     "remove": "Remove",
     "cancel": "Cancel",
     "clear": "Clear",
-    "select": "Select…"
+    "select": "Select…",
+    "saving": "Saving…"
   },
   "picker": {
     "placeholder": "Type a name or Student ID…",
@@ -177,7 +179,8 @@
     "linkSiblingHint": "Pick a brother or sister and they share one household, so the guardian details already on file apply to this child too.",
     "allCourses": "All",
     "filterByCourse": "Filter by course",
-    "showingOf": "Showing {{shown}} of {{total}} students"
+    "showingOf": "Showing {{shown}} of {{total}} students",
+    "withdrawn": "Withdrawn"
   },
   "import": {
     "title": "Import students",
@@ -248,7 +251,8 @@
     "col_fatherEmail": "Father’s email",
     "col_motherEmail": "Mother’s email",
     "col_otherEmail": "Other email",
-    "col_balance": "Balance"
+    "col_balance": "Balance",
+    "openBilling": "Open this child’s billing"
   },
   "structure": {
     "title": "Structure",
@@ -814,7 +818,23 @@
     "item": "Item",
     "customCharge": "Something else…",
     "addCharge": "Add charge",
-    "chargeHint": "Lands on this period’s open invoice straight away if there is one; otherwise it waits for the next generation. A negative amount is a credit. Once it’s on an invoice it can’t be voided — add a negative charge instead."
+    "chargeHint": "Lands on this period’s open invoice straight away if there is one; otherwise it waits for the next generation. A negative amount is a credit. Once it’s on an invoice it can’t be voided — add a negative charge instead.",
+    "findStudent": "Search a name or Student ID",
+    "openRecord": "Open their record",
+    "recordedFor": "{{amount}} recorded for {{name}}.",
+    "nothingDue": "Nothing is due for this child right now. Anything you record is held as their credit and the next bill takes it.",
+    "nothingDueCredit": "Nothing is due — {{amount}} is already in hand for this child, and their next bill will take it.",
+    "owesLines": "Owes {{amount}} — tick what this payment is for:",
+    "kind_tuition": "Tuition",
+    "kind_charge": "One-off",
+    "kind_credit": "Credit",
+    "tickedHint": "{{count}} line(s) ticked, {{amount}}. Recorded against those lines, so they are the ones that show as settled.",
+    "familyRecord": "Family record",
+    "lineSettled": "Settled",
+    "lineOwing": "{{amount}} to go",
+    "family": "Household",
+    "familiesMovedHint": "Looking for a household? Open the Year tab and press a child’s name — it opens the same record, and shows their class and paid months too.",
+    "ch_carry_in": "Carried forward"
   },
   "family": {
     "title": "Parent Portal",
@@ -890,7 +910,12 @@
     "autopayConsent": "When on, your default card is charged automatically when tuition comes due. Turn it off any time.",
     "kidOwes": "{{amount}} due",
     "kidCredit": "{{amount}} in credit",
-    "kidSettled": "Nothing due"
+    "kidSettled": "Nothing due",
+    "linePaid": "Paid",
+    "chosenCount": "{{count}} line(s) chosen",
+    "payChosen": "Pay {{amount}}",
+    "payingFor": "You’re paying for",
+    "signInWith": "You’ll sign in with {{email}}"
   },
   "admissions": {
     "addApplicant": "Add applicant",
@@ -941,5 +966,39 @@
     "error": "Something went wrong. Please try again in a moment.",
     "thanksTitle": "Thank you",
     "thanksBody": "We’ve received your enquiry. The office will be in touch soon, in shā’ Allāh."
+  },
+  "midyear": {
+    "title": "Starting mid-year",
+    "open": "Starting mid-year",
+    "banner": "Joining part-way through the year? Record what each child already owes or has paid, in one pass, before you bill your first month.",
+    "step1": "1. When do we start billing?",
+    "step1Hint": "Months before this are never billed here — whatever each child brings with them is recorded once, below. This is also how we make sure an earlier month cannot be billed twice later on.",
+    "goLive": "Bill from",
+    "memo": "Note on the record (optional)",
+    "memoHint": "e.g. from the office book",
+    "alreadyFloor": "This install already bills from {{period}} onwards.",
+    "needsYear": "Set up a school year on the Structure tab first — the months come from it.",
+    "step2": "2. What has each child already paid?",
+    "step2Hint": "Pick the last month they are square for. We work out the rest from their own rate — and if the book says otherwise, type the amount instead.",
+    "setAll": "Everyone paid through",
+    "setAllPick": "Set the whole column…",
+    "paidThrough": "Paid through",
+    "carried": "Carried forward",
+    "result": "Balance they start on",
+    "notSaid": "Not said",
+    "alreadyDone": "already recorded",
+    "owes": "owes",
+    "ahead": "paid ahead",
+    "k_owes": "owes",
+    "k_ahead": "paid ahead",
+    "k_square": "square",
+    "step3": "3. What each parent will see",
+    "step3Hint": "These are the balances this will produce. Nothing has been written yet.",
+    "commit": "Record it ({{count}} child(ren))",
+    "commitHint": "Writes one dated record per child and bills from {{period}} onwards.",
+    "doneTitle": "Done",
+    "doneBody": "{{owed}} child(ren) carried a balance forward and {{ahead}} were already paid ahead. Billing starts at {{period}}.",
+    "doneSkipped": "{{count}} child(ren) already had a record and were left alone.",
+    "doneNext": "Next: generate {{period}} on the Billing tab. Anything earlier is refused, so the balances you just recorded cannot be billed twice."
   }
 }

@@ -151,33 +151,35 @@ describe('allocation + balance', () => {
     expect(invStatus('inv_undated')).toBe('open');
   });
 
-  it('rejects an explicit allocation that exceeds the invoice balance', () => {
-    const { studentId, invId } = studentWithInvoice(5000, '2026-07-01');
-    expect(() => ledger.recordPayment({ studentId, amountCents: 8000, channel: 'donations-web', occurredAt: D('2026-07-05'), idempotencyKey: 'k1', allocations: [{ invoiceId: invId, amountCents: 8000 }] }, ACTOR)).toThrow('invalid_allocation');
+  it('rejects an instruction claiming more than the line costs', () => {
+    const { studentId } = studentWithInvoice(5000, '2026-07-01');
+    expect(() => ledger.recordPayment({ studentId, amountCents: 8000, channel: 'donations-web', occurredAt: D('2026-07-05'), idempotencyKey: 'k1', directed: [{ itemId: 'it_p1', amountCents: 8000 }] }, ACTOR)).toThrow('invalid_allocation');
     // Nothing was written — the transaction rolled back.
     expect(app.dbmod.db.select().from(payments).all()).toHaveLength(0);
   });
 
-  it('rejects explicit allocations summing beyond the payment amount', () => {
+  it('rejects instructions summing beyond the payment amount', () => {
     const { studentId } = studentWithInvoice(5000, '2026-07-01', 'a');
     mkInvoice(studentId, 5000, '2026-08-01', 'b');
-    expect(() => ledger.recordPayment({ studentId, amountCents: 6000, channel: 'kiosk', occurredAt: D('2026-07-05'), idempotencyKey: 'k1', allocations: [{ invoiceId: 'inv_a', amountCents: 5000 }, { invoiceId: 'inv_b', amountCents: 5000 }] }, ACTOR)).toThrow('invalid_allocation');
+    expect(() =>
+      ledger.recordPayment({ studentId, amountCents: 6000, channel: 'kiosk', occurredAt: D('2026-07-05'), idempotencyKey: 'k1', directed: [{ itemId: 'it_a', amountCents: 5000 }, { itemId: 'it_b', amountCents: 5000 }] }, ACTOR),
+    ).toThrow('invalid_allocation');
     expect(app.dbmod.db.select().from(payments).all()).toHaveLength(0);
   });
 
-  it('rejects an explicit allocation against a voided invoice', () => {
+  it('rejects an instruction naming a line on a voided invoice', () => {
     const { studentId, invId } = studentWithInvoice(5000, '2026-07-01');
     app.dbmod.db.update(invoices).set({ status: 'void' }).where(eq(invoices.id, invId)).run();
-    expect(() => ledger.recordPayment({ studentId, amountCents: 5000, channel: 'portal', occurredAt: D('2026-07-05'), idempotencyKey: 'k1', allocations: [{ invoiceId: invId, amountCents: 5000 }] }, ACTOR)).toThrow('invalid_allocation');
+    expect(() => ledger.recordPayment({ studentId, amountCents: 5000, channel: 'portal', occurredAt: D('2026-07-05'), idempotencyKey: 'k1', directed: [{ itemId: 'it_p1', amountCents: 5000 }] }, ACTOR)).toThrow('invalid_allocation');
   });
 
-  /** The wall between siblings. An explicit allocation naming another child's invoice must be refused
-   *  outright — otherwise a consumer bug could quietly settle the wrong child's bill. */
-  it('refuses to allocate one child’s payment to a SIBLING’s invoice', () => {
+  /** The wall between siblings. An instruction naming another child's line must be refused outright —
+   *  otherwise a consumer bug could quietly settle the wrong child's bill. */
+  it('refuses to direct one child’s payment at a SIBLING’s line', () => {
     const [a, b] = mkFamily(['stu_1', 'stu_2']);
     mkInvoice(a, 5000, '2026-07-01', 'a');
-    const bInv = mkInvoice(b, 5000, '2026-07-01', 'b');
-    expect(() => ledger.recordPayment({ studentId: a, amountCents: 5000, channel: 'cash', occurredAt: D('2026-07-05'), idempotencyKey: 'k1', allocations: [{ invoiceId: bInv, amountCents: 5000 }] }, ACTOR)).toThrow('invalid_allocation');
+    mkInvoice(b, 5000, '2026-07-01', 'b');
+    expect(() => ledger.recordPayment({ studentId: a, amountCents: 5000, channel: 'cash', occurredAt: D('2026-07-05'), idempotencyKey: 'k1', directed: [{ itemId: 'it_b', amountCents: 5000 }] }, ACTOR)).toThrow('invalid_allocation');
     expect(app.dbmod.db.select().from(payments).all()).toHaveLength(0);
   });
 

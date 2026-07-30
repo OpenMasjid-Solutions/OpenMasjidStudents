@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 OpenMasjid-Solutions
+/**
+ * Period keys — the `YYYY-MM` strings that identify which month a bill is for.
+ *
+ * They matter more than they look, because UNIQUE(student, period_key) is the ONLY thing stopping
+ * invoice generation from billing a month twice. That guarantee is exactly as strong as the agreement
+ * on how a month is spelled: `2027-2` and `2027-02` are different keys, so typing the first one into
+ * the Generate box raises a SECOND February invoice for every child, and nothing about the screen says
+ * anything is wrong — the office just sees the year's total quietly double for one month. The field was
+ * free text until 0.43.0.
+ *
+ * `carry-in` is reserved (see billing/carryIn.ts): it is a real period key belonging to the balance a
+ * school brings with it when it starts mid-year, and letting someone generate "carry-in" as though it
+ * were a month would collide with those invoices.
+ */
+
+/** The one spelling of a month: four-digit year, `-`, zero-padded 1-12. */
+export const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** The period key the mid-year carried-forward balance lives on. Not a month, and never generated. */
+export const CARRY_IN_PERIOD = 'carry-in';
+
+export function isMonthPeriod(key: string): boolean {
+  return PERIOD_RE.test(key);
+}
+
+/** Anything the office might have MEANT as a month: a year, a dash, one or two digits. */
+const MONTH_SHAPED = /^\d{4}-\d{1,2}$/;
+
+/**
+ * What is wrong with a period key, in words for the office rather than for a log — or null if nothing.
+ *
+ * Deliberately narrow. A key that is not month-shaped at all ("once", "registration") is a legitimate
+ * one-off label for something that does not recur, and it is idempotent on its own exact string, so
+ * there is nothing to protect. The danger is only in keys that are month-shaped: those are the ones
+ * where two spellings of the same month exist, and `2027-2` alongside `2027-02` bills February twice
+ * with nothing on screen to suggest it.
+ */
+export function periodKeyError(key: string): string | null {
+  const k = key.trim();
+  if (!k) return 'Enter the month to bill, like 2027-02.';
+  if (k.toLowerCase() === CARRY_IN_PERIOD) return 'That name is reserved for balances carried in from before you started using the app.';
+  if (MONTH_SHAPED.test(k) && !PERIOD_RE.test(k)) {
+    return 'Write the month as YYYY-MM with the leading zero — February 2027 is 2027-02. Without it this would bill that month a second time.';
+  }
+  return null;
+}
+
+/** Compare two `YYYY-MM` keys. String comparison is correct because both parts are fixed-width. */
+export function periodBefore(a: string, b: string): boolean {
+  return a < b;
+}
+
+/** `YYYY-MM` for a date, in local time — the month an office would call it. */
+export function periodOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** The first day of a month period, as an ISO date — used for a carried-in bill's due date. */
+export function firstDayOf(periodKey: string): string {
+  return `${periodKey}-01`;
+}
+
+/** The month before this one. */
+export function previousPeriod(periodKey: string): string {
+  const [y, m] = periodKey.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+}

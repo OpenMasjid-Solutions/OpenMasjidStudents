@@ -359,8 +359,12 @@ export type InvoiceStatus = 'open' | 'partially_paid' | 'paid' | 'void';
  *
  *  `ach` is a bank transfer the masjid received directly (a parent's online bill-pay, a wire) — it
  *  is NOT the Stripe ACH debit that §4 defers, and nothing charges it. Stored as plain text with no
- *  CHECK constraint, so adding a value needs no migration; existing rows are unaffected. */
-export type PaymentChannel = 'donations-web' | 'kiosk' | 'portal' | 'autopay' | 'cash' | 'zelle' | 'check' | 'ach' | 'other';
+ *  CHECK constraint, so adding a value needs no migration; existing rows are unaffected.
+ *
+ *  `carry_in` is money that reached the school BEFORE it ran this app — recorded once when a madrasa
+ *  goes live mid-year (0.43.0). It is its own channel rather than `other` so a statement, an export
+ *  and the office can all tell "we were told this was paid" apart from "we took this payment". */
+export type PaymentChannel = 'donations-web' | 'kiosk' | 'portal' | 'autopay' | 'cash' | 'zelle' | 'check' | 'ach' | 'carry_in' | 'other';
 
 /** The channels the office may record by hand — the card ones are never chosen in the UI, they are
  *  written by the portal, autopay, and the Fabric provider. Shared so the router's zod enum and the
@@ -535,6 +539,16 @@ export const payments = sqliteTable(
     memo: text('memo'),
     idempotencyKey: text('idempotency_key').notNull(),
     externalRef: text('external_ref', { mode: 'json' }).$type<Record<string, unknown>>(), // Stripe ids etc.
+    /**
+     * The invoice LINES this money was handed over for, when the payer said (0.43.0) — "this $50 is
+     * the book fee", chosen at the kiosk, on the donation site or in the portal.
+     *
+     * Part of the payment record and therefore immutable like the rest of it: allocation is derived
+     * and gets recomputed constantly, so without the instruction stored here the next recompute would
+     * quietly shunt the money onto the oldest bill and the line the parent paid would still read as
+     * outstanding. Null = no instruction, allocate oldest-due-first as always.
+     */
+    directed: text('directed', { mode: 'json' }).$type<{ itemId: string; amountCents: number }[]>(),
     reversalOf: text('reversal_of'), // the payment id this reverses
     recordedByUserId: text('recorded_by_user_id'),
     recordedByName: text('recorded_by_name'),
@@ -556,6 +570,16 @@ export const paymentAllocations = sqliteTable(
     invoiceId: text('invoice_id')
       .notNull()
       .references(() => invoices.id, { onDelete: 'restrict' }),
+    /**
+     * WHICH LINE of that invoice the money covered — the tuition or the book fee (0.43.0).
+     *
+     * Null means "the invoice as a whole", which is every row written before 0.43.0 and is read that
+     * way by `billing/lines.ts` (spread over the lines in order). It carries no foreign key on
+     * purpose: adding one to a populated table means a full SQLite table rebuild, and this column is
+     * a DERIVED mapping that `reallocateStudent` deletes and rewrites wholesale, so a dangling id
+     * cannot outlive the next recompute.
+     */
+    invoiceItemId: text('invoice_item_id'),
     amountCents: integer('amount_cents').notNull(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },

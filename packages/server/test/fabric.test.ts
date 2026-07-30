@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { freshApp, makeCtx } from './harness';
-import { students, families, invoices, payments, paymentAllocations, invoiceItems, studentFees, feePlans } from '../src/db/schema';
+import { students, families, invoices, payments, paymentAllocations, invoiceItems, studentFees, feePlans, charges, chargeItems } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
@@ -29,7 +29,8 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   const { db } = app.dbmod;
-  for (const t of [paymentAllocations, payments, invoiceItems, invoices, studentFees, feePlans, students, families]) db.delete(t).run();
+  // Order matters: `charges` points at the invoice line it became, so it goes before invoice_items.
+  for (const t of [paymentAllocations, payments, charges, chargeItems, invoiceItems, invoices, studentFees, feePlans, students, families]) db.delete(t).run();
 });
 
 const call = (method: string, body: unknown, opts: { secret?: string | null; tunnel?: boolean } = {}) =>
@@ -126,6 +127,30 @@ describe('lookup (§11.2)', () => {
     expect((await caller('admin').billing.familyBilling({ familyId })).balance.creditCents).toBe(3000);
   });
 
+  /**
+   * ITEMISED BILLS (0.43.0, additive). A kiosk used to get "Tuition — Jul 2026 · $250" and had no choice
+   * but to make the parent accept the whole thing, even when $50 of it was a book fee. `items` is what
+   * lets it list the two separately — and the arithmetic promise (the items add up to the invoice) is
+   * what lets it sum whatever the parent ticks without a special case.
+   */
+  it('breaks each open invoice into its lines, which add up to the invoice', async () => {
+    const admin = caller('admin');
+    const fam = await admin.people.familyCreate({ name: 'Ismail family' });
+    const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
+    const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
+    await admin.billing.chargeAdd({ studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
+    await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
+
+    const inv = (await call('lookup', { v: 2, studentCode: s.studentCode })).json().family.openInvoices[0];
+    expect(inv.items.map((i: { label: string; kind: string; balanceCents: number }) => [i.label, i.kind, i.balanceCents])).toEqual([
+      ['Monthly tuition', 'tuition', 20000],
+      ['Book fee', 'charge', 5000],
+    ]);
+    expect(inv.items.reduce((t: number, i: { balanceCents: number }) => t + i.balanceCents, 0)).toBe(inv.balanceCents);
+    // Exactly these fields per line, so a consumer knows what it may rely on.
+    for (const i of inv.items) expect(Object.keys(i).sort()).toEqual(['amountCents', 'balanceCents', 'id', 'kind', 'label']);
+  });
+
   it('accepts the ID as typed — lowercase and punctuation are normalised away', async () => {
     const { code } = await seed();
     expect((await call('lookup', { v: 2, studentCode: `${code.slice(0, 3).toLowerCase()} ${code.slice(3)}` })).json().found).toBe(true);
@@ -182,5 +207,114 @@ describe('record-payment + check (§11.3/§11.4)', () => {
     const r = await call('record-payment', { v: 2, idempotencyKey: 'k', familyId: 'fam_nope', amountCents: 100, channel: 'kiosk' });
     expect(r.statusCode).toBe(404);
     expect(r.json().error.code).toBe('family_not_found');
+  });
+
+  /**
+   * PAYING ONE LINE (0.43.0). A parent at the kiosk ticks the book fee and nothing else.
+   *
+   * The oldest-due-first house rule would have put that money on the tuition; the instruction is what
+   * overrides it, and the second half of this test is the part that matters — generating the next month
+   * recomputes every allocation, and the book fee must STILL read as settled afterwards.
+   */
+  it('honours a parent’s choice of lines, and it survives the next month', async () => {
+    const admin = caller('admin');
+    const fam = await admin.people.familyCreate({ name: 'Ismail family' });
+    const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
+    const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
+    await admin.billing.chargeAdd({ studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
+    await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
+
+    const items = (await call('lookup', { v: 2, studentCode: s.studentCode })).json().family.openInvoices[0].items;
+    const book = items.find((i: { label: string }) => i.label === 'Book fee');
+    const r = await call('record-payment', { v: 2, idempotencyKey: 'pi_BOOK', familyId: fam.id, amountCents: 5000, channel: 'kiosk', lines: [{ itemId: book.id, amountCents: 5000 }] });
+    expect(r.json()).toMatchObject({ recorded: true, duplicate: false });
+
+    await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-08', label: 'Tuition — Aug 2026', dueDate: '2026-08-01' });
+    const after = (await call('lookup', { v: 2, studentCode: s.studentCode })).json().family.openInvoices;
+    const july = after.find((i: { label: string }) => i.label === 'Tuition — Jul 2026');
+    // The book fee is still LISTED — a part-paid bill should say what is already dealt with — but it is
+    // settled, and the tuition it would otherwise have been swallowed by is untouched.
+    expect(july.items.map((i: { label: string; balanceCents: number }) => [i.label, i.balanceCents])).toEqual([
+      ['Monthly tuition', 20000],
+      ['Book fee', 0],
+    ]);
+    expect(july.balanceCents).toBe(20000);
+  });
+
+  it('refuses lines that do not add up, or that belong to another family', async () => {
+    const admin = caller('admin');
+    const { familyId } = await seed();
+    const other = await admin.people.familyCreate({ name: 'Farooqi family' });
+    const plan = await admin.billing.feePlanCreate({ name: 'Tuition B', amountCents: 5000, cadence: 'monthly' });
+    const theirs = await admin.people.studentCreate({ familyId: other.id, fullName: 'Bilal Farooqi', feePlanId: plan.id });
+    await admin.billing.generateFamily({ familyId: other.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
+    const theirLine = (await admin.billing.studentPayables({ studentId: theirs.id })).lines[0];
+
+    const mismatch = await call('record-payment', { v: 2, idempotencyKey: 'pi_SUM', familyId, amountCents: 9999, channel: 'kiosk', lines: [{ itemId: theirLine.itemId, amountCents: 5000 }] });
+    expect(mismatch.statusCode).toBe(422);
+    expect(mismatch.json().error.code).toBe('invalid_allocation');
+
+    // A line belonging to a DIFFERENT household must never be payable through this family's session.
+    const crossFamily = await call('record-payment', { v: 2, idempotencyKey: 'pi_CROSS', familyId, amountCents: 5000, channel: 'kiosk', lines: [{ itemId: theirLine.itemId, amountCents: 5000 }] });
+    expect(crossFamily.statusCode).toBe(422);
+    expect((await admin.billing.studentBilling({ studentId: theirs.id })).balance.owedCents).toBe(5000);
+  });
+
+  /**
+   * Stripe has already taken the card by the time record-payment runs, so an allocation the bills cannot
+   * absorb must never cost a recorded payment. It is a HINT: direct what fits, and the rest is ordinary
+   * money on that child (credit, if there is nothing left to pay). Refusing would leave a captured charge
+   * unrecorded and the consumer's outbox retrying the same 422 forever.
+   */
+  it('records the money when an allocation asks for more than the bill can absorb', async () => {
+    const admin = caller('admin');
+    const { familyId, studentId } = await seed(); // one $50 July invoice
+    const july = (await admin.billing.studentBilling({ studentId })).invoices[0];
+    // The office takes $50 in cash between the kiosk's lookup and its record-payment.
+    await admin.billing.recordManualPayment({ studentId, amountCents: 5000, channel: 'cash', occurredAt: '2026-07-10' });
+
+    const r = await call('record-payment', { v: 2, idempotencyKey: 'pi_RESIDUE', familyId, amountCents: 5000, channel: 'kiosk', allocations: [{ invoiceId: july.id, amountCents: 5000 }] });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ recorded: true, duplicate: false });
+    // Nothing left to pay, so it is held as that child's credit — money is never lost.
+    expect((await admin.billing.studentBilling({ studentId })).balance.creditCents).toBe(5000);
+  });
+
+  /** A consumer that builds `students[]` one entry per OPEN INVOICE sends the same child twice. Each row
+   *  is keyed by child, so without merging the second is swallowed as a replay of the first — half a real
+   *  charge dropped while the response says it was recorded. */
+  it('merges two entries for the same child instead of dropping one', async () => {
+    const admin = caller('admin');
+    const { familyId, studentId } = await seed();
+    await admin.billing.generateFamily({ familyId, periodKey: '2026-08', label: 'Tuition — Aug 2026', dueDate: '2026-08-01' });
+
+    const r = await call('record-payment', {
+      v: 2,
+      idempotencyKey: 'pi_DUPE',
+      familyId,
+      amountCents: 10000,
+      channel: 'kiosk',
+      students: [{ studentId, amountCents: 5000 }, { studentId, amountCents: 5000 }],
+    });
+    expect(r.json()).toMatchObject({ recorded: true, duplicate: false });
+    // The WHOLE $100 landed: both July and August are settled.
+    const invs = (await admin.billing.studentBilling({ studentId })).invoices;
+    expect(invs.every((i) => i.status === 'paid')).toBe(true);
+    expect((await admin.billing.studentBilling({ studentId })).balance.owedCents).toBe(0);
+  });
+
+  /** `allocations` has been in the contract since v1 and was parsed and then thrown away until 0.43.0 —
+   *  a consumer asking for a specific invoice silently got oldest-due-first instead. */
+  it('honours invoice-level allocations, which used to be ignored', async () => {
+    const admin = caller('admin');
+    const { familyId, studentId } = await seed(); // one $50 July invoice
+    await admin.billing.generateFamily({ familyId, periodKey: '2026-08', label: 'Tuition — Aug 2026', dueDate: '2026-08-01' });
+    const august = (await admin.billing.studentBilling({ studentId })).invoices.find((i) => i.periodKey === '2026-08')!;
+
+    await call('record-payment', { v: 2, idempotencyKey: 'pi_ALLOC', familyId, amountCents: 5000, channel: 'donations-web', allocations: [{ invoiceId: august.id, amountCents: 5000 }] });
+
+    const invs = (await admin.billing.studentBilling({ studentId })).invoices;
+    expect(invs.find((i) => i.periodKey === '2026-08')).toMatchObject({ status: 'paid' });
+    expect(invs.find((i) => i.periodKey === '2026-07')).toMatchObject({ status: 'open' }); // older, deliberately untouched
   });
 });

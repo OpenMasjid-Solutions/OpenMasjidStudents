@@ -9,6 +9,74 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.43.0]
+
+### Added
+
+- **Recording a payment is now the first thing on the Billing tab.** It used to be two clicks down —
+  find the household in a grid of cards, open its window, then pick the child — which is a strange
+  place to bury the thing an office does twenty times a morning. There is now a search box at the top:
+  type a few letters of a name or paste a Student ID, and the amount, method and date are right there.
+  The same control is also a dropdown, so you can browse the roster when you don't know how a name is
+  spelled.
+- **Bills are itemised, and a single line can be paid.** A February bill that is $200 of tuition plus a
+  $50 book fee showed up everywhere as one $250 lump, so a parent who came in to pay for the trip could
+  not, and the office had to explain why. Tuition and one-off charges are now listed separately — on the
+  parent portal, at the kiosk, on the donation site and on the office's own screens — and ticking a line
+  records the money **against that line**. It stays that way: the choice is kept with the payment and
+  re-applied whenever bills change, so the book fee somebody settled last month does not quietly reappear
+  as unpaid when the next month is generated.
+- **Starting mid-year.** A madrasa that adopts this in February of a September–June year had no honest
+  way in: bill the autumn and you charge families who already paid in cash, skip it and you forgive money
+  that is owed. There is now a one-time **Starting mid-year** step. Pick the month you start billing, then
+  for each child pick the last month they are square for — one dropdown, settable for the whole roster at
+  once — and the app works out what each one carries in from their own rate, editable where the office
+  book disagrees. **You see every parent's resulting balance before anything is written.** Committing
+  records one dated line per child ("Balance carried forward", or a dated payment for a family already
+  paid ahead) and never invents the months themselves.
+- **Parents are told plainly that their username is their email address.** There is no separate username
+  for a parent — the account is created with both set to the same address — but the sign-in form asks for
+  a "username", which is exactly where that catches people out. The login page now says so, the invite
+  email names the address, and the page where a parent sets their password repeats it.
+
+### Changed
+
+- **Pressing a child's name in the Year view opens their billing** — balance, bills line by line, and the
+  box to record a payment, with that child already selected. The grid of household cards at the bottom of
+  the Billing tab is gone: it was a wall of names with one number each, while the year view shows the same
+  name alongside their course, class and which months they have paid.
+- **A monthly bill always carries a due date now** — the day you configured, or the 1st of that month.
+  A bill with no date was not "no opinion": autopay only ever looks for bills that are due, so an undated
+  one was never charged, and money skipped past it to newer months. A February bill nobody had dated was
+  therefore never chased and never ticked off in the year grid.
+
+### Fixed
+
+- **A month typed without its leading zero would bill that month twice.** `2027-2` is a different period
+  from `2027-02` as far as the "don't bill a month twice" check is concerned, so it quietly raised a second
+  February invoice for every child, and nothing on screen suggested anything was wrong — the year's total
+  just grew. The Generate box now refuses it and says how to write it.
+- **A kiosk or donation-site payment aimed at a specific bill was silently ignored.** The Fabric contract
+  has accepted an invoice-level instruction since v1; this app parsed it and then allocated
+  oldest-due-first anyway, with nothing to say so. It is now honoured — and, like the new per-line
+  instruction, it survives later recalculations.
+- **Autopay could charge a card money the app itself said was not owed.** It added up the bills that were
+  due and counted only the positive ones, so a family holding a credit larger than one month's bill — a
+  scholarship, or a correction for a month that was over-billed — could be charged every month while
+  their own screen said they owed nothing and were in credit. The charge is now capped at the household's
+  actual balance, so a family who owes nothing can never be charged.
+- **A bill covered entirely by a scholarship stayed "Open" forever.** With the full amount credited off
+  there was nothing left to pay, and no payment can be made against a bill that costs nothing — so it sat
+  on the statement and in the year grid indefinitely. It now reads as settled.
+- **Part of a payment could be dropped without anything saying so.** When a card payment covering several
+  children was described one bill at a time rather than one child at a time, the second amount for the
+  same child was mistaken for a repeat of the first and discarded, while the response reported the whole
+  amount as recorded. The amounts are now added together. Separately, if a payment ever ends up only
+  partly recorded (a container restarting mid-way), the office is now told, instead of it going quiet.
+- **Two smaller ones in the new mid-year step:** running it a second time no longer moves the start month
+  forward and start refusing months you have already billed, and a child who left part-way through the
+  year is now included — they can still owe for the months they attended.
+
 ## [0.42.1]
 
 ### Fixed

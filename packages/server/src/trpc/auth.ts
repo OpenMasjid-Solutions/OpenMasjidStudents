@@ -227,9 +227,13 @@ export const authRouter = router({
   inviteInfo: publicProcedure.input(z.object({ token: TOKEN })).query(({ input }) => {
     const inv = db.select().from(invites).where(and(eq(invites.tokenHash, hashToken(input.token)), isNull(invites.usedAt))).get();
     if (!inv || inv.expiresAt.getTime() <= Date.now()) return { valid: false as const };
-    const g = db.select({ name: guardians.name }).from(guardians).where(eq(guardians.id, inv.guardianId)).get();
+    const g = db.select({ name: guardians.name, email: guardians.email }).from(guardians).where(eq(guardians.id, inv.guardianId)).get();
     if (!g) return { valid: false as const };
-    return { valid: true as const, guardianName: g.name };
+    // The address is echoed back so the page can say what they will sign in WITH. A parent has no
+    // username of their own — it IS their email (see inviteAccept, which sets both to it) — and a
+    // sign-in form asking for a "username" is the moment that catches them out. Only reachable with
+    // the invite token, which was sent to that very address.
+    return { valid: true as const, guardianName: g.name, email: (g.email ?? '').trim().toLowerCase() };
   }),
 
   /** Accept a portal invite: set a password → create the parent account + guardian link → sign in.

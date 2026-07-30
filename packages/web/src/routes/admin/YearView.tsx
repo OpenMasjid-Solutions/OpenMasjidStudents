@@ -3,8 +3,11 @@
 /** The whole-year view: every student as a row, every billing month as a column, so the office can
  *  read a year of tuition at a glance and print it.
  *
- *  A cell is the FAMILY's invoice state for that month — that is what is billed and paid, so
- *  siblings on one bill show the same cell. Clicking a billed cell opens that family's record.
+ *  A cell is that CHILD's own invoice state for the month — bills are per student since 0.39.0, so two
+ *  siblings can legitimately differ in the same column. Pressing a name (or a month cell) opens that
+ *  child's billing: their balance, their bills line by line, and the box to record a payment. This is
+ *  the way into a family's money since 0.43.0, when the grid of household cards on the Billing tab went
+ *  away — the name here tells you their course, class and paid months as well, which a card could not.
  *  The optional columns (Student ID, phones, balance…) are admin-configured and resolved server-side,
  *  so a column that is off never reaches the browser.
  *
@@ -12,13 +15,13 @@
  *  treatment that keeps 12 months usable on a phone. */
 import { Fragment, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Users, Settings2, Printer } from 'lucide-react';
+import { Wallet, Settings2, Printer } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
 import { formatMoney } from '../../lib/money';
 import { formatUsPhone, telHref } from '../../lib/phone';
 import { useWindows } from '../../components/Windows';
-import { FamilyDetail } from './FamilyDetail';
+import { FamilyBilling } from '../../components/FamilyBilling';
 
 const UNPLACED = '__unplaced';
 
@@ -47,9 +50,6 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
 
   const [showConfig, setShowConfig] = useState(false);
 
-  const openFamily = (id: string, label: string) =>
-    open({ title: label, wide: true, dedupeKey: `family:${id}`, icon: <Users size={15} />, node: <FamilyDetail familyId={id} /> });
-
   async function refresh() {
     await Promise.all([utils.billing.yearGrid.invalidate(), utils.structure.schoolYearList.invalidate(), utils.billing.yearViewColumnsGet.invalidate()]);
   }
@@ -63,6 +63,22 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
 
   const g = grid.data;
   const enabled = cols.data?.enabled ?? [];
+
+  /**
+   * Open a child's billing. Titled with the CHILD, keyed on the HOUSEHOLD.
+   *
+   * Both halves are deliberate: you pressed Yusuf, so the window says Yusuf and his payment box starts
+   * on him — but one adult pays for all their children, so the window shows the household, and pressing
+   * his sister afterwards does not stack a second window on the same family's money.
+   */
+  const openBilling = (row: { studentId: string; fullName: string; familyId: string }) =>
+    open({
+      title: row.fullName,
+      wide: true,
+      dedupeKey: `billing:${row.familyId}`,
+      icon: <Wallet size={15} />,
+      node: <FamilyBilling familyId={row.familyId} currency={g?.currency ?? 'usd'} focusStudentId={row.studentId} />,
+    });
 
   /** Course filter buttons, counted off the grid itself so a course with nobody in this year is not
    *  offered as an empty filter. */
@@ -208,7 +224,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                       )}
                       <tr>
                         <td className="year-sticky">
-                          <button type="button" className="btn btn--ghost btn--sm" onClick={() => openFamily(r.familyId, r.familyName)}>
+                          <button type="button" className="btn btn--ghost btn--sm" onClick={() => openBilling(r)} title={t('year.openBilling')}>
                             {r.fullName}
                           </button>
                         </td>
@@ -224,7 +240,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                               <button
                                 type="button"
                                 className="year-cell-btn"
-                                onClick={() => openFamily(r.familyId, r.familyName)}
+                                onClick={() => openBilling(r)}
                                 title={`${c.periodKey} — ${t(`year.cell_${c.status}`)}`}
                                 aria-label={`${r.fullName} ${c.periodKey} ${t(`year.cell_${c.status}`)}`}
                               >

@@ -98,6 +98,40 @@
 .list-row .row-amt.neg { color: var(--color-danger, #e5645b); }
 .list-row .row-amt.pos { color: var(--color-success, #46c99a); }
 
+/* ── An itemised bill (0.43.0) ────────────────────────────────────────────────
+   A bill that is tuition PLUS something else says so, and each line can be paid on its own. The row
+   at the top is the bill; the list under it is what the bill is made of.
+
+   Phone-first: each line is a full-width <label>, so the whole row is the tap target for its checkbox
+   rather than a 16px box a thumb has to find. Logical properties throughout, so RTL is free. */
+.bill { border-radius: 14px; padding: 0.85rem 1rem; margin-block-end: 0.6rem; }
+.bill-lines { list-style: none; margin: 0.55rem 0 0; padding: 0; border-block-start: 1px solid var(--color-hairline, rgba(255, 255, 255, 0.09)); }
+.bill-lines li { margin: 0; }
+.bill-lines label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.15rem;
+  min-height: 2.75rem; /* a comfortable thumb target */
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.bill-lines label.is-muted { cursor: default; color: var(--color-ink-muted); }
+.bill-lines input[type='checkbox'] { inline-size: 1.15rem; block-size: 1.15rem; flex: none; }
+.bill-lines .bill-dot { inline-size: 1.15rem; block-size: 1.15rem; flex: none; border-radius: 50%; background: var(--color-hairline, rgba(255, 255, 255, 0.12)); }
+.bill-lines .bill-line-label { flex: 1 1 auto; display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.bill-lines .tnum { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+
+/* The "you have chosen some lines" bar, which replaces the pay-the-whole-balance button. */
+.pay-picked { border-radius: 14px; padding: 0.8rem 1rem; margin-block-start: 0.4rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.pay-picked > span { font-weight: 600; flex: 1 1 auto; }
+.pay-picked > :last-child { flex: 1 1 100%; }
+
+/* The confirmation list on the pay screen: exactly what this card charge is for. */
+.pay-chosen { list-style: none; margin: 0; padding: 0; }
+.pay-chosen li { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.3rem 0; font-size: 0.9rem; }
+.pay-chosen .tnum { font-variant-numeric: tabular-nums; font-weight: 600; }
+
 .fam-empty { color: var(--color-ink-muted); font-size: 0.92rem; padding: 0.5rem 0.25rem; }
 /* A one-line explainer under a list — how to actually use the Student IDs above it. */
 .fam-hint { color: var(--color-ink-muted); font-size: 0.85rem; line-height: 1.45; margin: 0.5rem 0.25rem 0; }

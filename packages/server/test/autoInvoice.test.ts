@@ -114,17 +114,25 @@ describe('when enabled', () => {
     expect(auto.runAutoInvoice(JULY_15)).toMatchObject({ ran: false, reason: 'needs_start_year' });
   });
 
-  it('stamps a due date when one is configured, and none when it is not', async () => {
+  /**
+   * A month bill ALWAYS carries a due date — the configured day, or the 1st of that month.
+   *
+   * It used to be null when no due day was set, and null is not a harmless "no opinion": autopay's
+   * whole query is `due_date <= today`, so those invoices were never charged, and `reallocateStudent`
+   * sorts nulls last, so money skipped past them to newer months. A February bill nobody had dated was
+   * therefore never chased and never ticked in the year grid (0.43.0).
+   */
+  it('always dates a month bill — the configured day, or the 1st', async () => {
     await seed();
     settingsMod.setAutoInvoice({ day: 1, dueDay: 10 });
     auto.runAutoInvoice(JULY_15);
     expect(app.dbmod.db.select().from(invoices).all()[0].dueDate).toBe('2026-07-10');
 
-    // Fresh month, no due day.
+    // Fresh month, no due day configured.
     settingsMod.setAutoInvoice({ dueDay: null });
     auto.runAutoInvoice(new Date(2026, 7, 15)); // August
     const aug = app.dbmod.db.select().from(invoices).all().find((i) => i.periodKey === '2026-08')!;
-    expect(aug.dueDate).toBeNull();
+    expect(aug.dueDate).toBe('2026-08-01');
   });
 
   it('bills only monthly plans — a per-term plan is not swept into a month run', async () => {

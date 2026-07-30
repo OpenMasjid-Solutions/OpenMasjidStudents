@@ -123,7 +123,7 @@ export function MassApply({ currency }: { currency: string }) {
           ...(periodKey.trim() ? { periodKey: periodKey.trim() } : {}),
         });
         setResult(t('mass.chargeResult', { created: r.created, attached: r.attached, targeted: r.targeted }));
-        await Promise.all([utils.billing.chargeList.invalidate(), utils.billing.familyBilling.invalidate(), utils.billing.familiesOverview.invalidate()]);
+        await Promise.all([utils.billing.chargeList.invalidate(), utils.billing.familyBilling.invalidate()]);
       }
     } catch (e2) {
       setErr((e2 as Error).message);

@@ -1,22 +1,39 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
-/** Billing (admin + finance): fee-plan definitions, a period invoice-generation action, and a
- *  families-with-balances overview that opens each family's billing as a window.
+/** Billing (admin + finance): recording a payment, fee-plan definitions, charges, and invoice
+ *  generation.
+ *
+ *  RECORDING A PAYMENT IS FIRST, because it is the thing the office does twenty times a morning and
+ *  everything else on this page is something they set up once. It used to be buried two clicks down —
+ *  find the household in a grid of cards, open its window, then pick the child — so the top of the page
+ *  is now a search box for the child and the amount. The households grid that used to sit at the bottom
+ *  is gone with it: the year view is the better way into a family's record, and one press of a child's
+ *  name there opens the same window.
  *
  *  `canManagePlans` is the admin/finance line (§5): finance runs the billing — generate invoices,
  *  record payments, chase balances — but WHAT the madrasa charges is the office's decision, so
  *  creating, archiving and deleting fee plans is admin-only. Finance still READS the plans, because
  *  no invoice screen means anything without their names. The server enforces the same wall. */
-import { useState, type FormEvent } from 'react';
+import { lazy, Suspense, useMemo, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { Wallet, Users2, Pencil } from 'lucide-react';
-import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
+import { Wallet, Users2, Pencil, CalendarClock, ArrowRight } from 'lucide-react';
+import { fadeRise } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { useWindows } from '../../components/Windows';
 import { FamilyBilling } from '../../components/FamilyBilling';
 import { MassApply } from '../../components/MassApply';
+import { StudentPicker } from '../../components/StudentPicker';
 import { formatMoney, parseCents, parseSignedCents } from '../../lib/money';
+
+/** The go-live wizard is a once-per-install screen — no reason for every parent's phone to download it
+ *  with the rest of the app. (Same treatment as What's new.) */
+const MidYearSetup = lazy(() => import('../../components/MidYearSetup').then((m) => ({ default: m.MidYearSetup })));
+
+/** The channels the office can record by hand — kept in step with the server by the mutation's own
+ *  input type, so a drift here fails `tsc` rather than at runtime. */
+const MANUAL_CHANNELS = ['cash', 'check', 'ach', 'zelle', 'other'] as const;
+type ManualChannel = (typeof MANUAL_CHANNELS)[number];
 
 /** The code-defined export sheets (the server owns the columns — §14, no query built from input). */
 type CsvDataset = 'payments' | 'invoices' | 'balances' | 'students';
@@ -28,7 +45,6 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   const currencyQ = trpc.billing.currency.useQuery();
   const currency = currencyQ.data?.currency ?? 'usd';
   const plans = trpc.billing.feePlanList.useQuery();
-  const overview = trpc.billing.familiesOverview.useQuery();
   const planCreate = trpc.billing.feePlanCreate.useMutation();
   const planArchive = trpc.billing.feePlanArchive.useMutation();
   const planDelete = trpc.billing.feePlanDelete.useMutation();
@@ -49,6 +65,23 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   const setAuto = trpc.billing.autoInvoiceSet.useMutation();
   const runAuto = trpc.billing.autoInvoiceRunNow.useMutation();
 
+  // ── Recording a payment (the top of the page) ─────────────────────────────
+  const roster = trpc.people.studentOptions.useQuery();
+  const pay = trpc.billing.recordManualPayment.useMutation();
+  const [payment, setPayment] = useState<{ studentId: string; amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({
+    studentId: '',
+    amount: '',
+    channel: 'cash',
+    occurredAt: new Date().toISOString().slice(0, 10),
+    memo: '',
+  });
+  /** Lines the office ticked, when the parent said what the money was for. */
+  const [ticked, setTicked] = useState<Record<string, boolean>>({});
+  const [payMsg, setPayMsg] = useState<string | null>(null);
+  const [payErr, setPayErr] = useState<string | null>(null);
+  const payables = trpc.billing.studentPayables.useQuery({ studentId: payment.studentId }, { enabled: !!payment.studentId });
+  const midYear = trpc.billing.midYearStatus.useQuery();
+
   const [plan, setPlan] = useState({ name: '', amount: '', cadence: 'monthly' });
   const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
   const [genMsg, setGenMsg] = useState<string | null>(null);
@@ -59,6 +92,69 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   const [autoMsg, setAutoMsg] = useState<string | null>(null);
   const [planMsg, setPlanMsg] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
+
+  /** The lines currently ticked, in the order they are shown. */
+  const chosen = useMemo(() => (payables.data?.lines ?? []).filter((l) => ticked[l.itemId]), [payables.data, ticked]);
+  const chosenCents = chosen.reduce((s, l) => s + l.balanceCents, 0);
+
+  /** Tick a line: the amount follows the ticks, because "what am I paying for" and "how much" are the
+   *  same question at the desk. Untick everything and the amount is the office's own again. */
+  function toggleLine(itemId: string, on: boolean) {
+    const next = { ...ticked, [itemId]: on };
+    setTicked(next);
+    const lines = payables.data?.lines ?? [];
+    const total = lines.filter((l) => next[l.itemId]).reduce((s, l) => s + l.balanceCents, 0);
+    setPayment((p) => ({ ...p, amount: total > 0 ? (total / 100).toFixed(2) : '' }));
+  }
+
+  function pickStudent(studentId: string) {
+    setPayment((p) => ({ ...p, studentId, amount: '', memo: '' }));
+    setTicked({});
+    setPayMsg(null);
+    setPayErr(null);
+  }
+
+  /**
+   * Record it. When lines are ticked the money is DIRECTED at them, so the book fee the parent came in
+   * to pay is the line that ends up settled — not whichever bill happens to be oldest.
+   */
+  async function doPay(e: FormEvent) {
+    e.preventDefault();
+    setPayErr(null);
+    setPayMsg(null);
+    const cents = parseCents(payment.amount);
+    if (!cents || cents < 1 || !payment.studentId) return;
+    const name = roster.data?.find((s) => s.id === payment.studentId)?.fullName ?? '';
+    // Only direct the money when the ticks actually describe the amount — a part-payment of a ticked
+    // line, or extra on top, is ordinary money and belongs on the oldest bill.
+    const directed = chosen.length && chosenCents === cents ? chosen.map((l) => ({ itemId: l.itemId, amountCents: l.balanceCents })) : undefined;
+    try {
+      await pay.mutateAsync({
+        studentId: payment.studentId,
+        amountCents: cents,
+        channel: payment.channel,
+        occurredAt: payment.occurredAt,
+        memo: payment.memo.trim() || undefined,
+        ...(directed ? { directed } : {}),
+      });
+      setPayMsg(t('billing.recordedFor', { amount: money(cents), name }));
+      setPayment((p) => ({ ...p, amount: '', memo: '' }));
+      setTicked({});
+      await Promise.all([utils.billing.studentPayables.invalidate({ studentId: payment.studentId }), utils.billing.yearGrid.invalidate(), utils.billing.chargeList.invalidate()]);
+    } catch (err) {
+      setPayErr((err as Error).message);
+    }
+  }
+
+  function openStudentBilling(studentId: string) {
+    const s = roster.data?.find((k) => k.id === studentId);
+    if (!s) return;
+    open({ title: s.fullName, wide: true, dedupeKey: `billing:${s.familyId}`, icon: <Wallet size={15} />, node: <FamilyBilling familyId={s.familyId} currency={currency} focusStudentId={studentId} /> });
+  }
+
+  function openMidYear() {
+    open({ title: t('midyear.title'), wide: true, dedupeKey: 'midyear', icon: <CalendarClock size={15} />, node: <Suspense fallback={<p className="empty">{t('common.loading')}</p>}><MidYearSetup currency={currency} /></Suspense> });
+  }
 
   async function addPlan(e: FormEvent) {
     e.preventDefault();
@@ -89,7 +185,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
         if (!window.confirm(t('billing.confirmPlanArchive', { name, count: info.invoiceLines }))) return;
         await planArchive.mutateAsync({ id });
       }
-      await Promise.all([utils.billing.feePlanList.invalidate(), utils.billing.familiesOverview.invalidate()]);
+      await Promise.all([utils.billing.feePlanList.invalidate()]);
     } catch (e) {
       setPlanMsg((e as Error).message);
     }
@@ -100,7 +196,6 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
     const r = await genPeriod.mutateAsync({ periodKey: gen.periodKey.trim(), label: gen.label.trim(), dueDate: gen.dueDate || undefined });
     setGenMsg(t('billing.generatedN', { n: r.created }));
     setGen({ periodKey: '', label: '', dueDate: '' });
-    await utils.billing.familiesOverview.invalidate();
   }
   function openFamily(id: string, name: string) {
     open({ title: name, wide: true, dedupeKey: `billing:${id}`, icon: <Wallet size={15} />, node: <FamilyBilling familyId={id} currency={currency} /> });
@@ -139,7 +234,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
     setAutoMsg(null);
     const r = await runAuto.mutateAsync();
     setAutoMsg(r.ran ? t('billing.autoRan', { period: r.periodKey, n: r.created ?? 0 }) : t(`billing.autoWhy_${r.reason ?? 'disabled'}`));
-    await Promise.all([utils.billing.autoInvoiceGet.invalidate(), utils.billing.familiesOverview.invalidate()]);
+    await Promise.all([utils.billing.autoInvoiceGet.invalidate()]);
   }
 
   /** Save the server-built CSV. A Blob + object URL keeps it a plain download with no extra route,
@@ -159,7 +254,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
     setChargeErr(null);
     try {
       await chargeVoid.mutateAsync({ id });
-      await Promise.all([utils.billing.chargeList.invalidate(), utils.billing.familiesOverview.invalidate()]);
+      await Promise.all([utils.billing.chargeList.invalidate()]);
     } catch (e) {
       // The useful case: it is already on an invoice, so the fix is a negative charge, not an edit.
       setChargeErr((e as Error).message);
@@ -169,7 +264,6 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
     const r = await reconcileNow.mutateAsync();
     setReconcileMsg(r.ok ? t('billing.reconcileDone', { scanned: r.scanned, recorded: r.recorded }) : t('billing.reconcileUnavailable'));
     await utils.billing.reconcileStatus.invalidate();
-    await utils.billing.familiesOverview.invalidate();
   }
 
   return (
@@ -196,7 +290,82 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
           <option value="students">{t('billing.ds_students')}</option>
         </select>
         <button type="button" className="btn btn--ghost" onClick={openMassApply}><Users2 size={15} /> {t('mass.title')}</button>
+        {canManagePlans && (
+          <button type="button" className="btn btn--ghost" onClick={openMidYear}><CalendarClock size={15} /> {t('midyear.open')}</button>
+        )}
       </div>
+
+      {/* ── Record a payment — first, because it is the thing the office does all morning ───────── */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head"><h2>{t('billing.recordPayment')}</h2></div>
+        {payErr && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{payErr}</div>}
+        {payMsg && (
+          <div className="notice" style={{ marginBlockEnd: '0.6rem' }}>
+            {payMsg}{' '}
+            <button type="button" className="link-btn" onClick={() => openStudentBilling(payment.studentId)}>{t('billing.openRecord')} <ArrowRight size={12} /></button>
+          </div>
+        )}
+        <form className="inline-form glass-inset" onSubmit={doPay} style={{ marginBlockStart: 0 }}>
+          {/* Type the name OR browse the roster — the same control does both (StudentPicker). */}
+          <div style={{ flex: '1 1 15rem', minWidth: '13rem' }}>
+            <StudentPicker students={roster.data ?? []} value={payment.studentId} onChange={pickStudent} label={t('billing.forStudent')} placeholder={t('billing.findStudent')} />
+          </div>
+          <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.amount')}</label>
+            <input type="number" step="0.01" min="0" className="input glass-inset" value={payment.amount} onChange={(e) => setPayment({ ...payment, amount: e.target.value })} />
+          </div>
+          <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.channel')}</label>
+            <select className="input glass-inset" value={payment.channel} onChange={(e) => setPayment({ ...payment, channel: e.target.value as ManualChannel })}>
+              {MANUAL_CHANNELS.map((c) => <option key={c} value={c}>{t(`billing.ch_${c}`)}</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.date')}</label>
+            <input type="date" className="input glass-inset" value={payment.occurredAt} onChange={(e) => setPayment({ ...payment, occurredAt: e.target.value })} />
+          </div>
+          <div className="field" style={{ flex: '1 1 8rem' }}><label className="label">{t('billing.memo')}</label>
+            <input className="input glass-inset" value={payment.memo} onChange={(e) => setPayment({ ...payment, memo: e.target.value })} maxLength={200} />
+          </div>
+          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount)}>{t('billing.record')}</button>
+        </form>
+
+        {/* What this child owes, line by line. Ticking lines fills in the amount AND records the money
+            against those lines, so "he's here to pay the trip" ends up settling the trip. */}
+        {payment.studentId && payables.data && (
+          <div className="glass-inset" style={{ padding: '0.7rem 0.85rem', borderRadius: 'var(--radius-card)', marginBlockStart: '0.7rem' }}>
+            {payables.data.lines.length === 0 ? (
+              <p className="muted" style={{ fontSize: '0.9rem', margin: 0 }}>
+                {payables.data.balance.creditCents > 0
+                  ? t('billing.nothingDueCredit', { amount: money(payables.data.balance.creditCents) })
+                  : t('billing.nothingDue')}
+              </p>
+            ) : (
+              <>
+                <p className="label" style={{ marginBlockEnd: '0.4rem' }}>{t('billing.owesLines', { amount: money(payables.data.balance.owedCents) })}</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                  {payables.data.lines.map((l) => (
+                    <label key={l.itemId} className="pay-line" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={!!ticked[l.itemId]} onChange={(e) => toggleLine(l.itemId, e.target.checked)} />
+                      <span className={`chip ${l.kind === 'tuition' ? '' : 'is-accent'}`}>{t(`billing.kind_${l.kind}`)}</span>
+                      <span style={{ flex: '1 1 auto' }}>{l.label} <span className="muted">· {l.invoiceLabel}</span></span>
+                      <span className="tnum">{money(l.balanceCents)}</span>
+                    </label>
+                  ))}
+                </div>
+                {chosen.length > 0 && <p className="hint">{t('billing.tickedHint', { count: chosen.length, amount: money(chosenCents) })}</p>}
+              </>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Starting mid-year: offered until the go-live step has been run or the office has billed a
+          month, since after that it is not what they need. */}
+      {canManagePlans && midYear.data && !midYear.data.committedAt && (
+        <div className="notice notice--warn" style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+          <CalendarClock size={16} />
+          <span style={{ flex: '1 1 18rem' }}>{t('midyear.banner')}</span>
+          <button type="button" className="btn btn--primary btn--sm" onClick={openMidYear}>{t('midyear.open')}</button>
+        </div>
+      )}
 
       {/* Fee plans */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
@@ -356,24 +525,10 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
         </div>
       </section>
 
-      {/* Families with balances */}
-      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
-        <div className="section-head"><h2>{t('billing.families')}</h2></div>
-        {(overview.data ?? []).length === 0 ? (
-          <p className="empty">{t('billing.noFamilies')}</p>
-        ) : (
-          <motion.div className="card-grid" variants={staggerContainer} initial="initial" animate="animate">
-            {overview.data?.map((f) => (
-              <motion.button key={f.id} type="button" className="fam-card glass fx-glint" variants={staggerItem} onClick={() => openFamily(f.id, f.name)}>
-                <h3>{f.name}</h3>
-                <div className={f.balance.owedCents > 0 ? 'merit-total is-neg' : 'merit-total is-pos'} style={{ fontSize: '1.1rem' }}>
-                  {f.balance.owedCents > 0 ? money(f.balance.owedCents) : f.balance.creditCents > 0 ? `${money(f.balance.creditCents)} ${t('billing.credit')}` : money(0)}
-                </div>
-              </motion.button>
-            ))}
-          </motion.div>
-        )}
-      </section>
+      {/* No households grid here any more. It was a wall of cards with one number on each, and the way
+          into a family's record is now the year view — where the same name also tells you their course,
+          their class and which months they have paid. */}
+      <p className="hint">{t('billing.familiesMovedHint')}</p>
     </motion.div>
   );
 }

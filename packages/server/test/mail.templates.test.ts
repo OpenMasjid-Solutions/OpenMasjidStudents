@@ -32,6 +32,14 @@ describe('invite email', () => {
     expect(m.html).toContain(url);
     expect(m.subject).toContain('An-Noor School');
   });
+
+  /** A parent has no username of their own — it IS this address — and the sign-in form asks for a
+   *  "username", so the invite has to say which one is theirs (0.43.0). */
+  it('names the address they will sign in with', () => {
+    const m = inviteEmail('An-Noor School', 'Yusuf', 'https://x.test/i?token=t', 'abu@example.com');
+    expect(m.text).toContain('abu@example.com');
+    expect(m.html).toContain('abu@example.com');
+  });
 });
 
 describe('autopay-failure email', () => {

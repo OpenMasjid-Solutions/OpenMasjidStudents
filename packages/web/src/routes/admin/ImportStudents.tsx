@@ -90,7 +90,7 @@ export function ImportStudents() {
       utils.structure.studentsByClass.invalidate(),
       utils.structure.courseTree.invalidate(),
       utils.people.directory.invalidate(),
-      utils.people.siblingOptions.invalidate(),
+      utils.people.studentOptions.invalidate(),
       // The suggestions are computed from what was just written, so they must not come from cache.
       utils.people.siblingSuggestions.invalidate(),
     ]);

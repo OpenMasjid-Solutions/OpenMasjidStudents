@@ -77,7 +77,9 @@ export async function sendInvite(email: string, url: string, guardianName: strin
   if (!mailAvailable()) return { sent: false, skipped: 'no_transport' };
   if (!portalBase()) return { sent: false, skipped: 'no_public_url' };
   refreshEmailLogo();
-  const m = inviteEmail(getSchoolName(), guardianName, url);
+  // The address is passed into the template as well as being the recipient: it is what they will sign
+  // in WITH, and a parent has no other username.
+  const m = inviteEmail(getSchoolName(), guardianName, url, email);
   return { sent: await deliver(email, m.subject, m.text, m.html) };
 }
 

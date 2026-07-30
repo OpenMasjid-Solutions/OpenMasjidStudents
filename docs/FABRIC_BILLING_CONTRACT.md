@@ -59,6 +59,44 @@ Both exist because a *derived* balance of `0` is ambiguous — square, paid ahea
 here" — and a consumer had no way to tell those apart. **Donations and Kiosk should pick both up
 together:** they are the two halves of one screen (what you owe / what you've paid ahead / pay anyway).
 
+### 11.0b Additive since v2 — 0.43.0: ITEMISED BILLS (no version bump, nothing breaks)
+
+A bill was one label and one number on the wire, so a consumer had no choice but to make a parent accept
+the whole thing. In practice a February bill is often **$200 of tuition plus a $50 book fee**, and
+parents ask to pay one of the two — which was not expressible at all.
+
+| Field | Where | What it's for |
+| --- | --- | --- |
+| `items[]` | `lookup` → each `family.openInvoices[]` entry | The lines that make up that bill: `{ id, label, kind, amountCents, balanceCents }`. `kind` is `tuition` \| `charge` \| `credit`. **List them separately.** |
+| `lines[]` | `record-payment` request | `[{ itemId, amountCents }]` — the lines the parent chose. Must sum to `amountCents`. **Supersedes `students[]`**, since a line already says whose bill it is. |
+
+**Two guarantees a consumer can build on.**
+
+1. **The items add up to the bill.** `sum(items[].balanceCents) === openInvoices[].balanceCents`, always.
+   A credit line (a bursary, a correction) reports `balanceCents: 0` because its value is already
+   deducted from the lines above it, so summing whatever the parent ticked is safe with no special case.
+2. **A chosen line is the line that gets settled.** The choice is stored with the payment and re-applied
+   whenever this app recomputes its allocations, so the book fee a parent deliberately paid still reads
+   as settled on next month's statement — it does not quietly slide onto the oldest unpaid bill.
+
+**Notes.** Every line of an open bill is listed, **including ones already settled** (`balanceCents: 0`) —
+show those as done on a part-paid bill, and offer only the lines with a balance as payable. A bill with a
+single line needs no itemised UI; render it exactly as before. Omit `lines` entirely and behaviour is
+unchanged (oldest-due-first), so this is safe to adopt screen by screen.
+
+**Also fixed in 0.43.0:** `allocations[]` (invoice-level, in the contract since v1) was parsed and then
+**silently ignored** — a consumer asking for a specific invoice got oldest-due-first with nothing to say
+so. It now works, normalised into the same line mechanism. `lines` is the better field for new work;
+`allocations` is honoured for what already sends it.
+
+`allocations` is treated as a **hint**, deliberately: it must still sum to `amountCents`, but if a named
+invoice cannot absorb what you asked for — the office recorded a cash payment against it between your
+`lookup` and your `record-payment`, or you simply over-asked — the remainder is recorded as ordinary money
+on that same child (credit, if there is nothing left to pay) rather than rejected. By the time this call
+runs the card is already captured, so refusing the whole payment would strand a real charge and leave your
+outbox retrying the same error forever. `lines` is strict by contrast, because you build it from ids this
+app just gave you.
+
 ### 11.1 Transport (all four repos must agree)
 
 - Consumers (Donations, Kiosk) call the **OS broker**, never this app directly:
@@ -136,8 +174,13 @@ paid alongside. **Breaking at v2:** `name` and `pin` are gone (§11.0).
     "students": [{ "studentId": "stu_1", "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I", "balanceCents": 20000, "creditCents": 0 },
                  { "studentId": "stu_2", "studentCode": "MAR8802", "firstName": "Maryam", "lastInitial": "I", "balanceCents": 0, "creditCents": 5000 }],
     "balanceCents": 20000, "creditCents": 0, "currency": "usd",   // the household total — what a parent pays in one go
-    // Every open invoice across the family, each tagged with the child it belongs to.
-    "openInvoices": [{ "id": "inv_9", "studentId": "stu_1", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 20000 }]
+    // Every open invoice across the family, each tagged with the child it belongs to — and since
+    // 0.43.0, what each one is MADE OF. `items[].balanceCents` sums to the invoice's `balanceCents`,
+    // so a consumer can list them separately and total whatever the parent ticks. Pass the `id`s back
+    // as `lines` on record-payment to pay one of them. See §11.0b.
+    "openInvoices": [{ "id": "inv_9", "studentId": "stu_1", "label": "Tuition — Jul 2026", "dueDate": "2026-07-01", "balanceCents": 25000,
+      "items": [{ "id": "iti_1", "label": "Monthly tuition", "kind": "tuition", "amountCents": 20000, "balanceCents": 20000 },
+                { "id": "iti_2", "label": "Book fee",        "kind": "charge",  "amountCents": 5000,  "balanceCents": 5000 }] }]
   } }
 // 200 (not found) — same shape, same latency, whatever actually mismatched (no enumeration oracle):
 // unknown ID, withdrawn student, locked ID, or external payments switched off
@@ -188,7 +231,12 @@ balance, and the child's next invoice absorbs it.
   // every student must belong to familyId. Omit it and this app derives the split itself, walking the
   // family's open invoices oldest-due-first.
   "students": [{ "studentId": "stu_1", "amountCents": 10000 }, { "studentId": "stu_2", "amountCents": 5000 }],
-  "allocations": [{ "invoiceId": "inv_9", "amountCents": 15000 }],   // optional; omitted → auto-allocate oldest-due-first
+  // NEW at 0.43.0, optional and preferred: the exact LINES the parent ticked (ids from lookup's
+  // openInvoices[].items). Must sum EXACTLY to amountCents. SUPERSEDES students[] — a line already says
+  // whose bill it is — and it is HONOURED, not just accepted: the ticked line is the one that ends up
+  // settled, and stays settled when this app later recomputes its allocations. See §11.0b.
+  "lines": [{ "itemId": "iti_2", "amountCents": 5000 }],
+  "allocations": [{ "invoiceId": "inv_9", "amountCents": 15000 }],   // invoice-level, v1; works from 0.43.0 (ignored before)
   "payerNote": "paid by grandmother" }        // optional, ≤200 chars, displayed to finance
 // 200 (first time) — one ledger row PER CHILD, so `payments[]` is the full truth; `paymentId` is the
 // first of them, kept so a v1 consumer that stores a single id still gets something meaningful.
@@ -198,7 +246,8 @@ balance, and the child's next invoice absorbs it.
 // 200 (replay) — same shape with "duplicate": true throughout. NOTHING is written.
 // 404 unknown family    { "error": { "code": "family_not_found", "message": "…" } }
 // 422 bad allocation    { "error": { "code": "invalid_allocation", "message": "…" } }
-//     …also returned when students[] doesn't sum to amountCents, or names a child of another family.
+//     …also returned when students[] doesn't sum to amountCents, or names a child of another family,
+//     and when lines[] doesn't sum to amountCents or names a line outside this family's open bills.
 ```
 Surplus beyond a child's open invoices becomes **that child's** credit, which their next invoice
 absorbs automatically. A recorded external payment fires a Fabric **notification** and an audit entry.

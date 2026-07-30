@@ -25,7 +25,8 @@ import { db } from '../db';
 import { schoolYears } from '../db/schema';
 import { generateForPeriod } from './invoices';
 import { schoolYearMonths } from './schoolYear';
-import { getSetting, setSetting, SETTING_KEYS, getAutoInvoice } from '../settings';
+import { getSetting, setSetting, SETTING_KEYS, getAutoInvoice, getBillingStartPeriod } from '../settings';
+import { periodBefore } from './period';
 import { makeLog } from '../logger';
 
 const log = makeLog('autoInvoice');
@@ -35,7 +36,7 @@ const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'S
 export interface AutoInvoiceResult {
   ran: boolean;
   /** Why it did nothing, when it did nothing. */
-  reason?: 'disabled' | 'no_school_year' | 'needs_start_year' | 'outside_school_year' | 'too_early' | 'already_done';
+  reason?: 'disabled' | 'no_school_year' | 'needs_start_year' | 'outside_school_year' | 'before_start' | 'too_early' | 'already_done';
   periodKey?: string;
   created?: number;
 }
@@ -73,6 +74,12 @@ export function runAutoInvoice(today = new Date()): AutoInvoiceResult {
   const months = schoolYearMonths(year.startYear, year.startMonth, year.endMonth);
   const month = months.find((m) => m.periodKey === periodKey);
   if (!month) return { ran: false, reason: 'outside_school_year', periodKey };
+
+  // A school that went live mid-year carries the earlier months as one figure per child; billing them
+  // again would charge the same arrears twice. Normally moot (the floor is in the past), but an office
+  // that sets a future go-live month must not have the scheduler bill around it.
+  const floor = getBillingStartPeriod();
+  if (floor && periodBefore(periodKey, floor)) return { ran: false, reason: 'before_start', periodKey };
 
   // Clamped so "the 31st" still fires in a 28-day month.
   const dueDay = Math.min(cfg.day, daysInMonth(today));

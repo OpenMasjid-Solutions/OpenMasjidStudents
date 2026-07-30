@@ -17,9 +17,24 @@ import { audit } from '../audit';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
 import { schoolYearMonths } from '../billing/schoolYear';
+import { invoiceLines, payableLines } from '../billing/lines';
+import { periodKeyError, periodBefore, isMonthPeriod } from '../billing/period';
+import { commitCarryIn, defaultGoLivePeriod, midYearPlan } from '../billing/carryIn';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
-import { getCurrency, getYearViewColumns, setYearViewColumns, YEAR_VIEW_COLUMNS, getAutoInvoice, setAutoInvoice, getAutoInvoiceLast } from '../settings';
+import {
+  getCurrency,
+  getYearViewColumns,
+  setYearViewColumns,
+  YEAR_VIEW_COLUMNS,
+  getAutoInvoice,
+  setAutoInvoice,
+  getAutoInvoiceLast,
+  getBillingStartPeriod,
+  setBillingStartPeriod,
+  getMidYearDoneAt,
+  setMidYearDoneAt,
+} from '../settings';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { relationKind, dedupeNumbers, type RelationKind } from '../people/relations';
 
@@ -63,6 +78,31 @@ function snapshotCharge(source: z.infer<typeof CHARGE_SOURCE>): { label: string;
   return { label: item.name, amountCents, chargeItemId: item.id };
 }
 
+/**
+ * Refuse a period key that would bill a month twice.
+ *
+ * Two ways that happens, both silent until the year's total is wrong: a mis-spelled month (`2027-2` is
+ * a DIFFERENT key from `2027-02`, so UNIQUE(student, period) does not stop it and February is billed
+ * again), and a month before this install started billing (a madrasa that recorded the autumn as one
+ * carried-forward figure would now be owed it twice — see settings.getBillingStartPeriod).
+ *
+ * A `term` period is exempt from the month spelling: its key comes from a configured term row, not from
+ * anybody typing.
+ */
+function assertBillablePeriod(periodKey: string, periodKind: 'month' | 'term' = 'month'): void {
+  if (periodKind === 'month') {
+    const err = periodKeyError(periodKey);
+    if (err) throw new TRPCError({ code: 'BAD_REQUEST', message: err });
+  }
+  const floor = getBillingStartPeriod();
+  if (floor && isMonthPeriod(periodKey) && periodBefore(periodKey, floor)) {
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: `This install bills from ${floor} onwards. Anything earlier is already covered by the balances carried forward, so billing it again would charge it twice.`,
+    });
+  }
+}
+
 function resolveTarget(target: z.infer<typeof BULK_TARGET>): string[] {
   if (target.kind === 'students') {
     // Keep only ids that are real AND active — a stale UI selection must not create rows
@@ -96,7 +136,20 @@ function invoiceRowsFor(studentIds: string[]) {
     .map((i) => {
       const total = invoiceTotal(db, i.id);
       const paid = invoicePaid(db, i.id);
-      return { id: i.id, studentId: i.studentId, label: i.label, periodKey: i.periodKey, dueDate: i.dueDate, status: i.status, totalCents: total, paidCents: paid, balanceCents: total - paid };
+      return {
+        id: i.id,
+        studentId: i.studentId,
+        label: i.label,
+        periodKey: i.periodKey,
+        dueDate: i.dueDate,
+        status: i.status,
+        totalCents: total,
+        paidCents: paid,
+        balanceCents: total - paid,
+        // What the bill is made of, so the office can see at a glance that the $250 is $200 of tuition
+        // plus a $50 book fee — and which of the two the money has actually covered.
+        lines: invoiceLines(db, i.id),
+      };
     });
 }
 
@@ -109,6 +162,47 @@ function paymentRowsFor(studentIds: string[]) {
     .where(inArray(payments.studentId, studentIds))
     .orderBy(desc(payments.occurredAt), desc(payments.createdAt))
     .all();
+}
+
+/** The mid-year go-live input — shared by preview and commit so they cannot drift (see below). */
+const MID_YEAR_INPUT = z.object({
+  goLivePeriod: PERIOD,
+  schoolYearId: ID.optional(),
+  /** What the office said about each child. A child not mentioned is treated as square. */
+  rows: z
+    .array(
+      z.object({
+        studentId: ID,
+        paidThrough: z.union([PERIOD, z.literal('')]).optional(),
+        amountOverrideCents: CENTS.optional(),
+        kindOverride: z.enum(['owes', 'ahead']).optional(),
+      }),
+    )
+    .max(4000)
+    .optional(),
+  /** When the money/debt was true, for the artifacts' dates. Defaults to today. */
+  asOf: z.string().max(20).optional(),
+  memo: NOTE.optional(),
+});
+
+/** Household totals for the preview — a parent pays once for all their children, so this is the number
+ *  they will actually read. Summed from the same per-child figures shown above it. */
+function familyTotals(rows: { familyId: string; familyLabel: string; afterOwedCents: number; afterCreditCents: number }[]) {
+  const m = new Map<string, { familyId: string; label: string; owedCents: number; creditCents: number }>();
+  for (const r of rows) {
+    const cur = m.get(r.familyId) ?? { familyId: r.familyId, label: r.familyLabel, owedCents: 0, creditCents: 0 };
+    cur.owedCents += r.afterOwedCents;
+    cur.creditCents += r.afterCreditCents;
+    m.set(r.familyId, cur);
+  }
+  // A household with money owed AND credit sitting on another child nets out, because one adult pays
+  // for all of them — showing both numbers would read as two separate problems.
+  return [...m.values()]
+    .map((f) => {
+      const net = f.owedCents - f.creditCents;
+      return { familyId: f.familyId, label: f.label, owedCents: net > 0 ? net : 0, creditCents: net < 0 ? -net : 0 };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 /** Distinct, non-empty email addresses from a set of guardians — compared case-insensitively, since
@@ -303,6 +397,7 @@ export const billingRouter = router({
   generatePeriod: adminOrFinanceProcedure
     .input(z.object({ periodKey: PERIOD, label: NAME, dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
     .mutation(({ ctx, input }) => {
+      assertBillablePeriod(input.periodKey, input.periodKind ?? 'month');
       const r = generateForPeriod({ periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null, periodKind: input.periodKind });
       audit(auditActor(ctx), 'invoice.generatePeriod', { entity: 'billing', detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
@@ -311,6 +406,7 @@ export const billingRouter = router({
   generateFamily: adminOrFinanceProcedure
     .input(z.object({ familyId: ID, periodKey: PERIOD, label: NAME, dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
     .mutation(({ ctx, input }) => {
+      assertBillablePeriod(input.periodKey, input.periodKind ?? 'month');
       const r = generateForFamily(input.familyId, { periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null, periodKind: input.periodKind });
       audit(auditActor(ctx), 'invoice.generateFamily', { entity: 'family', entityId: input.familyId, detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
@@ -797,6 +893,23 @@ export const billingRouter = router({
     };
   }),
 
+  /**
+   * What there is to pay for one child, line by line — the tuition and the book fee as separate rows.
+   *
+   * The office's quick payment box reads this so "what is Yusuf here to pay?" is answerable without
+   * opening anything, and so a parent handing over money for the trip can have it recorded AS the trip.
+   * Same shape the parent portal and the kiosk get (billing/lines.ts), so all three describe a bill the
+   * same way.
+   */
+  studentPayables: adminOrFinanceProcedure.input(z.object({ studentId: ID })).query(({ input }) => {
+    const s = db.select({ id: students.id, fullName: students.fullName, familyId: students.familyId }).from(students).where(eq(students.id, input.studentId)).get();
+    if (!s) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+    return { student: s, balance: studentBalance(s.id), lines: payableLines(db, [s.id]) };
+  }),
+
+  /** The lines of one invoice — what a bill is actually made of, for the office and the statement. */
+  invoiceLines: adminOrFinanceProcedure.input(z.object({ invoiceId: ID })).query(({ input }) => invoiceLines(db, input.invoiceId)),
+
   /** The whole household, for when a parent asks "what do we owe altogether?". The combined balance
    *  plus each child's own, and every invoice/payment tagged with the child it belongs to. */
   familyBilling: adminOrFinanceProcedure.input(z.object({ familyId: ID })).query(({ input }) => {
@@ -815,11 +928,10 @@ export const billingRouter = router({
     };
   }),
 
-  /** Overview: every active family with its balance (the Billing landing list). */
-  familiesOverview: adminOrFinanceProcedure.query(() => {
-    const fams = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.status, 'active')).orderBy(asc(families.name)).all();
-    return fams.map((f) => ({ ...f, balance: familyBalance(f.id) }));
-  }),
+  // (`familiesOverview` lived here until 0.43.0. Its only reader was the grid of household cards at the
+  // bottom of the Billing tab, which the year view replaced — a wall of names with one number each was
+  // never how anyone found a family. A query nobody calls is the kind of thing that rots quietly, so it
+  // went out with the screen.)
 
   /** Mark money as received that did not come through a card: cash, a check, a bank/ACH transfer,
    *  Zelle, or anything else (with the memo saying what). The channel list is shared with the schema
@@ -829,12 +941,35 @@ export const billingRouter = router({
    *  own invoices absorb it oldest-first; anything left over stays as his credit and the next bill for
    *  him takes it. Paying for several children is several records, which is the honest shape: the
    *  office counted separate amounts for separate kids. */
-  recordManualPayment: adminOrFinanceProcedure.input(z.object({ studentId: ID, amountCents: CENTS.min(1), channel: z.enum(MANUAL_PAYMENT_CHANNELS), occurredAt: z.string().max(20), memo: z.string().trim().max(200).optional() })).mutation(({ ctx, input }) => {
-    if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
-    const res = recordPayment({ studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${input.occurredAt}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null }, auditActor(ctx));
-    audit(auditActor(ctx), 'payment.record', { entity: 'student', entityId: input.studentId, detail: { channel: input.channel, amountCents: input.amountCents } });
-    return res;
-  }),
+  recordManualPayment: adminOrFinanceProcedure
+    .input(
+      z.object({
+        studentId: ID,
+        amountCents: CENTS.min(1),
+        channel: z.enum(MANUAL_PAYMENT_CHANNELS),
+        occurredAt: z.string().max(20),
+        memo: z.string().trim().max(200).optional(),
+        /** Lines the money was handed over for, when the parent said which (§ billing/lines.ts). */
+        directed: z.array(z.object({ itemId: ID, amountCents: CENTS.min(1) })).max(100).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+      let res;
+      try {
+        res = recordPayment(
+          { studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${input.occurredAt}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null, directed: input.directed ?? null },
+          auditActor(ctx),
+        );
+      } catch (e) {
+        // The only thing the ledger refuses here is an instruction that does not fit the bills it
+        // names — a stale screen, in practice. Say so plainly instead of leaking the ledger's wording.
+        if ((e as Error).message === 'invalid_allocation') throw new TRPCError({ code: 'CONFLICT', message: 'Those lines have changed since this screen loaded. Reload and record it again.' });
+        throw e;
+      }
+      audit(auditActor(ctx), 'payment.record', { entity: 'student', entityId: input.studentId, detail: { channel: input.channel, amountCents: input.amountCents, directedLines: input.directed?.length ?? 0 } });
+      return res;
+    }),
 
   reversePayment: adminOrFinanceProcedure.input(z.object({ paymentId: ID })).mutation(({ ctx, input }) => {
     const p = db.select({ id: payments.id, studentId: payments.studentId }).from(payments).where(eq(payments.id, input.paymentId)).get();
@@ -842,6 +977,77 @@ export const billingRouter = router({
     const r = reversePayment(input.paymentId, auditActor(ctx));
     audit(auditActor(ctx), 'payment.reverse', { entity: 'student', entityId: p.studentId, detail: { paymentId: input.paymentId } });
     return r;
+  }),
+
+  // ── Starting mid-year (0.43.0) ───────────────────────────────────────────────
+  /** Where this install stands: the first month it bills, and whether the go-live step has been run. */
+  midYearStatus: adminOrFinanceProcedure.query(() => ({
+    startPeriod: getBillingStartPeriod(),
+    committedAt: getMidYearDoneAt(),
+    suggestedGoLive: defaultGoLivePeriod(),
+  })),
+
+  /**
+   * What the go-live step WOULD do — every child, their rate, the figure derived from "paid through",
+   * and the balance each parent would end up seeing. Writes nothing.
+   *
+   * The same input and the same derivation as `midYearCommit`, deliberately: the office must not be
+   * able to commit a set of balances it has not already read on screen, and the way to guarantee the
+   * preview is truthful is for both to be one function (see test/midYear.test.ts).
+   */
+  midYearPreview: adminOrFinanceProcedure.input(MID_YEAR_INPUT).query(({ input }) => {
+    const plan = midYearPlan(input.goLivePeriod, input.schoolYearId ?? null, input.rows ?? []);
+    return { ...plan, families: familyTotals(plan.students) };
+  }),
+
+  /**
+   * Commit it: one carried-forward bill per child who owes, one dated prepayment per child who is
+   * ahead, nothing at all for a child who is square — and the billing floor set, so the months this
+   * figure already covers can never be generated on top of it.
+   *
+   * Admin-only. It is a one-time statement about the school's history, not a day-to-day finance action,
+   * and it is the one action here that decides what every parent's balance starts at.
+   */
+  midYearCommit: adminProcedure.input(MID_YEAR_INPUT).mutation(({ ctx, input }) => {
+    const err = periodKeyError(input.goLivePeriod);
+    if (err) throw new TRPCError({ code: 'BAD_REQUEST', message: err });
+    const plan = midYearPlan(input.goLivePeriod, input.schoolYearId ?? null, input.rows ?? []);
+    const actor = auditActor(ctx);
+
+    let owed = 0;
+    let ahead = 0;
+    let skipped = 0;
+    for (const s of plan.students) {
+      if (s.already || s.kind === 'square' || s.amountCents <= 0) {
+        if (s.already && s.kind !== 'square') skipped++;
+        continue;
+      }
+      const r = commitCarryIn({ studentId: s.studentId, kind: s.kind, amountCents: s.amountCents, goLivePeriod: input.goLivePeriod, asOf: input.asOf ?? null, memo: input.memo ?? null }, actor);
+      if (!r.wrote) continue;
+      if (r.kind === 'owes') owed++;
+      else ahead++;
+    }
+
+    // The floor goes in whether or not anything was written: "we start billing in February" is true of
+    // a school whose families were all square too, and it is what stops January being generated later.
+    //
+    // It only ever moves BACK. The wizard defaults its month to today, so a second run — a new child
+    // whose history needs recording in May — would otherwise push the floor to May and start refusing
+    // February, March and April, months this install has already billed. The earliest go-live is the
+    // honest one: it is the point before which balances were carried in.
+    const floor = getBillingStartPeriod();
+    if (!floor || periodBefore(input.goLivePeriod, floor)) setBillingStartPeriod(input.goLivePeriod);
+    setMidYearDoneAt(new Date().toISOString());
+    audit(actor, 'billing.midYear.commit', { entity: 'billing', detail: { goLivePeriod: input.goLivePeriod, owed, ahead, skipped } });
+    return { owed, ahead, skipped, startPeriod: getBillingStartPeriod() ?? input.goLivePeriod };
+  }),
+
+  /** Clear the billing floor — for an install that set a go-live month it now needs to bill before.
+   *  Admin-only and audited: it re-opens the door the floor was closing. */
+  midYearClearFloor: adminProcedure.mutation(({ ctx }) => {
+    setBillingStartPeriod(null);
+    audit(auditActor(ctx), 'billing.midYear.clearFloor', { entity: 'billing' });
+    return { ok: true as const };
   }),
 
   // Stripe reconciliation (§11.4): the safety net for missed broker calls / webhooks. The last-run

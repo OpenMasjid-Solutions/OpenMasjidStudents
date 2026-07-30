@@ -85,7 +85,7 @@ export function SiblingSuggestions({ onDone, doneLabel }: { onDone?: () => void;
       await Promise.all([
         utils.people.siblingSuggestions.invalidate(),
         utils.people.directory.invalidate(),
-        utils.people.siblingOptions.invalidate(),
+        utils.people.studentOptions.invalidate(),
         utils.structure.studentsByClass.invalidate(),
       ]);
     } catch (e) {

@@ -331,14 +331,17 @@ export const peopleRouter = router({
     }),
 
   /**
-   * Candidate siblings to link a new student to — every active student.
+   * Every active student, ready to be picked — for linking a sibling, and for the office's payment box.
    *
    * Carries the Student ID and the household label as well as the name, because the picker is a
    * type-to-search list and a madrasa really does enrol two children called Muhammad Ali. A name alone
    * makes those two rows indistinguishable at the moment of choosing, which is the one moment it
    * matters; the ID disambiguates them and the household says who they are already with.
+   *
+   * (Named `siblingOptions` until 0.43.0, when recording a payment started with the same picker — a
+   * name that described one of its two callers was worse than a plain one.)
    */
-  siblingOptions: adminOrFinanceProcedure.query(() =>
+  studentOptions: adminOrFinanceProcedure.query(() =>
     db
       .select({ id: students.id, fullName: students.fullName, studentCode: students.studentCode, familyId: students.familyId, familyName: families.name })
       .from(students)

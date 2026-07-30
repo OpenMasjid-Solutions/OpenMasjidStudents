@@ -68,7 +68,7 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
   const setClass = trpc.structure.setStudentClass.useMutation();
   const addStudent = trpc.people.studentAdd.useMutation();
   const plans = trpc.billing.feePlanList.useQuery();
-  const siblings = trpc.people.siblingOptions.useQuery();
+  const siblings = trpc.people.studentOptions.useQuery();
 
   const [adding, setAdding] = useState(false);
   /** A student is added on its own terms; `linkToStudentId` is what makes them a sibling — guardians
@@ -98,7 +98,7 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
     setAdding(false);
     await Promise.all([
       utils.people.directory.invalidate(),
-      utils.people.siblingOptions.invalidate(),
+      utils.people.studentOptions.invalidate(),
       utils.structure.studentsByClass.invalidate(),
       utils.structure.courseTree.invalidate(),
     ]);

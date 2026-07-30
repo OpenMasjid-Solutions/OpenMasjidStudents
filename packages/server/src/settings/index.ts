@@ -26,6 +26,11 @@ export const SETTING_KEYS = {
   autoInvoiceDay: 'auto_invoice_day', // day of month (1-28+) to generate on; clamped to the month.
   autoInvoiceDueDay: 'auto_invoice_due_day', // optional day of month to set as the invoice due date.
   autoInvoiceLast: 'auto_invoice_last', // the last periodKey generated — the job's own idempotency.
+  // The first month this install bills for (0.43.0). A madrasa that goes live mid-year records what
+  // each child brings with them as ONE carried-forward figure; generating the months before that would
+  // then bill the same arrears a second time, so anything earlier is refused rather than discouraged.
+  billingStartPeriod: 'billing_start_period',
+  midYearDoneAt: 'midyear_committed_at', // ISO timestamp — the wizard has been run (hides the banner).
   // The masjid's own logo, stored as a `data:` URI so it travels with the DB and needs no file
   // handling or attachment plumbing. Bounded and magic-byte checked on the way in (§14).
   schoolLogo: 'school_logo',
@@ -208,4 +213,30 @@ export function getChosenStripeAccount(): string {
 }
 export function setChosenStripeAccount(id: string): void {
   setSetting(SETTING_KEYS.stripeAccount, id);
+}
+
+/**
+ * The first month this install bills for, or null when it has always billed everything (0.43.0).
+ *
+ * Set by the mid-year go-live step, and then enforced on every generation path. It exists because the
+ * one way to double-bill a madrasa that started in February is to record the autumn as one carried-in
+ * figure and THEN generate September out of habit — the arrears would be counted twice, and the second
+ * copy looks exactly as legitimate as the first. Refusing the earlier month is the only version of that
+ * protection an office cannot forget about.
+ */
+export function getBillingStartPeriod(): string | null {
+  const v = getSetting(SETTING_KEYS.billingStartPeriod);
+  return v && v.trim() ? v.trim() : null;
+}
+export function setBillingStartPeriod(periodKey: string | null): void {
+  setSetting(SETTING_KEYS.billingStartPeriod, periodKey ?? '');
+}
+
+/** When the mid-year go-live step was committed, or null. Only used to stop nagging about it. */
+export function getMidYearDoneAt(): string | null {
+  const v = getSetting(SETTING_KEYS.midYearDoneAt);
+  return v && v.trim() ? v.trim() : null;
+}
+export function setMidYearDoneAt(iso: string): void {
+  setSetting(SETTING_KEYS.midYearDoneAt, iso);
 }

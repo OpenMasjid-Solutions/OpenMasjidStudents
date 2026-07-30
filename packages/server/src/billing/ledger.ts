@@ -21,6 +21,7 @@ import type { DB } from '../db';
 import { invoices, invoiceItems, payments, paymentAllocations, autopayEnrollments, students } from '../db/schema';
 import type { InvoiceStatus, PaymentChannel } from '../db/schema';
 import { rid } from '../db/ids';
+import { orderedItems } from './lines';
 
 export type Tx = DB | Parameters<Parameters<DB['transaction']>[0]>[0];
 type Actor = { userId: string | null; role: string; name: string | null };
@@ -35,6 +36,11 @@ export function invoicePaid(tx: Tx, invoiceId: string): number {
 }
 
 function statusFor(total: number, paid: number): InvoiceStatus {
+  // A bill that costs nothing is settled, not open. This test has to come FIRST: a 100% bursary makes
+  // the total 0 (or negative), no payment is possible against it, and asking "has anything been paid?"
+  // first left such an invoice reading Open with a $0.00 balance forever — on the statement, in the
+  // year grid, and in front of the office.
+  if (total <= 0) return 'paid';
   if (paid <= 0) return 'open';
   if (paid >= total) return 'paid';
   return 'partially_paid';
@@ -103,6 +109,12 @@ export function familyBalance(familyId: string): Balance {
   return balanceForStudents(familyStudentIds(familyId));
 }
 
+/** "This much of the money is for that line" — a payer's instruction, not a derived mapping. */
+export interface DirectedLine {
+  itemId: string;
+  amountCents: number;
+}
+
 export interface RecordInput {
   studentId: string;
   amountCents: number; // > 0
@@ -111,8 +123,45 @@ export interface RecordInput {
   idempotencyKey: string;
   memo?: string | null;
   externalRef?: Record<string, unknown> | null;
-  /** Optional explicit allocation (Fabric/webhook); omitted → auto oldest-due-first. */
-  allocations?: { invoiceId: string; amountCents: number }[];
+  /**
+   * The invoice LINES this money was handed over for — "the $50 is the book fee" (0.43.0).
+   *
+   * Stored on the payment and re-honoured by every later `reallocateStudent`, which is the whole
+   * point: allocation is derived and gets recomputed whenever a bill changes, so an instruction that
+   * lived only in the first allocation pass would silently move to the oldest invoice the next time
+   * anything happened, and the line the parent chose would go back to reading as unpaid.
+   */
+  directed?: DirectedLine[] | null;
+}
+
+/**
+ * Check a payer's line instruction and turn it into what gets stored, or null when there is none.
+ *
+ * An instruction may only name lines on THIS student's live invoices, and may not claim more than a
+ * line costs or more than the payment is worth — a consumer bug must not be able to park one child's
+ * money on another child's bill (§11.2) or to mark a $50 line as $500 settled. Rejected as
+ * `invalid_allocation`, which is the error code the Fabric provider already maps to a 422.
+ *
+ * An invoice-level instruction (the Fabric contract's `allocations`) is normalised into lines by the
+ * caller, so there is only ever one shape to honour here.
+ */
+function normalizeDirected(tx: Tx, input: RecordInput): DirectedLine[] | null {
+  const wanted = input.directed?.filter((d) => d.amountCents > 0) ?? [];
+  if (!wanted.length) return null;
+  let total = 0;
+  for (const d of wanted) {
+    const row = tx
+      .select({ itemAmount: invoiceItems.amountCents, invoiceStudent: invoices.studentId, invoiceStatus: invoices.status })
+      .from(invoiceItems)
+      .innerJoin(invoices, eq(invoices.id, invoiceItems.invoiceId))
+      .where(eq(invoiceItems.id, d.itemId))
+      .get();
+    if (!row || row.invoiceStudent !== input.studentId || row.invoiceStatus === 'void') throw new Error('invalid_allocation');
+    if (d.amountCents > row.itemAmount) throw new Error('invalid_allocation');
+    total += d.amountCents;
+  }
+  if (total > input.amountCents) throw new Error('invalid_allocation');
+  return wanted.map((d) => ({ itemId: d.itemId, amountCents: d.amountCents }));
 }
 
 /** Record a payment + allocate it. Idempotent on `idempotencyKey` (a replay returns the original). */
@@ -128,35 +177,23 @@ export function recordPayment(input: RecordInput, actor: Actor): { paymentId: st
   const paymentId = rid('pay');
   let allocated = 0;
   db.transaction((tx) => {
-    tx.insert(payments).values({ id: paymentId, studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: input.occurredAt, memo: input.memo ?? null, idempotencyKey: input.idempotencyKey, externalRef: input.externalRef ?? null, reversalOf: null, recordedByUserId: actor.userId, recordedByName: actor.name, createdAt: ts }).run();
+    // An instruction about WHERE the money should land is validated here, once, and then stored with
+    // the payment — everything downstream (including every later recompute) reads it from there.
+    const directed = normalizeDirected(tx, input);
+    tx.insert(payments).values({ id: paymentId, studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: input.occurredAt, memo: input.memo ?? null, idempotencyKey: input.idempotencyKey, externalRef: input.externalRef ?? null, directed, reversalOf: null, recordedByUserId: actor.userId, recordedByName: actor.name, createdAt: ts }).run();
 
-    if (input.allocations && input.allocations.length) {
-      for (const a of input.allocations) {
-        const inv = tx.select({ id: invoices.id, studentId: invoices.studentId, status: invoices.status }).from(invoices).where(eq(invoices.id, a.invoiceId)).get();
-        // Same student, not void, within the invoice's remaining balance, and never exceeding
-        // the payment total — an explicit allocation (Fabric/webhook) can't overpay a bill,
-        // manufacture negative credit, or push one child's money onto another's invoice (§11.2).
-        if (!inv || inv.studentId !== input.studentId || inv.status === 'void') throw new Error('invalid_allocation');
-        if (a.amountCents <= 0) continue;
-        const bal = invoiceTotal(tx, a.invoiceId) - invoicePaid(tx, a.invoiceId);
-        if (a.amountCents > bal || allocated + a.amountCents > input.amountCents) throw new Error('invalid_allocation');
-        tx.insert(paymentAllocations).values({ id: rid('pal'), paymentId, invoiceId: a.invoiceId, amountCents: a.amountCents, createdAt: ts }).run();
-        allocated += a.amountCents;
-        refreshStatus(tx, a.invoiceId);
-      }
-    } else {
-      // Auto: re-derive the whole student's mapping oldest-due-first, which places this payment and
-      // simultaneously picks up any earlier money that was left unattached (see `reallocateStudent`).
-      // One rule, one implementation — the alternative was a second allocation loop here that could
-      // drift from the one used everywhere else.
-      reallocateStudent(tx, input.studentId);
-      allocated = tx
-        .select({ a: paymentAllocations.amountCents })
-        .from(paymentAllocations)
-        .where(eq(paymentAllocations.paymentId, paymentId))
-        .all()
-        .reduce((s, r) => s + r.a, 0);
-    }
+    // ONE allocation path, always: re-derive the whole student's mapping, which places this payment,
+    // honours any instruction it carries, and simultaneously picks up earlier money that was left
+    // unattached (see `reallocateStudent`). There used to be a second loop here for explicit
+    // allocations; it wrote rows that the very next recompute deleted, so an instruction only held
+    // until the next invoice was raised.
+    reallocateStudent(tx, input.studentId);
+    allocated = tx
+      .select({ a: paymentAllocations.amountCents })
+      .from(paymentAllocations)
+      .where(eq(paymentAllocations.paymentId, paymentId))
+      .all()
+      .reduce((s, r) => s + r.a, 0);
   });
   // A payment that clears the FAMILY's balance (via ANY channel — portal, manual, autopay, Fabric)
   // resets the autopay retry ladder: it tracks CONSECUTIVE failures against outstanding debt, so once
@@ -191,13 +228,24 @@ export function recordPayment(input: RecordInput, actor: Actor): { paymentId: st
  * charge behave the way an office expects — adding it to an earlier invoice pulls money back off a
  * later month automatically, and that month correctly reverts to unpaid so it gets chased.
  *
+ * THE ONE EXCEPTION IS AN INSTRUCTION (0.43.0). When a parent picked lines to pay — "this $50 is the
+ * book fee" at the kiosk, on the donation site or in the portal — that choice is stored on the payment
+ * and honoured here BEFORE the oldest-first sweep. It has to happen here rather than at the moment of
+ * payment, because this function runs again every time a bill changes: an instruction applied once
+ * would be quietly undone by the next invoice, and the line the parent deliberately paid would go back
+ * to reading as outstanding on their next statement.
+ *
+ * Money is attached per LINE, not per invoice, so a bill made of tuition plus a book fee can honestly
+ * say which of the two is settled. `payment_allocations.invoice_id` is still set on every row, so
+ * everything that reads an invoice's total paid is unaffected.
+ *
  * REVERSALS ARE LEFT ALONE. A reversed payment and its mirror both keep their allocations, which
  * sum to zero on the invoice, so they neither hold money down nor get handed out again.
  *
  * Returns the number of cents now attached to invoices.
  */
 export function reallocateStudent(tx: Tx, studentId: string): number {
-  const all = tx.select({ id: payments.id, amountCents: payments.amountCents, reversalOf: payments.reversalOf, occurredAt: payments.occurredAt, createdAt: payments.createdAt }).from(payments).where(eq(payments.studentId, studentId)).all();
+  const all = tx.select({ id: payments.id, amountCents: payments.amountCents, reversalOf: payments.reversalOf, occurredAt: payments.occurredAt, createdAt: payments.createdAt, directed: payments.directed }).from(payments).where(eq(payments.studentId, studentId)).all();
   const reversed = new Set(all.map((p) => p.reversalOf).filter((x): x is string => !!x));
   /** Live money: not a reversal row, and not itself reversed. */
   const live = all
@@ -222,28 +270,72 @@ export function reallocateStudent(tx: Tx, studentId: string): number {
     .orderBy(sql`${invoices.dueDate} is null`, asc(invoices.dueDate), asc(invoices.createdAt))
     .all();
 
-  const ts = new Date();
-  let applied = 0;
-  let p = 0;
-  let left = live.length ? live[0].amountCents : 0;
+  /** Every payable line of this student's live invoices, oldest bill first, with what it still needs.
+   *  Built AFTER the live allocations are cleared, so `needs` counts only money that is staying put
+   *  (a reversal pair) plus the reduction any credit line on the same invoice already applied. */
+  const slots: { itemId: string; invoiceId: string; need: number }[] = [];
   for (const inv of open) {
     if (inv.status === 'void') continue;
-    let need = invoiceTotal(tx, inv.id) - invoicePaid(tx, inv.id);
-    while (need > 0 && p < live.length) {
-      if (left <= 0) {
+    touched.add(inv.id);
+    // The SAME order billing/lines.ts displays them in — if these two disagreed, the balance shown
+    // against a line would not be the one the money actually landed on.
+    const items = orderedItems(tx, inv.id);
+    const kept = tx.select({ itemId: paymentAllocations.invoiceItemId, amountCents: paymentAllocations.amountCents }).from(paymentAllocations).where(eq(paymentAllocations.invoiceId, inv.id)).all();
+    const named = new Map<string, number>();
+    let pool = 0; // invoice-level money that names no line, plus the value of any credit lines
+    for (const k of kept) {
+      if (k.itemId) named.set(k.itemId, (named.get(k.itemId) ?? 0) + k.amountCents);
+      else pool += k.amountCents;
+    }
+    for (const it of items) if (it.amountCents < 0) pool += -it.amountCents;
+    if (pool < 0) pool = 0;
+    for (const it of items) {
+      if (it.amountCents <= 0) continue; // a credit line is a reduction, never something to pay
+      let need = it.amountCents - Math.min(it.amountCents, Math.max(0, named.get(it.id) ?? 0));
+      if (need > 0 && pool > 0) {
+        const take = Math.min(need, pool);
+        need -= take;
+        pool -= take;
+      }
+      if (need > 0) slots.push({ itemId: it.id, invoiceId: inv.id, need });
+    }
+  }
+
+  const ts = new Date();
+  const left = live.map((p) => p.amountCents);
+  let applied = 0;
+  const put = (paymentIdx: number, slot: { itemId: string; invoiceId: string; need: number }, amount: number): void => {
+    tx.insert(paymentAllocations).values({ id: rid('pal'), paymentId: live[paymentIdx].id, invoiceId: slot.invoiceId, invoiceItemId: slot.itemId, amountCents: amount, createdAt: ts }).run();
+    slot.need -= amount;
+    left[paymentIdx] -= amount;
+    applied += amount;
+    touched.add(slot.invoiceId);
+  };
+
+  // Pass 1 — the payer's instructions. A line named by a payment that no longer needs the money (it
+  // was covered another way, or its invoice was voided) is simply skipped, and that money falls
+  // through to the sweep below rather than being stranded.
+  const byItem = new Map(slots.map((s) => [s.itemId, s]));
+  live.forEach((p, i) => {
+    for (const d of p.directed ?? []) {
+      const slot = byItem.get(d.itemId);
+      if (!slot || slot.need <= 0 || left[i] <= 0) continue;
+      put(i, slot, Math.min(d.amountCents, slot.need, left[i]));
+    }
+  });
+
+  // Pass 2 — the house rule for everything not spoken for: oldest bill first, line by line.
+  let p = 0;
+  for (const slot of slots) {
+    while (slot.need > 0 && p < live.length) {
+      if (left[p] <= 0) {
         p++;
-        left = p < live.length ? live[p].amountCents : 0;
         continue;
       }
-      const amt = Math.min(need, left);
-      tx.insert(paymentAllocations).values({ id: rid('pal'), paymentId: live[p].id, invoiceId: inv.id, amountCents: amt, createdAt: ts }).run();
-      need -= amt;
-      left -= amt;
-      applied += amt;
-      touched.add(inv.id);
+      put(p, slot, Math.min(slot.need, left[p]));
     }
-    touched.add(inv.id);
   }
+
   for (const id of touched) refreshStatus(tx, id);
   return applied;
 }
@@ -252,6 +344,8 @@ export function reallocateStudent(tx: Tx, studentId: string): number {
 export interface SplitShare {
   studentId: string;
   amountCents: number;
+  /** Lines of THIS child's bills the payer chose to settle, when they chose (0.43.0). */
+  directed?: DirectedLine[];
 }
 
 /**
@@ -346,14 +440,14 @@ export function recordedSplit(key: string): { studentId: string; paymentId: stri
  * means a crash between children is recoverable by simply calling again with the same key.
  */
 export function recordSplit(
-  base: Omit<RecordInput, 'studentId' | 'amountCents' | 'allocations'>,
+  base: Omit<RecordInput, 'studentId' | 'amountCents' | 'directed'>,
   shares: SplitShare[],
   actor: Actor,
 ): SplitResult {
   const parts = shares
     .filter((s) => s.amountCents > 0)
     .map((s) => {
-      const r = recordPayment({ ...base, studentId: s.studentId, amountCents: s.amountCents, idempotencyKey: `${base.idempotencyKey}:${s.studentId}` }, actor);
+      const r = recordPayment({ ...base, studentId: s.studentId, amountCents: s.amountCents, directed: s.directed ?? null, idempotencyKey: `${base.idempotencyKey}:${s.studentId}` }, actor);
       return { studentId: s.studentId, ...r };
     });
   return { parts, duplicate: parts.length > 0 && parts.every((p) => p.duplicate) };
@@ -371,9 +465,11 @@ export function reversePayment(paymentId: string, actor: Actor): { reversalId: s
   const ts = new Date();
   const reversalId = rid('pay');
   db.transaction((tx) => {
-    tx.insert(payments).values({ id: reversalId, studentId: orig.studentId, amountCents: -orig.amountCents, channel: orig.channel, occurredAt: ts, memo: `Reversal of ${orig.id}`, idempotencyKey: `reversal:${orig.id}`, externalRef: null, reversalOf: orig.id, recordedByUserId: actor.userId, recordedByName: actor.name, createdAt: ts }).run();
+    tx.insert(payments).values({ id: reversalId, studentId: orig.studentId, amountCents: -orig.amountCents, channel: orig.channel, occurredAt: ts, memo: `Reversal of ${orig.id}`, idempotencyKey: `reversal:${orig.id}`, externalRef: null, directed: null, reversalOf: orig.id, recordedByUserId: actor.userId, recordedByName: actor.name, createdAt: ts }).run();
     for (const a of tx.select().from(paymentAllocations).where(eq(paymentAllocations.paymentId, orig.id)).all()) {
-      tx.insert(paymentAllocations).values({ id: rid('pal'), paymentId: reversalId, invoiceId: a.invoiceId, amountCents: -a.amountCents, createdAt: ts }).run();
+      // Mirrored line for line, so the pair nets to zero on the LINE as well as on the invoice —
+      // otherwise reversing a directed payment would leave that line reading as settled.
+      tx.insert(paymentAllocations).values({ id: rid('pal'), paymentId: reversalId, invoiceId: a.invoiceId, invoiceItemId: a.invoiceItemId, amountCents: -a.amountCents, createdAt: ts }).run();
       refreshStatus(tx, a.invoiceId);
     }
     // The reversed pair nets to zero on the invoices it touched, re-opening them. Any OTHER money

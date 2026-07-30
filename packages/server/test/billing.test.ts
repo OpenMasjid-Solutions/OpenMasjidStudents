@@ -126,10 +126,10 @@ describe('walls', () => {
       await expect(caller(r).billing.recordManualPayment({ studentId: s1, amountCents: 100, channel: 'cash', occurredAt: '2026-07-01' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     }
     await expect(caller('admin', { origin: 'tunnel' }).billing.feePlanList()).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    // finance can do billing, including over the tunnel
+    // finance can do billing, including over the tunnel — reads AND the money path.
     expect(Array.isArray(await caller('finance', { origin: 'tunnel' }).billing.feePlanList())).toBe(true);
-    const r = await caller('finance', { origin: 'tunnel' }).billing.familiesOverview();
-    expect(r.find((f) => f.id === familyId)).toBeTruthy();
+    const r = await caller('finance', { origin: 'tunnel' }).billing.familyBilling({ familyId });
+    expect(r.students.some((k) => k.id === s1)).toBe(true);
     void admin;
   });
 

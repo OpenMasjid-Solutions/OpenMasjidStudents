@@ -2,13 +2,19 @@
 // Copyright (C) 2026 OpenMasjid-Solutions
 /** One family's billing (admin/finance window): balance, per-student fee assignment + discount,
  *  invoices (with void), a manual-payment form, and the payments ledger (with reverse). Money is
- *  integer cents end-to-end; the server ledger is the source of truth. RTL-safe. */
-import { useState, type FormEvent } from 'react';
+ *  integer cents end-to-end; the server ledger is the source of truth. RTL-safe.
+ *
+ *  `focusStudentId` is the child the window was opened FOR — pressing a name in the year view lands
+ *  here, so the payment form and the charge form start on that child instead of asking again. The
+ *  window still shows the whole household, because one adult pays for all of them. */
+import { Fragment, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Printer, Pencil } from 'lucide-react';
+import { Printer, Pencil, Users } from 'lucide-react';
 import { trpc } from '../lib/trpc';
 import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
 import { withBase } from '../lib/base';
+import { useWindows } from './Windows';
+import { FamilyDetail } from '../routes/admin/FamilyDetail';
 
 /** The channels the office can record by hand. Kept in step with the server's
  *  `MANUAL_PAYMENT_CHANNELS` by the router's own input type — `recordManualPayment` types `channel`
@@ -17,9 +23,10 @@ import { withBase } from '../lib/base';
 const MANUAL_CHANNELS = ['cash', 'check', 'ach', 'zelle', 'other'] as const;
 type ManualChannel = (typeof MANUAL_CHANNELS)[number];
 
-export function FamilyBilling({ familyId, currency }: { familyId: string; currency: string }) {
+export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId: string; currency: string; focusStudentId?: string }) {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
+  const { open } = useWindows();
   const billing = trpc.billing.familyBilling.useQuery({ familyId });
   const fees = trpc.billing.familyFees.useQuery({ familyId });
   const plans = trpc.billing.feePlanList.useQuery();
@@ -36,10 +43,12 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
   const reverse = trpc.billing.reversePayment.useMutation();
 
   const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
-  const [payment, setPayment] = useState<{ studentId: string; amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({ studentId: '', amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
+  // Start on the child the window was opened for. Nothing re-syncs this afterwards on purpose: once
+  // the office has picked a different sibling, moving it back under them would be the bug.
+  const [payment, setPayment] = useState<{ studentId: string; amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({ studentId: focusStudentId ?? '', amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
   /** Which fee assignment is having its per-student amount edited, if any. */
   const [override, setOverrideForm] = useState<{ feeId: string; amount: string; note: string } | null>(null);
-  const [charge, setCharge] = useState({ studentId: '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
+  const [charge, setCharge] = useState({ studentId: focusStudentId ?? '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
   const [chargeErr, setChargeErr] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
   /** Whose invoice / payment this is. Every row carries a child now, so the tables say so. */
@@ -146,6 +155,11 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head">
           <h2>{t('billing.balance')}</h2>
+          {/* The people record is one press away — the year view now opens THIS window on a name, so
+              guardians, contacts and the children themselves need a door from here. */}
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => open({ title: t('billing.familyRecord'), wide: true, dedupeKey: `family:${familyId}`, icon: <Users size={15} />, node: <FamilyDetail familyId={familyId} /> })}>
+            <Users size={14} /> {t('billing.familyRecord')}
+          </button>
           <a className="btn btn--ghost btn--sm" href={withBase(`/statements/family/${familyId}`)} target="_blank" rel="noopener noreferrer"><Printer size={14} /> {t('billing.printStatement')}</a>
         </div>
         {bal && (
@@ -312,15 +326,33 @@ export function FamilyBilling({ familyId, currency }: { familyId: string; curren
               <thead><tr><th>{t('students.name')}</th><th>{t('billing.invoice')}</th><th>{t('billing.due')}</th><th>{t('billing.total')}</th><th>{t('billing.paid')}</th><th>{t('billing.status')}</th><th className="actions" /></tr></thead>
               <tbody>
                 {billing.data?.invoices.map((i) => (
-                  <tr key={i.id}>
-                    <td>{nameOf(i.studentId)}</td>
-                    <td>{i.label}</td>
-                    <td>{i.dueDate ?? '—'}</td>
-                    <td>{money(i.totalCents)}</td>
-                    <td>{money(i.paidCents)}</td>
-                    <td><span className={`chip ${i.status === 'paid' ? 'is-accent' : 'is-muted'}`}>{t(`billing.st_${i.status}`)}</span></td>
-                    <td className="actions">{i.status !== 'void' && i.paidCents === 0 && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { await voidInv.mutateAsync({ id: i.id }); await refresh(); }}>{t('billing.void')}</button>}</td>
-                  </tr>
+                  <Fragment key={i.id}>
+                    <tr>
+                      <td>{nameOf(i.studentId)}</td>
+                      <td>{i.label}</td>
+                      <td>{i.dueDate ?? '—'}</td>
+                      <td>{money(i.totalCents)}</td>
+                      <td>{money(i.paidCents)}</td>
+                      <td><span className={`chip ${i.status === 'paid' ? 'is-accent' : 'is-muted'}`}>{t(`billing.st_${i.status}`)}</span></td>
+                      <td className="actions">{i.status !== 'void' && i.paidCents === 0 && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { await voidInv.mutateAsync({ id: i.id }); await refresh(); }}>{t('billing.void')}</button>}</td>
+                    </tr>
+                    {/* The lines of that bill. Shown for every invoice with more than one, because a
+                        parent asking "what is this $250?" is the question this answers — and it says
+                        which line the money has covered, not just how much arrived. */}
+                    {i.lines.length > 1 &&
+                      i.lines.map((l) => (
+                        <tr key={l.itemId} className="line-row">
+                          <td />
+                          <td colSpan={2} style={{ paddingInlineStart: '1.4rem' }}>
+                            <span className={`chip ${l.kind === 'tuition' ? 'is-muted' : 'is-accent'}`}>{t(`billing.kind_${l.kind}`)}</span> {l.label}
+                          </td>
+                          <td>{money(l.amountCents)}</td>
+                          <td>{money(l.coveredCents)}</td>
+                          <td className="muted">{l.balanceCents === 0 ? t('billing.lineSettled') : t('billing.lineOwing', { amount: money(l.balanceCents) })}</td>
+                          <td />
+                        </tr>
+                      ))}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

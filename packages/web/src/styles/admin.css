@@ -227,6 +227,19 @@
   text-align: end;
   white-space: nowrap;
 }
+/* A bill's own lines, under the bill (0.43.0): the $250 is $200 of tuition plus a $50 book fee, and
+   this says which of the two the money has covered. Deliberately quiet — it is detail under a row,
+   not a row of its own, and the hairline is dropped so a bill and its lines read as one block. */
+.data-table tr.line-row td {
+  border-block-end: none;
+  padding-block: 0.3rem;
+  font-size: 0.86rem;
+  color: var(--color-ink-muted);
+}
+.data-table tr.line-row + tr:not(.line-row) td { border-block-start: 1px solid var(--glass-border); }
+/* One payable line in the office's payment box — the whole row is the tap target for its checkbox. */
+.pay-line { min-height: 2.4rem; padding-block: 0.15rem; font-size: 0.9rem; }
+.pay-line .tnum { font-variant-numeric: tabular-nums; font-weight: 600; }
 .code {
   font-family: var(--mono, ui-monospace, monospace);
   font-variant-numeric: tabular-nums;

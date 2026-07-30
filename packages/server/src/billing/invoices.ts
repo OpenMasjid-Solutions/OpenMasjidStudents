@@ -24,6 +24,7 @@ import { db } from '../db';
 import { invoices, invoiceItems, studentFees, students, feePlans, charges } from '../db/schema';
 import { rid } from '../db/ids';
 import { refreshStatus, reallocateStudent, type Tx } from './ledger';
+import { firstDayOf, isMonthPeriod } from './period';
 
 /** Which kind of period is being generated. Drives the cadence gate. */
 export type PeriodKind = 'month' | 'term';
@@ -106,6 +107,19 @@ function pendingCharges(tx: Tx, studentId: string, periodKey: string) {
     .all();
 }
 
+/**
+ * When a bill is due. A month bill with no stated due date is dated the FIRST of that month.
+ *
+ * Not a cosmetic default: a NULL due date makes an invoice invisible to autopay, whose whole query is
+ * `due_date <= today`, and sorts it LAST in `reallocateStudent` so money skips past it to newer months.
+ * A February bill with no date was therefore never chased and never ticked, which is the opposite of
+ * what generating it meant. A term period keeps null — its dates come from the configured term.
+ */
+function dueDateFor(opts: GenerateOpts): string | null {
+  if (opts.dueDate) return opts.dueDate;
+  return isMonthPeriod(opts.periodKey) ? firstDayOf(opts.periodKey) : null;
+}
+
 /** Insert one charge as an invoice line and flip it to `invoiced`. */
 function writeChargeLine(tx: Tx, invoiceId: string, c: { id: string; studentId: string; label: string; amountCents: number }, ts: Date): void {
   const itemId = rid('iti');
@@ -130,7 +144,7 @@ export function generateForStudent(studentId: string, opts: GenerateOpts): { inv
     const chs = pendingCharges(tx, studentId, opts.periodKey);
     if (lines.length === 0 && chs.length === 0) return; // nothing to bill — no empty invoice
 
-    tx.insert(invoices).values({ id: invId, studentId, label: opts.label, periodKey: opts.periodKey, dueDate: opts.dueDate ?? null, status: 'open', createdAt: ts, updatedAt: ts }).run();
+    tx.insert(invoices).values({ id: invId, studentId, label: opts.label, periodKey: opts.periodKey, dueDate: dueDateFor(opts), status: 'open', createdAt: ts, updatedAt: ts }).run();
     for (const l of lines) {
       tx.insert(invoiceItems).values({ id: rid('iti'), invoiceId: invId, description: l.description, amountCents: l.amountCents, studentId: l.studentId, feePlanId: l.feePlanId, createdAt: ts }).run();
     }

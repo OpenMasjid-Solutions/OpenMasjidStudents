@@ -49,9 +49,16 @@ export function InviteAccept({ token }: { token: string }) {
 
       {info.data?.valid && (
         <>
-          <p className="page-sub" style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
+          <p className="page-sub" style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
             {t('family.acceptGreeting', { name: info.data.guardianName })}
           </p>
+          {/* Say the address out loud. There is no separate username for a parent — it IS this email —
+              and the sign-in form asks for a "username", which is exactly where that trips people up. */}
+          {info.data.email && (
+            <p className="page-sub" style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
+              <strong>{t('family.signInWith', { email: info.data.email })}</strong>
+            </p>
+          )}
           <form onSubmit={submit}>
             <div className="field">
               <label className="label" htmlFor="ia-pw">{t('family.newPassword')}</label>

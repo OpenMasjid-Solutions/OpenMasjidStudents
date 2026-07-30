@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type Stripe from 'stripe';
 import { freshApp, makeCtx } from './harness';
-import { guardianUsers, guardians, guardianFamilies, invites, paymentAllocations, payments, invoiceItems, invoices, studentFees, feePlans, students, families, sessions, users, settings } from '../src/db/schema';
+import { guardianUsers, guardians, guardianFamilies, invites, paymentAllocations, payments, charges, chargeItems, invoiceItems, invoices, studentFees, feePlans, students, families, sessions, users, settings } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
@@ -31,7 +31,8 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   const { db } = app.dbmod;
-  for (const t of [guardianUsers, guardians, guardianFamilies, invites, paymentAllocations, payments, invoiceItems, invoices, studentFees, feePlans, students, families, sessions, users, settings]) db.delete(t).run();
+  // `charges` points at the invoice line it became, so it is cleared before invoice_items.
+  for (const t of [guardianUsers, guardians, guardianFamilies, invites, paymentAllocations, payments, charges, chargeItems, invoiceItems, invoices, studentFees, feePlans, students, families, sessions, users, settings]) db.delete(t).run();
 });
 
 /** A family with a $50 open invoice + a real parent account linked to it (via the invite door). */
@@ -81,6 +82,41 @@ describe('portal.confirmPayment (record-on-return, no webhook)', () => {
     const { parentUserId } = await familyWithParent();
     pi = { id: 'pi_ok', status: 'succeeded', amount: 5000, amount_received: 5000, latest_charge: null, metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: 'fam_x' } };
     await expect(caller('parent', parentUserId).portal.confirmPayment({ familyId: 'fam_x', paymentIntentId: 'pi_ok' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  /**
+   * A PARENT PAYS ONE LINE (0.43.0). Their bill is $50 tuition + a $20 book fee; they tick the book fee
+   * and pay $20. The oldest-due-first rule would have put that on the tuition.
+   */
+  it('settles the line the parent ticked, not the oldest one', async () => {
+    const { famId, parentUserId } = await familyWithParent();
+    const admin = caller('admin');
+    const studentId = (await admin.billing.familyBilling({ familyId: famId })).students[0].id;
+    await admin.billing.chargeAdd({ studentId, source: { kind: 'custom', label: 'Book fee', amountCents: 2000 }, periodKey: '2026-07' });
+    const parent = caller('parent', parentUserId);
+
+    const book = (await parent.portal.myFamily()).families[0].invoices[0].items.find((i) => i.label === 'Book fee')!;
+    expect(book.kind).toBe('charge');
+    pi = { id: 'pi_book', status: 'succeeded', amount: 2000, amount_received: 2000, latest_charge: 'ch_b', metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: famId } };
+    await parent.portal.confirmPayment({ familyId: famId, paymentIntentId: 'pi_book', lines: [{ itemId: book.id, amountCents: 2000 }] });
+
+    const lines = (await parent.portal.myFamily()).families[0].invoices[0].items;
+    expect(lines.find((l) => l.label === 'Book fee')!.balanceCents).toBe(0);
+    expect(lines.find((l) => l.label === 'Tuition')!.balanceCents).toBe(5000); // untouched
+  });
+
+  /** Stripe has already taken the money by the time we get here, so a stale tick list must never cost a
+   *  recorded payment. It falls back to the ordinary oldest-first allocation instead. */
+  it('records the money anyway when the ticked lines do not match the charge', async () => {
+    const { famId, parentUserId } = await familyWithParent();
+    const parent = caller('parent', parentUserId);
+    const tuition = (await parent.portal.myFamily()).families[0].invoices[0].items[0];
+    pi = { id: 'pi_stale', status: 'succeeded', amount: 5000, amount_received: 5000, latest_charge: 'ch_s', metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: famId } };
+
+    // Claims $20 of a $50 charge — the lists disagree, so the lines are ignored, not the payment.
+    const r = await parent.portal.confirmPayment({ familyId: famId, paymentIntentId: 'pi_stale', lines: [{ itemId: tuition.id, amountCents: 2000 }] });
+    expect(r).toMatchObject({ recorded: true });
+    expect(ledger.familyBalance(famId).owedCents).toBe(0);
   });
 });
 

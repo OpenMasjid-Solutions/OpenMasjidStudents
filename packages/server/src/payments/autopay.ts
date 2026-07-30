@@ -11,7 +11,7 @@
 import { and, eq, inArray, lte, isNull, or } from 'drizzle-orm';
 import { db } from '../db';
 import { autopayEnrollments, autopayRuns, families, invoices } from '../db/schema';
-import { invoiceTotal, invoicePaid, recordSplit, splitAcrossFamily, familyStudentIds } from '../billing/ledger';
+import { invoiceTotal, invoicePaid, recordSplit, splitAcrossFamily, familyStudentIds, familyBalance } from '../billing/ledger';
 import { formatMoney } from '../db/money';
 import { getCurrency } from '../settings';
 import { rid } from '../db/ids';
@@ -38,6 +38,13 @@ export function addDays(iso: string, n: number): string {
  * What autopay should charge a family today: the sum of EVERY child's invoice balances due on/before
  * `today`. One card, one charge, even though the bills behind it are per student — the split back out
  * to the children happens at the ledger (see `chargeFamily`).
+ *
+ * NEVER MORE THAN THE FAMILY ACTUALLY OWES. That cap is not belt-and-braces: this walks invoices and
+ * counts only the positive ones, so anything that makes a household's derived balance smaller than the
+ * sum of its due bills — a credit line bigger than the invoice it sits on, money paid ahead against a
+ * bill not yet due — would otherwise be charged to a card as if it were owed. The derived balance
+ * (`invoiced − paid`, the same figure the parent sees) is the authority on what is owed, so it is the
+ * ceiling here, and a family whose screen says they owe nothing can never be charged.
  */
 function amountDue(familyId: string, today: string): number {
   const kidIds = familyStudentIds(familyId);
@@ -53,7 +60,7 @@ function amountDue(familyId: string, today: string): number {
     const bal = invoiceTotal(db, i.id) - invoicePaid(db, i.id);
     if (bal > 0) due += bal;
   }
-  return due;
+  return Math.min(due, familyBalance(familyId).owedCents);
 }
 
 /** Families eligible to be charged today: autopay on, a default card set, not waiting on the retry

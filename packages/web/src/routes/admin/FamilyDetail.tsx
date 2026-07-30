@@ -66,7 +66,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   /** Adding a sibling to THIS household — one choice, the child to bring in. It used to ask which
    *  student on this record they were a sibling OF, which was a question with no useful answer: every
    *  child here already shares one household, so any answer gave the same result. */
-  const siblingOptions = trpc.people.siblingOptions.useQuery();
+  const studentOptions = trpc.people.studentOptions.useQuery();
   const addSibling = trpc.people.familyAddSibling.useMutation();
   const unlinkSiblings = trpc.people.studentUnlinkSiblings.useMutation();
   const [siblingId, setSiblingId] = useState('');
@@ -80,7 +80,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
       await addSibling.mutateAsync({ familyId, studentId: siblingId });
       setSiblingId('');
       await refresh();
-      await utils.people.siblingOptions.invalidate();
+      await utils.people.studentOptions.invalidate();
       await utils.structure.studentsByClass.invalidate();
     } catch (err) {
       setLinkErr((err as Error).message);
@@ -93,7 +93,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     try {
       await unlinkSiblings.mutateAsync({ studentId });
       await refresh();
-      await utils.people.siblingOptions.invalidate();
+      await utils.people.studentOptions.invalidate();
       await utils.structure.studentsByClass.invalidate();
     } catch (err) {
       setLinkErr((err as Error).message);
@@ -484,7 +484,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               <StudentPicker
                 id="add-sibling"
                 label={t('directory.siblingStudent')}
-                students={siblingOptions.data ?? []}
+                students={studentOptions.data ?? []}
                 value={siblingId}
                 onChange={setSiblingId}
                 // Only children OUTSIDE this household: the ones already here have nothing to join.

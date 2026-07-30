@@ -58,10 +58,17 @@ function shell(heading: string, paragraphs: string[], cta?: { label: string; url
   ].join('');
 }
 
-/** Parent-portal invite (§12 door 1). */
-export function inviteEmail(schoolName: string, guardianName: string, url: string): Email {
+/**
+ * Parent-portal invite (§12 door 1).
+ *
+ * `email` is the address this is being sent to, and it is named IN the message on purpose: a parent has
+ * no username of their own — their account is created with the username set to this address — and the
+ * sign-in form asks for a "username", so the invite is the right place to say which one is theirs.
+ */
+export function inviteEmail(schoolName: string, guardianName: string, url: string, email?: string): Email {
   const hi = guardianName ? `Assalāmu ʿalaykum ${guardianName},` : 'Assalāmu ʿalaykum,';
   const subject = `Set up your ${schoolName} parent account`;
+  const signIn = email ? `You'll sign in with this email address: ${email}` : 'You’ll sign in with this email address.';
   const text = [
     hi,
     '',
@@ -69,6 +76,8 @@ export function inviteEmail(schoolName: string, guardianName: string, url: strin
     '',
     'Set your password to get started:',
     url,
+    '',
+    signIn,
     '',
     'This link works once and expires in 7 days. If it has expired, please ask the office for a new invite.',
   ].join('\n');
@@ -79,7 +88,7 @@ export function inviteEmail(schoolName: string, guardianName: string, url: strin
       'Set your password to get started:',
     ],
     { label: 'Set up my account', url },
-    'This link works once and expires in 7 days. If it has expired, ask the office for a new invite.',
+    `${esc(signIn)} This link works once and expires in 7 days. If it has expired, ask the office for a new invite.`,
   );
   return { subject, text, html };
 }

@@ -49,6 +49,10 @@ export function Login({ tunnel }: { tunnel?: boolean }) {
           <input id="li-username" className="input glass-inset" autoComplete="username" autoCapitalize="none"
             autoCorrect="off" spellCheck={false} value={username}
             onChange={(e) => setUsername(e.target.value)} required />
+          {/* Staff have a username the office chose; a parent's IS their email address (the account is
+              created with both set to it). Most people on this page are parents, so say so here rather
+              than leaving them to guess what a "username" of theirs would even be. */}
+          <span className="hint">{t('auth.parentUsernameIsEmail')}</span>
         </div>
 
         <div className="field">
