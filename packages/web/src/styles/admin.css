@@ -826,7 +826,18 @@
   cursor: pointer;
 }
 .picker-btn:hover { color: var(--color-ink); background: var(--glass-bg-inset); }
-.picker-list {
+/*
+ * The dropdown itself. Two things here are load-bearing, both learned the hard way.
+ *
+ * 1. AN OPAQUE SURFACE, not the glass panel. The component also carries `glass`, whose whole point is
+ *    to be translucent — right for a panel sitting on the page background, wrong for a MENU sitting on
+ *    top of other content, because whatever is behind it reads straight through the names you are
+ *    trying to choose between. `--color-surface-overlay` is the token for exactly this, and it is
+ *    opaque in both themes. Selected as `ul.picker-list` (an element + a class) so it out-specifies
+ *    `.glass` whatever order the stylesheets happen to be imported in.
+ * 2. `z-index` HERE IS NOT ENOUGH — see the `:has()` rules below.
+ */
+ul.picker-list {
   position: absolute;
   z-index: 40;
   inset-inline: 0;
@@ -838,6 +849,38 @@
   padding: 0.25rem;
   border-radius: var(--radius-card);
   list-style: none;
+  background-color: var(--color-surface-overlay);
+  background-image: none; /* drop glass's glint + tint: they belong on a panel, not a menu */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none; /* nothing to blur through an opaque surface — and it costs a repaint */
+  /* A hairline and a lifted shadow, so it reads as floating above the page rather than merging with it. */
+  box-shadow:
+    0 0 0 1px var(--glass-border),
+    var(--glass-shadow-raised);
+}
+
+/*
+ * Lifting the open dropdown above everything after it.
+ *
+ * `z-index: 40` on the list alone does nothing here, and it is worth knowing why: `.glass` and
+ * `.glass-inset` both set `backdrop-filter`, and that makes every element carrying them a STACKING
+ * CONTEXT. So the list can only ever compete inside its own form, the form only inside its section, and
+ * the section only against its siblings — a later `.section` paints over the whole lot no matter how
+ * high the list bids. That is the bug where the list appeared *behind* the next section.
+ *
+ * So each ancestor that is itself a stacking context has to out-rank its own later siblings while a
+ * picker is open, which is what these do. Scoped with `:has()` so nothing is raised except while a list
+ * is actually rendered — a permanently raised section would start covering things itself.
+ *
+ * 30 deliberately: it clears anything on the page (all z-index auto) while staying UNDER the sticky
+ * topbar (40), the profile menu (60), modals (100) and toasts (200). Going above 40 would mean an open
+ * dropdown scrolled up behind the header and came out on top of it.
+ */
+.section:has(ul.picker-list),
+.inline-form:has(ul.picker-list),
+.field:has(ul.picker-list) {
+  position: relative;
+  z-index: 30;
 }
 .picker-row {
   display: flex;
@@ -866,7 +909,9 @@
 @media (max-width: 700px) {
   /* Thumb-sized rows, and a taller list since there is more vertical room than width. */
   .picker-row { padding-block: 0.7rem; }
-  .picker-list { max-block-size: 60vh; }
+  /* `ul.` to match the specificity of the base rule above — as a plain `.picker-list` this lost to it
+     and the list stayed capped at 16rem on exactly the screens with the most vertical room. */
+  ul.picker-list { max-block-size: 60vh; }
 }
 
 /* Contact columns in the year grid: tappable numbers, one per line, never wrapped mid-number. */

@@ -9,6 +9,15 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.43.1]
+
+### Fixed
+
+- **The student search list on the Billing tab was unreadable.** Opening it showed the page behind it
+  straight through the names, and the bottom of the list disappeared underneath the next section — so
+  choosing a child, the first thing you do when recording a payment, meant guessing. The list is now a
+  solid panel that sits above everything on the page.
+
 ## [0.43.0]
 
 ### Added
