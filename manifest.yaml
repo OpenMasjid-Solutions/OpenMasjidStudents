@@ -4,7 +4,7 @@ id: students
 name: OpenMasjid Students
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
-version: 0.43.1
+version: 0.44.0
 author: OpenMasjid-Solutions
 license: AGPL-3.0-only
 icon: icon.svg
@@ -56,6 +56,13 @@ alerts:
   - id: reconcile-recovered
     label: A payment was recovered by reconciliation
     description: A card payment reached Stripe but never reached the ledger directly; the daily reconciliation found and recorded it. Worth a look.
+  # Declared in 0.44.0. The code has raised this since 0.43.0, where it was added to the alert union but
+  # NOT here — so every one of them was answered 400 "Unknown alert" and dropped, which is exactly the
+  # silent-failure mode the comment above warns about. (The app's own alert emails never depended on
+  # this list, which is part of why they exist.)
+  - id: payment-short
+    label: A payment was only partly recorded
+    description: A card payment covering several children was recorded for some of them but not all. The difference has to be entered by hand — check the family's record.
   - id: test
     label: Test message
     description: A test you trigger from Settings to confirm OpenMasjidOS is reaching you by email or webhook.

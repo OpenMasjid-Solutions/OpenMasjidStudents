@@ -396,6 +396,20 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
         {(billing.data?.payments ?? []).length > 0 && (
           <div style={{ overflowX: 'auto', marginBlockStart: '0.75rem' }}>
             <table className="data-table">
+              <thead>
+                <tr>
+                  <th>{t('students.name')}</th>
+                  <th>{t('billing.amount')}</th>
+                  <th>{t('billing.channel')}</th>
+                  <th>{t('billing.date')}</th>
+                  <th>{t('billing.memo')}</th>
+                  {/* WHO took the money. A cash payment is the one kind nobody else can verify, so the
+                      name of the person who wrote it down is part of the record — and it is what a
+                      volunteer finance manager needs when a figure is queried a month later. */}
+                  <th>{t('billing.recordedBy')}</th>
+                  <th className="actions" />
+                </tr>
+              </thead>
               <tbody>
                 {billing.data?.payments.map((p) => (
                   <tr key={p.id}>
@@ -404,6 +418,9 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                     <td>{t(`billing.ch_${p.channel}`, p.channel)}</td>
                     <td>{new Date(p.occurredAt as unknown as number).toISOString().slice(0, 10)}</td>
                     <td className="muted">{p.memo ?? ''}</td>
+                    {/* A card payment records itself, so there is no person to name — say so rather
+                        than leaving a blank cell that reads like missing data. */}
+                    <td className="muted">{p.by ?? t('billing.recordedAuto')}</td>
                     <td className="actions">{p.amountCents > 0 && !p.reversalOf && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { if (!window.confirm(t('billing.confirmReverse'))) return; await reverse.mutateAsync({ paymentId: p.id }); await refresh(); }}>{t('billing.reverse')}</button>}</td>
                   </tr>
                 ))}

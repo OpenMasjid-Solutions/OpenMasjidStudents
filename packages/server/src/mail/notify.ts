@@ -6,9 +6,9 @@
  * SMTP is unconfigured (returns false / 0) — callers degrade gracefully. Nothing here throws or logs
  * PII. The parent-portal link uses OPENMASJID_PUBLIC_URL when set (empty → no button, still valid).
  */
-import { getSchoolName, getSchoolLogo } from '../settings';
+import { getSchoolName, getSchoolLogo, getParentEmails } from '../settings';
 import { guardianEmailsForFamily } from './recipients';
-import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail, testEmail, setEmailLogoUrl } from './templates';
+import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail, testEmail, alertEmail, setEmailLogoUrl } from './templates';
 import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
 import { fabricConfigured } from '../config';
@@ -92,10 +92,16 @@ export async function sendReset(email: string, url: string): Promise<MailOutcome
   return { sent: await deliver(email, m.subject, m.text, m.html) };
 }
 
-/** Email a payment receipt to a family's guardians (§13.2.5 — "payment", never "donation"). Returns
- *  how many were sent. A receipt is useful WITHOUT a public URL (it just drops the portal button). */
+/**
+ * Email a payment receipt to a family's guardians (§13.2.5 — "payment", never "donation"). Returns how
+ * many were sent. A receipt is useful WITHOUT a public URL (it just drops the portal button).
+ *
+ * The office's "email parents a receipt" switch is checked HERE rather than at each call site, and
+ * that is the point: receipts are sent from five places (portal, autopay, the kiosk and donation site
+ * over the Fabric, and the office's own cash entry). A check per caller is a check somebody forgets.
+ */
 export async function sendReceipt(familyId: string, amountFormatted: string): Promise<number> {
-  if (!mailAvailable()) return 0;
+  if (!mailAvailable() || !getParentEmails().receipt) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   refreshEmailLogo();
@@ -125,7 +131,7 @@ export async function sendTestEmail(to: string): Promise<boolean> {
 /** Email an autopay-failure notice to a family's guardians (§13.3). `final` = the third strike (autopay
  *  now off). Returns how many were sent. */
 export async function sendAutopayFailure(familyId: string, final: boolean): Promise<number> {
-  if (!mailAvailable()) return 0;
+  if (!mailAvailable() || !getParentEmails().autopayFailure) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   refreshEmailLogo();
@@ -133,4 +139,19 @@ export async function sendAutopayFailure(familyId: string, final: boolean): Prom
   let n = 0;
   for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
   return n;
+}
+
+/**
+ * Email ONE staff alert to ONE address (0.44.0). The recipient list and the decision to send live in
+ * alerts/index.ts; this is only the composing + transport half, so alerts look like every other email
+ * the madrasa sends (same shell, same letterhead).
+ *
+ * Note there is no `getParentEmails` gate here — this is not a parent email. Its off switch is the
+ * recipient list itself: an address that should hear nothing is removed.
+ */
+export async function sendAlert(to: string, title: string, body: string): Promise<boolean> {
+  if (!mailAvailable()) return false;
+  refreshEmailLogo();
+  const m = alertEmail(getSchoolName(), title, body, portalBase());
+  return deliver(to, m.subject, m.text, m.html);
 }

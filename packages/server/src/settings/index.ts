@@ -31,6 +31,7 @@ export const SETTING_KEYS = {
   // then bill the same arrears a second time, so anything earlier is refused rather than discouraged.
   billingStartPeriod: 'billing_start_period',
   midYearDoneAt: 'midyear_committed_at', // ISO timestamp — the wizard has been run (hides the banner).
+  parentEmails: 'parent_emails', // JSON {receipt, autopayFailure} — which emails PARENTS get (0.44.0).
   // The masjid's own logo, stored as a `data:` URI so it travels with the DB and needs no file
   // handling or attachment plumbing. Bounded and magic-byte checked on the way in (§14).
   schoolLogo: 'school_logo',
@@ -230,6 +231,37 @@ export function getBillingStartPeriod(): string | null {
 }
 export function setBillingStartPeriod(periodKey: string | null): void {
   setSetting(SETTING_KEYS.billingStartPeriod, periodKey ?? '');
+}
+
+/**
+ * Which emails PARENTS receive (0.44.0). Both default ON.
+ *
+ * Only the discretionary ones are here. Invites and password resets are deliberately absent and always
+ * send: they are not notifications, they are the only way a parent can reach their account at all, and
+ * a switch that can turn them off is a support call waiting to happen.
+ */
+export interface ParentEmailPrefs {
+  /** A receipt whenever money lands, whichever way it arrived (portal, autopay, kiosk, cash). */
+  receipt: boolean;
+  /** "We couldn't charge your card" + the third-strike "autopay is now off" (§13.3). */
+  autopayFailure: boolean;
+}
+
+export function getParentEmails(): ParentEmailPrefs {
+  const raw = getSetting(SETTING_KEYS.parentEmails);
+  // Absent = an install that upgraded, which was sending both; defaulting to ON keeps the morning
+  // after an update looking like the day before it.
+  if (!raw) return { receipt: true, autopayFailure: true };
+  try {
+    const p = JSON.parse(raw) as Partial<ParentEmailPrefs>;
+    return { receipt: p.receipt !== false, autopayFailure: p.autopayFailure !== false };
+  } catch {
+    return { receipt: true, autopayFailure: true };
+  }
+}
+
+export function setParentEmails(patch: Partial<ParentEmailPrefs>): void {
+  setSetting(SETTING_KEYS.parentEmails, JSON.stringify({ ...getParentEmails(), ...patch }));
 }
 
 /** When the mid-year go-live step was committed, or null. Only used to stop nagging about it. */

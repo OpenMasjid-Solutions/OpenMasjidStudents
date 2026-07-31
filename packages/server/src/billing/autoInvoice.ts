@@ -27,6 +27,7 @@ import { generateForPeriod } from './invoices';
 import { schoolYearMonths } from './schoolYear';
 import { getSetting, setSetting, SETTING_KEYS, getAutoInvoice, getBillingStartPeriod } from '../settings';
 import { periodBefore } from './period';
+import { alertStaff } from '../alerts';
 import { makeLog } from '../logger';
 
 const log = makeLog('autoInvoice');
@@ -96,5 +97,13 @@ export function runAutoInvoice(today = new Date()): AutoInvoiceResult {
   // Mark the period done only AFTER a successful pass, so a throw leaves it to be retried tomorrow.
   setSetting(SETTING_KEYS.autoInvoiceLast, periodKey);
   log.info('auto-generated invoices', { periodKey, created: r.created });
+  // Tell whoever asked to be told: this job runs at 2am and bills every family, and until now the only
+  // trace of it was a line in the container log.
+  void alertStaff('invoices-generated', {
+    title: 'This month’s invoices were generated',
+    // A count and a month name — no family in either, so the two texts are the same here.
+    text: `${r.created} invoice(s) were generated automatically for ${label}.`,
+    publicText: `${r.created} invoice(s) were generated automatically for ${label}.`,
+  });
   return { ran: true, periodKey, created: r.created };
 }

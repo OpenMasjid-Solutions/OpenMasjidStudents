@@ -4,11 +4,13 @@
  *  the Stripe account (from the OS vault) that tuition charges go through. */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { isNotNull } from 'drizzle-orm';
+import { eq, isNotNull } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
-import { families, paymentMethods, autopayEnrollments } from '../db/schema';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo } from '../settings';
+import { families, paymentMethods, autopayEnrollments, alertRecipients } from '../db/schema';
+import { rid } from '../db/ids';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails } from '../settings';
+import { ALERT_EVENTS, defaultEvents, listRecipients, sendAlertTest, type AlertEvent } from '../alerts';
 import { audit } from '../audit';
 import { mailAvailable, sendTestEmail } from '../mail/notify';
 import { portalBase } from '../auth/invites';
@@ -108,6 +110,83 @@ export const settingsRouter = router({
         message: 'OpenMasjidOS couldn’t send it. Check that email is set up in OpenMasjidOS → Settings, then try again.',
       });
     }
+    return { ok: true as const };
+  }),
+
+  // ── Email alerts (0.44.0) ──────────────────────────────────────────────────
+  /**
+   * Who gets told what, and which emails parents receive.
+   *
+   * Admin-only, like every other setting (§5). Finance sees alerts arrive in their inbox but does not
+   * choose the list — an address on it is a standing grant of information about families, and that is
+   * the office's decision.
+   */
+  alertsGet: adminProcedure.query(() => ({
+    /** The catalogue, so the UI never hard-codes the event list. */
+    events: ALERT_EVENTS,
+    recipients: listRecipients(),
+    parentEmails: getParentEmails(),
+    /** Nothing can be delivered without a transport; the UI says so rather than looking broken. */
+    mailAvailable: mailAvailable(),
+  })),
+
+  /**
+   * Add an address, or change one (same procedure — a repeated email UPDATES rather than failing on the
+   * unique index, which is what an admin means when they re-add someone).
+   */
+  alertRecipientSave: adminProcedure
+    .input(
+      z.object({
+        id: z.string().trim().max(64).optional(),
+        email: z.string().trim().email().max(320),
+        label: z.string().trim().max(80).optional(),
+        /** Validated against the catalogue, so a stale client can never subscribe to an unknown id. */
+        events: z.array(z.enum(ALERT_EVENTS)).max(ALERT_EVENTS.length).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      const email = input.email.toLowerCase();
+      const ts = new Date();
+      const existing = input.id
+        ? db.select().from(alertRecipients).where(eq(alertRecipients.id, input.id)).get()
+        : db.select().from(alertRecipients).where(eq(alertRecipients.email, email)).get();
+      // A brand-new recipient starts on the alerts that cost money or hide an attack, not on everything:
+      // an inbox full of routine payments is how somebody mutes the whole channel.
+      const events: AlertEvent[] = input.events ?? (existing ? ((existing.events ?? []) as AlertEvent[]) : defaultEvents());
+      if (existing) {
+        db.update(alertRecipients).set({ email, label: input.label?.trim() || null, events, updatedAt: ts }).where(eq(alertRecipients.id, existing.id)).run();
+        audit(auditActor(ctx), 'alerts.recipientUpdate', { entity: 'settings', entityId: existing.id, detail: { events: events.length } });
+        return { id: existing.id };
+      }
+      const id = rid('alr');
+      db.insert(alertRecipients).values({ id, email, label: input.label?.trim() || null, events, createdAt: ts, updatedAt: ts }).run();
+      audit(auditActor(ctx), 'alerts.recipientAdd', { entity: 'settings', entityId: id, detail: { events: events.length } });
+      return { id };
+    }),
+
+  alertRecipientRemove: adminProcedure.input(z.object({ id: z.string().trim().max(64) })).mutation(({ ctx, input }) => {
+    db.delete(alertRecipients).where(eq(alertRecipients.id, input.id)).run();
+    audit(auditActor(ctx), 'alerts.recipientRemove', { entity: 'settings', entityId: input.id });
+    return { ok: true as const };
+  }),
+
+  /** "Does this actually reach you?" — the same question the mail test answers, per recipient. */
+  alertTest: adminProcedure.input(z.object({ id: z.string().trim().max(64) })).mutation(async ({ ctx, input }) => {
+    const sent = await sendAlertTest(input.id);
+    audit(auditActor(ctx), 'alerts.test', { entity: 'settings', entityId: input.id, detail: { sent } });
+    if (!sent) {
+      throw new TRPCError({
+        code: 'BAD_GATEWAY',
+        message: 'That didn’t send. Check that email is set up in OpenMasjidOS → Settings, then try again.',
+      });
+    }
+    return { ok: true as const };
+  }),
+
+  /** Which emails PARENTS get. Invites and password resets are not here — they always send (§ settings). */
+  parentEmailsSet: adminProcedure.input(z.object({ receipt: z.boolean().optional(), autopayFailure: z.boolean().optional() })).mutation(({ ctx, input }) => {
+    setParentEmails(input);
+    audit(auditActor(ctx), 'settings.parentEmails', { entity: 'settings', detail: { ...input } });
     return { ok: true as const };
   }),
 

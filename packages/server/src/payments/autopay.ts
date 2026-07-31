@@ -16,7 +16,7 @@ import { formatMoney } from '../db/money';
 import { getCurrency } from '../settings';
 import { rid } from '../db/ids';
 import { makeLog } from '../logger';
-import { notifyPlatform, raiseAlert } from '../fabric/platform';
+import { alertStaff, householdName } from '../alerts';
 import { sendReceipt, sendAutopayFailure } from '../mail/notify';
 import { stripeClient } from './stripe';
 
@@ -150,7 +150,11 @@ export async function chargeFamily(familyId: string, amountCents: number, today:
         { userId: null, role: 'autopay', name: 'autopay' },
       );
       if (!res.duplicate) {
-        void notifyPlatform(`A tuition payment of ${(amountCents / 100).toFixed(2)} was received (autopay).`, { title: 'Tuition payment' });
+        void alertStaff('payment-received', {
+          title: 'Tuition payment received',
+          text: `${householdName(familyId)} was charged ${formatMoney(amountCents, getCurrency())} by autopay.`,
+          publicText: `A tuition payment of ${formatMoney(amountCents, getCurrency())} was received (autopay).`,
+        });
         void sendReceipt(familyId, formatMoney(amountCents, getCurrency())); // parent receipt (§13.2.5); !duplicate avoids a double with the webhook
       }
       onAutopaySucceeded(pi.id, runId); // mark the run charged + reset the retry ladder
@@ -245,13 +249,22 @@ function markRunFailed(runId: string, runDate: string): void {
     // Third strike — stop trying, turn autopay off, and tell finance + the parent.
     db.update(autopayEnrollments).set({ enabled: false, failureCount, nextAttemptAt: null, updatedAt: ts }).where(eq(autopayEnrollments.familyId, run.familyId)).run();
     // An ALERT, not a notification: this family stops being charged until a human intervenes, so it
-    // must be able to reach the admin's email rather than only a webhook nobody configured.
-    // `error`: this family has stopped being charged and will stay that way until a human acts.
-    void raiseAlert('autopay-disabled', 'Autopay was turned off for a family after three failed charge attempts.', { title: 'Autopay disabled', level: 'error' });
+    // must reach a person — the office's own alert list, and the admin's email via OpenMasjidOS —
+    // rather than only a webhook nobody configured. Named, because "a family" is not actionable.
+    void alertStaff('autopay-disabled', {
+      title: 'Autopay switched off',
+      text: `${householdName(run.familyId)} had three failed card charges, so autopay has been turned off. They will not be charged again until someone follows up.`,
+      publicText: 'Autopay was turned off for a family after three failed charge attempts.',
+    });
     void sendAutopayFailure(run.familyId, true); // parent: autopay is now off — pay now + update card (§13.3)
   } else {
     // Retry on day +2 (after the 1st failure) then day +5 (after the 2nd).
     db.update(autopayEnrollments).set({ failureCount, nextAttemptAt: addDays(runDate, failureCount === 1 ? 2 : 3), updatedAt: ts }).where(eq(autopayEnrollments.familyId, run.familyId)).run();
+    void alertStaff('autopay-failed', {
+      title: 'An autopay charge failed',
+      text: `${householdName(run.familyId)}'s card was declined (attempt ${failureCount} of 3). We will try again in a few days; they have been emailed.`,
+      publicText: `An autopay charge was declined (attempt ${failureCount} of 3). A retry is scheduled.`,
+    });
     void sendAutopayFailure(run.familyId, false); // parent: charge failed, we'll retry — or pay now (§13.3)
   }
 }

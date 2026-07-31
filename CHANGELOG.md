@@ -9,6 +9,46 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.44.0]
+
+### Added
+
+- **Autopay is its own tab in the parent portal, with an offer on the front page.** Saving a card and
+  switching autopay on used to be the very last thing on a long page — below the balance, the children,
+  every open bill and the whole payment history — so on a phone the feature that saves a family from
+  thinking about tuition at all was several screens of scrolling, and most parents never found it. There
+  is now a card directly under the balance offering to set it up, and a tab for cards and autopay of its
+  own. Once it is on, that same card says which card will be charged.
+- **Email alerts, in Settings.** Two separate questions that had no answer before:
+  - **What parents are emailed.** A receipt every time they pay, and a notice when their card is
+    declined — both switchable. A receipt now goes out however the money arrived, including **cash, a
+    check or Zelle recorded by the office**, and payments made at the kiosk or on the donation site.
+    Until now only portal and autopay payments told the family anything, which meant most families got
+    nothing. (Invites and password resets are not switchable and always send — they are the only way a
+    parent can reach their account.)
+  - **Who to tell at the masjid.** Add any address — the treasurer, the imām, a trustee — and tick which
+    alerts it receives: autopay switching itself off, a Student ID being locked after repeated failed
+    lookups, a payment recovered by the daily Stripe check, a payment only partly recorded, the nightly
+    invoice run, or every single payment. An address grants no access to the app; it only receives what
+    you ticked. New addresses start on the alerts that cost money or hide a problem, because one email
+    per payment is how somebody ends up muting the lot.
+- **Payments say who recorded them.** Cash is the one payment nobody else can verify — no card, no
+  receipt from Stripe, nothing to reconcile against — so the office's payment list now has a **Recorded
+  by** column naming the person, using the name their staff account was created with. Card payments say
+  "Automatic". It shows on reversals too, and in the payments CSV.
+
+### Fixed
+
+- **Alerts now reach a person, and say who they are about.** They went to two channels that could both
+  be silently dead: a webhook most masajid never set up, and the OpenMasjidOS alert list, which needs
+  each alert declared in the app's catalog entry. `payment-short` — raised when a card payment covering
+  several children is only partly recorded — was added to the code in 0.43.0 but not to that list, so
+  every one of those alerts was rejected and dropped without a trace. It is declared now, a test fails
+  the build if another one goes missing, and alerts additionally go out by email from the app itself, so
+  they no longer depend on that plumbing at all. Alert wording now **names the household and the
+  amount** ("the Ismail family had three failed card charges") instead of "a family", which was true but
+  useless to act on.
+
 ## [0.43.1]
 
 ### Fixed

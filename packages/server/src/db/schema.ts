@@ -350,6 +350,31 @@ export const auditLog = sqliteTable(
 );
 export type AuditEntry = typeof auditLog.$inferSelect;
 
+/**
+ * Who the office wants emailed when something happens (0.44.0).
+ *
+ * A row is an ADDRESS, not an account: the person who should hear that autopay switched itself off is
+ * often not the person who logs in — the imām, the treasurer, a trustee who never opens the app. So
+ * this is deliberately not a column on `users`, and adding a recipient grants no access to anything.
+ *
+ * `events` is the list of alert ids that address gets (see alerts/index.ts, which owns the catalogue
+ * and validates against it on every write). Storing it as JSON rather than a join table is the right
+ * trade here: it is a handful of rows read whole, always written whole, and never queried BY event.
+ *
+ * The email is UNIQUE and stored lowercased so "Office@…" and "office@…" cannot both subscribe and
+ * double every message.
+ */
+export const alertRecipients = sqliteTable('alert_recipients', {
+  id: text('id').primaryKey(),
+  email: text('email').notNull().unique(),
+  /** What to call them on screen ("Office", "Ustādh Bilāl"). Optional — the address is the identity. */
+  label: text('label'),
+  events: text('events', { mode: 'json' }).$type<string[]>().notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+export type AlertRecipient = typeof alertRecipients.$inferSelect;
+
 // ── Billing (fee plans, invoices, ledger, payments) ──────────────────────────
 
 export type FeeCadence = 'monthly' | 'per_term' | 'one_time';

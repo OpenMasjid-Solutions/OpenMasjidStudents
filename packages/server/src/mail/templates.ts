@@ -186,6 +186,21 @@ export function resetEmail(schoolName: string, url: string): Email {
   return { subject, text, html };
 }
 
+/**
+ * A staff alert (0.44.0) — autopay switched off, an ID locked, a payment recovered.
+ *
+ * Written for a volunteer, not an operator: the subject says what happened, the body says what to do
+ * about it. The CTA appears only when the install has a public URL, and it points at the app rather
+ * than at any particular screen — finance can follow it from anywhere, and an admin will be on the
+ * masjid network anyway (§12.4).
+ */
+export function alertEmail(schoolName: string, title: string, body: string, appUrl: string): Email {
+  const subject = `${schoolName}: ${title}`;
+  const text = [body, '', appUrl ? `Open the app:\n${appUrl}` : '', `— ${schoolName}`].filter(Boolean).join('\n');
+  const html = shell(title, [esc(body)], appUrl ? { label: 'Open the app', url: appUrl } : undefined, `You're receiving this because your email address is on the alert list for ${schoolName}. An admin can change that in Settings → Email alerts.`);
+  return { subject, text, html };
+}
+
 /** Admin "send test" probe. */
 export function testEmail(schoolName: string): Email {
   const subject = `${schoolName}: test email`;

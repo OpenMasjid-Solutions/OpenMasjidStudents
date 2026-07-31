@@ -32,7 +32,8 @@ import { invoiceLines } from '../billing/lines';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../settings';
 import { audit } from '../audit';
-import { notifyPlatform, raiseAlert } from './platform';
+import { alertStaff, householdName } from '../alerts';
+import { sendReceipt } from '../mail/notify';
 import { normalizeStudentCode } from '../billing/studentCodes';
 import { givenName, lastInitial } from '../people/names';
 
@@ -59,7 +60,12 @@ function failCode(code: string): void {
   const wasLocked = codeLookupLimiter.retryAfterMs(code) > 0;
   codeLookupLimiter.fail(code);
   if (!wasLocked && codeLookupLimiter.retryAfterMs(code) > 0) {
-    void raiseAlert('lookup-lockout', 'A tuition student-ID lookup was locked after repeated failed attempts.', { title: 'Tuition lookup locked' });
+    void alertStaff('lookup-lockout', {
+      title: 'A Student ID was locked',
+      // The code itself is never in EITHER text (§14) — it is a payment credential.
+      text: 'One student’s ID was locked for an hour after repeated failed lookups at the kiosk or on the donation site. If nobody is expecting that, someone may be guessing IDs.',
+      publicText: 'A tuition student-ID lookup was locked after repeated failed attempts.',
+    });
   }
 }
 
@@ -389,11 +395,11 @@ export function registerFabricProvider(app: FastifyInstance): void {
       // is told, so it can be corrected by hand rather than discovered in a year-end total.
       const recordedCents = already.reduce((s, p) => s + p.amountCents, 0);
       if (recordedCents < d.amountCents) {
-        void raiseAlert(
-          'payment-short',
-          `A tuition payment of ${formatMoney(d.amountCents, getCurrency())} was only partly recorded (${formatMoney(recordedCents, getCurrency())}). Check the family's record and enter the difference by hand.`,
-          { title: 'Tuition payment partly recorded' },
-        );
+        void alertStaff('payment-short', {
+          title: 'A payment was only partly recorded',
+          text: `${householdName(d.familyId)} paid ${formatMoney(d.amountCents, getCurrency())} but only ${formatMoney(recordedCents, getCurrency())} reached the ledger. Check their record and enter the difference by hand.`,
+          publicText: `A tuition payment of ${formatMoney(d.amountCents, getCurrency())} was only partly recorded (${formatMoney(recordedCents, getCurrency())}). Check the family's record and enter the difference by hand.`,
+        });
       }
       return reply.send({
         v: CONTRACT_V,
@@ -482,8 +488,16 @@ export function registerFabricProvider(app: FastifyInstance): void {
     }
     if (!res.duplicate) {
       audit({ userId: null, role: 'fabric', name: d.channel }, 'payment.record', { entity: 'family', entityId: d.familyId, detail: { channel: d.channel, amountCents: d.amountCents, students: res.parts.length } });
-      // Amount + channel only — never a family/student name (§14: no name+amount together).
-      void notifyPlatform(`A tuition payment of ${formatMoney(d.amountCents, getCurrency())} was received (${d.channel}).`, { title: 'Tuition payment' });
+      void alertStaff('payment-received', {
+        title: 'Tuition payment received',
+        text: `${householdName(d.familyId)} paid ${formatMoney(d.amountCents, getCurrency())} (${d.channel === 'kiosk' ? 'at the kiosk' : 'on the donation site'}).`,
+        // Amount + channel only — never a family/student name (§14: no name+amount together).
+        publicText: `A tuition payment of ${formatMoney(d.amountCents, getCurrency())} was received (${d.channel}).`,
+      });
+      // A receipt for money handed over at the kiosk or on the website, to the guardians on file —
+      // the payer standing at the screen may not be the parent, and it is the parent who needs the
+      // record. Gated on the office's parent-email switch inside sendReceipt.
+      void sendReceipt(d.familyId, formatMoney(d.amountCents, getCurrency()));
     }
     return reply.send({
       v: CONTRACT_V,

@@ -46,6 +46,86 @@
   gap: 1rem;
 }
 
+/* ── The two tabs (0.44.0) ───────────────────────────────────────────────────
+   A segmented control, not a bottom bar: there are two destinations and the top of the column is
+   where a thumb already is after the sticky header. Logical properties throughout, so RTL is free. */
+.fam-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  background: var(--glass-bg-inset, rgba(255, 255, 255, 0.05));
+  box-shadow: inset 0 0 0 1px var(--glass-border, rgba(255, 255, 255, 0.08));
+}
+.fam-tab {
+  flex: 1 1 0;
+  min-height: 2.5rem; /* a comfortable thumb target */
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-ink-muted);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.4rem 0.6rem;
+  transition: background 0.18s, color 0.18s;
+}
+.fam-tab.is-active {
+  background: var(--color-surface-overlay, rgba(255, 255, 255, 0.1));
+  color: var(--color-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+.fam-tab:focus-visible { outline: 2px solid var(--color-primary, #1fa37a); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .fam-tab { transition: none; }
+}
+
+/* The autopay offer under the balance. One big tap target — the whole card is the button. */
+.autopay-cta {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  text-align: start;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--color-ink);
+  /* Emerald-tinted while it is an INVITATION; once autopay is on it calms down to a plain glass row
+     (see .is-on below) — a permanent call to action for something already done is just noise. */
+  border: 1px solid color-mix(in srgb, var(--color-primary, #1fa37a) 45%, transparent);
+  background: color-mix(in srgb, var(--color-primary, #1fa37a) 12%, transparent);
+}
+.autopay-cta .ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  flex: none;
+  border-radius: 50%;
+  color: var(--color-primary, #1fa37a);
+  background: color-mix(in srgb, var(--color-primary, #1fa37a) 18%, transparent);
+}
+.autopay-cta .txt { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; flex: 1 1 auto; }
+.autopay-cta .txt strong { font-weight: 650; }
+.autopay-cta .txt .sub { font-size: 0.82rem; color: var(--color-ink-muted); }
+.autopay-cta .go { color: var(--color-ink-muted); display: inline-flex; flex: none; }
+/* The chevron means "onward", so it has to follow the reading direction — logical properties place the
+   box, but nothing flips the glyph inside it. */
+[dir="rtl"] .autopay-cta .go { transform: scaleX(-1); }
+.autopay-cta:focus-visible { outline: 2px solid var(--color-primary, #1fa37a); outline-offset: 2px; }
+.autopay-cta.is-on {
+  border-color: var(--glass-border, rgba(255, 255, 255, 0.08));
+  background: var(--glass-bg-inset, rgba(255, 255, 255, 0.05));
+}
+.autopay-cta.is-on .ico { color: var(--color-success, #46c99a); background: color-mix(in srgb, var(--color-success, #46c99a) 16%, transparent); }
+
+/* One household's heading on the autopay tab, for the rare parent linked to two. */
+.fam-section-title { font-size: 1.05rem; margin: 0 0 0.5rem; }
+
 .fam-hello { margin: 0.25rem 0 0.25rem; }
 .fam-hello h1 { font-size: 1.35rem; margin: 0; }
 .fam-hello p { color: var(--color-ink-muted); margin: 0.15rem 0 0; font-size: 0.92rem; }

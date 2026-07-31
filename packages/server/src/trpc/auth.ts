@@ -18,7 +18,8 @@ import { users, guardians, guardianUsers, guardianFamilies, students, invites, p
 import { rid } from '../db/ids';
 import { hashPassword, verifyPassword, dummyHash, MIN_PASSWORD_LENGTH } from '../auth/passwords';
 import { createSession, destroySession, cookieOptions, COOKIE, COOKIE_PATH, SSO_SESSION_TTL_MS, hashToken } from '../auth/sessions';
-import { probePlatformSession, raiseAlert } from '../fabric/platform';
+import { probePlatformSession } from '../fabric/platform';
+import { alertStaff } from '../alerts';
 import { fabricConfigured, config } from '../config';
 import { clientIp } from '../security/origin';
 import { loginLimiter, inviteAcceptLimiter, resetRequestLimiter, resetConfirmLimiter, registerLimiter, codeLookupLimiter } from '../security/rateLimit';
@@ -405,7 +406,13 @@ export const authRouter = router({
         const wasLocked = codeLookupLimiter.retryAfterMs(code) > 0;
         codeLookupLimiter.fail(code);
         // An alert (email-capable), not a webhook-only notification — see fabric/provider.ts.
-        if (!wasLocked && codeLookupLimiter.retryAfterMs(code) > 0) void raiseAlert('lookup-lockout', 'A self-registration Student ID lookup was locked after repeated failed attempts.', { title: 'Signup lookup locked' });
+        if (!wasLocked && codeLookupLimiter.retryAfterMs(code) > 0) {
+          void alertStaff('lookup-lockout', {
+            title: 'A Student ID was locked',
+            text: 'One student’s ID was locked for an hour after repeated failed attempts at parent sign-up. If no parent is stuck, someone may be guessing IDs.',
+            publicText: 'A self-registration Student ID lookup was locked after repeated failed attempts.',
+          });
+        }
         return { ok: true as const }; // generic — no enumeration (§14)
       }
       codeLookupLimiter.succeed(code);

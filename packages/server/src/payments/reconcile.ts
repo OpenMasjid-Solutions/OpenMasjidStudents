@@ -18,9 +18,10 @@ import type { PaymentChannel } from '../db/schema';
 import { recordSplit, splitAcrossFamily, recordedSplit } from '../billing/ledger';
 import { onAutopaySucceeded, onAutopayFailed, abandonRun, pendingRuns } from './autopay';
 import { stripeClient, loadStripeKeys } from './stripe';
-import { getSetting, setSetting, SETTING_KEYS } from '../settings';
+import { getSetting, setSetting, SETTING_KEYS, getCurrency } from '../settings';
+import { formatMoney } from '../db/money';
 import { audit, type AuditActor } from '../audit';
-import { raiseAlert } from '../fabric/platform';
+import { alertStaff, householdName } from '../alerts';
 import { makeLog } from '../logger';
 
 const log = makeLog('reconcile');
@@ -216,7 +217,11 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
             // failed, which someone should look at rather than have it vanish into an unset webhook.
             // `info`, not the default `warning`: the money was recovered, so this is a notice that a
             // push path needs looking at — not something going wrong right now.
-            void raiseAlert('reconcile-recovered', `A previously-missed tuition payment of ${(amount / 100).toFixed(2)} was recorded (${channel}).`, { title: 'Tuition payment recovered', level: 'info' });
+            void alertStaff('payment-recovered', {
+              title: 'A missed payment was recovered',
+              text: `${householdName(familyId)}'s ${formatMoney(amount, getCurrency())} payment (${channel}) reached Stripe but not the ledger, so the daily check recorded it. The money is safe; the push path is worth a look.`,
+              publicText: `A previously-missed tuition payment of ${formatMoney(amount, getCurrency())} was recorded (${channel}).`,
+            });
           }
         } catch (e) {
           // A transient write failure on ONE PI must not abort the pass — but must NOT let the cursor

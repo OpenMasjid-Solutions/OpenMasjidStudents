@@ -12,6 +12,39 @@ import { useTranslation } from 'react-i18next';
 import { CreditCard, Trash2 } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 
+/**
+ * The Autopay & cards TAB (0.44.0): every household this parent is linked to, each with its own cards
+ * and its own autopay switch.
+ *
+ * Per household on purpose — autopay is a per-family enrolment against a per-family Stripe Customer
+ * (§13.3), so one switch for a parent linked to two households would be a lie about what it does.
+ * Nearly every parent has exactly one, and then the heading is simply omitted.
+ */
+export function FamilyPayMethods() {
+  const { t } = useTranslation();
+  const q = trpc.portal.myFamily.useQuery();
+  const payConfig = trpc.portal.payConfig.useQuery();
+
+  if (q.isLoading) return <div className="fam-empty">{t('status.connecting')}</div>;
+  if (q.isError) return <div className="fam-empty">{t('family.loadError')}</div>;
+  const fams = q.data?.families ?? [];
+  if (!fams.length) return <div className="fam-empty">{t('family.noFamily')}</div>;
+  // Cards can go away under us (the platform unreachable, or the account unset) — say so rather than
+  // showing an empty tab the parent will read as broken.
+  if (!payConfig.data?.ready) return <div className="fam-empty">{t('family.payUnavailable')}</div>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {fams.map((fam) => (
+        <div key={fam.id}>
+          {fams.length > 1 && <h2 className="fam-section-title">{fam.name}</h2>}
+          <PayMethods familyId={fam.id} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function PayMethods({ familyId }: { familyId: string }) {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
@@ -33,7 +66,7 @@ export function PayMethods({ familyId }: { familyId: string }) {
 
   return (
     <section className="fam-section">
-      <h2>{t('family.autopayCards')}</h2>
+      <h2>{t('family.savedCards')}</h2>
 
       {cards.length === 0 ? (
         <div className="fam-empty">{t('family.noCards')}</div>
@@ -61,14 +94,16 @@ export function PayMethods({ familyId }: { familyId: string }) {
       )}
 
       {/* Autopay toggle — needs a card on file. */}
-      <div className="list-row glass" style={{ marginBlockStart: '0.75rem' }}>
+      <h2 style={{ marginBlockStart: '1.25rem' }}>{t('family.autopay')}</h2>
+      <div className="list-row glass">
         <div className="row-main">
-          <span className="row-title">{t('family.autopay')}</span>
-          <span className="row-sub">{enabled ? t('family.autopayOn') : t('family.autopayOff')}</span>
+          <span className="row-title">{enabled ? t('family.autopayIsOn') : t('family.autopayIsOff')}</span>
+          <span className="row-sub">{enabled ? t('family.autopayOn') : cards.length === 0 ? t('family.autopayNeedsCard') : t('family.autopayOff')}</span>
         </div>
         <label className="switch" style={{ marginInlineStart: 'auto' }}>
           <input
             type="checkbox"
+            aria-label={t('family.autopay')}
             checked={enabled}
             disabled={setAutopay.isPending || (!enabled && cards.length === 0)}
             onChange={async (e) => { await setAutopay.mutateAsync({ familyId, enabled: e.target.checked }); await refresh(); }}
@@ -76,7 +111,9 @@ export function PayMethods({ familyId }: { familyId: string }) {
           <span className="switch-track" aria-hidden="true" />
         </label>
       </div>
-      {!enabled && cards.length > 0 && <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('family.autopayConsent')}</p>}
+      {/* Consent copy stays visible while it is ON as well: a parent should be able to see what they
+          agreed to at the moment they are deciding whether to keep it (§13.3). */}
+      {cards.length > 0 && <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('family.autopayConsent')}</p>}
     </section>
   );
 }

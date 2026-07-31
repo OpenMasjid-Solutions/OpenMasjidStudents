@@ -9,9 +9,11 @@
  */
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { CreateFastifyContextOptions } from '@trpc/server/adapters/fastify';
+import { eq } from 'drizzle-orm';
 import { classifyOrigin, isHttpsRequest, roleAllowedFromOrigin, type Origin } from '../security/origin';
 import { getSession, touchSession, COOKIE } from '../auth/sessions';
-import type { Role, Session } from '../db/schema';
+import { db } from '../db';
+import { users, type Role, type Session } from '../db/schema';
 
 export function createContext({ req, res }: CreateFastifyContextOptions) {
   const origin: Origin = classifyOrigin(req);
@@ -66,4 +68,26 @@ export function auditActor(ctx: Context): { userId: string | null; role: string;
     role: ctx.session?.role ?? 'unknown',
     name: ctx.session?.username ?? null,
   };
+}
+
+/**
+ * Who to NAME on a money row — `payments.recorded_by_name` (§9).
+ *
+ * Deliberately NOT `auditActor`. The audit log wants the account identity, which is the username: it
+ * is unique, it is what an admin disables, and it is the right thing for a forensic trail. A payment
+ * row is read by the OFFICE, asking "who took this cash?", and the useful answer is the person's name
+ * — which staff accounts are created with (Staff → Name). So: the display name when there is one, the
+ * username when there isn't.
+ *
+ * An OpenMasjidOS SSO session has no local account, so there is no name of ours to use and it is
+ * recorded as plain "Admin". The platform does send a username, but it is untrusted display text from
+ * another system (§12) and this value is stored forever on an immutable money row.
+ */
+export function recordingActor(ctx: Context): { userId: string | null; role: string; name: string | null } {
+  const base = auditActor(ctx);
+  if (!ctx.session) return base;
+  if (ctx.session.source === 'sso') return { ...base, name: 'Admin' };
+  if (!base.userId) return base;
+  const row = db.select({ displayName: users.displayName, username: users.username }).from(users).where(eq(users.id, base.userId)).get();
+  return { ...base, name: row?.displayName?.trim() || row?.username || base.name };
 }

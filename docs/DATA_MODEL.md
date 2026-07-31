@@ -20,7 +20,7 @@
 `report_cards`, `transcripts`, `admissions` (+ `admission_notes`), `saved_reports`, `fee_plans`,
 `enrollment_fees`, `invoices`, `invoice_items`, `payments`, `payment_allocations`,
 `payment_methods`, `autopay_enrollments`, `autopay_runs`, `stripe_events`, `attachments`,
-`audit_log`, `fabric_inbox`, `settings`.
+`audit_log`, `alert_recipients`, `fabric_inbox`, `settings`.
 
 Non-negotiable rules live in §9 (Student IDs unique + always generated; exam subjects are a snapshot;
 term finals are frozen; report cards/transcripts immutable + versioned; gradebook snapshots
@@ -66,6 +66,42 @@ money paths). Every table: `id`, `created_at`, `updated_at`.
   our assumptions. Two notes: OS has **no `resources:` manifest key** (omit it); the public-URL
   endpoint `/api/fabric/site` is gated on a `domain:` capability our manifest can add later if needed
   (the injected `OPENMASJID_PUBLIC_URL` path works without it).
+
+- **Alerts fan out to three places, and an ALERT RECIPIENT IS AN ADDRESS, NOT AN ACCOUNT** (0.44.0,
+  `alerts/index.ts` + `alert_recipients`). There were two channels before, and both could be silently
+  dead: `notifyPlatform` posts to a masjid webhook most installs never configure, and `raiseAlert`
+  reaches OpenMasjidOS but only for ids declared in the **catalog entry the masjid installed from** — so
+  a newly-declared id is answered `400 Unknown alert` until a release lands, fail-soft, invisibly.
+  `payment-short` spent all of 0.43.0 in exactly that state. So `alertStaff(event, msg)` now also emails
+  the addresses the office listed, which needs no manifest, no catalog and no webhook.
+  - **Not a column on `users`**: the person who must know that autopay switched itself off is often not
+    someone who logs in (the treasurer, the imām, a trustee). A recipient row grants no access.
+  - **`events` as JSON, not a join table**: a handful of rows, always read and written whole, never
+    queried BY event. `alerts/index.ts` owns the catalogue and filters unknown ids on read, so a stale
+    row can never widen what it receives.
+  - **Two texts per alert, and `publicText` is REQUIRED**: `text` goes by email to the addresses an
+    admin typed and MAY name the household and the amount — without that an alert is unactionable, which
+    is what the old "a family's card failed" wording was. `publicText` goes to the masjid webhook and the
+    OpenMasjidOS alert channel, which are third-party sinks (a webhook is usually Slack or Discord), so
+    it carries no household and no name-beside-an-amount — an amount alone is fine, which is where §14's
+    line has always been. It is a required field rather than defaulting to `text` on purpose: a default
+    would leak a family's name into a chat channel the first time somebody forgot it, and nothing would
+    ever surface that. Neither text may carry a **Student ID** (a payment credential), card details, or
+    anything from a payment proof. Logs get the event id and a count only, never an address or a body.
+  - `platformAlertIds()` exists purely so `test/alerts.test.ts` can hold the code against
+    `manifest.yaml`. It only guards the half that lives in this repo — the catalog entry is the other
+    half, and a release has to carry it (§19 step 6).
+  - **Parent emails are gated inside `mail/notify.ts`**, not at the call sites: receipts are sent from
+    five places (portal, autopay, kiosk, donation site, and the office's own cash entry), and a check
+    per caller is a check somebody forgets. 0.44.0 also added the three that were missing — cash, kiosk
+    and donation-site payments told the family nothing before.
+
+- **`payments.recorded_by_name` is a DISPLAY name; `audit_log.actor_name` is the USERNAME** (0.44.0,
+  `recordingActor` vs `auditActor` in `trpc/trpc.ts`). Two different questions: the office asks "who
+  took this cash?" and wants a person's name, while the audit trail wants the account identity, which is
+  unique and is what an admin disables. An OpenMasjidOS SSO session has no local account, so it records
+  plain `Admin` — the platform's `username` is untrusted display text from another system (§12) and this
+  row is immutable.
 
 ## Origin policy — reconciliation with §12.4 (IMPORTANT)
 

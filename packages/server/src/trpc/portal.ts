@@ -19,7 +19,7 @@ import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getCurrency } from '../settings';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
 import { stripeClient, stripeReady, publishableKey } from '../payments/stripe';
-import { notifyPlatform } from '../fabric/platform';
+import { alertStaff, householdName } from '../alerts';
 import { sendReceipt } from '../mail/notify';
 import { makeLog } from '../logger';
 
@@ -218,7 +218,11 @@ export const portalRouter = router({
         { userId: ctx.session.userId ?? null, role: 'portal', name: 'portal' },
       );
       if (!res.duplicate) {
-        void notifyPlatform(`A tuition payment of ${(amount / 100).toFixed(2)} was received (portal).`, { title: 'Tuition payment' });
+        void alertStaff('payment-received', {
+          title: 'Tuition payment received',
+          text: `${householdName(input.familyId)} paid ${formatMoney(amount, getCurrency())} by card in the parent portal.`,
+          publicText: `A tuition payment of ${formatMoney(amount, getCurrency())} was received (portal).`,
+        });
         void sendReceipt(input.familyId, formatMoney(amount, getCurrency())); // §13.2.5 — "payment", never "donation"
       }
     }

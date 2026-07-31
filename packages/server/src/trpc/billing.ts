@@ -9,7 +9,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { and, eq, asc, desc, inArray } from 'drizzle-orm';
-import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
+import { router, adminProcedure, adminOrFinanceProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
 import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
@@ -37,6 +37,9 @@ import {
 } from '../settings';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { relationKind, dedupeNumbers, type RelationKind } from '../people/relations';
+import { alertStaff, householdName } from '../alerts';
+import { sendReceipt } from '../mail/notify';
+import { formatMoney } from '../db/money';
 
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
@@ -954,12 +957,15 @@ export const billingRouter = router({
       }),
     )
     .mutation(({ ctx, input }) => {
-      if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+      const stu = db.select({ id: students.id, familyId: students.familyId }).from(students).where(eq(students.id, input.studentId)).get();
+      if (!stu) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
       let res;
       try {
         res = recordPayment(
           { studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${input.occurredAt}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null, directed: input.directed ?? null },
-          auditActor(ctx),
+          // `recordingActor`, not `auditActor`: this name is stamped on the payment row the office
+          // reads back ("who took this cash?"), so it is the person's name rather than their username.
+          recordingActor(ctx),
         );
       } catch (e) {
         // The only thing the ledger refuses here is an instruction that does not fit the bills it
@@ -968,13 +974,25 @@ export const billingRouter = router({
         throw e;
       }
       audit(auditActor(ctx), 'payment.record', { entity: 'student', entityId: input.studentId, detail: { channel: input.channel, amountCents: input.amountCents, directedLines: input.directed?.length ?? 0 } });
+      if (!res.duplicate) {
+        // A receipt for cash, a check, Zelle — the parent who handed money over at the door gets the
+        // same written record as one who paid by card. This was simply missing before 0.44.0: five ways
+        // to pay, and only two of them told the family anything. Both sends are best-effort and gated
+        // (parent-email switch / the alert list), so nothing here can fail the payment.
+        void sendReceipt(stu.familyId, formatMoney(input.amountCents, getCurrency()));
+        void alertStaff('payment-received', {
+          title: 'Tuition payment received',
+          text: `${householdName(stu.familyId)} paid ${formatMoney(input.amountCents, getCurrency())} (${input.channel}), recorded by ${recordingActor(ctx).name ?? 'the office'}.`,
+          publicText: `A tuition payment of ${formatMoney(input.amountCents, getCurrency())} was received (${input.channel}).`,
+        });
+      }
       return res;
     }),
 
   reversePayment: adminOrFinanceProcedure.input(z.object({ paymentId: ID })).mutation(({ ctx, input }) => {
     const p = db.select({ id: payments.id, studentId: payments.studentId }).from(payments).where(eq(payments.id, input.paymentId)).get();
     if (!p) throw new TRPCError({ code: 'NOT_FOUND', message: 'Payment not found.' });
-    const r = reversePayment(input.paymentId, auditActor(ctx));
+    const r = reversePayment(input.paymentId, recordingActor(ctx));
     audit(auditActor(ctx), 'payment.reverse', { entity: 'student', entityId: p.studentId, detail: { paymentId: input.paymentId } });
     return r;
   }),
@@ -1012,7 +1030,8 @@ export const billingRouter = router({
     const err = periodKeyError(input.goLivePeriod);
     if (err) throw new TRPCError({ code: 'BAD_REQUEST', message: err });
     const plan = midYearPlan(input.goLivePeriod, input.schoolYearId ?? null, input.rows ?? []);
-    const actor = auditActor(ctx);
+    // A carry-in writes real ledger rows, so it is named the same way a cash payment is.
+    const actor = recordingActor(ctx);
 
     let owed = 0;
     let ahead = 0;
@@ -1038,7 +1057,7 @@ export const billingRouter = router({
     const floor = getBillingStartPeriod();
     if (!floor || periodBefore(input.goLivePeriod, floor)) setBillingStartPeriod(input.goLivePeriod);
     setMidYearDoneAt(new Date().toISOString());
-    audit(actor, 'billing.midYear.commit', { entity: 'billing', detail: { goLivePeriod: input.goLivePeriod, owed, ahead, skipped } });
+    audit(auditActor(ctx), 'billing.midYear.commit', { entity: 'billing', detail: { goLivePeriod: input.goLivePeriod, owed, ahead, skipped } });
     return { owed, ahead, skipped, startPeriod: getBillingStartPeriod() ?? input.goLivePeriod };
   }),
 

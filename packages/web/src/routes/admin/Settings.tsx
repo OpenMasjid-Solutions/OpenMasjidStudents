@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
-/** Admin settings — school name + currency, parent self-registration, email (SMTP), and the
- *  Stripe account tuition is collected into (+ the donation-site/kiosk tuition toggle). */
+/** Admin settings — school name + currency, parent self-registration, email alerts (who hears what),
+ *  and the Stripe account tuition is collected into (+ the donation-site/kiosk tuition toggle). */
 import { useState } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
+import { Trash2, Send } from 'lucide-react';
 import { fadeRise } from '../../lib/motion';
-import { trpc } from '../../lib/trpc';
+import { trpc, type RouterOutputs } from '../../lib/trpc';
+
+/** The alert catalogue comes from the server (alerts/index.ts owns it), so the UI never hard-codes the
+ *  event list — adding an event there makes a new checkbox appear here with no change on this side. */
+type AlertEvent = RouterOutputs['settings']['alertsGet']['events'][number];
+type AlertRecipient = RouterOutputs['settings']['alertsGet']['recipients'][number];
 
 export function Settings() {
   const { t } = useTranslation();
@@ -88,6 +94,56 @@ export function Settings() {
     } catch (e) {
       setMailMsg((e as Error).message);
     }
+  }
+
+  // Email alerts — who hears what, and which emails parents get.
+  const alerts = trpc.settings.alertsGet.useQuery();
+  const saveRecipient = trpc.settings.alertRecipientSave.useMutation();
+  const removeRecipient = trpc.settings.alertRecipientRemove.useMutation();
+  const testAlert = trpc.settings.alertTest.useMutation();
+  const saveParentEmails = trpc.settings.parentEmailsSet.useMutation();
+  const [newRecipient, setNewRecipient] = useState({ email: '', label: '' });
+  const [alertMsg, setAlertMsg] = useState<string | null>(null);
+
+  async function addRecipient() {
+    setAlertMsg(null);
+    try {
+      await saveRecipient.mutateAsync({ email: newRecipient.email.trim(), label: newRecipient.label.trim() || undefined });
+      setNewRecipient({ email: '', label: '' });
+      await utils.settings.alertsGet.invalidate();
+    } catch (e) {
+      setAlertMsg((e as Error).message);
+    }
+  }
+
+  /** Tick/untick one alert for one address. The whole list is sent back, so the server stays the only
+   *  place that decides what a valid event id is. */
+  async function toggleEvent(r: AlertRecipient, event: AlertEvent, on: boolean) {
+    setAlertMsg(null);
+    const events = on ? [...r.events, event] : r.events.filter((e) => e !== event);
+    try {
+      await saveRecipient.mutateAsync({ id: r.id, email: r.email, label: r.label ?? undefined, events });
+      await utils.settings.alertsGet.invalidate();
+    } catch (e) {
+      setAlertMsg((e as Error).message);
+    }
+  }
+
+  async function sendAlertTest(id: string) {
+    setAlertMsg(null);
+    try {
+      await testAlert.mutateAsync({ id });
+      setAlertMsg(t('settings.alertTestOk'));
+    } catch (e) {
+      setAlertMsg((e as Error).message);
+    }
+  }
+
+  async function toggleParentEmail(key: 'receipt' | 'autopayFailure') {
+    const cur = alerts.data?.parentEmails;
+    if (!cur) return;
+    await saveParentEmails.mutateAsync({ [key]: !cur[key] });
+    await utils.settings.alertsGet.invalidate();
   }
 
   // Payments — pick which OpenMasjidOS Stripe account tuition charges go through (§10).
@@ -229,9 +285,98 @@ export function Settings() {
         )}
       </section>
 
-      {/* No email settings here on purpose — OpenMasjidOS owns the mail provider and the From address,
-          so there is nothing for a masjid to configure twice. The "Reaching parents" panel above says
-          whether it is actually working. */}
+      {/* No mail PROVIDER settings here on purpose — OpenMasjidOS owns the provider and the From
+          address, so there is nothing for a masjid to configure twice. What is ours to decide is who
+          gets told what, which is the section below. */}
+
+      {/* ── Email alerts ────────────────────────────────────────────────────────
+          Two separate questions that used to have no answer at all: what the school emails PARENTS,
+          and who at the masjid hears when something needs a person. */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head"><h2>{t('settings.alerts')}</h2></div>
+        <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.75rem' }}>{t('settings.alertsHint')}</p>
+        {alertMsg && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{alertMsg}</div>}
+        {alerts.data && !alerts.data.mailAvailable && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{t('settings.alertsNoMail')}</div>}
+
+        {/* What parents get. Invites and password resets are deliberately not switchable — they are the
+            only way a parent reaches their account, so there is nothing to decide. */}
+        {/* Both sub-headings carry explicit margins: there is no global heading reset in app.css, so an
+            h3 would otherwise inherit the browser's own spacing. */}
+        <h3 className="label" style={{ marginBlock: '0 0.4rem' }}>{t('settings.parentEmails')}</h3>
+        {alerts.data && (
+          <>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
+              <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={alerts.data.parentEmails.receipt} onChange={() => void toggleParentEmail('receipt')} disabled={saveParentEmails.isPending} />
+              <span>{t('settings.parentReceipt')}<br /><span className="hint">{t('settings.parentReceiptHint')}</span></span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBlockStart: '0.5rem', cursor: 'pointer' }}>
+              <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={alerts.data.parentEmails.autopayFailure} onChange={() => void toggleParentEmail('autopayFailure')} disabled={saveParentEmails.isPending} />
+              <span>{t('settings.parentAutopay')}<br /><span className="hint">{t('settings.parentAutopayHint')}</span></span>
+            </label>
+            <p className="hint" style={{ marginBlockStart: '0.5rem' }}>{t('settings.parentAlwaysHint')}</p>
+          </>
+        )}
+
+        {/* Staff alerts: an address plus what it hears about. Adding one grants no access to anything. */}
+        <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.staffAlerts')}</h3>
+        <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>{t('settings.staffAlertsHint')}</p>
+        {alerts.data && alerts.data.recipients.length > 0 && (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>{t('settings.alertWho')}</th>
+                  {alerts.data.events.map((e) => <th key={e} style={{ fontSize: '0.72rem', whiteSpace: 'normal', minWidth: '5.5rem' }}>{t(`settings.ev_${e}`)}</th>)}
+                  <th className="actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {alerts.data.recipients.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      {r.label ? <>{r.label}<br /><span className="hint">{r.email}</span></> : r.email}
+                    </td>
+                    {alerts.data!.events.map((e) => (
+                      <td key={e} style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          aria-label={`${r.email} — ${t(`settings.ev_${e}`)}`}
+                          checked={r.events.includes(e)}
+                          disabled={saveRecipient.isPending}
+                          onChange={(ev) => void toggleEvent(r, e, ev.target.checked)}
+                        />
+                      </td>
+                    ))}
+                    <td className="actions">
+                      <button type="button" className="btn btn--ghost btn--sm" title={t('settings.alertSendTest')} onClick={() => void sendAlertTest(r.id)} disabled={testAlert.isPending}><Send size={14} /></button>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        title={t('common.remove')}
+                        onClick={async () => {
+                          if (!window.confirm(t('settings.alertRemoveConfirm', { email: r.email }))) return;
+                          await removeRecipient.mutateAsync({ id: r.id });
+                          await utils.settings.alertsGet.invalidate();
+                        }}
+                        disabled={removeRecipient.isPending}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {alerts.data && alerts.data.recipients.length === 0 && <p className="muted" style={{ fontSize: '0.9rem' }}>{t('settings.noRecipients')}</p>}
+        <div className="inline-form glass-inset">
+          <div className="field" style={{ flex: '2 1 14rem' }}><label className="label">{t('settings.alertEmail')}</label><input className="input glass-inset" value={newRecipient.email} onChange={(e) => setNewRecipient({ ...newRecipient, email: e.target.value })} placeholder="office@example.org" /></div>
+          <div className="field" style={{ flex: '1 1 9rem' }}><label className="label">{t('settings.alertLabel')}</label><input className="input glass-inset" value={newRecipient.label} onChange={(e) => setNewRecipient({ ...newRecipient, label: e.target.value })} placeholder={t('settings.alertLabelHint')} maxLength={80} /></div>
+          <button type="button" className="btn btn--primary" onClick={() => void addRecipient()} disabled={saveRecipient.isPending || !newRecipient.email.includes('@')}>{t('settings.alertAdd')}</button>
+          <p className="hint">{t('settings.alertAddHint')}</p>
+        </div>
+      </section>
 
       {/* Payments — choose which OpenMasjidOS Stripe account tuition (portal, donations, kiosk) uses. */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>

@@ -6,13 +6,49 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
+import { Repeat, ChevronRight } from 'lucide-react';
 import { staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { formatMoney } from '../../lib/money';
 import { PayNow, type ChosenLine } from './PayNow';
-import { PayMethods } from './PayMethods';
 
-export function FamilyHome() {
+/**
+ * The autopay offer, directly under the balance (0.44.0).
+ *
+ * This is the whole point of the tab split: the setup it leads to used to be at the very bottom of the
+ * page, under every bill and the entire payment history, which on a phone is several screens of
+ * scrolling past things a parent did not come here to read. So the offer comes to them, once, where
+ * they are already looking — and once it is on, the same card is how they check which card gets charged.
+ *
+ * Its own component because it needs a per-family query, and Home renders one of these per household.
+ */
+function AutopayCta({ familyId, onManage }: { familyId: string; onManage: () => void }) {
+  const { t } = useTranslation();
+  const statusQ = trpc.portal.autopayStatus.useQuery({ familyId });
+  if (!statusQ.data?.ready) return null; // card payments not configured → nothing to offer
+  const { enabled, cards, defaultPmId } = statusQ.data;
+  const card = cards.find((c) => c.id === defaultPmId) ?? cards.find((c) => c.isDefault) ?? cards[0];
+  const cardText = card ? `${(card.brand ?? 'card').toUpperCase()} ···· ${card.last4}` : '';
+
+  return (
+    <button type="button" className={`autopay-cta ${enabled ? 'is-on' : ''}`} onClick={onManage}>
+      <span className="ico" aria-hidden="true"><Repeat size={18} /></span>
+      <span className="txt">
+        <strong>{enabled ? t('family.autopayIsOn') : t('family.autopaySetUp')}</strong>
+        <span className="sub">
+          {enabled
+            ? cardText
+              ? t('family.autopayOnCard', { card: cardText })
+              : t('family.autopayOn')
+            : t('family.autopaySetUpHint')}
+        </span>
+      </span>
+      <span className="go" aria-hidden="true"><ChevronRight size={18} /></span>
+    </button>
+  );
+}
+
+export function FamilyHome({ onManageAutopay }: { onManageAutopay: () => void }) {
   const { t } = useTranslation();
   const q = trpc.portal.myFamily.useQuery();
   const payConfigQ = trpc.portal.payConfig.useQuery();
@@ -69,6 +105,9 @@ export function FamilyHome() {
                 <PayNow familyId={fam.id} owedCents={fam.balance.owedCents} currency={data.currency} onPaid={onPaid} />
               )}
             </div>
+
+            {/* Autopay — offered here, set up on its own tab. */}
+            <AutopayCta familyId={fam.id} onManage={onManageAutopay} />
 
             {/* Kids, each with the one thing a parent needs to pay anywhere: their Student ID. */}
             <section className="fam-section">
@@ -179,8 +218,8 @@ export function FamilyHome() {
               )}
             </section>
 
-            {/* Saved cards + autopay (hidden when card payments aren't configured). */}
-            <PayMethods familyId={fam.id} />
+            {/* Saved cards + autopay used to sit here, at the very bottom. They are a tab of their own
+                now (0.44.0) — reached from the card under the balance above. */}
           </motion.div>
         );
       })}
