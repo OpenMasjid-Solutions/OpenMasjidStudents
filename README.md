@@ -33,7 +33,67 @@ portal (network + uplink).
 > ledger and manual-payment billing all function; every integration degrades gracefully.
 > (Without the tunnel, the parent portal is network-only and card payments reconcile via the
 > daily Stripe job instead of live confirmation.)
+---
 
+## Acknowledgements
+
+Created by **Hasan Ismail**, with immense help from **Qari Ijaz** and **Osman Sayed**.
+
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <a href="https://github.com/hasan-ismail">
+          <img src="https://github.com/hasan-ismail.png?size=100" width="100px;" alt="Hasan Ismail"/><br />
+          <sub><b>Hasan Ismail</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://github.com/ijazshare">
+          <img src="https://github.com/ijazshare.png?size=100" width="100px;" alt="Qari Ijaz"/><br />
+          <sub><b>Qari Ijaz</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://github.com/osayed0001">
+          <img src="https://github.com/osayed0001.png?size=100" width="100px;" alt="Osman Sayed"/><br />
+          <sub><b>Osman Sayed</b></sub>
+        </a>
+      </td>
+    </tr>
+  </table>
+</div>
+
+Resources for this project were generously sponsored by **[An-Noor Institute](https://www.annoorusa.org/)**, **[Rihlatul Ilm Foundation](https://rifusa.org/)**, and **[AsmaTec Inc.](https://asmatec.com/)**.
+
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <a href="https://www.annoorusa.org/">
+          <img src="https://raw.githubusercontent.com/OpenMasjid-Solutions/OpenMasjidOS/master/assets/An-noor2.png" width="120px;" alt="An-Noor Institute"/><br />
+          <sub><b>An-Noor Institute</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://rifusa.org/">
+          <img src="https://raw.githubusercontent.com/OpenMasjid-Solutions/OpenMasjidOS/master/assets/RIFbetter.png" width="120px;" alt="Rihlatul Ilm Foundation"/><br />
+          <sub><b>Rihlatul Ilm Foundation</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://asmatec.com/">
+          <img src="https://raw.githubusercontent.com/OpenMasjid-Solutions/OpenMasjidOS/master/assets/Asmatec.png" width="120px;" alt="AsmaTec Inc."/><br />
+          <sub><b>AsmaTec Inc.</b></sub>
+        </a>
+      </td>
+    </tr>
+  </table>
+</div>
+
+May Allah reward everyone who made it possible.
+
+---
 ## Status
 
 Active development. See [`CHANGELOG.md`](CHANGELOG.md) for what has landed and `CLAUDE.md`
