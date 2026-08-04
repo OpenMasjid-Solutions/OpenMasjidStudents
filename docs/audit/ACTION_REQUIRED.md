@@ -96,7 +96,15 @@ JSON
 
 Per CLAUDE.md §19 this is a one-time step after the first build. Masjid hosts pull without authentication, so if it is private, installs fail. Worth re-checking since nothing in the repo can verify it.
 
-### 4.3 Consider a `renovate.json` or Dependabot config
+### 4.3 Bump the pinned Actions to their current majors (small, now safe)
+
+The first CI run emitted one non-blocking annotation:
+
+> Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: `actions/checkout@11d5960a…`
+
+I pinned every action to the SHA its **existing** tag resolved to, so this branch changed immutability and nothing else — a major action bump is a behaviour change, and before `ci.yml` existed there was no way to verify one. Now there is. Current majors at audit time: `checkout` v7.0.1, `docker/setup-qemu-action` v4.2.0, `docker/setup-buildx-action` v4.2.0, `docker/login-action` v4.6.0, `docker/build-push-action` v7.3.0. Bump them on a branch, let `verify` run, and for `build-image.yml` confirm the multi-arch push still works before tagging a release.
+
+### 4.4 Consider a `renovate.json` or Dependabot config
 
 Ten advisories remain, all requiring major bumps I deliberately did not ship. Automated PRs would surface these continuously instead of at audit time — and now that CI runs tests, such a PR is actually evaluable.
 

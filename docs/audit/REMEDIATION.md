@@ -165,6 +165,24 @@ job: verify
   step: Install -> npm ci ·  Typecheck -> npm run lint ·  Test -> npm run test ·  Build -> npm run build
 ```
 
+**And verified in GitHub's own environment** — the workflow's first real run, on PR #2 (run `30931843030`, 1m12s, Ubuntu, Node 22):
+
+```
+verify  Install    added 363 packages, and audited 366 packages in 9s
+verify  Typecheck  > tsc -p tsconfig.json --noEmit
+verify  Typecheck  > tsc --noEmit
+verify  Test        Test Files  48 passed (48)
+verify  Test             Tests  475 passed (475)
+verify  Test        Test Files   5 passed (5)
+verify  Test             Tests   52 passed (52)
+verify  Build      > tsc -p tsconfig.json
+  ✓ Install · ✓ Typecheck · ✓ Test · ✓ Build · ✓ Complete job
+```
+
+PR checks: `verify` **pass**, `cla` **pass**. `build-image` correctly did **not** run — it triggers only on pushes to `main` and `v*` tags, never on a pull request.
+
+**One annotation, non-blocking:** `actions/checkout@v4.4.0` targets Node 20, which GitHub has deprecated, so the runner forces it onto Node 24. It works today. I pinned to the *current* `v4` SHA deliberately rather than jumping to `v5`/`v7`, because a major action bump is a behaviour change I could not verify before the workflow existed. Now that it does, bumping is a safe follow-up — noted in `ACTION_REQUIRED.md`.
+
 **Known limitation, stated in the workflow itself:** this does not yet *block* a bad release. GitHub does not order independent workflows, so a red `verify` does not stop `build-image` from publishing. Gating needs a branch-protection rule requiring the `verify` check — admin-only, in `ACTION_REQUIRED.md`.
 
 ---
