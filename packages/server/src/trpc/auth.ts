@@ -76,6 +76,15 @@ export const authRouter = router({
       }
     }
 
+    // `setupRequired` IS answered over the tunnel, deliberately, and it is the one place this app
+    // trades a bit of install state for usability. The web shell reads it with the origin to show
+    // `SetupOnLanNotice` ("Set up the admin account from a device on the masjid's own Wi-Fi — for
+    // safety, the first admin can't be created over the internet") instead of a login form nobody can
+    // use yet. Reviewed in the 2026-08-04 audit (OMS-008) and kept: the only thing it tells an
+    // internet visitor is that first-run has not happened, and `setup` refuses every non-LAN origin
+    // regardless, so there is nothing to act on — whereas the notice is the difference between an
+    // admin understanding what to do next and staring at a rejected login. §14's "no install-state
+    // oracle" applies to the setup mutation's own error text, which stays uniform.
     return { authenticated: false as const, origin: ctx.origin, setupRequired: !hasAnyUser() };
   }),
 

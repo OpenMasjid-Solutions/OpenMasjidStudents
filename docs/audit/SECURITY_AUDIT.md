@@ -79,7 +79,7 @@ Every finding below ties to one of these six.
 | [OMS-007](#oms-007) | Container runs as root | Medium | Confirmed | `Dockerfile:25` | **Deferred** |
 | [OMS-002](#oms-002) | `@fastify/static` 8.3.0 — 4 HIGH advisories, unreachable in this config | Low | Confirmed | `packages/server/package.json:19` | **Deferred** |
 | [OMS-003](#oms-003) | `drizzle-orm` 0.38.3 — identifier-escaping SQLi, unreachable | Low | Confirmed | `packages/server/package.json:24` | **Deferred** |
-| [OMS-008](#oms-008) | `auth.session` leaks install state to the internet | Low | Confirmed | `trpc/auth.ts:79` | **Fixed** |
+| [OMS-008](#oms-008) | `auth.session` reports install state over the tunnel | ~~Low~~ **Info** | Confirmed | `trpc/auth.ts:79` | **Accepted by design** |
 | [OMS-011](#oms-011) | School logo interpolated into an HTML attribute unescaped | Low | Confirmed | `billing/statements.ts:185` | **Fixed** |
 | [OMS-012](#oms-012) | Statement HTML served with no CSP or hardening headers | Low | Confirmed | `billing/statementRoutes.ts:34` | **Fixed** |
 | [OMS-014](#oms-014) | Invite acceptance navigates outside the app under the tunnel prefix | Low | Confirmed | `web/routes/InviteAccept.tsx:31` | **Fixed** |
@@ -92,7 +92,9 @@ Every finding below ties to one of these six.
 | [OMS-019](#oms-019) | "Full RTL / Arabic-ready" is plumbing only | Info | Confirmed | `web/src/lib/i18n/` | **Reported** |
 | [OMS-020](#oms-020) | `externalRef` accepts an unbounded object shape | Info | Confirmed | `fabric/provider.ts:367` | **Reported** |
 
-**Counts:** 0 Critical · 0 High · 6 Medium · 10 Low · 4 Info.
+**Counts:** 0 Critical · 0 High · 6 Medium · 9 Low · 5 Info.
+
+One finding moved during remediation: **OMS-008 was downgraded from Low to Info and its fix reverted** after I found the disclosure is deliberate and load-bearing for the first-run UX. Recorded in full at [OMS-008](#oms-008) rather than quietly dropped, because "I was wrong about this one" is part of the result.
 
 ---
 
@@ -254,14 +256,14 @@ GHSA-gpj5-g38j-94v9 (HIGH): SQL injection via improperly escaped SQL *identifier
 
 ---
 
-### <a id="oms-008"></a>OMS-008 — `auth.session` leaks install state to the internet
-**Low · Confirmed · `trpc/auth.ts:79`**
+### <a id="oms-008"></a>OMS-008 — `auth.session` reports install state over the tunnel — **ACCEPTED BY DESIGN**
+**Info (downgraded from Low) · `trpc/auth.ts:79`**
 
 ```ts
 return { authenticated: false as const, origin: ctx.origin, setupRequired: !hasAnyUser() };
 ```
 
-Unauthenticated, reachable over the tunnel, and it answers "has this install created its admin account yet?" The very next procedure states the intended rule explicitly:
+Unauthenticated, reachable over the tunnel, and it answers "has this install created its admin account yet?" — while the very next procedure appears to forbid exactly that:
 
 ```ts
 // setup, auth.ts:86-87
@@ -269,11 +271,17 @@ Unauthenticated, reachable over the tunnel, and it answers "has this install cre
 // not the app is set up yet (no install-state oracle to the internet, §14).
 ```
 
-`setup` honours that; `session` undermines it four lines earlier.
+**I initially rated this Low and shipped a fix gating `setupRequired` to `lan`. I then reverted it, because the disclosure is deliberate and my fix was a regression.** [App.tsx:126](../../packages/web/src/App.tsx#L126) reads the flag *together with the origin*:
 
-**Impact is reconnaissance only.** `setupRequired: true` tells an internet attacker the app is unconfigured, but they still cannot act on it — `setup` refuses any non-LAN origin, so a first-run admin can only ever be created from the masjid network. Worth fixing because it is free and the stated invariant should hold.
+```tsx
+screen = s.origin === 'tunnel' ? <SetupOnLanNotice /> : <Setup />;
+```
 
-**Fix.** `setupRequired` is now computed only for `lan` origin and reported as `false` over the tunnel. Regression test added.
+`SetupOnLanNotice` is a purpose-built component with two dedicated i18n strings — *"Almost there / Set up the admin account from a device on the masjid's own Wi-Fi — for safety, the first admin can't be created over the internet."* Gating the flag would have replaced that with a generic login form on a fresh install, so an admin who exposed the tunnel before doing first-run would see a sign-in box, no accounts to sign in with, and no explanation.
+
+**Why accepting it is right.** The single bit disclosed is "first-run has not happened", and there is nothing an attacker can do with it: `setup` refuses every non-LAN origin at the top of the handler, so the first admin can only ever be created from the masjid network. §14's "no install-state oracle" constrains the setup mutation's *error text*, which does stay uniform. Trading one unactionable bit for a first-run experience that explains itself is the better engineering call, and it was made on purpose.
+
+**Action taken.** No behaviour change. Added a comment at the call site recording that this was reviewed and kept, and why — so the next person auditing does not read it as the oversight I first took it for.
 
 ---
 
