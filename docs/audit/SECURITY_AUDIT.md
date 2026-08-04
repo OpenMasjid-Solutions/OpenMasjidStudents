@@ -5,7 +5,8 @@
 
 **Date:** 2026-08-04
 **Audited commit:** `66b75e9ad778c4057424a3d7de7541c99ab54a77` (`main`, v0.44.0)
-**Rollback tag:** `pre-audit-2026-08-04`
+**Rollback tag:** `pre-audit-2026-08-04` (→ the audited commit)
+**Fix branch rebased onto:** `3a06857` (a README-only change that landed on `main` mid-audit)
 **Scope:** whole repository — server, web, database, container, CI, docs, and git history.
 
 ---

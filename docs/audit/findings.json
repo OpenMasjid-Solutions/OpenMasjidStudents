@@ -2,6 +2,7 @@
   "repo": "OpenMasjidStudents",
   "audit_date": "2026-08-04",
   "audited_commit": "66b75e9ad778c4057424a3d7de7541c99ab54a77",
+  "rebased_onto": "3a0685767d901c1de1b0c329157ecf3b775df660",
   "rollback_tag": "pre-audit-2026-08-04",
   "branch": "audit/security-2026-08-04",
   "merged_to_main": false,
@@ -20,7 +21,7 @@
       "line": 27,
       "summary": "nodemailer was a production dependency of the server workspace and therefore installed into the runtime image by `npm ci --omit=dev`, while never being imported anywhere (email goes through the platform's /api/fabric/email). It carried eight HIGH advisories including SMTP command injection, CRLF header injection, TLS certificate validation bypass, and file read / SSRF via the message-level raw option. @react-pdf/renderer and react were dead the same way after the v0.35.0 descope. Not reachable, but a mail library with SMTP-injection flaws has no business inside a payments container, and it accounted for 7 of 15 audit findings.",
       "status": "fixed",
-      "commit": "bf541c8"
+      "commit": "1a6b0de"
     },
     {
       "id": "OMS-004",
@@ -32,7 +33,7 @@
       "line": 259,
       "summary": "The allocation-clearing read selected every row of payment_allocations for every student and discarded non-matching rows in JavaScript, so the cost of one payment was proportional to every allocation the install had ever written. Reachable from all five money paths, and generatePeriod calls it once per student — a 200-child madrasa three years in was reading roughly three million rows per nightly auto-invoice run, inside one transaction, on a Raspberry Pi. Fixed with an indexed predicate selecting exactly the rows the JS filter kept.",
       "status": "fixed",
-      "commit": "bed8d2e"
+      "commit": "75a7321"
     },
     {
       "id": "OMS-005",
@@ -44,7 +45,7 @@
       "line": 160,
       "summary": "resetConfirm has always ended every session for the account; changePassword did not. It is the same gesture reached from inside the app and the only revocation a user can perform, since there is no session list and no sign-out-everywhere button. A parent who signed in on a borrowed phone and later changed their password precisely because they were worried left that cookie working for the rest of its 12-hour TTL. Now scoped to that user and sparing the caller's own token. Tier 2: behaviour-visible.",
       "status": "fixed",
-      "commit": "c944290"
+      "commit": "1ddd980"
     },
     {
       "id": "OMS-006",
@@ -56,7 +57,7 @@
       "line": 41,
       "summary": "All five actions in the image-publishing job referenced mutable major tags while the job held packages: write and a GHCR-scoped GITHUB_TOKEN. This workflow is the only thing that publishes the artifact masajid install, so a repointed tag does not leak data — it ships a backdoored container under a released version number. cla.yml already pinned its action to a SHA, so the standard was established. Pinned to the SHAs the tags resolved to, so behaviour is unchanged.",
       "status": "fixed",
-      "commit": "a21b766"
+      "commit": "1a991a0"
     },
     {
       "id": "OMS-016",
@@ -68,7 +69,7 @@
       "line": 16,
       "summary": "The repo had two workflows, neither of which ran a test. Every push to main published a Docker image to GHCR with nothing having verified that the code compiled or that the 499 tests passed. CLAUDE.md §19 and §9 both claim CI enforces version and alert-id consistency; neither could fire. §9 records the cost: payment-short was raisable in code but undeclared in the manifest for all of 0.43.0, so every such alert was dropped fail-soft, and the guard test written afterwards guarded nothing. Added a lint + test + build workflow on push and PR.",
       "status": "fixed",
-      "commit": "1e278a5"
+      "commit": "b79d3d4"
     },
     {
       "id": "OMS-007",
@@ -116,7 +117,7 @@
       "line": 185,
       "summary": "The only dynamic value in the server-rendered statement that skipped esc(), while the file's own header promised every dynamic value is escaped. Not exploitable: the value is regex-validated on write and re-validated on read against an anchored data-URI pattern whose alphabet contains no quote or angle bracket, magic bytes must match the declared MIME, SVG is excluded, and only an admin can set it. Fixed because correctness rested entirely on a regex two modules away with no local signal that HTML safety depended on it.",
       "status": "fixed",
-      "commit": "4368e3d"
+      "commit": "c39b714"
     },
     {
       "id": "OMS-012",
@@ -128,7 +129,7 @@
       "line": 34,
       "summary": "A page assembled by string concatenation containing every child's Student ID and the family's payment history, served same-origin with no Content-Security-Policy, nosniff, referrer policy, or framing protection — while /api/logo in index.ts already set a policy of that shape. Added default-src 'none'; img-src data:; form-action 'none'; frame-ancestors 'none'; base-uri 'none' plus nosniff and no-referrer. 'unsafe-inline' is retained for the one authored style block and Print button, a documented compromise chosen for zero rendering-regression risk; the policy still cuts every external exfiltration channel.",
       "status": "fixed",
-      "commit": "4368e3d"
+      "commit": "c39b714"
     },
     {
       "id": "OMS-014",
@@ -140,7 +141,7 @@
       "line": 31,
       "summary": "window.location.assign('/') was the only navigation in the web app that skipped withBase() and the only location.assign in the codebase. An invite link is opened over the OS tunnel by definition, where the app is served under a prefix like /students, so a parent who had just successfully created their account was redirected to the OS dashboard root — and the session cookie's Path is scoped to that same prefix, so they landed on a page it is not even sent to. Reads as a failed signup, on the primary parent onboarding path.",
       "status": "fixed",
-      "commit": "fd5d200"
+      "commit": "0477f4f"
     },
     {
       "id": "OMS-015",
@@ -152,7 +153,7 @@
       "line": 364,
       "summary": "The contract has carried currency since v1 and this app parsed it, length-validated it, then dropped it. Amounts are integer cents rendered in the school's own currency, so a consumer sending 'eur' against a usd install had EUR 150.00 recorded as $150.00. Requires a consumer bug to trigger, but is silent. Fixed to the safe half only: the mismatch is logged and the money is still recorded, because changing the response would alter a wire contract four repos share and because Stripe has already captured the card — a 422 would strand a real charge. Cross-repo resolution documented in ACTION_REQUIRED.md.",
       "status": "partial",
-      "commit": "28824ac"
+      "commit": "77250d6"
     },
     {
       "id": "OMS-010",
@@ -200,7 +201,7 @@
       "line": 79,
       "summary": "Initially rated Low and fixed by gating setupRequired to LAN origin; the fix was then REVERTED. App.tsx:126 reads the flag together with the origin to render SetupOnLanNotice, a purpose-built component with dedicated i18n copy explaining that the first admin cannot be created over the internet. Gating it would have shown a fresh install's tunnel visitor a generic login form with no accounts and no explanation. The disclosed bit is unactionable because setup refuses every non-LAN origin. Downgraded to Info and accepted by design; a comment now records the decision.",
       "status": "accepted-by-design",
-      "commit": "a106291"
+      "commit": "07a959c"
     },
     {
       "id": "OMS-017",
@@ -212,7 +213,7 @@
       "line": 1,
       "summary": "CLAUDE.md is declared the single source of truth but describes a Stripe webhook route, stripe_events dedupe table, SMTP settings, a public /apply admissions form, and a 30-row teacher/gradebook/report-card permission matrix — none of which exist after the v0.35.0 descope and the move to platform email. docs/PAYMENTS.md and docker-compose.yml comments carry the same drift, and cla.yml asserted main was branch-protected when the API returns 404 Branch not protected. Fixed the comments in files already being touched; rewriting the specification is owner work.",
       "status": "partial",
-      "commit": "3f530cd"
+      "commit": "9e37e35"
     },
     {
       "id": "OMS-018",
@@ -224,7 +225,7 @@
       "line": 12,
       "summary": "freshApp() returns tRPC callers with fake contexts and never constructs a Fastify instance, so @fastify/static serving, the SPA notFoundHandler, rewriteUrl base-path stripping, the JSON parser's empty-body path, /api/logo, and /api/public/appearance have no HTTP-level coverage. This is the direct reason OMS-002 and OMS-009 were deferred. Partially addressed: statementRoute.test.ts is the first such coverage, driving the statement route's self-gating access wall through a real Fastify instance.",
       "status": "partial",
-      "commit": "4368e3d"
+      "commit": "c39b714"
     },
     {
       "id": "OMS-019",
@@ -260,7 +261,7 @@
       "line": 1,
       "summary": "Five transitive packages had non-breaking fixes available: postcss (moderate, sourceMappingURL arbitrary .map read), find-my-way (high, HTTP/2 DoS — Fastify's router), fast-uri at two versions (high, host confusion via backslash authority), and brace-expansion (high, unbounded expansion OOM). Applied via npm audit fix after confirming by dry-run that it changed five packages and added, removed, and majored nothing. find-my-way is the only one touching runtime behaviour and is covered by the fabric and statement-route tests, which drive real Fastify routing.",
       "status": "fixed",
-      "commit": "80d5f44"
+      "commit": "c232305"
     }
   ]
 }

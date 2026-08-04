@@ -3,7 +3,9 @@
 
 # Remediation — what shipped
 
-**Branch:** `audit/security-2026-08-04` · **Base:** `66b75e9` (`main`, v0.44.0) · **Rollback tag:** `pre-audit-2026-08-04`
+**Branch:** `audit/security-2026-08-04` · **Audited at:** `66b75e9` (`main`, v0.44.0) · **Rebased onto:** `3a06857` · **Rollback tag:** `pre-audit-2026-08-04`
+
+`main` advanced during the audit (`3a06857` "Add acknowledgements and resource sponsors" — README only, no code). The branch was rebased onto it cleanly, and the full ship gate was re-run afterwards: `npm ci` exit 0, lint clean, 527 tests passing, build clean. Commit SHAs below are post-rebase.
 
 **Not merged to `main` by me.** Pushing to `main` triggers `build-image.yml`, which pushes a multi-arch image to GHCR tagged both `:0.44.0` and `:latest` — a published artifact, and it would move the `:0.44.0` tag off the code actually released as v0.44.0. That is the one condition that overrides the instruction to push, so this is a PR.
 
@@ -11,7 +13,7 @@
 
 ## Read this first — Tier 2 changes (behaviour-visible)
 
-### 1. Changing a password now signs you out on your other devices — `c944290` [OMS-005]
+### 1. Changing a password now signs you out on your other devices — `1ddd980` [OMS-005]
 
 **What a user will notice.** Someone with the portal open on a phone and a laptop who changes their password on one is now signed out on the other. Previously both stayed live for up to 12 hours.
 
@@ -19,7 +21,7 @@
 
 **Where to look if something feels off in the next few days:** unexpected sign-outs after a password change, especially for staff who keep the admin UI open on two machines. The caller's own session is deliberately spared, so the tab you change it in keeps working.
 
-### 2. A mismatched `currency` on `record-payment` now logs a warning — `28824ac` [OMS-015]
+### 2. A mismatched `currency` on `record-payment` now logs a warning — `77250d6` [OMS-015]
 
 **What changes:** one `WARN fabric:` line when a Fabric consumer sends a currency that isn't the school's. **No behaviour change on the money path** — the payment is still recorded exactly as before, deliberately (see the finding). If Donations or Kiosk send a currency at all, expect log noise; that noise *is* the finding.
 
@@ -31,25 +33,25 @@ Nothing else in this batch alters an API response, a schema, or user-visible beh
 
 | Finding | Severity | Commit | One line |
 |---|---|---|---|
-| [OMS-001] | Medium | `bf541c8` | Removed unused `nodemailer` (8 HIGH advisories), `@react-pdf/renderer`, `react` from the server |
-| [OMS-004] | Medium | `bed8d2e` | `reallocateStudent` no longer scans the whole `payment_allocations` table |
-| [OMS-006] | Medium | `a21b766` | Release workflow's 5 Actions pinned to commit SHAs |
-| [OMS-016] | Medium | `1e278a5` | Added CI that runs lint + test + build |
-| [OMS-011] | Low | `4368e3d` | Logo escaped in the statement HTML |
-| [OMS-012] | Low | `4368e3d` | CSP + `nosniff` + `no-referrer` on the statement route |
-| [OMS-014] | Low | `fd5d200` | Invite acceptance redirects through `withBase` |
-| [OMS-015] | Low | `28824ac` | Currency mismatch surfaced (safe half only) |
-| [OMS-022] | Low | `80d5f44` | 5 patch-level transitive dependency bumps |
-| [OMS-017] | Info | `3f530cd` | Corrected `cla.yml`'s false branch-protection claim |
-| [OMS-008] | Info | `a106291` | **Fix reverted** — disclosure is deliberate; see below |
+| [OMS-001] | Medium | `1a6b0de` | Removed unused `nodemailer` (8 HIGH advisories), `@react-pdf/renderer`, `react` from the server |
+| [OMS-004] | Medium | `75a7321` | `reallocateStudent` no longer scans the whole `payment_allocations` table |
+| [OMS-006] | Medium | `1a991a0` | Release workflow's 5 Actions pinned to commit SHAs |
+| [OMS-016] | Medium | `b79d3d4` | Added CI that runs lint + test + build |
+| [OMS-011] | Low | `c39b714` | Logo escaped in the statement HTML |
+| [OMS-012] | Low | `c39b714` | CSP + `nosniff` + `no-referrer` on the statement route |
+| [OMS-014] | Low | `0477f4f` | Invite acceptance redirects through `withBase` |
+| [OMS-015] | Low | `77250d6` | Currency mismatch surfaced (safe half only) |
+| [OMS-022] | Low | `c232305` | 5 patch-level transitive dependency bumps |
+| [OMS-017] | Info | `9e37e35` | Corrected `cla.yml`'s false branch-protection claim |
+| [OMS-008] | Info | `07a959c` | **Fix reverted** — disclosure is deliberate; see below |
 
-Plus `5a758e9` (the audit report) and `a106291` (the OMS-008 correction). Eleven commits, each individually revertable.
+Plus `f2794e3` (the audit report) and `07a959c` (the OMS-008 correction). Eleven commits, each individually revertable.
 
 ---
 
 ## Per-finding detail
 
-### OMS-001 — unused `nodemailer` in the production image — `bf541c8`
+### OMS-001 — unused `nodemailer` in the production image — `1a6b0de`
 
 **Changed:** removed `nodemailer`, `@types/nodemailer`, `@react-pdf/renderer`, and `react` from `packages/server/package.json`. Corrected the `vitest.config.ts` comment that justified its timeout by the (removed) PDF renderer.
 
@@ -79,7 +81,7 @@ Audit count: **15 → 14**, high **7 → 6**.
 
 ---
 
-### OMS-004 — full-table scan on every money write — `bed8d2e`
+### OMS-004 — full-table scan on every money write — `75a7321`
 
 **Changed:** `billing/ledger.ts` — the allocation-clearing read is now `inArray(paymentAllocations.paymentId, liveIdList)` instead of an unfiltered `.all()` with a JS filter. Empty-set case short-circuited.
 
@@ -107,7 +109,7 @@ The test compares **row ids**, not totals — a delete-and-rebuild would produce
 
 ---
 
-### OMS-006 — Actions pinned to mutable tags — `a21b766`
+### OMS-006 — Actions pinned to mutable tags — `1a991a0`
 
 **Changed:** all five actions in `build-image.yml` now reference full commit SHAs, with the resolved version in a trailing comment.
 
@@ -139,7 +141,7 @@ I did **not** also upgrade to the newer majors available (checkout v7, docker/* 
 
 ---
 
-### OMS-016 — no CI ran the tests — `1e278a5`
+### OMS-016 — no CI ran the tests — `b79d3d4`
 
 **Changed:** added `.github/workflows/ci.yml` — `npm ci` → `npm run lint` → `npm run test` → `npm run build`, on pushes to `main` and all pull requests. `permissions: contents: read`, no secrets, `concurrency` cancel-in-progress, Actions SHA-pinned.
 
@@ -167,7 +169,7 @@ job: verify
 
 ---
 
-### OMS-011 + OMS-012 — statement escaping and response hardening — `4368e3d`
+### OMS-011 + OMS-012 — statement escaping and response hardening — `c39b714`
 
 **Changed:** `esc()` around the logo data URI in `billing/statements.ts`; `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer` on the route in `billing/statementRoutes.ts`.
 
@@ -194,7 +196,7 @@ Full suite after: **48 files / 473 server tests + 4 files / 44 web tests**, lint
 
 ---
 
-### OMS-014 — invite acceptance left the app — `fd5d200`
+### OMS-014 — invite acceptance left the app — `0477f4f`
 
 **Changed:** `window.location.assign('/')` → `window.location.assign(withBase('/'))` in `web/routes/InviteAccept.tsx`.
 
@@ -214,7 +216,7 @@ It pins the helper rather than the screen because this workspace has **no compon
 
 ---
 
-### OMS-015 — currency accepted and ignored — `28824ac`
+### OMS-015 — currency accepted and ignored — `77250d6`
 
 **Changed:** `fabric/provider.ts` logs a warning when a consumer's `currency` differs from the school's. Added the module's first logger. **The payment is still recorded exactly as before.**
 
@@ -231,7 +233,7 @@ Full suite: 48 files / 475 server + 5 files / 52 web. Lint exit 0.
 
 ---
 
-### OMS-022 — transitive dependency bumps — `80d5f44`
+### OMS-022 — transitive dependency bumps — `c232305`
 
 **Changed:** `npm audit fix`, which here is five patch bumps and nothing else — verified by `--dry-run` first (`added: 0, removed: 0, changed: 5`, no majors):
 
@@ -249,7 +251,7 @@ brace-expansion  5.0.7 → 5.0.9    high      unbounded expansion OOM
 
 ---
 
-### OMS-008 — fix shipped, then reverted — `a106291`
+### OMS-008 — fix shipped, then reverted — `07a959c`
 
 I rated this Low and gated `setupRequired` to LAN origin. **I then reverted it**, because [`App.tsx:126`](../../packages/web/src/App.tsx#L126) reads the flag together with the origin to render `SetupOnLanNotice` — a purpose-built component with dedicated i18n copy ("*Set up the admin account from a device on the masjid's own Wi-Fi — for safety, the first admin can't be created over the internet*"). My change would have replaced that with a generic login form on a fresh install: no accounts to sign in with, no explanation.
 
@@ -279,7 +281,7 @@ Each of these is a real finding I chose not to ship. In every case the reason is
 
 ## Before / after
 
-| | Before (`66b75e9`) | After (`3f530cd`) |
+| | Before (`66b75e9`) | After (this branch) |
 |---|---|---|
 | `npm run lint` | exit 0 | exit 0 |
 | Server tests | 45 files / **455** | 48 files / **475** |
@@ -304,26 +306,26 @@ Remaining 10 advisories, all deliberately deferred and documented: `@fastify/sta
 Safe in any order; each commit is self-contained. Re-run `npm run test` after any revert that touches `package.json` or `package-lock.json` (add `npm install` first).
 
 ```bash
-git revert 3f530cd   # OMS-017  cla.yml comment
-git revert 80d5f44   # OMS-022  transitive dependency bumps  (then: npm install)
-git revert 28824ac   # OMS-015  currency warning
-git revert fd5d200   # OMS-014  invite redirect through withBase
-git revert 4368e3d   # OMS-011 + OMS-012  statement escaping + CSP headers
-git revert a106291   # OMS-008  comment only (no behaviour to restore)
-git revert c944290   # OMS-005  ← the Tier 2 one: restores sessions surviving a password change
-git revert 1e278a5   # OMS-016  removes the CI workflow
-git revert a21b766   # OMS-006  un-pins the Actions
-git revert bed8d2e   # OMS-004  restores the full-table scan  (then: npm install)
-git revert bf541c8   # OMS-001  restores nodemailer/react-pdf/react  (then: npm install)
+git revert 9e37e35   # OMS-017  cla.yml comment
+git revert c232305   # OMS-022  transitive dependency bumps  (then: npm install)
+git revert 77250d6   # OMS-015  currency warning
+git revert 0477f4f   # OMS-014  invite redirect through withBase
+git revert c39b714   # OMS-011 + OMS-012  statement escaping + CSP headers
+git revert 07a959c   # OMS-008  comment only (no behaviour to restore)
+git revert 1ddd980   # OMS-005  ← the Tier 2 one: restores sessions surviving a password change
+git revert b79d3d4   # OMS-016  removes the CI workflow
+git revert 1a991a0   # OMS-006  un-pins the Actions
+git revert 75a7321   # OMS-004  restores the full-table scan  (then: npm install)
+git revert 1a6b0de   # OMS-001  restores nodemailer/react-pdf/react  (then: npm install)
 ```
 
-**Most likely single revert you'd want:** `git revert c944290` — the only change a user can feel.
+**Most likely single revert you'd want:** `git revert 1ddd980` — the only change a user can feel.
 
 ### Revert the whole run
 
 ```bash
 # On the audit branch, keeping history (preferred):
-git revert --no-commit bf541c8..3f530cd && git commit -m "Revert the 2026-08-04 audit batch"
+git revert --no-commit 1a6b0de..9e37e35 && git commit -m "Revert the 2026-08-04 audit batch"
 npm install && npm run test
 
 # Or simply don't merge the PR — nothing has reached main.
