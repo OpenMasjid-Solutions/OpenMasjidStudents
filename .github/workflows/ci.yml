@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 OpenMasjid-Solutions
+
+name: CI
+
+# Typecheck, test, and build on every push to main and every pull request.
+#
+# WHY THIS EXISTS (added by the 2026-08-04 audit — docs/audit/SECURITY_AUDIT.md, OMS-016). Until now
+# the repo had no workflow that ran a test. The only one built the Docker image and pushed it to GHCR,
+# so a push to main published the artifact masajid install WITHOUT anything having checked that the
+# code compiles or that the 499 tests still pass. Two places in CLAUDE.md said otherwise — §19 claims
+# `version.test.ts` makes a half-finished version bump "fail CI instead of shipping", and §9 claims
+# `test/alerts.test.ts` "fails the build" when the code can raise an alert id the manifest does not
+# declare. Both tests exist and are well written; neither could ever fire, because nothing ran them.
+#
+# That is not hypothetical. CLAUDE.md §9 records that `payment-short` was raisable in code but missing
+# from the manifest for the whole of 0.43.0, so every one of those alerts was answered 400 "Unknown
+# alert" and silently dropped. A guard test was written afterwards — and with no CI it guarded nothing.
+#
+# Deliberately NOT a duplicate of the image build: this is the fast gate (lint + test + build, ~2 min),
+# while build-image.yml does the slow multi-arch publish. Note they are independent — GitHub does not
+# order workflows, so a red run here does not by itself block a publish. Making the release depend on
+# this gate needs a branch-protection rule requiring the `verify` check on main (see
+# docs/audit/ACTION_REQUIRED.md), which only a repo admin can add.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only, and no secrets are used. This workflow must never gain the ability to publish anything:
+# it runs on pull_request, which means it executes code from forks.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a commit SHA, not a tag — see the note in build-image.yml (OMS-006).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` (not `install`) so the lockfile is authoritative and a drifted lockfile fails here.
+      # Native modules (better-sqlite3) build for the runner arch; the tests need a real SQLite.
+      - name: Install
+        run: npm ci
+
+      # tsc --noEmit across both workspaces. The web workspace imports the server's AppRouter type, so
+      # this is also what catches a router change that breaks the UI's types — something `vite build`
+      # does NOT check, since it strips types without verifying them.
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      # Last, because it is the slowest and the least likely to fail on its own once types are clean.
+      - name: Build
+        run: npm run build
