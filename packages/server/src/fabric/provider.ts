@@ -36,6 +36,10 @@ import { alertStaff, householdName } from '../alerts';
 import { sendReceipt } from '../mail/notify';
 import { normalizeStudentCode } from '../billing/studentCodes';
 import { givenName, lastInitial } from '../people/names';
+import { makeLog } from '../logger';
+
+/** Ids, codes and counts only — never a Student ID, a name, or a request body (§14). */
+const payLog = makeLog('fabric');
 
 /** Constant-time check of the platform-proof header against our own secret. Disabled (always false)
  *  when no secret is configured — so a standalone install never accepts Fabric calls. */
@@ -466,6 +470,26 @@ export function registerFabricProvider(app: FastifyInstance): void {
     }
     if (!shares.length) {
       return reply.code(422).send({ error: { code: 'invalid_allocation', message: 'That family has no student to record a payment against.' } });
+    }
+
+    // The contract has carried `currency` since v1 and this app has never read it: amounts are stored
+    // as integer cents and rendered in the school's own currency, so a consumer that sent "eur" against
+    // a usd install would have EUR 150.00 recorded as $150.00 — the same integer, different money, with
+    // nothing on any screen to suggest it. It takes a consumer bug to happen (both read the currency
+    // from /fabric/billing/info), but it is silent, and silent is how it survives to a year-end total.
+    //
+    // LOGGED, NOT REFUSED. Turning a currently-accepted request into a 422 is a change to a wire
+    // contract four repos share, and this is the money path: Stripe has already taken the card by the
+    // time we are called, so rejecting here would strand a real charge and send a consumer outbox into
+    // a permanent retry. So we record the money and make the mismatch visible instead. The contract-side
+    // resolution is in docs/audit/ACTION_REQUIRED.md under Cross-repo. Currency codes are not PII.
+    const schoolCurrency = getCurrency();
+    if (d.currency && d.currency.trim().toLowerCase() !== schoolCurrency.toLowerCase()) {
+      payLog.warn('record-payment currency does not match this school — recorded in the school currency', {
+        sent: d.currency.trim().toLowerCase(),
+        school: schoolCurrency.toLowerCase(),
+        channel: d.channel,
+      });
     }
 
     const occurredAt = d.occurredAt ? new Date(d.occurredAt) : new Date();

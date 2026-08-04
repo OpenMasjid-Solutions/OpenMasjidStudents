@@ -9,7 +9,7 @@
  * The kiosk-facing half of the contract — identify, the shared lockout, v1 back-compat — lives in
  * fabricIdentify.test.ts.
  */
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { freshApp, makeCtx } from './harness';
 import { students, families, invoices, payments, paymentAllocations, invoiceItems, studentFees, feePlans, charges, chargeItems } from '../src/db/schema';
@@ -207,6 +207,46 @@ describe('record-payment + check (§11.3/§11.4)', () => {
     const r = await call('record-payment', { v: 2, idempotencyKey: 'k', familyId: 'fam_nope', amountCents: 100, channel: 'kiosk' });
     expect(r.statusCode).toBe(404);
     expect(r.json().error.code).toBe('family_not_found');
+  });
+
+  /**
+   * A mismatched `currency` is WARNED ABOUT, never refused [OMS-015].
+   *
+   * The field has been in the contract since v1 and this app has never read it — amounts are integer
+   * cents rendered in the school's own currency, so "eur" against a usd install records EUR 150.00 as
+   * $150.00. Refusing it is not an option on this path: Stripe has already taken the card by the time
+   * we are called, so a 422 would strand a real charge and leave a consumer outbox retrying into a
+   * deterministic failure forever. It also cannot change shape unilaterally — four repos share this
+   * contract (see docs/audit/ACTION_REQUIRED.md).
+   *
+   * So the guarantee to pin is that the money still lands. The log line is the visibility.
+   */
+  it('records the money even when the currency does not match, and says so in the log', async () => {
+    const { familyId } = await seed();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const r = await call('record-payment', { v: 2, idempotencyKey: 'pi_EUR', familyId, amountCents: 3000, currency: 'eur', channel: 'kiosk' });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject({ recorded: true, duplicate: false });
+      // Money is never lost over a currency label: the ledger applied it (5000 → 2000).
+      expect((await caller('admin').billing.familyBilling({ familyId })).balance.owedCents).toBe(2000);
+      expect(warn.mock.calls.flat().join(' ')).toMatch(/currency does not match/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('says nothing when the currency matches', async () => {
+    const { familyId } = await seed();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // 'USD' — the check is case-insensitive, so the school's own currency in caps is not a mismatch.
+      const r = await call('record-payment', { v: 2, idempotencyKey: 'pi_USD', familyId, amountCents: 1000, currency: 'USD', channel: 'kiosk' });
+      expect(r.statusCode).toBe(200);
+      expect(warn.mock.calls.flat().join(' ')).not.toMatch(/currency does not match/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   /**
