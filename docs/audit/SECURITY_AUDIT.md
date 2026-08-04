@@ -91,8 +91,9 @@ Every finding below ties to one of these six.
 | [OMS-018](#oms-018) | No HTTP-layer tests for the boot path | Info | Confirmed | `packages/server/test/` | **Reported** |
 | [OMS-019](#oms-019) | "Full RTL / Arabic-ready" is plumbing only | Info | Confirmed | `web/src/lib/i18n/` | **Reported** |
 | [OMS-020](#oms-020) | `externalRef` accepts an unbounded object shape | Info | Confirmed | `fabric/provider.ts:367` | **Reported** |
+| [OMS-022](#oms-022) | Vulnerable transitive dependencies at patch-fixable versions | Low | Confirmed | `package-lock.json` | **Fixed** |
 
-**Counts:** 0 Critical · 0 High · 6 Medium · 9 Low · 5 Info.
+**Counts:** 0 Critical · 0 High · 6 Medium · 10 Low · 5 Info · **21 total**.
 
 One finding moved during remediation: **OMS-008 was downgraded from Low to Info and its fix reverted** after I found the disclosure is deliberate and load-bearing for the first-run UX. Recorded in full at [OMS-008](#oms-008) rather than quietly dropped, because "I was wrong about this one" is part of the result.
 
@@ -395,6 +396,23 @@ No `TZ` is set in the `Dockerfile`, `docker-compose.yml`, or `manifest.yaml`, so
 **User-visible consequence.** For a masjid west of UTC, a payment recorded in the evening displays as the next day. Entering cash at 21:00 on 4 Aug in US Central (02:00 UTC on 5 Aug) prints "2026-08-05" on the statement handed to the parent and in the CSV the treasurer reconciles against. `periodOf()` ([period.ts:57](../../packages/server/src/billing/period.ts#L57)) additionally uses *local* time while everything else uses UTC — harmless while the container is UTC, latent if anyone ever sets `TZ`.
 
 **Deferred:** a correct fix needs a masjid-configurable timezone applied consistently to rendering, `todayIso()`, and period derivation. That changes which day a cron run attributes work to and which month a bill lands in — a Tier 2 change with real billing consequences that should not be guessed at inside a security sweep.
+
+---
+
+### <a id="oms-022"></a>OMS-022 — Vulnerable transitive dependencies at patch-fixable versions
+**Low · Confirmed · `package-lock.json`**
+
+Five transitive packages had non-breaking fixes available. Recorded as its own finding because it was remediated as a distinct commit rather than folded into [OMS-001](#oms-001):
+
+| Package | From → To | Severity | Advisory |
+|---|---|---|---|
+| `find-my-way` | 9.6.0 → 9.7.0 | high | GHSA-c96f-x56v-gq3h — HTTP/2 DoS. **This is Fastify's router**, so it is the one on a live request path. |
+| `fast-uri` | 3.1.3 → 3.1.5 | high | GHSA-v2hh-gcrm-f6hx / GHSA-7p8r-x3mc-p8w7 — host confusion via backslash authority delimiter |
+| `fast-uri` | 4.1.0 → 4.1.2 | high | same pair, under `fast-json-stringify` |
+| `brace-expansion` | 5.0.7 → 5.0.9 | high | GHSA-mh99-v99m-4gvg / GHSA-rgw5-rvv9-x895 — unbounded expansion OOM |
+| `postcss` | 8.5.19 → 8.5.25 | moderate | GHSA-fxqj-rqcc-2cmp — attacker-controlled `sourceMappingURL` reads arbitrary `.map` files |
+
+**Fix.** `npm audit fix`, after confirming by `--dry-run` that it touched exactly these five and did nothing else (`added: 0, removed: 0, changed: 5`, no major versions). `find-my-way` is covered by the Fabric provider tests and the new statement-route tests, both of which drive real Fastify routing through `inject`.
 
 ---
 
