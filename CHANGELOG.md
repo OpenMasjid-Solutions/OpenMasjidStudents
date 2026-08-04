@@ -11,52 +11,39 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [0.45.0]
 
-A security and code-health release. No new features — this is the result of a full audit of the app
-(recorded in `docs/audit/`), and every change below either fixes something that was quietly going wrong
-or removes a way it could. Nothing needs doing after updating.
-
-### Fixed
-
-- **Accepting a parent-portal invite now actually lands in the portal.** A parent who opened their
-  invite link and set a password was signed in correctly — and then sent to a blank, unrelated page,
-  because the app forgot it was being served under a sub-address when reached over the internet. Their
-  account existed and worked, but the very first thing they saw said otherwise, so the reasonable
-  conclusion was that signing up had failed. This was the first step of the parent portal for every
-  family who joins by invite.
-- **Generating a month's invoices no longer gets slower every year.** The work of attaching payments to
-  bills was re-reading the whole payment history of the whole school for each child, so the nightly
-  invoice run and the Generate button got heavier as the years accumulated — most noticeably on a
-  Raspberry Pi, and worst at the largest madāris. It now reads only the child in front of it. The
-  balances, the ticks on the year grid and the order money lands in are all exactly as before.
-
-### Security
-
-- **Changing your password now signs you out on your other devices.** It always ended every session
-  when you reset a *forgotten* password, but not when you changed a password you still knew — which is
-  the version of that action people actually reach for, and the only one available inside the app. So a
+- **Security: changing your password now signs you out on your other devices.** Resetting a
+  *forgotten* password always did that; changing a password you still knew did not — and that is the
+  version of it people actually reach for, as well as the only one available from inside the app. So a
   parent who signed in on a borrowed phone, forgot to sign out, and later changed their password from
-  home precisely because they were worried about it, left that phone signed in for up to another twelve
-  hours. It doesn't any more. The device you change it on stays signed in; every other one is signed
-  out.
-- **The app no longer ships a mail library it never used.** Sending email moved to OpenMasjidOS a while
-  back, but the old mail component was still being installed into every copy of the app — and eight
-  security problems had since been found in it, including ways to tamper with an outgoing message. It
-  was never switched on and never could have sent anything, but it has no business being in there, so
-  it is gone. A leftover PDF component from the old report-card feature went with it, which also makes
-  the download smaller.
-- **Printed statements are served with stricter browser protections.** A family statement carries every
-  child's Student ID and the household's payment history, so the page is now locked down: it cannot load
-  or send anything to another website, cannot be embedded in one, and the masjid's own logo is handled
-  as data rather than as part of the page.
-- **The release itself is harder to tamper with.** The build that produces each new version now names
-  every tool it uses by exact fingerprint instead of by a label that could be moved to point somewhere
-  else — the sort of substitution that would otherwise let someone slip altered code into an update.
-  Five other shared components were updated to versions with security fixes, one of them in the part of
-  the app that answers every web request.
-- **Every release now runs the full test suite before it can ship.** All 527 checks — the money and
-  allocation rules, the access walls, the version numbers, the alert list — ran only on a developer's
-  machine before now, so nothing stopped a broken build from being published. They run automatically on
-  every change from here on.
+  home precisely because they were worried left that phone signed in for up to another twelve hours.
+  **The device you change it on stays signed in; every other one is signed out.** Nothing else about
+  signing in changes.
+- **Fixed: accepting a parent-portal invite left the family on a blank page.** A parent who opened
+  their invite link and set a password was signed in correctly — and then sent somewhere else
+  entirely, because the app forgot it was being served under a sub-address when reached over the
+  internet. Their account existed and worked, but the first thing they saw said otherwise, so the
+  reasonable conclusion was that signing up had failed. This was the first step for every family who
+  joins by invite.
+- **Fixed: generating a month's invoices got slower every year.** Matching payments to bills was
+  re-reading the whole school's payment history once for every child, so the nightly run and the
+  Generate button got heavier as the years added up — most noticeably on a Raspberry Pi and at the
+  largest madāris. Balances, the ticks on the year grid and the order money lands in are all exactly as
+  before.
+- **Security: the app no longer ships a mail library it never used.** Sending email moved to
+  OpenMasjidOS a while ago, but the old mail component was still being installed into every copy of the
+  app, and eight security problems had since been found in it. It was never switched on and could never
+  have sent anything, so nobody was at risk — but it had no business being there. A leftover PDF
+  component from the old report cards went with it, which makes the download smaller too.
+- **Printed family statements are served locked down.** A statement carries every child's Student ID
+  and the household's payment history, so the page can no longer load anything from another website or
+  send anything to one, and it cannot be embedded in one.
+- The release process is harder to tamper with: every build step is now pinned to an exact verified
+  version, so the app you install is the app we built. Five shared components were updated to close
+  published vulnerabilities, one of them in the part that answers every web request. Nothing about how
+  the app looks or behaves changes.
+- Housekeeping: all 527 automatic checks — the money and allocation rules, the access walls, the
+  version numbers, the alert list — now run before any release can ship, where before they only ever
+  ran on a developer's machine.
 
 ## [0.44.0]
 
@@ -509,10 +496,10 @@ or removes a way it could. Nothing needs doing after updating.
 
 ## [0.37.0]
 
-The office can now reach everything v0.36.0 built. That release shipped the school year, terms,
-courses, classes, mass apply, the charge catalogue and per-student fee overrides **on the server
-only** — around 28 procedures with no screen behind them — so on a real install none of it could be
-used, and the v0.36.0 notes below have been corrected to say what actually shipped.
+- **The office can now reach everything v0.36.0 built.** That release shipped the school year, terms,
+  courses, classes, mass apply, the charge catalogue and per-student fee overrides **on the server
+  only** — around 28 procedures with no screen behind them — so on a real install none of it could be
+  used, and the v0.36.0 notes below have been corrected to say what actually shipped.
 
 ### Added
 
@@ -609,10 +596,10 @@ used, and the v0.36.0 notes below have been corrected to say what actually shipp
 
 ## [0.36.0]
 
-> **Corrected after release.** The entries below originally described the school year, terms,
-> courses, classes, mass apply, the charge catalogue and the fee-override note as delivered
-> features. They were built on the server but had **no user interface**, so none of them could be
-> reached on a real install. The wording now says what shipped; the screens arrived in 0.37.0.
+- **Corrected after release.** The entries below originally described the school year, terms,
+  courses, classes, mass apply, the charge catalogue and the fee-override note as delivered
+  features. They were built on the server but had **no user interface**, so none of them could be
+  reached on a real install. The wording now says what shipped; the screens arrived in 0.37.0.
 
 ### Added
 
@@ -1355,7 +1342,8 @@ used, and the v0.36.0 notes below have been corrected to say what actually shipp
   app's LAN TLS proxy also sets `x-forwarded-proto: https`. See `docs/DATA_MODEL.md`.
 
 ## [0.1.0]
-Initial scaffolding, published to the OpenMasjidAPPS catalog: monorepo skeleton (npm
-workspaces), Fastify + tRPC + SQLite (WAL) via Drizzle with migrations-on-boot, the
-OpenMasjidOS "liquid glass" design system ported verbatim (i18n/RTL, dark/light, Amiri
-Naskh), the `students/billing` contract + docs, and the multi-arch → GHCR CI.
+
+- Initial scaffolding, published to the OpenMasjidAPPS catalog: monorepo skeleton (npm
+  workspaces), Fastify + tRPC + SQLite (WAL) via Drizzle with migrations-on-boot, the
+  OpenMasjidOS "liquid glass" design system ported verbatim (i18n/RTL, dark/light, Amiri
+  Naskh), the `students/billing` contract + docs, and the multi-arch → GHCR CI.
