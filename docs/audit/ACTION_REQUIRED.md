@@ -58,11 +58,23 @@ This is a genuinely good result and it is architectural, not luck:
 
 Related, same coordination: **`externalRef` is `z.record(z.unknown())`** — unbounded key count, depth, and size, capped only by the 1 MiB body limit, and persisted as JSON on the immutable `payments` row. The contract only ever needs four keys (`stripePaymentIntentId`, `stripeChargeId`, `stripeAccountId`, `via`). Narrowing it is a request-shape change, so it belongs in the same conversation. [OMS-020]
 
-### 3.2 Verify consumers call `identify` before `lookup`
+### 3.2 OpenMasjidOS: chown the app's data volume during an update — enables [OMS-007]
+
+Needed only if you take option (a) above. When updating an app whose new image runs as a non-root user, the OS is the only component positioned to fix volume ownership: it has the Docker socket, it knows the volume name, and it already stops and recreates the container. The app itself cannot — `cap_drop: ALL` denies uid 0 `CAP_CHOWN` (proved above).
+
+Roughly: before starting the new container, if the image declares a non-root `Config.User` and the data volume's root is owned by uid 0, run `chown -R <uid>:<gid>` over it once. Verified remedy for this app:
+
+```bash
+docker run --rm -v omos-students_data:/data alpine:3 chown -R 1000:1000 /data
+```
+
+Without it, `students` would come up with `SQLITE_READONLY` on every existing install. Worth raising in the OS audit as a general platform capability rather than a students-specific patch — every app that ever wants to stop running as root hits this same wall.
+
+### 3.3 Verify consumers call `identify` before `lookup`
 
 Not a change here, a **verification there.** The name-confirmation step is what replaced the PIN in contract v2 — a parent who mistypes an ID is supposed to see a stranger's first name and stop, *before* any balance appears. A consumer that skips straight to `lookup` silently removes that control and turns a mistyped ID into someone else's balance on screen. I could not check this from inside this repo. Confirm both `OpenMasjidDonations` and `OpenMasjidKiosk` call `identify` first and require an explicit confirmation.
 
-### 3.3 Confirm the per-caller lookup rate limit exists in the broker
+### 3.4 Confirm the per-caller lookup rate limit exists in the broker
 
 §14 places throttling at three layers: per-IP in the consumers, **per-caller in the OS broker**, and per-ID here (which I verified — 6 failures/hour, shared across `identify`, `lookup`, and self-registration). Since a Student ID is `ABC1234`, roughly 10k guesses per name prefix, the per-ID lockout is the load-bearing control, but it means a sweep across *many* IDs is only bounded by the broker. Worth confirming that layer is real in `OpenMasjidOS`.
 
@@ -112,28 +124,63 @@ Ten advisories remain, all requiring major bumps I deliberately did not ship. Au
 
 ## 5. Deferred findings that need your decision
 
-### 5.1 Container runs as root [OMS-007] — Medium
+### 5.1 Container runs as root [OMS-007] — Medium — **now tested; my earlier recommendation was wrong**
 
 The runtime stage never drops privileges. Mitigated by `cap_drop: ALL` + `no-new-privileges:true`, but a code-execution bug still gets uid 0 in-container and unrestricted write to `/data`.
 
-**I did not fix it because the obvious fix breaks every existing install.** `docker-compose.yml` uses a named volume, whose ownership Docker seeds from the image *only on first creation*. Deployed masajid have root-owned volumes, so `USER node` alone means the app cannot open `students.db` — a boot failure on update, for everyone, at once.
+**Correction.** An earlier version of this section recommended installing `gosu` and dropping privileges in an entrypoint that first `chown`s `/data`. **That cannot work with this compose file, and I have now proved it.** `cap_drop: ALL` removes `CAP_CHOWN` and `CAP_SETUID` from uid 0 as well, so both halves of that pattern fail outright:
 
-The migration-safe shape, which needs testing against a real upgraded install before it ships:
+```
+as shipped (root + cap_drop ALL):
+  chown /data to node   -> chown: changing ownership of '/data': Operation not permitted
+  setpriv --reuid=node  -> setpriv: setresuid failed: Operation not permitted
+
+without cap_drop:
+  chown /data to node   -> OK
+  setpriv --reuid=node  -> 1000
+```
+
+Making that entrypoint work would need `cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]` — handing back the capabilities that most ease privilege escalation, in order to achieve a privilege drop. That is a worse container than the one we have.
+
+**What actually works** is setting the user at build time: the kernel applies it at exec, so it needs no capability at all (`--user 1000:1000` under `cap_drop: ALL` → `uid=1000`). `setpriv` is already in the image, so **no new package is needed either** — the `gosu` install was unnecessary.
+
+The tested change is:
 
 ```dockerfile
-RUN apt-get install -y --no-install-recommends gosu
-COPY docker-entrypoint.sh /usr/local/bin/
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
-```
-```sh
-#!/bin/sh
-# Runs as root, hands /data to the app user, then drops privileges for the process itself.
-set -e
-chown -R node:node /data || echo "warn: could not chown /data; continuing as-is" >&2
-exec gosu node "$@"
+EXPOSE 8080
+
+# /data is handed to `node` BEFORE the VOLUME declaration on purpose: Docker seeds a fresh named
+# volume's ownership from the image's directory, but DISCARDS changes made to a VOLUME path in any
+# later layer — a chown after this line silently does nothing.
+RUN mkdir -p /data && chown node:node /data
+VOLUME ["/data"]
+USER node
 ```
 
-Verify by: creating a volume with the **current** image (root-owned), then starting the **new** image against that same volume and confirming it boots, migrates, and writes. Bundle [OMS-009] (digest-pin `node:22-slim` to its **manifest-list** digest, or the arm64 build breaks) into the same tested change.
+**Verified in WSL2 (Ubuntu 26.04, Docker 29.6.2), built from this repo:**
+
+| Case | Result |
+|---|---|
+| Fresh volume (new install) | Boots as `uid=1000(node)`, `/data` is `node:node 755`, writes `students.db` **and** the WAL, reports `0.45.1`. Bonus: `/app` becomes read-only to the app. |
+| **Existing root-owned volume** | **Fails to boot** — `SqliteError: attempt to write a readonly database`, `code: 'SQLITE_READONLY'` |
+| Same volume after a one-time chown | Boots as 1000, and the pre-existing database is preserved |
+
+**So it is safe to ship only alongside a migration.** The one-time command, verified to fix the failing case:
+
+```bash
+docker run --rm -v <the app's data volume>:/data alpine:3 chown -R 1000:1000 /data
+```
+
+**Your decision, and it is genuinely yours:**
+
+- **(a) Ship it with OpenMasjidOS running that chown during the app update.** The right home for it — masajid never see it. Cross-repo, so it needs the OS side first; noted in §3 below.
+- **(b) Ship it and document the manual step.** Every masjid must run one command or their tuition app stops booting. I would not do this to a volunteer treasurer.
+- **(c) Ship a startup check first, then the user change later.** Right now an unwritable `/data` surfaces as a raw `SQLITE_READONLY` stack trace. A boot-time check that says *"/data is not writable by this container — run: docker run --rm -v …"* is worth having regardless, and it turns (b) from a mystery outage into a two-minute fix.
+- **(d) Leave it as root.** Defensible: `cap_drop: ALL` + `no-new-privileges` + no `docker.sock` already removes most of what root buys an attacker.
+
+My recommendation: **(c) then (a)**. The startup check is small, breaks nothing, and is useful on its own; the user change then lands cleanly once the OS can chown.
+
+Bundle [OMS-009] (digest-pin `node:22-slim` to its **manifest-list** digest, or the arm64 build breaks) into whichever change ships.
 
 ### 5.2 Login throttling: per-account or not? [OMS-010] — Low, genuinely ambiguous
 

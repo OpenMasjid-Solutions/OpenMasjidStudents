@@ -93,8 +93,9 @@ Every finding below ties to one of these six.
 | [OMS-019](#oms-019) | "Full RTL / Arabic-ready" is plumbing only | Info | Confirmed | `web/src/lib/i18n/` | **Reported** |
 | [OMS-020](#oms-020) | `externalRef` accepts an unbounded object shape | Info | Confirmed | `fabric/provider.ts:367` | **Reported** |
 | [OMS-022](#oms-022) | Vulnerable transitive dependencies at patch-fixable versions | Low | Confirmed | `package-lock.json` | **Fixed** |
+| [OMS-023](#oms-023) | Fastify `maxParamLength` option deprecated, removed in fastify@6 | Info | Confirmed at runtime | `src/index.ts:66` | **Reported** |
 
-**Counts:** 0 Critical · 0 High · 6 Medium · 10 Low · 5 Info · **21 total**.
+**Counts:** 0 Critical · 0 High · 6 Medium · 10 Low · 6 Info · **22 total**.
 
 One finding moved during remediation: **OMS-008 was downgraded from Low to Info and its fix reverted** after I found the disclosure is deliberate and load-bearing for the first-run UX. Recorded in full at [OMS-008](#oms-008) rather than quietly dropped, because "I was wrong about this one" is part of the result.
 
@@ -225,7 +226,20 @@ CMD ["node", "packages/server/dist/index.js"]     # uid 0
 
 The `node:22-slim` base provides an unused `node` user (uid 1000). Partially mitigated in [docker-compose.yml](../../docker-compose.yml): `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, `tmpfs: /tmp`, no `docker.sock`, no `privileged`, no host networking. Residual risk: a code-execution bug gets uid 0 inside the container and unrestricted write to `/data`, which holds minors' PII and the entire payment ledger.
 
-**Why I did not ship this.** `docker-compose.yml` mounts a **named volume** (`data:/data`). Docker seeds a named volume's ownership from the image only when the volume is *first created*. Every already-deployed masjid has a volume whose files are root-owned, so adding `USER node` would leave the app unable to open `students.db` — **every existing install would fail to boot on update.** The correct fix keeps root as the entrypoint, `chown`s `/data`, then drops to `node` via `gosu`/`setpriv`, which needs an entrypoint script and an extra package. I could not verify that against a real root-owned volume in this run, and an unverified change here breaks every masjid at once. Deferred deliberately; migration path in `ACTION_REQUIRED.md`.
+**Why I did not ship this.** `docker-compose.yml` mounts a **named volume** (`data:/data`). Docker seeds a named volume's ownership from the image only when the volume is *first created*. Every already-deployed masjid has a volume whose files are root-owned, so adding `USER node` would leave the app unable to open `students.db` — **every existing install would fail to boot on update.**
+
+**Since verified in WSL2** (Ubuntu 26.04, Docker 29.6.2), which changed two conclusions:
+
+1. **The `gosu`-entrypoint fix this report originally recommended cannot work.** `cap_drop: ALL` strips `CAP_CHOWN` and `CAP_SETUID` from uid 0 too, so a chown-then-drop entrypoint fails at both steps (`chown: Operation not permitted`, `setpriv: setresuid failed`). It would need those capabilities added back — weakening the container to achieve a privilege drop. A build-time `USER` needs no capability (the kernel applies it at exec) and `setpriv` is already in the image, so **no extra package was ever needed**.
+2. **The predicted breakage is real and now has an exact signature.** Built from this repo with `RUN mkdir -p /data && chown node:node /data` before `VOLUME` plus `USER node`:
+
+| Case | Result |
+|---|---|
+| Fresh volume | Boots as `uid=1000(node)`, `/data` `node:node 755`, writes `students.db` + WAL, reports `0.45.1`; `/app` also becomes read-only to the app |
+| Existing root-owned volume | **Fails** — `SqliteError: attempt to write a readonly database` (`SQLITE_READONLY`) |
+| Same volume after `chown -R 1000:1000 /data` | Boots as 1000, pre-existing database preserved |
+
+So the change is correct and ready, and still **must not ship without a migration** — which belongs in OpenMasjidOS's update path, since only the platform can chown the volume. Options and the exact commands are in `ACTION_REQUIRED.md` §5.1/§3.2.
 
 ---
 
@@ -417,6 +431,23 @@ Five transitive packages had non-breaking fixes available. Recorded as its own f
 
 ---
 
+### <a id="oms-023"></a>OMS-023 — Fastify option deprecated, removed in the next major — **REPORTED**
+**Info · Confirmed at runtime · `packages/server/src/index.ts:66`**
+
+Found only by booting the released image; no test surfaces it, because the test harness never constructs a Fastify instance for the main app ([OMS-018](#oms-018)). Every container start logs:
+
+```
+(node:7) [FSTDEP022] FastifyWarning: The router options for maxParamLength property access is
+deprecated. Please use "options.routerOptions" instead for accessing router options. The router
+options will be removed in `fastify@6`.
+```
+
+The option itself is load-bearing and well justified — [index.ts:61-66](../../packages/server/src/index.ts#L61-L66) raises `maxParamLength` to 5000 because tRPC's `httpBatchLink` packs a comma-joined procedure list into one GET path, and Fastify's default of 100 truncates the batch to a 414. The comment notes this was caught by driving a browser, since `createCaller` tests bypass HTTP entirely.
+
+**Impact today: none** — it is a warning, the behaviour is correct, and it costs one noisy line per boot. It matters on the next Fastify major, where the top-level form is removed and the batch endpoint would silently start 414-ing again. Worth moving to `routerOptions: { maxParamLength: 5000 }` when Fastify 6 is on the horizon; **not** worth a change to the HTTP boot layer of a just-released version on my own initiative. Now that a container can be booted and probed, this is also cheap to verify when someone does it.
+
+---
+
 ### <a id="oms-017"></a>OMS-017 — Documentation describes removed subsystems as present — **PARTIAL**
 **Info · Confirmed**
 
@@ -509,10 +540,18 @@ Stating these explicitly, because "no finding" is a result:
 
 **Fully reviewed:** every file in `packages/server/src` (55 files) and the security-relevant parts of `packages/web/src`; all 31 migrations for FK actions and indexes; `Dockerfile`, `docker-compose.yml`, `manifest.yaml`, both workflows, `.gitignore`, `.dockerignore`; both lockfile audits; git history across all branches for secret patterns.
 
-**What I could not assess without runtime access:**
+**Runtime access arrived after the audit** (WSL2 Ubuntu 26.04 + Docker 29.6.2, 2026-08-04), which closed gaps 1 and 2 below in part. What that added:
 
-1. **No live install exercised.** Findings are from static analysis plus the existing 499-test suite. I did not run the container, drive a browser, or exercise Stripe test mode. Anything requiring observed behaviour — actual `@fastify/static` traversal attempts, real tunnel header injection, a genuine multi-arch build — is unverified either way.
-2. **The Docker image was never built.** [OMS-007](#oms-007) and [OMS-009](#oms-009) are deferred partly for this reason.
+- **The released v0.45.1 artifact is verified end-to-end.** Pulled by digest (`sha256:a0332756…`, 131 MB, linux/amd64), booted on a fresh volume with `cap_drop: ALL` + `no-new-privileges`: `/healthz` → `{"ok":true}`, migrations applied, `students.db` + WAL + snapshot on the volume, SPA served, standalone mode correct, no `ERROR` lines. Critically it **reports `"version":"0.45.1"`** — the §19 drift bug (0.41.0 and 0.42.0 both claiming 0.40.0) is genuinely closed, not just asserted by a test.
+- **[OMS-007](#oms-007) is now fully characterised** — including that this report's original fix recommendation was wrong. See that finding.
+- **The test suite runs on Ubuntu with a Linux `better_sqlite3.node`** (ELF x86-64, SQLite 3.53.2, Node v22.23.2), matching CI and the container rather than approximating on Windows. 527 tests green there.
+- **[OMS-023](#oms-023)** was found only by booting the image — a Fastify deprecation that no test surfaces.
+
+**What remains unassessed:**
+
+1. **No browser, no Stripe test mode.** The UI was never driven, and no card was charged. Anything needing a real payment round-trip — Elements, SCA, the autopay ladder against live Stripe — is still unverified either way.
+2. **The multi-arch build was not reproduced locally.** The published index carries `linux/amd64` + `linux/arm64` and I verified both are present, but only amd64 was executed; nothing here ran on arm64 hardware, which is the actual Raspberry Pi target. [OMS-009](#oms-009) stays deferred for that reason.
+3. **`@fastify/static` traversal was not attempted.** Its advisories were assessed as unreachable by configuration, not by exploitation; that reasoning is unchanged and untested.
 3. **The OS platform is a black box.** `/api/fabric/{session,email,alert,notify,site,stripe}` behaviour is taken from this repo's comments. Notably, [OMS-016](#oms-016)-style silent failure already bit this app once via the platform's alert allow-list.
 4. **Consumer repos not read.** Donations and Kiosk are being audited in parallel; whether they actually send a correct `currency` ([OMS-015](#oms-015)) or call `identify` before `lookup` is unverified here.
 5. **The Stripe account is untouched.** No API calls, no webhook config inspection, no key validity check — Tier 3 by instruction.

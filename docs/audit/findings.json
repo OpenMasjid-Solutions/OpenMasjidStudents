@@ -7,9 +7,36 @@
   "branch": "audit/security-2026-08-04",
   "merged_to_main": false,
   "merge_blocked_reason": "push to main triggers build-image.yml, which publishes a multi-arch image to GHCR tagged :0.44.0 and :latest",
-  "counts": { "critical": 0, "high": 0, "medium": 6, "low": 10, "info": 5, "total": 21 },
-  "baseline": { "lint": "pass", "tests": 499, "build": "pass", "npm_audit": { "critical": 1, "high": 7, "moderate": 7, "total": 15 } },
-  "after": { "lint": "pass", "tests": 527, "build": "pass", "npm_audit": { "critical": 1, "high": 3, "moderate": 6, "total": 10 } },
+  "counts": {
+    "critical": 0,
+    "high": 0,
+    "medium": 6,
+    "low": 10,
+    "info": 6,
+    "total": 22
+  },
+  "baseline": {
+    "lint": "pass",
+    "tests": 499,
+    "build": "pass",
+    "npm_audit": {
+      "critical": 1,
+      "high": 7,
+      "moderate": 7,
+      "total": 15
+    }
+  },
+  "after": {
+    "lint": "pass",
+    "tests": 527,
+    "build": "pass",
+    "npm_audit": {
+      "critical": 1,
+      "high": 3,
+      "moderate": 6,
+      "total": 10
+    }
+  },
   "findings": [
     {
       "id": "OMS-001",
@@ -75,11 +102,11 @@
       "id": "OMS-007",
       "title": "Container runs as root",
       "severity": "medium",
-      "confidence": "confirmed",
+      "confidence": "confirmed (tested at runtime)",
       "category": "container",
       "file": "Dockerfile",
       "line": 25,
-      "summary": "The runtime stage never drops privileges, so a code-execution bug gets uid 0 in-container and unrestricted write to /data, which holds minors' PII and the entire payment ledger. Partially mitigated by cap_drop: ALL and no-new-privileges in compose. Deferred: compose uses a named volume whose ownership Docker seeds from the image only on first creation, so adding USER node would leave every already-deployed masjid unable to open students.db — a boot failure for everyone on update. The correct fix chowns /data then drops privileges via gosu, which could not be verified against a real root-owned volume in this run.",
+      "summary": "The runtime stage never drops privileges, so a code-execution bug gets uid 0 in-container and unrestricted write to /data, which holds minors PII and the entire payment ledger. Partially mitigated by cap_drop: ALL and no-new-privileges in compose. VERIFIED IN WSL2 2026-08-04, which corrected this reports own recommendation: a chown-then-drop entrypoint (gosu/setpriv) CANNOT work here, because cap_drop: ALL strips CAP_CHOWN and CAP_SETUID from uid 0 as well — both steps fail with Operation not permitted, and making them work would mean adding back the capabilities that most ease privilege escalation. A build-time USER needs no capability and setpriv was already in the image, so no extra package was needed. Built and tested: a fresh volume boots as uid 1000 with /data node:node, writes the DB and WAL, and reports 0.45.1 (and /app becomes read-only to the app); an EXISTING root-owned volume fails with SqliteError SQLITE_READONLY, confirming the upgrade breakage; after a one-time chown -R 1000:1000 the same volume boots with its data preserved. Ready to ship, but only alongside a migration run by OpenMasjidOS during update.",
       "status": "deferred",
       "commit": null
     },
@@ -262,6 +289,33 @@
       "summary": "Five transitive packages had non-breaking fixes available: postcss (moderate, sourceMappingURL arbitrary .map read), find-my-way (high, HTTP/2 DoS — Fastify's router), fast-uri at two versions (high, host confusion via backslash authority), and brace-expansion (high, unbounded expansion OOM). Applied via npm audit fix after confirming by dry-run that it changed five packages and added, removed, and majored nothing. find-my-way is the only one touching runtime behaviour and is covered by the fabric and statement-route tests, which drive real Fastify routing.",
       "status": "fixed",
       "commit": "c232305"
+    },
+    {
+      "id": "OMS-023",
+      "title": "Fastify maxParamLength option deprecated, removed in fastify@6",
+      "severity": "info",
+      "confidence": "confirmed (observed at runtime)",
+      "category": "forward-compatibility",
+      "file": "packages/server/src/index.ts",
+      "line": 66,
+      "summary": "Every container boot logs FSTDEP022: top-level maxParamLength access is deprecated in favour of options.routerOptions and will be removed in fastify@6. Found only by booting the released image — no test surfaces it, because the harness never builds a Fastify instance for the main app (OMS-018). The option is load-bearing: it is raised to 5000 so tRPC httpBatchLink batched GETs are not truncated to a 414 by Fastify default of 100. No impact today; on the next Fastify major the batch endpoint would silently start failing again. Move to routerOptions when Fastify 6 approaches; not worth touching the HTTP boot layer of a just-released version unprompted.",
+      "status": "reported",
+      "commit": null
     }
-  ]
+  ],
+  "runtime_verification": {
+    "environment": "WSL2 Ubuntu 26.04 LTS, Docker 29.6.2, Node v22.23.2 linux/x64",
+    "released_image_verified": "sha256:a033275625f9914e45331e454652dd76c6fa95c021fad241fef4e6a5d4523d56",
+    "checks": [
+      "pulled by digest (131 MB, linux/amd64)",
+      "boots under cap_drop ALL + no-new-privileges",
+      "/healthz ok",
+      "reports version 0.45.1 (closes the §19 drift bug)",
+      "migrations applied; students.db + WAL + snapshot on the volume",
+      "corrected 0.45.1 release notes present in the served bundle",
+      "SPA served; standalone mode correct",
+      "no ERROR lines in the boot log"
+    ],
+    "suite": "527 tests green on Ubuntu with an ELF x86-64 better_sqlite3.node (SQLite 3.53.2)"
+  }
 }
