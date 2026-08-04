@@ -7,12 +7,19 @@
 # If not, it comments asking them to reply with the exact sentence below; they sign
 # ONCE and are remembered thereafter.
 #
-# Signatures are stored on a DEDICATED, UNPROTECTED branch (`cla-signatures`), NOT on
-# the default branch. This is deliberate: the default branch is protected with a
-# required "cla" status check, and the bot cannot commit the signatures file to a
-# protected branch (it fails with `Required status check "cla" is expected`). The
-# storage branch has no protection, so signing always succeeds. The built-in
-# GITHUB_TOKEN can write it; PERSONAL_ACCESS_TOKEN is used when present (optional).
+# Signatures are stored on a DEDICATED branch (`cla-signatures`), NOT on the default
+# branch. The reason is branch protection: where `main` requires the "cla" status
+# check, the bot cannot commit the signatures file to it (that fails with
+# `Required status check "cla" is expected`). A separate storage branch keeps signing
+# working regardless. The built-in GITHUB_TOKEN can write it; PERSONAL_ACCESS_TOKEN is
+# used when present (optional).
+#
+# NOTE (2026-08-04 audit): this comment used to assert that `main` IS protected with a
+# required "cla" check. It is not — `GET /repos/.../branches/main/protection` answers
+# 404 "Branch not protected", so a direct push to main currently succeeds and nothing
+# requires any check to pass first. Enabling that protection is recommended and needs a
+# repo admin; see docs/audit/ACTION_REQUIRED.md. Keeping the storage branch separate is
+# correct either way, and becomes load-bearing the moment protection is turned on.
 #
 # `actions: write` is REQUIRED (this is the official contributor-assistant setup):
 # after a contributor posts the sign comment, the action RE-RUNS the PR's workflow to

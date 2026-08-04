@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { randomBytes } from 'node:crypto';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { router, publicProcedure, protectedProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
 import { users, guardians, guardianUsers, guardianFamilies, students, invites, passwordResets, sessions, type Role } from '../db/schema';
@@ -76,6 +76,15 @@ export const authRouter = router({
       }
     }
 
+    // `setupRequired` IS answered over the tunnel, deliberately, and it is the one place this app
+    // trades a bit of install state for usability. The web shell reads it with the origin to show
+    // `SetupOnLanNotice` ("Set up the admin account from a device on the masjid's own Wi-Fi — for
+    // safety, the first admin can't be created over the internet") instead of a login form nobody can
+    // use yet. Reviewed in the 2026-08-04 audit (OMS-008) and kept: the only thing it tells an
+    // internet visitor is that first-run has not happened, and `setup` refuses every non-LAN origin
+    // regardless, so there is nothing to act on — whereas the notice is the difference between an
+    // admin understanding what to do next and staring at a rejected login. §14's "no install-state
+    // oracle" applies to the setup mutation's own error text, which stays uniform.
     return { authenticated: false as const, origin: ctx.origin, setupRequired: !hasAnyUser() };
   }),
 
@@ -156,7 +165,20 @@ export const authRouter = router({
     return { ok: true as const };
   }),
 
-  /** Change your own password (used for the forced change on a staff temp password). */
+  /**
+   * Change your own password (also used for the forced change on a staff temp password).
+   *
+   * SIGNS OUT EVERY OTHER SESSION, keeping the caller's own. `resetConfirm` below has always done this
+   * ("sign out everywhere") because a reset is what you do when you have lost control of an account —
+   * but a password CHANGE is the same gesture reached from inside the app, and it is the only
+   * revocation a user can actually perform: there is no session list and no "sign out everywhere"
+   * button. Leaving other sessions live meant a parent who signed in on a borrowed phone, then changed
+   * their password from home precisely because they were worried, left that cookie working for the rest
+   * of its 12-hour TTL.
+   *
+   * The current token is spared deliberately — revoking it would log the user out of the tab they are
+   * standing in the moment they succeed, which reads as the change having failed.
+   */
   changePassword: protectedProcedure
     .input(z.object({ currentPassword: PASSWORD, newPassword: z.string().min(MIN_PASSWORD_LENGTH).max(200) }))
     .mutation(async ({ ctx, input }) => {
@@ -166,7 +188,16 @@ export const authRouter = router({
       if (!user || !(await verifyPassword(user.passwordHash, input.currentPassword))) {
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Your current password is incorrect.' });
       }
-      db.update(users).set({ passwordHash: await hashPassword(input.newPassword), mustChangePassword: false, updatedAt: new Date() }).where(eq(users.id, userId)).run();
+      const passwordHash = await hashPassword(input.newPassword); // hash BEFORE the txn (no await inside)
+      const keep = ctx.token ? hashToken(ctx.token) : null;
+      db.transaction((tx) => {
+        tx.update(users).set({ passwordHash, mustChangePassword: false, updatedAt: new Date() }).where(eq(users.id, userId)).run();
+        // Scoped to THIS user, so nobody else is disturbed; `keep` spares the caller's own cookie.
+        tx.delete(sessions)
+          .where(keep ? and(eq(sessions.userId, userId), ne(sessions.tokenHash, keep)) : eq(sessions.userId, userId))
+          .run();
+      });
+      audit(auditActor(ctx), 'password.change', { entity: 'user', entityId: userId });
       return { ok: true as const };
     }),
 

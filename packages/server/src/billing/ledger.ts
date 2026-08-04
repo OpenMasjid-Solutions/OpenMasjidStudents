@@ -256,8 +256,22 @@ export function reallocateStudent(tx: Tx, studentId: string): number {
   const touched = new Set<string>();
   // Clear the mapping for live payments only, remembering which invoices that affects so their
   // status is re-derived even if nothing is re-attached to them.
-  for (const a of tx.select({ id: paymentAllocations.id, paymentId: paymentAllocations.paymentId, invoiceId: paymentAllocations.invoiceId }).from(paymentAllocations).all()) {
-    if (!liveIds.has(a.paymentId)) continue;
+  //
+  // SCOPED TO THIS STUDENT'S PAYMENTS IN SQL, not filtered afterwards. This used to read the whole
+  // `payment_allocations` table and drop everything that wasn't in `liveIds` in JS — correct, but it
+  // made the cost of one payment proportional to every allocation the install has ever written, and
+  // `generatePeriod` calls this once PER STUDENT. A 200-child madrasa a few years in was reading
+  // millions of rows per nightly run, on a Raspberry Pi, to keep a few dozen. The predicate hits
+  // `payment_allocations_payment_idx`; the rows selected are exactly the ones the JS filter kept.
+  const liveIdList = [...liveIds];
+  const existing = liveIdList.length
+    ? tx
+        .select({ id: paymentAllocations.id, invoiceId: paymentAllocations.invoiceId })
+        .from(paymentAllocations)
+        .where(inArray(paymentAllocations.paymentId, liveIdList))
+        .all()
+    : []; // no live payments → nothing of ours is attached (don't ask SQLite for `IN ()`)
+  for (const a of existing) {
     touched.add(a.invoiceId);
     tx.delete(paymentAllocations).where(eq(paymentAllocations.id, a.id)).run();
   }
