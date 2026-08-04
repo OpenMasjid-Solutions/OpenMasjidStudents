@@ -8,6 +8,7 @@ import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { MasjidMark } from '../components/Glyphs';
 import { fadeRise } from '../lib/motion';
+import { withBase } from '../lib/base';
 import { trpc } from '../lib/trpc';
 
 const MIN_PW = 12;
@@ -27,8 +28,12 @@ export function InviteAccept({ token }: { token: string }) {
     if (password !== confirm) return setError(t('family.passwordsDontMatch'));
     try {
       await accept.mutateAsync({ token, password });
-      // Signed in — reload to the portal (drops the token from the URL).
-      window.location.assign('/');
+      // Signed in — reload to the portal (drops the token from the URL). THROUGH withBase: an invite
+      // is by definition opened over the OpenMasjidOS tunnel (the link needs an absolute public URL),
+      // where the app is served under a prefix like /students. A bare '/' sent the parent to the OS
+      // dashboard root instead — and their session cookie is Path-scoped to that same prefix, so they
+      // landed somewhere it isn't even sent, having just successfully created their account.
+      window.location.assign(withBase('/'));
     } catch (err) {
       setError((err as Error).message);
     }
