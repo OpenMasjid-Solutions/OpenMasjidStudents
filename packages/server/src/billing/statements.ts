@@ -6,9 +6,11 @@
  * signup — that finance/admin hand to a family. Rendered server-side (like the report-card
  * PDFs), so the strings are fixed English for now, matching the other generated artifacts.
  *
- * Security: every dynamic value (names, memos, labels) is HTML-escaped — the statement embeds
- * student names, which are user input (§14: stored data is inert, always rendered as text). Printing
- * the Student ID is the point of the page — it is what a parent types to pay (§11.2).
+ * Security: every dynamic value (names, memos, labels, the logo data URI) goes through `esc()` — the
+ * statement embeds student names and payment memos, which are user input, and a memo can be typed by a
+ * PARENT at the kiosk or on the donation site and read back here by staff (§14: stored data is inert,
+ * always rendered as text). Printing the Student ID is the point of the page — it is what a parent
+ * types to pay (§11.2). The route adds a CSP on top (see statementRoutes.ts).
  */
 import { and, eq, asc, desc, inArray, sql } from 'drizzle-orm';
 import type { Role } from '../db/schema';
@@ -182,7 +184,7 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   <div class="toolbar"><button class="btn" onclick="window.print()">Print</button></div>
   <header>
     <div class="brand">
-      ${logo ? `<img class="logo" src="${logo}" alt="" />` : ''}
+      ${logo ? `<img class="logo" src="${esc(logo)}" alt="" />` : ''}
       <div>
         <h1>${esc(schoolName)}</h1>
         <div class="sub">Family statement</div>
