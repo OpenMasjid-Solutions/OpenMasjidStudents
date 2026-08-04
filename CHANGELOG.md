@@ -9,6 +9,18 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.45.1]
+
+- **Fixed: parts of these release notes were never shown to you.** What's new only displayed text
+  written as a bullet point, so any plain paragraph in the notes was quietly dropped on its way to the
+  screen. Four things had gone missing that way: the summary at the top of the 0.45.0 entry, the note
+  explaining that 0.36.0's features arrived without any screens to reach them by, the whole of the
+  0.1.0 entry — and a **correction published against the 0.36.0 notes**, which existed precisely to
+  say what that release had really delivered and was the one thing there that most needed reading. All
+  of it is readable now, and the 0.45.0 notes below have been rewritten to read the way the rest of
+  the OpenMasjid apps do. Nothing about the app itself changes in this release; it exists so the notes
+  reach you.
+
 ## [0.45.0]
 
 - **Security: changing your password now signs you out on your other devices.** Resetting a
