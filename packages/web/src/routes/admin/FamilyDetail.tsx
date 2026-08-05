@@ -258,6 +258,20 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
         <div className="section-head">
           <h2>{t('directory.students')}</h2>
           <span className="spacer" />
+          {/* The onboarding sheet is per HOUSEHOLD, not per child — the parents, the emergency contacts,
+              the portal QR and the whole "how to pay" section are the same for every child, so a sheet
+              each meant handing a family of three three mostly-identical pages and no single page
+              showing what the household owes. It sits here rather than on a student row for that reason.
+              Not behind `readOnly`: finance prints and hands these out too, and the route allows
+              exactly the same two roles. */}
+          <a
+            className="btn btn--ghost btn--sm"
+            href={withBase(`/sheets/family/${familyId}`)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Printer size={14} /> {t('directory.printSheet')}
+          </a>
           {!readOnly && <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowStudent((v) => !v)}>{t('directory.addStudent')}</button>}
         </div>
         {students.length === 0 ? (
@@ -275,18 +289,6 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     <td><span className="code">{s.studentCode ?? '—'}</span></td>
                     <td>{s.status === 'withdrawn' ? <span className="chip is-muted">{t('directory.withdrawn')}</span> : <span className="chip">{t('directory.active')}</span>}</td>
                     <td className="actions">
-                      {/* The onboarding sheet: what the office hands the family when a child is added —
-                          their details, their fees, the Student ID, a portal QR, and how to pay. Not
-                          behind `readOnly`: finance prints and hands these out too, and the route
-                          allows exactly the same two roles. */}
-                      <a
-                        className="btn btn--ghost btn--sm"
-                        href={withBase(`/sheets/student/${s.id}`)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <Printer size={14} /> {t('directory.printSheet')}
-                      </a>
                       {!readOnly && (
                         <>
                           <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>

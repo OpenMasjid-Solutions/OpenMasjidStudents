@@ -132,7 +132,7 @@
     "mailNoTransport": "Not emailed: no email is set up yet. Add SMTP under Settings, or set up email in OpenMasjidOS — or just share the link below.",
     "mailNotSent": "Couldn’t send the email. Share the link below instead.",
     "studentId": "Student ID",
-    "printSheet": "Print info sheet",
+    "printSheet": "Print family sheet",
     "confirmDelete": "Delete {{name}} for good? This can’t be undone.",
     "confirmDeleteWithExtras": "Delete {{name}} for good? Their fee plan and any charges not yet invoiced go with them. This can’t be undone.",
     "deleteBlocked": "{{name}} has already been billed, so their record is part of your invoice history and can’t be deleted. Mark them withdrawn instead — that stops future billing and keeps the record.",

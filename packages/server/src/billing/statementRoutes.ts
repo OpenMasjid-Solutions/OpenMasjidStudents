@@ -3,7 +3,7 @@
 /**
  * Authed serving of the app's printable documents (CLAUDE.md §4, §5, §14):
  *   GET /statements/family/:id  — a household's balance, open bills and payment history
- *   GET /sheets/student/:id     — a student's onboarding sheet (details, fees, how to pay)
+ *   GET /sheets/family/:id      — a household's onboarding sheet (children, fees, how to pay)
  *
  * Both are registered before the SPA fallback and excluded from the tRPC/session middleware, so each
  * gates itself: session from the cookie, role must be admin (LAN only) or finance (LAN + tunnel),
@@ -19,7 +19,7 @@ import { getSession, COOKIE } from '../auth/sessions';
 import { classifyOrigin } from '../security/origin';
 import { config } from '../config';
 import { buildFamilyStatementHtml, canServeStatement } from './statements';
-import { buildStudentSheetHtml } from '../people/onboardingSheet';
+import { buildFamilySheetHtml } from '../people/onboardingSheet';
 
 /**
  * Defence in depth for a page assembled by string concatenation that carries a family's Student IDs
@@ -81,10 +81,10 @@ export function registerStatementRoutes(app: FastifyInstance): void {
     servePrintable(req, reply, buildFamilyStatementHtml),
   );
 
-  // The onboarding sheet a family is handed when a child is added. Same gate as the statement: it
-  // carries the child's DOB and the household's contact details, which finance and admin may see and
-  // nobody else may (§5).
-  app.get('/sheets/student/:id', (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) =>
-    servePrintable(req, reply, (id, base) => buildStudentSheetHtml(id, base)),
+  // The onboarding sheet a household is handed when their children go on the system — one sheet for the
+  // family, not one per child. Same gate as the statement: it carries the children's dates of birth and
+  // the household's contact details, which finance and admin may see and nobody else may (§5).
+  app.get('/sheets/family/:id', (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) =>
+    servePrintable(req, reply, (id, base) => buildFamilySheetHtml(id, base)),
   );
 }

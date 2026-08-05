@@ -9,6 +9,33 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.47.0]
+
+- **A printable information sheet for each family, on their record.** Open a household and there is a
+  **Print family sheet** button. It gives you one page — front and back of a single sheet — to hand or
+  post to the family when their children go on the system: **every child together**, each with their
+  date of birth, class and **Student ID**; the fees assigned to each of them, at the rate you agreed
+  with them rather than the plan's list price, so a bursary or a sibling rate reads correctly; what
+  each child owes and what the family owes altogether; any bill still open; the parents, guardians
+  and emergency contacts you hold; and a **QR code** to set up the parent portal. Then, in plain words,
+  what the portal is for and **every way this masjid can take a payment** — by card in the portal, with
+  a Student ID on the masjid website or at the kiosk (including Apple Pay and Google Pay), or by cash,
+  check, Zelle or bank transfer through the office, which has to be handed over and recorded by a
+  person. It ends by asking the family to check it and tell the office if anything is wrong, which is
+  far easier to sort out on the day they join than at the end of the year.
+  - **One sheet for the household, not one per child.** The parents, the emergency contacts, the portal
+    and the whole list of ways to pay are the same for every child, so a sheet each meant handing a
+    family of three three mostly identical pages — and none of them showing what the family actually
+    owed. Sized to one double-sided sheet: children and money on the front, everything else on the back.
+  - It only ever offers what your install actually has. With card payments not set up, the sheet does
+    not mention paying by card; with kiosk and donation-site tuition switched off, it does not send
+    anyone to the website or the kiosk; and where parents cannot sign themselves up, the QR stops being
+    a signup link and the sheet asks them to request an invite instead — rather than printing a code
+    that leads to a page which turns them away.
+  - Prints from your browser, so you get a proper preview and can save it as a PDF. Both the office and
+    the finance manager can print it; nobody else can open it, because it carries children's dates of
+    birth and the household's phone numbers.
+
 ## [0.46.0]
 
 - **"What's new" now reads the way it does in OpenMasjid Kiosk.** The release notes used to put every
@@ -17,26 +44,6 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   news. It is now one list you simply scroll: a line at the top saying which version you are running,
   then each release under its number, with a green **You're on this** tag against the one you have.
   Nothing was removed from the notes themselves — the same text, minus a click per release.
-
-- **A printable information sheet for each student, on their record.** Open a household, and every
-  child now has a **Print info sheet** button. It produces one page you can hand or post to the family
-  when you add their child: their name, date of birth, class, household and **Student ID**; the fees
-  that are actually assigned to them — at the rate you agreed with them, not the plan's list price, so
-  a bursary or a sibling rate reads correctly; what they owe today and any bill still outstanding; the
-  parents, guardians and emergency contacts you hold; and a **QR code** to set up the parent portal.
-  Then, in plain words, what the portal is for and **every way this masjid can take a payment** — by
-  card in the portal, with a Student ID on the masjid website or at the kiosk (including Apple Pay and
-  Google Pay), or by cash, check, Zelle or bank transfer through the office. It ends by asking the
-  family to check it and tell the office if anything is wrong, which is far easier to sort out on the
-  day a child joins than at the end of the year.
-  - It only ever offers what your install actually has. With card payments not set up, the sheet does
-    not mention paying by card; with kiosk and donation-site tuition switched off, it does not send
-    anyone to the website or the kiosk; and where parents cannot sign themselves up, the QR stops
-    being a signup link and the sheet asks them to request an invite instead — rather than printing a
-    code that leads to a page which turns them away.
-  - Prints from your browser, so you get a proper preview and can save it as a PDF. Both the office
-    and the finance manager can print it; nobody else can open it, because it carries a child's date
-    of birth and the household's phone numbers.
 
 ## [0.45.2]
 
