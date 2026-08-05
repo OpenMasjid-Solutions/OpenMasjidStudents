@@ -9,6 +9,20 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.45.2]
+
+- **Nothing about the app changes in this release, and nothing you have set up needs redoing.** It
+  exists so that new versions can be tried out before they reach everyone: there is now a second,
+  optional **development channel** you can switch an install onto in OpenMasjidOS, which follows the
+  newest build as it is made. Everyone stays on the normal channel unless they deliberately choose
+  otherwise, and the normal channel keeps installing exact, pinned versions the way it always has —
+  so for almost every masjid this release changes nothing at all, which is the point. The benefit is
+  that the next release will have been run somewhere real before it is offered to you.
+- Also in this release: the project's own README was rewritten, because it still described the app as
+  billing each household one combined bill. Bills have been **per child since 0.39.0**, and that is
+  the single most important thing to understand about how the money is recorded, so it should not have
+  been wrong in the first place. No screens, wording or figures in the app are affected.
+
 ## [0.45.1]
 
 - **Fixed: parts of these release notes were never shown to you.** What's new only displayed text
