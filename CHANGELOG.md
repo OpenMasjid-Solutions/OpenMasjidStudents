@@ -9,6 +9,26 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+- **A printable information sheet for each student, on their record.** Open a household, and every
+  child now has a **Print info sheet** button. It produces one page you can hand or post to the family
+  when you add their child: their name, date of birth, class, household and **Student ID**; the fees
+  that are actually assigned to them — at the rate you agreed with them, not the plan's list price, so
+  a bursary or a sibling rate reads correctly; what they owe today and any bill still outstanding; the
+  parents, guardians and emergency contacts you hold; and a **QR code** to set up the parent portal.
+  Then, in plain words, what the portal is for and **every way this masjid can take a payment** — by
+  card in the portal, with a Student ID on the masjid website or at the kiosk (including Apple Pay and
+  Google Pay), or by cash, check, Zelle or bank transfer through the office. It ends by asking the
+  family to check it and tell the office if anything is wrong, which is far easier to sort out on the
+  day a child joins than at the end of the year.
+  - It only ever offers what your install actually has. With card payments not set up, the sheet does
+    not mention paying by card; with kiosk and donation-site tuition switched off, it does not send
+    anyone to the website or the kiosk; and where parents cannot sign themselves up, the QR stops
+    being a signup link and the sheet asks them to request an invite instead — rather than printing a
+    code that leads to a page which turns them away.
+  - Prints from your browser, so you get a proper preview and can save it as a PDF. Both the office
+    and the finance manager can print it; nobody else can open it, because it carries a child's date
+    of birth and the household's phone numbers.
+
 ## [0.45.2]
 
 - **Nothing about the app changes in this release, and nothing you have set up needs redoing.** It

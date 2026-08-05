@@ -19,7 +19,7 @@ services:
     #
     # On `main` this line is a release tag AND its @sha256 digest (the digest is the real pin — a moved
     # tag can't repoint it):
-    #   ghcr.io/openmasjid-solutions/openmasjidstudents:0.45.1@sha256:a0332756…
+    #   ghcr.io/openmasjid-solutions/openmasjidstudents:0.45.2@sha256:25542ea8…
     # Restoring that pin is a step OF the merge-to-main release, not an afterthought — merging dev into
     # main without it would hand every stable install a tag that moves on every dev push. CI refuses to
     # publish a v* tag whose compose is not digest-pinned, so that mistake fails loudly rather than

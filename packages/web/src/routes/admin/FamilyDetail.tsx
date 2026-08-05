@@ -10,8 +10,9 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Printer, Trash2 } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
+import { withBase } from '../../lib/base';
 import { formatUsPhone, telHref } from '../../lib/phone';
 import { StudentPicker } from '../../components/StudentPicker';
 
@@ -274,6 +275,18 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     <td><span className="code">{s.studentCode ?? '—'}</span></td>
                     <td>{s.status === 'withdrawn' ? <span className="chip is-muted">{t('directory.withdrawn')}</span> : <span className="chip">{t('directory.active')}</span>}</td>
                     <td className="actions">
+                      {/* The onboarding sheet: what the office hands the family when a child is added —
+                          their details, their fees, the Student ID, a portal QR, and how to pay. Not
+                          behind `readOnly`: finance prints and hands these out too, and the route
+                          allows exactly the same two roles. */}
+                      <a
+                        className="btn btn--ghost btn--sm"
+                        href={withBase(`/sheets/student/${s.id}`)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <Printer size={14} /> {t('directory.printSheet')}
+                      </a>
                       {!readOnly && (
                         <>
                           <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
