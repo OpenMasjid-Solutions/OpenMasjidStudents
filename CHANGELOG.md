@@ -9,6 +9,8 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+## [0.46.0]
+
 - **"What's new" now reads the way it does in OpenMasjid Kiosk.** The release notes used to put every
   version in its own panel with a **Show what changed** lid on it, so catching up after an update meant
   opening each release in turn and the window greeted you with a stack of closed boxes rather than the
