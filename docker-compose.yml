@@ -11,20 +11,19 @@
 # it, create the admin account, and set up the rest inside the app (saved to /data).
 services:
   app:
-    # ── DEVELOPMENT CHANNEL — this line differs from `main`, and that is the point ──
-    # This is the `dev` branch, so the image is the MOVING :dev tag that CI repoints on every push
-    # here. It is deliberately NOT digest-pinned: a digest is what makes an install reproducible, and
-    # the dev channel exists precisely to follow the newest build instead. A masjid only sees this if
-    # they switch OpenMasjidOS to the development update channel.
+    # ── STABLE CHANNEL — this line differs from `dev`, and that is the point ──
+    # Tag for humans + @sha256 digest for integrity. The digest is the real pin: a tag can be moved to
+    # point at different content, a digest cannot. This is what every masjid installs.
     #
-    # On `main` this line is a release tag AND its @sha256 digest (the digest is the real pin — a moved
-    # tag can't repoint it):
-    #   ghcr.io/openmasjid-solutions/openmasjidstudents:0.45.1@sha256:a0332756…
-    # Restoring that pin is a step OF the merge-to-main release, not an afterthought — merging dev into
-    # main without it would hand every stable install a tag that moves on every dev push. CI refuses to
-    # publish a v* tag whose compose is not digest-pinned, so that mistake fails loudly rather than
-    # shipping (see .github/workflows/build-image.yml and CLAUDE.md "Branching policy" + §19).
-    image: ghcr.io/openmasjid-solutions/openmasjidstudents:dev
+    # On `dev` this same line is the MOVING `:dev` tag, deliberately unpinned, because the development
+    # channel exists to follow the newest build. So a merge from dev lands `:dev` here, and re-pinning
+    # is a STEP OF the release rather than an afterthought — CLAUDE.md "Branching policy" + §19:
+    # bump the version, merge, let CI build, pin the digest it prints, then tag.
+    #
+    # Skipping the pin would hand every stable install a tag this repo repoints on every dev push.
+    # `build-image.yml` refuses to publish a v* tag whose compose is not digest-pinned, so that
+    # mistake fails loudly instead of shipping — but the guard is the backstop, not the plan.
+    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.45.2@sha256:25542ea87629f404344f2e70387c5084b892bec70416ad26674ce4de25c2a072
     restart: unless-stopped
     environment:
       PORT: "8080"
