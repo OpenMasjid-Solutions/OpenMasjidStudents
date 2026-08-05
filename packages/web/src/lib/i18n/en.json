@@ -507,12 +507,9 @@
   },
   "whatsNew": {
     "title": "What’s new",
-    "intro": "Everything that has changed in OpenMasjid Students, newest first.",
-    "running": "You’re on v{{version}}",
-    "thisOne": "You’re on this one",
-    "version": "Version {{version}}",
-    "showDetails": "Show what changed",
-    "hideDetails": "What changed"
+    "intro": "Release notes for OpenMasjid Students.",
+    "introRunning": "Release notes for OpenMasjid Students, up to the v{{version}} you’re running.",
+    "thisOne": "You’re on this"
   },
   "dashboard": {
     "title": "Dashboard",

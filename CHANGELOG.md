@@ -9,6 +9,13 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
+- **"What's new" now reads the way it does in OpenMasjid Kiosk.** The release notes used to put every
+  version in its own panel with a **Show what changed** lid on it, so catching up after an update meant
+  opening each release in turn and the window greeted you with a stack of closed boxes rather than the
+  news. It is now one list you simply scroll: a line at the top saying which version you are running,
+  then each release under its number, with a green **You're on this** tag against the one you have.
+  Nothing was removed from the notes themselves — the same text, minus a click per release.
+
 - **A printable information sheet for each student, on their record.** Open a household, and every
   child now has a **Print info sheet** button. It produces one page you can hand or post to the family
   when you add their child: their name, date of birth, class, household and **Student ID**; the fees
