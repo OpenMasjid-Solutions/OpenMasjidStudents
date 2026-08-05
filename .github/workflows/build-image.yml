@@ -10,12 +10,22 @@ name: Build image
 # which is what docker-compose.yml references. The app id stays `students`
 # (the Fabric contract — see docs/FABRIC_BILLING_CONTRACT.md).
 #
+# TWO CHANNELS (CLAUDE.md "Branching policy"):
+#   main / v* tags  ->  :<manifest version>  +  :latest     the stable channel masajid install
+#   dev             ->  :dev  +  :dev-<sha>                 the development channel
+#
+# The tag sets are disjoint on purpose, and that is the load-bearing part of this file. `dev` carries
+# main's manifest version for most of its life, so publishing :<version> from a dev push would
+# overwrite an ALREADY-RELEASED stable tag with unreviewed content — every masjid that reinstalled or
+# recreated that app would then pull a dev build under a released version number. Never add the
+# version tag or :latest to the dev branch's tag list.
+#
 # After the first run, make the GHCR package Public (owner -> Packages -> package
 # settings) so masjid hosts can pull it without authentication.
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     tags: ['v*']
     # Changes that don't affect the image — skip the (slow) multi-arch build.
     # docker-compose.yml is NOT part of the image build context (.dockerignore
@@ -34,6 +44,16 @@ permissions:
   contents: read
   packages: write
 
+# :dev is a MOVING tag, so two overlapping dev builds race to own it — and the loser is whichever
+# finishes last, not whichever is newer. A slow arm64 build of an older commit could therefore repoint
+# :dev backwards. Superseded dev builds are cancelled to make the tag follow the branch tip.
+#
+# Cancellation is scoped to dev deliberately: a release build must never be cancelled. (Tag pushes are
+# each their own ref anyway, so they could not cancel one another regardless.)
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/dev' }}
+
 # EVERY action below is pinned to a full commit SHA, not a tag. A tag is mutable: whoever controls the
 # action's repository can repoint `v4` at any commit, and every step in this job runs with
 # `packages: write` and a GHCR-scoped GITHUB_TOKEN. This workflow is the only thing that publishes the
@@ -46,14 +66,68 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Resolve image name + version
+      - name: Resolve image name, version, and channel tags
         id: meta
         run: |
           ver=$(grep -E '^version:' manifest.yaml | head -1 | sed -E 's/^version:[[:space:]]*//' | tr -d "\"' \r")
           [ -n "$ver" ] || ver=latest
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          name=$(echo "${GITHUB_REPOSITORY##*/}" | tr '[:upper:]' '[:lower:]')
+          img="ghcr.io/$owner/$name"
           echo "version=$ver" >> "$GITHUB_OUTPUT"
-          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
-          echo "name=$(echo "${GITHUB_REPOSITORY##*/}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+          if [ "$GITHUB_REF" = refs/heads/dev ]; then
+            channel=dev
+            # :dev moves; :dev-<sha> does not. The immutable companion costs nothing (same manifest,
+            # one more tag) and is the only way to put a dev host back on the previous dev build after
+            # a bad one, since a moving tag keeps no history.
+            tags="$img:dev
+          $img:dev-${GITHUB_SHA:0:7}"
+          else
+            channel=stable
+            tags="$img:$ver
+          $img:latest"
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<TAGS_EOF"
+            echo "$tags"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "channel=$channel"; echo "$tags"
+
+      # docker-compose.yml is what the catalog serves to installers (it fetches the file from the ref
+      # its registry entry pins), so this file IS a shipped artifact and the channel invariant belongs
+      # right here, before anything is published.
+      #
+      # dev must name the moving :dev tag; a v* tag must be digest-pinned. Pinning the tag alone is not
+      # enough — a tag can be repointed at different content, which is why another app was delisted from
+      # the catalog on 2026-08-01. A push to main is allowed to be unpinned for exactly one commit,
+      # because §19 pins the digest only AFTER the image has been built from main, so that case warns.
+      - name: Check the compose image matches the channel
+        run: |
+          img=$(grep -E '^[[:space:]]*image:' docker-compose.yml | head -1 | sed -E 's/^[[:space:]]*image:[[:space:]]*//')
+          echo "compose image: $img"
+          case "$GITHUB_REF" in
+            refs/heads/dev)
+              case "$img" in
+                *@sha256:*) echo "::error::the dev compose must not digest-pin — :dev is a moving tag ($img)"; exit 1 ;;
+                *:dev) echo "ok — dev channel" ;;
+                *) echo "::error::the dev compose must reference the :dev tag, got '$img'"; exit 1 ;;
+              esac ;;
+            refs/tags/v*)
+              case "$img" in
+                *@sha256:*) echo "ok — release is digest-pinned" ;;
+                *) echo "::error::a release compose must digest-pin the image (@sha256:…), got '$img'. Did a dev merge land without re-pinning?"; exit 1 ;;
+              esac ;;
+            refs/heads/main)
+              case "$img" in
+                *@sha256:*) echo "ok — main is digest-pinned" ;;
+                *) echo "::warning::main's compose is not digest-pinned yet — pin the digest before tagging (CLAUDE.md §19 step 4)" ;;
+              esac ;;
+          esac
 
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
@@ -65,9 +139,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Publishes the version-pinned (+ latest) image on main and on v* tags. Bump
-      # manifest.yaml `version:` for each meaningful change so a pinned install stays
-      # stable (the catalog pins a git tag + version — CLAUDE.md §19).
+      # Tags come from the channel resolved above: version + :latest on main / v* tags, the moving
+      # :dev + :dev-<sha> on dev. Bump manifest.yaml `version:` for each meaningful release so a pinned
+      # install stays stable (the catalog pins a git tag + version — CLAUDE.md §19).
+      #
+      # Multi-arch is not optional: masajid run this on Raspberry Pis (arm64) as well as amd64 hosts,
+      # and the dev channel is where a Pi-only regression would be caught, so dev builds both too.
       - name: Build and push
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -75,14 +152,19 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/${{ steps.meta.outputs.owner }}/${{ steps.meta.outputs.name }}:${{ steps.meta.outputs.version }}
-            ghcr.io/${{ steps.meta.outputs.owner }}/${{ steps.meta.outputs.name }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Digest to pin in docker-compose.yml
-        run: echo "Pin this in docker-compose.yml image line -> @${{ steps.build.outputs.digest }}"
+      - name: What was published
+        run: |
+          echo "channel: ${{ steps.meta.outputs.channel }}"
+          echo "digest:  ${{ steps.build.outputs.digest }}"
+          if [ "${{ steps.meta.outputs.channel }}" = stable ]; then
+            echo "Pin this in docker-compose.yml image line -> @${{ steps.build.outputs.digest }}"
+          else
+            echo "The moving :dev tag now points here. Nothing to pin — the dev channel tracks the tag."
+          fi
 
       # Optional: tell the OpenMasjidAPPS catalog to rebuild after a release.
       # Requires a repo secret CATALOG_DISPATCH_TOKEN (a PAT with 'repo' scope).

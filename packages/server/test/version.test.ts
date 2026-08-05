@@ -64,11 +64,23 @@ describe('every place that states the version agrees', () => {
    * It cannot be equality: §19 bumps the version, pushes, waits for the image, and only then pins the
    * digest — so between steps 1 and 4 the compose legitimately still names the previous release, which
    * is exactly when CI runs. A test that fails on every release's first push is a test that gets
-   * deleted. What is worth asserting is that the line never regresses to a floating tag, since a
-   * masjid installing from a moving tag gets a build nobody audited.
+   * deleted. What is worth asserting is that the line never regresses to an ARBITRARY floating tag,
+   * since a masjid installing from a moving tag gets a build nobody audited.
+   *
+   * Two forms are sanctioned, one per update channel (CLAUDE.md "Branching policy"):
+   *   a digest-pinned release  — what `main` carries, and the only thing a stable install ever gets
+   *   exactly `:dev`           — the moving development tag, on the `dev` branch
+   *
+   * `:dev` is the one mutable tag the org accepts, and only because opting into it is an explicit
+   * choice in OpenMasjidOS. Note what this test can and cannot see: it knows the two shapes are
+   * legitimate, but not which branch it is running on, so it cannot catch a `:dev` compose reaching a
+   * release. That half is enforced where the branch is actually known — build-image.yml refuses to
+   * publish a v* tag whose compose is not digest-pinned. Neither check is sufficient alone.
    */
-  it('the compose image is pinned to a digest, not a floating tag', () => {
+  it('the compose image is a digest-pinned release or the moving :dev tag', () => {
     const m = /^\s*image:\s*(\S+)\s*$/m.exec(read('docker-compose.yml'));
-    expect(m?.[1]).toMatch(/^ghcr\.io\/openmasjid-solutions\/openmasjidstudents:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/);
+    expect(m?.[1]).toMatch(
+      /^ghcr\.io\/openmasjid-solutions\/openmasjidstudents:(?:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}|dev)$/,
+    );
   });
 });

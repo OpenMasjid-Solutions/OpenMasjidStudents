@@ -18,7 +18,7 @@
     "lint": "npm run lint -w @openmasjid/students-server && npm run lint -w @openmasjid/students-web",
     "test": "npm run test -w @openmasjid/students-server --if-present && npm run test -w @openmasjid/students-web --if-present",
     "generate": "npm run generate -w @openmasjid/students-server",
-    "image": "docker build -t ghcr.io/openmasjid-solutions/openmasjidstudents:dev ."
+    "image": "docker build -t ghcr.io/openmasjid-solutions/openmasjidstudents:local ."
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

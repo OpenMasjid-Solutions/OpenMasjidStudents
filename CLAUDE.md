@@ -13,6 +13,60 @@
 
 ---
 
+## Branching policy
+
+> **Check this before you change anything.** `git branch --show-current` must print **`dev`**. If it
+> prints anything else, switch before you edit a single file — do not "just fix this one thing" on
+> another branch and sort the branch out afterwards.
+
+The org runs **two update channels**, chosen by an Update Channel toggle in OpenMasjidOS. This repo has
+one branch per channel:
+
+| Branch | Channel | Image tags CI publishes | Compose `image:` |
+| --- | --- | --- | --- |
+| **`dev`** | development | `:dev` (moving) + `:dev-<sha>` (immutable) | `…:dev`, **not** digest-pinned |
+| **`main`** | stable | `:<manifest version>` + `:latest` | release tag **+ `@sha256:` digest** |
+
+**The rules, and they do not bend:**
+
+1. **All development happens on `dev`** — every feature, fix, experiment, and docs change, in this
+   session and every future one. **Never commit to `main`.**
+2. **`main` changes only when Hasan says the words "merge to main."** Never merge, rebase onto, or
+   cherry-pick into `main` on your own initiative — not for a hotfix, not for a typo, not for docs, and
+   not because a fix looks urgent. Urgency is not authorization.
+3. **That merge IS the release.** It carries the whole §19 runbook with it: bump the version in all six
+   places, FF-merge, let CI build, **re-pin the `@sha256` digest in `docker-compose.yml`**, tag, then
+   bump `OpenMasjidAPPS/registry.yaml`. Nothing is released until the registry bump lands.
+4. **Re-pinning the digest at step 3 is not optional bookkeeping.** `dev`'s compose names the *moving*
+   `:dev` tag. Merging that to `main` unchanged would point every stable install at a tag this repo
+   repoints on every dev push — the exact supply-chain hole that got another app delisted from the
+   catalog on 2026-08-01. `build-image.yml` refuses to publish a `v*` tag whose compose is not
+   digest-pinned, so the mistake fails loudly instead of shipping; do not treat that guard as the plan.
+
+**Channel wiring (what makes the dev channel actually a channel):**
+
+- `.github/workflows/build-image.yml` resolves tags from the ref. The two tag sets are **disjoint on
+  purpose**: `dev` carries `main`'s manifest version for most of its life, so publishing `:<version>`
+  from a dev push would overwrite an already-released stable tag with unreviewed content. Never add the
+  version tag or `:latest` to the dev list.
+- Both channels build **multi-arch (amd64 + arm64)**. Masajid run this on Raspberry Pis, and the dev
+  channel is where a Pi-only regression should surface.
+- `ci.yml` (lint + test + build) runs on `dev` as well as `main`. `dev` is the branch that most needs it.
+- The catalog needs **`dev_ref: dev`** alongside the stable `ref:` in this app's `OpenMasjidAPPS/registry.yaml`
+  entry. That edit belongs to the catalog repo, not here.
+
+**Known gap — a moving tag alone does not reach a dev host.** OpenMasjidOS decides an app has an update
+by comparing the catalog's `manifest.yaml` **version string** against the installed one
+(`checkCatalogUpdate` → `isNewerVersion`), and `updateCatalogApp` returns "already up to date" when it
+is not newer — so `docker compose pull` never runs. While `dev`'s manifest version equals the released
+one, `:dev` can be repointed any number of times and **no dev host will ever be offered it**. Closing
+this needs a platform-side change (on the dev channel, pull and recreate on a changed digest rather than
+a changed version) or a per-dev-build version scheme here. Do not invent either one unilaterally: the
+first is an OpenMasjidOS decision, and the second changes the release contract §19 and `version.test.ts`
+depend on.
+
+---
+
 ## 1. What we are building (one paragraph)
 
 **OpenMasjidStudents** is a self-hosted **tuition & fee management** app **built for madāris** that runs as an **OpenMasjidOS app**: one Docker container, installed from the App Store, all data on the masjid's own hardware. It is a **three-role app**: **admins** manage families, students, fee plans and settings (LAN-only, by design); a **finance manager** runs billing (invoices, the ledger, manual + card payments); and **parents** get their own phone-first portal with the family balance and one unified payment history — **payable by card right in the app (Stripe)**, with **autopay** and saved cards. Every student gets an auto-generated **Student ID** (`YUS1234` — first three letters of the first name + 4 digits); fees are assigned **per student** as **fee plans** (monthly / per-term / one-time) and billed as **one invoice per student** each period (the parent still sees one combined balance and pays once). Finance records cash/Zelle/check by hand, and prints **statements** carrying each child's Student ID and a portal-signup QR. Finance and parents work over the **Cloudflare uplink the OS provides**; the admin surface stays on the masjid LAN. Tuition paid with a **child’s Student ID** through **OpenMasjidDonations** and **OpenMasjidKiosk** flows automatically into the same ledger over the **OpenMasjidOS Fabric** — this app is the **provider** of the `students/billing` capability those apps consume.
@@ -568,8 +622,13 @@ npm run dev         # server + web, hot reload (server :8080; Vite :5173 proxyin
 npm run build       # typecheck + build web and server
 npm run lint        # eslint + tsc --noEmit
 npm run test        # vitest (ledger, fabric contract, webhook, autopay ladder, origin policy, finals math, dataset registry, admissions input)
-npm run image       # build & tag ghcr.io/openmasjid-solutions/openmasjidstudents:dev
+npm run image       # build & tag ghcr.io/openmasjid-solutions/openmasjidstudents:local
 ```
+
+> The local build tag is `:local`, **not** `:dev`. `:dev` is now a published moving tag (the development
+> update channel), and Docker prefers a local image over pulling — so a local build tagged `:dev` would
+> silently shadow the real dev image for anyone running `docker compose up` on the `dev` branch, and
+> they would be testing their own stale build while believing they were on the channel.
 
 Dev: `.env` with fake Fabric vars; curl fixtures for `/fabric/billing/*`; **Stripe test mode + `stripe listen --forward-to localhost:8080/api/stripe/webhook`** for the payment paths; a tiny mock of `/api/auth/session` + `/api/fabric/stripe` in `packages/server/test/`. Simulate tunnel origin locally by sending `cf-ray: dev` to exercise the origin policy.
 
@@ -609,7 +668,7 @@ The `version:` in the registry entry, `manifest.yaml`, and `VERSION` must agree;
 
 ## 20. Working agreement for Claude (the coding agent)
 
-- Read this file every session. §3 (licensing), §5 (roles + origin), §9 (data rules), §11 (contract), §12.4 (origin policy), §13 (payments), §14 (security), §15 (UI parity) are **hard constraints**.
+- Read this file every session. **Branching policy** (above §1 — confirm you are on `dev` before editing anything), §3 (licensing), §5 (roles + origin), §9 (data rules), §11 (contract), §12.4 (origin policy), §13 (payments), §14 (security), §15 (UI parity) are **hard constraints**.
 - Build **vertically** — one full slice (schema + router + UI + i18n + tests) before the next. Suggested order:
   1. Monorepo skeleton, SQLite+Drizzle boot, Dockerfile, **`.github/workflows/build-image.yml` (multi-arch → GHCR, §19)**, SPDX/CLA scaffolding, `VERSION` + `CHANGELOG.md`.
   2. **Auth**: local users + roles + sessions + first-run; **origin-policy middleware with tests**; SSO fast-path behind env presence.

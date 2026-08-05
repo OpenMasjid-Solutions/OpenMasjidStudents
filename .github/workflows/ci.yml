@@ -22,9 +22,12 @@ name: CI
 # order workflows, so a red run here does not by itself block a publish. Making the release depend on
 # this gate needs a branch-protection rule requiring the `verify` check on main (see
 # docs/audit/ACTION_REQUIRED.md), which only a repo admin can add.
+# `dev` is where all development happens (CLAUDE.md "Branching policy"), so it is the branch that most
+# needs this gate — leaving it on main only would have meant the fast checks ran for the first time at
+# release, on the merge commit, which is the worst possible moment to discover a red test.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 # Read-only, and no secrets are used. This workflow must never gain the ability to publish anything:
