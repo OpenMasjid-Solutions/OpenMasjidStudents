@@ -30,14 +30,21 @@ one branch per channel:
 **The rules, and they do not bend:**
 
 1. **All development happens on `dev`** — every feature, fix, experiment, and docs change, in this
-   session and every future one. **Never commit to `main`.**
-2. **`main` changes only when Hasan says the words "merge to main."** Never merge, rebase onto, or
-   cherry-pick into `main` on your own initiative — not for a hotfix, not for a typo, not for docs, and
-   not because a fix looks urgent. Urgency is not authorization.
-3. **That merge IS the release.** It carries the whole §19 runbook with it: bump the version in all six
+   session and every future one. **Never commit to `main`.** Work is committed and pushed to `dev` as
+   normal; that needs no permission and should not be asked about.
+2. **`main` changes only when Hasan says the words "merge to main"** (or "push to main"). Never merge,
+   rebase onto, or cherry-pick into `main` on your own initiative — not for a hotfix, not for a typo,
+   not for docs, and not because a fix looks urgent. Urgency is not authorization.
+3. **Ask every time, at the end of every turn that pushed to `dev`.** Once an update is on `dev`,
+   close the reply by asking whether he wants it pushed to `main` — and then keep working on `dev`
+   until he actually says so. A turn that pushed to `dev` and did not ask has not finished. The answer
+   is not remembered between updates: one "push to main" releases *that* update and nothing more, and
+   the next push to `dev` gets the same question again. Silence, a new task, or an unrelated reply all
+   mean **stay on `dev`**; only the explicit words move `main`.
+4. **That merge IS the release.** It carries the whole §19 runbook with it: bump the version in all six
    places, FF-merge, let CI build, **re-pin the `@sha256` digest in `docker-compose.yml`**, tag, then
    bump `OpenMasjidAPPS/registry.yaml`. Nothing is released until the registry bump lands.
-4. **Re-pinning the digest at step 3 is not optional bookkeeping.** `dev`'s compose names the *moving*
+5. **Re-pinning the digest at step 4 is not optional bookkeeping.** `dev`'s compose names the *moving*
    `:dev` tag. Merging that to `main` unchanged would point every stable install at a tag this repo
    repoints on every dev push — the exact supply-chain hole that got another app delisted from the
    catalog on 2026-08-01. `build-image.yml` refuses to publish a `v*` tag whose compose is not
