@@ -9,7 +9,11 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [Unreleased]
 
-## [0.47.0]
+<!-- Entries are filed under the RELEASE they are heading toward, not per dev build. The dev branch's
+     manifest reads `0.46.0-dev.N`, and the version test checks the CHANGELOG for the base `0.46.0`,
+     so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
+
+## [0.46.0]
 
 - **A printable information sheet for each family, on their record.** Open a household and there is a
   **Print family sheet** button. It gives you one page — front and back of a single sheet — to hand or
@@ -35,8 +39,6 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   - Prints from your browser, so you get a proper preview and can save it as a PDF. Both the office and
     the finance manager can print it; nobody else can open it, because it carries children's dates of
     birth and the household's phone numbers.
-
-## [0.46.0]
 
 - **"What's new" now reads the way it does in OpenMasjid Kiosk.** The release notes used to put every
   version in its own panel with a **Show what changed** lid on it, so catching up after an update meant

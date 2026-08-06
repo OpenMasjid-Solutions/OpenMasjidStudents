@@ -28,9 +28,22 @@ const pkgVersion = (rel: string) => (JSON.parse(read(rel)) as { version: string 
 
 describe('every place that states the version agrees', () => {
   const version = read('VERSION').trim();
+  /**
+   * The dev branch carries a semver PRERELEASE (`0.46.0-dev.3`); `main` carries a plain release.
+   *
+   * That is not cosmetic. OpenMasjidOS detects an app update by comparing the catalog's `version`
+   * against the installed one, so while the dev entry declared the same version as stable there was
+   * nothing observable to compare and development-channel updates simply never fired. Each dev build
+   * now gets its own version, and CI publishes an image tag to match.
+   *
+   * `base` is the release the work is heading toward, and it is what the CHANGELOG is filed under — a
+   * heading per dev build would be noise nobody reads.
+   */
+  const base = version.replace(/-.*$/, '');
+  const isPrerelease = version !== base;
 
-  it('VERSION looks like a semver release', () => {
-    expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+  it('VERSION is a release, or a -dev.N prerelease of one', () => {
+    expect(version).toMatch(/^\d+\.\d+\.\d+(-dev\.\d+)?$/);
   });
 
   it('the three package.json files match VERSION', () => {
@@ -53,9 +66,12 @@ describe('every place that states the version agrees', () => {
     expect(config.version).not.toBe('0.0.0'); // the "could not read it" fallback
   });
 
-  it('the CHANGELOG has an entry for this version', () => {
+  it('the CHANGELOG has an entry for the release this version belongs to', () => {
     // A release whose notes were forgotten now also fails, since What's new is built from this file.
-    expect(read('CHANGELOG.md')).toContain(`## [${version}]`);
+    // Checked against the BASE version so `0.46.0-dev.3` is satisfied by the `## [0.46.0]` entry: the
+    // notes describe the release being worked toward, and filing one heading per dev build would leave
+    // a masjid scrolling through build numbers to find what actually changed.
+    expect(read('CHANGELOG.md')).toContain(`## [${base}]`);
   });
 
   /**
@@ -68,19 +84,35 @@ describe('every place that states the version agrees', () => {
    * since a masjid installing from a moving tag gets a build nobody audited.
    *
    * Two forms are sanctioned, one per update channel (CLAUDE.md "Branching policy"):
-   *   a digest-pinned release  — what `main` carries, and the only thing a stable install ever gets
-   *   exactly `:dev`           — the moving development tag, on the `dev` branch
+   *   a digest-pinned release          — what `main` carries; the only thing a stable install gets
+   *   the exact `:X.Y.Z-dev.N` tag     — on the `dev` branch, matching this VERSION
    *
-   * `:dev` is the one mutable tag the org accepts, and only because opting into it is an explicit
-   * choice in OpenMasjidOS. Note what this test can and cannot see: it knows the two shapes are
-   * legitimate, but not which branch it is running on, so it cannot catch a `:dev` compose reaching a
-   * release. That half is enforced where the branch is actually known — build-image.yml refuses to
-   * publish a v* tag whose compose is not digest-pinned. Neither check is sufficient alone.
+   * NO moving tag is acceptable in either. `:dev` used to be allowed here and that was the bug: the
+   * catalog embeds this compose, and a tag that silently moves gave OpenMasjidOS nothing observable to
+   * compare, so it could neither notify anyone nor find anything to update to.
+   *
+   * On dev this is checked for EQUALITY with VERSION, not just for shape — a stale tag would make every
+   * dev host install the previous build while the catalog advertised the new version, which is a lie
+   * that looks exactly like success. Note what this test cannot see: which branch it is on. That half is
+   * enforced where the ref is known (build-image.yml). Neither check is sufficient alone.
    */
-  it('the compose image is a digest-pinned release or the moving :dev tag', () => {
+  it('the compose image is a digest-pinned release, or this exact prerelease tag', () => {
     const m = /^\s*image:\s*(\S+)\s*$/m.exec(read('docker-compose.yml'));
-    expect(m?.[1]).toMatch(
-      /^ghcr\.io\/openmasjid-solutions\/openmasjidstudents:(?:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}|dev)$/,
-    );
+    const img = m?.[1] ?? '';
+    if (isPrerelease) {
+      expect(img).toBe(`ghcr.io/openmasjid-solutions/openmasjidstudents:${version}`);
+    } else {
+      expect(img).toMatch(/^ghcr\.io\/openmasjid-solutions\/openmasjidstudents:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/);
+    }
+  });
+
+  it('every service image is pinned — no floating tag anywhere in the compose', () => {
+    // The catalog runs the whole file, so a second service on `:latest` would be just as unreproducible
+    // as the first. There is one service today; this fails the moment that stops being true.
+    const lines = read('docker-compose.yml').split('\n').filter((l) => /^\s*image:/.test(l));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) {
+      expect(l).not.toMatch(/:(dev|latest)\s*$/);
+    }
   });
 });

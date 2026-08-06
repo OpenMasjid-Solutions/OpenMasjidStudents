@@ -12,19 +12,26 @@
 services:
   app:
     # ── DEVELOPMENT CHANNEL — this line differs from `main`, and that is the point ──
-    # This is the `dev` branch, so the image is the MOVING :dev tag that CI repoints on every push
-    # here. It is deliberately NOT digest-pinned: a digest is what makes an install reproducible, and
-    # the dev channel exists precisely to follow the newest build instead. A masjid only sees this if
-    # they switch OpenMasjidOS to the development update channel.
+    # An IMMUTABLE, versioned prerelease tag that matches `manifest.yaml`'s `version` exactly.
+    #
+    # It must not be the moving `:dev` tag, and that is not a style preference. The catalog embeds this
+    # compose and OpenMasjidOS detects an update by comparing the catalog's `version` against the
+    # installed one — so a dev entry that declared the same version as stable and pointed at a tag that
+    # silently moves gave the platform nothing observable to act on: same version string, same image
+    # reference, no notification, nothing to update to. Every dev build now gets its own version and its
+    # own tag, so a dev host sees a real change. CI publishes `:dev` as a convenience alias too, but the
+    # catalog pins the versioned tag, so the versioned tag is what belongs here.
+    #
+    # Bumping the prerelease means bumping this line with it. CI refuses to publish when the compose tag
+    # and the manifest version disagree, so a forgotten bump fails the build instead of shipping an entry
+    # that points at the previous build.
     #
     # On `main` this line is a release tag AND its @sha256 digest (the digest is the real pin — a moved
     # tag can't repoint it):
     #   ghcr.io/openmasjid-solutions/openmasjidstudents:0.45.2@sha256:25542ea8…
-    # Restoring that pin is a step OF the merge-to-main release, not an afterthought — merging dev into
-    # main without it would hand every stable install a tag that moves on every dev push. CI refuses to
-    # publish a v* tag whose compose is not digest-pinned, so that mistake fails loudly rather than
-    # shipping (see .github/workflows/build-image.yml and CLAUDE.md "Branching policy" + §19).
-    image: ghcr.io/openmasjid-solutions/openmasjidstudents:dev
+    # Restoring that pin is a step OF the merge-to-main release (CLAUDE.md "Branching policy" + §19); CI
+    # refuses to publish a v* tag whose compose is not digest-pinned.
+    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.46.0-dev.1
     restart: unless-stopped
     environment:
       PORT: "8080"
