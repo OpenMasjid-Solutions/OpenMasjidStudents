@@ -298,16 +298,17 @@ export async function buildFamilySheetHtml(
     ? kids
         .map((k) => {
           const age = ageFromDob(k.dob, now);
+          // No Student ID column: the ID has its own box above, at four times this size, and printing
+          // it twice on a page with a two-side budget buys nothing.
           return `<tr>
         <td><b>${esc(k.fullName)}</b>${k.status === 'withdrawn' ? ' <span class="muted">(withdrawn)</span>' : ''}</td>
-        <td class="code">${esc(k.studentCode ?? '—')}</td>
         <td>${esc(k.dob ? (age != null ? `${k.dob} (${age})` : k.dob) : '—')}</td>
         <td>${esc(k.className ?? '—')}</td>
         <td class="num">${balanceOf(k.owedCents, k.creditCents)}</td>
       </tr>`;
         })
         .join('')
-    : '<tr><td colspan="5" class="muted">No children on this record yet.</td></tr>';
+    : '<tr><td colspan="4" class="muted">No children on this record yet.</td></tr>';
 
   // Fees, grouped by child. The child's name spans their lines so the eye groups them without needing
   // a separate table per child.
@@ -384,15 +385,27 @@ export async function buildFamilySheetHtml(
   }
   payItems.push(`<li><b>Cash, check, Zelle or bank transfer (ACH).</b> These go <b>through the office</b>. Please hand them to the office and make sure someone records it against the right child — a payment nobody enters is a payment nobody can see. Ask for confirmation before you leave, and keep it.</li>`);
 
-  const idsLine = kids.filter((k) => k.studentCode).length
-    ? `<p class="idnote"><b>Each child has their own Student ID.</b> ${kids
-        .filter((k) => k.studentCode)
-        .map((k) => `${esc(k.fullName.trim().split(/\s+/)[0])} <span class="code">${esc(k.studentCode!)}</span>`)
-        .join(' &nbsp;·&nbsp; ')}${
-        routes.external
-          ? ' — it is what puts a payment on the right child, and what you need to pay at the kiosk or on the masjid website.'
-          : ' — it is what puts a payment on the right child when the office enters it.'
-      }</p>`
+  // The big Student ID box, one per child. Carried over from the per-student sheet deliberately: the ID
+  // is the one thing a parent has to type to pay anywhere, so it should be the most legible thing on the
+  // page, not a cell in a table.
+  //
+  // The explanatory line sits ONCE beneath the row rather than inside every box. On a sheet with a hard
+  // two-side budget, printing the same sentence five times is waste — and repeated identical prose reads
+  // like a fault rather than emphasis.
+  const withCodes = kids.filter((k) => k.studentCode);
+  const oneId = withCodes.length === 1;
+  const portalTail = routes.selfRegister ? ', and to set up your parent portal account' : '';
+  const idCardCopy = routes.external
+    ? `This is how a payment finds ${oneId ? 'your child' : 'the right child'}. You will need ${oneId ? 'it' : 'one of these'} to pay at the kiosk or on the masjid website${portalTail}.`
+    : `This is how a payment finds ${oneId ? 'your child' : 'the right child'} — it is what puts the money on the right record when the office enters it${portalTail}.`;
+  const idCards = withCodes.length
+    ? `<section>
+    <h2>Student ID${oneId ? '' : 's'}</h2>
+    <div class="idrow">${withCodes
+      .map((k) => `<div class="idcard"><div class="lbl">${esc(k.fullName.trim().split(/\s+/)[0])}</div><div class="code">${esc(k.studentCode!)}</div></div>`)
+      .join('')}</div>
+    <p class="idcopy">${esc(idCardCopy)}</p>
+  </section>`
     : '';
 
   const signupCopy = routes.selfRegister
@@ -427,9 +440,21 @@ export async function buildFamilySheetHtml(
   .logo { max-height: 46px; max-width: 170px; width: auto; height: auto; }
   h1 { font-size: 19px; color: var(--teal); margin: 0; }
   .sub { color: var(--muted); margin-top: 1px; font-size: 12px; }
-  .meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 7px; }
-  .fam { font-size: 16px; font-weight: 700; }
+  /* No family name here on purpose — the school name plus "Family information & how to pay" is the
+     heading, and the opening sentence already names the children. */
+  .meta { display: flex; justify-content: flex-end; align-items: baseline; margin-top: 7px; }
   .intro { margin: 0 0 10px; }
+  /* One box per child, the Student ID set large: it is the single thing a parent has to type to pay
+     anywhere, so it is the most legible thing on the sheet. Wraps to a second row rather than shrinking,
+     so a big family does not end up with unreadable codes. */
+  .idrow { display: flex; flex-wrap: wrap; gap: 8px; }
+  .idcard {
+    flex: 1 1 auto; min-width: 8.4rem; display: flex; flex-direction: column; gap: 1px;
+    padding: 7px 12px; border: 1px solid var(--teal); border-radius: 8px; background: #f4faf8;
+  }
+  .idcard .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .idcard .code { font-size: 21px; }
+  .idcopy { margin: 7px 0 0; font-size: 12px; color: var(--muted); }
   section { margin-top: 14px; page-break-inside: avoid; }
   h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 5px; }
   table { width: 100%; border-collapse: collapse; }
@@ -444,7 +469,6 @@ export async function buildFamilySheetHtml(
   .owed { color: #b42318; font-weight: 700; }
   .credit, .settled { color: var(--teal); font-weight: 700; }
   .balance { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--teal); border-radius: 8px; background: #f4faf8; font-size: 14px; }
-  .idnote { margin: 8px 0 0; padding: 7px 10px; border: 1px dashed var(--teal); border-radius: 8px; font-size: 12px; }
   ul.pay, ul.plain { margin: 0; padding-left: 18px; }
   ul.pay li { margin-bottom: 5px; }
   ul.plain li { margin-bottom: 2px; }
@@ -459,8 +483,9 @@ export async function buildFamilySheetHtml(
   @media print {
     body { padding: 0; font-size: 10.5pt; }
     .toolbar { display: none; }
-    .signup, .idnote { border-color: #999; }
-    .balance, .check { background: #fff; }
+    .signup { border-color: #999; }
+    /* Tinted panels print as white — a solid block of colour is what drains a masjid's toner. */
+    .balance, .check, .idcard { background: #fff; }
   }
 </style>
 </head>
@@ -475,7 +500,7 @@ export async function buildFamilySheetHtml(
         <div class="sub">Family information &amp; how to pay</div>
       </div>
     </div>
-    <div class="meta"><span class="fam">${esc(d.familyLabel)}</span><span class="muted">Printed ${esc(printedOn)}</span></div>
+    <div class="meta"><span class="muted">Printed ${esc(printedOn)}</span></div>
   </header>
 
   <p class="intro">${namesSentence
@@ -484,13 +509,14 @@ export async function buildFamilySheetHtml(
   ${firstNames.length === 1 ? 'child' : 'children'}, what the fees are, and every way you can pay.
   Please read it through and tell the office if anything is wrong or out of date.</p>
 
+  ${idCards}
+
   <section>
     <h2>Your ${firstNames.length === 1 ? 'child' : 'children'}</h2>
     <table>
-      <thead><tr><th>Name</th><th>Student ID</th><th>Date of birth</th><th>Class</th><th class="num">Owes</th></tr></thead>
+      <thead><tr><th>Name</th><th>Date of birth</th><th>Class</th><th class="num">Owes</th></tr></thead>
       <tbody>${childRows}</tbody>
     </table>
-    ${idsLine}
   </section>
 
   <section>

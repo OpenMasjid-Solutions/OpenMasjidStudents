@@ -163,6 +163,58 @@ describe('one sheet for the household', () => {
     expect(count('Please check this sheet')).toBe(1);
   });
 
+  it('gives every child their own big Student ID box, and explains it once', async () => {
+    household();
+    child('stu_1', 'Yusuf Ismail', { code: 'YUS1234' });
+    child('stu_2', 'Maryam Ismail', { code: 'MAR5678' });
+    const out = (await html())!;
+    // One box per child, labelled with their first name so you can tell whose code is whose.
+    expect(out.split('class="idcard"').length - 1).toBe(2);
+    expect(out).toContain('<div class="lbl">Yusuf</div><div class="code">YUS1234</div>');
+    expect(out).toContain('<div class="lbl">Maryam</div><div class="code">MAR5678</div>');
+    expect(out).toContain('<h2>Student IDs</h2>');
+    // The explanation appears ONCE, not once per child — repeated identical prose reads as a fault.
+    expect(out.split('This is how a payment finds').length - 1).toBe(1);
+    expect(out).toContain('the right child'); // pluralised for a household with siblings
+  });
+
+  it('says "Student ID" singular, and "your child", for an only child', async () => {
+    household();
+    child('stu_1', 'Yusuf Ismail', { code: 'YUS1234' });
+    const out = (await html())!;
+    expect(out).toContain('<h2>Student ID</h2>');
+    expect(out).toContain('This is how a payment finds your child');
+    expect(out).not.toContain('one of these');
+  });
+
+  it('prints no ID box for a child who has no code yet', async () => {
+    household();
+    child('stu_1', 'Yusuf Ismail', { code: null });
+    const out = (await html())!;
+    expect(out).not.toContain('class="idcard"');
+    expect(out).not.toContain('This is how a payment finds');
+  });
+
+  it('does not print the Student ID twice — the table has no ID column', async () => {
+    household();
+    child('stu_1', 'Yusuf Ismail', { code: 'YUS1234' });
+    const out = (await html())!;
+    expect(out.split('YUS1234').length - 1).toBe(1); // the box only
+    expect(out).not.toContain('<th>Student ID</th>');
+  });
+
+  it('has no family-name heading — the school name and the subtitle are the heading', async () => {
+    household();
+    child('stu_1', 'Yusuf Ismail');
+    const out = (await html())!;
+    expect(out).not.toContain('class="fam"');
+    // Not in the visible body at all. It stays in <title> on purpose: that is the saved PDF's filename.
+    const body = out.slice(out.indexOf('<body'));
+    expect(body).not.toContain('Ismail family');
+    expect(out).toContain('<title>Family information — Ismail family</title>');
+    expect(out).toContain('Family information &amp; how to pay');
+  });
+
   it('includes a withdrawn child, whose unpaid bill is still owed', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
@@ -359,7 +411,7 @@ describe('it must not promise a payment route this install does not have', () =>
   it('tells the family what the IDs are for, differently when nothing external is on', async () => {
     household();
     child('stu_1', 'Yusuf Ismail', { code: 'YUS1234' });
-    expect((await html(ALL_ON))!).toContain('what you need to pay at the kiosk or on the masjid website');
+    expect((await html(ALL_ON))!).toContain('to pay at the kiosk or on the masjid website');
     const off = (await html({ card: true, external: false, selfRegister: true }))!;
     expect(off).toContain('when the office enters it');
     expect(off).not.toContain('pay at the kiosk');
