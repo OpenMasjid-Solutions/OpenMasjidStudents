@@ -202,10 +202,36 @@ jobs:
             echo "The moving :dev tag now points here. Nothing to pin — the dev channel tracks the tag."
           fi
 
-      # Optional: tell the OpenMasjidAPPS catalog to rebuild after a release.
-      # Requires a repo secret CATALOG_DISPATCH_TOKEN (a PAT with 'repo' scope).
-      # - name: Notify catalog
-      #   if: startsWith(github.ref, 'refs/tags/v')
-      #   env:
-      #     GH_TOKEN: ${{ secrets.CATALOG_DISPATCH_TOKEN }}
-      #   run: gh api repos/OpenMasjid-Solutions/OpenMasjidAPPS/dispatches -f event_type=rebuild-catalog
+      # ── Tell the catalog an image exists ───────────────────────────────────────────────────────────
+      # Publishing an image reaches nobody on its own. OpenMasjidOS reads versions from the catalog, and
+      # the catalog is only regenerated when something asks it to — so until this step existed, a dev
+      # build sat in GHCR while `dev/catalog.json` still advertised the previous version and every masjid
+      # was correctly told it was up to date. OpenMasjidAPPS listens for `repository_dispatch`
+      # (`types: [rebuild-catalog]`) and, across its whole history, had received exactly ZERO of them:
+      # every rebuild came from a push, the hourly cron, or a human. This step is the missing signal.
+      #
+      # It runs LAST, after the image is pushed, and that order is the point: the catalog reads
+      # `manifest.yaml` from the git ref, so asking it to rebuild before the image exists publishes an
+      # entry pointing at a tag nobody can pull.
+      #
+      # Fires on BOTH publishing paths — a `v*` release tag and a `dev` branch push. NOT on a plain push
+      # to `main`: the stable catalog entry pins the release TAG, which does not exist yet at that point,
+      # so a rebuild then would only re-publish the previous release.
+      #
+      # `continue-on-error` is deliberate. The image is already published and immutable by the time this
+      # runs; a failed dispatch must not turn a good build red. The hourly cron in OpenMasjidAPPS remains
+      # the floor under this — this step only removes the wait.
+      #
+      # Copied from OpenMasjidKiosk's build-image.yml so all app repos signal identically.
+      - name: Notify catalog to rebuild
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/dev'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.CATALOG_PUSH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "CATALOG_PUSH_TOKEN not set — skipping catalog dispatch (add it as an org/repo secret to auto-publish)."
+            exit 0
+          fi
+          gh api repos/OpenMasjid-Solutions/OpenMasjidAPPS/dispatches -f event_type=rebuild-catalog
+          echo "Requested an OpenMasjidAPPS catalog rebuild."
