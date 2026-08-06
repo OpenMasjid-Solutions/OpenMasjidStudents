@@ -22,10 +22,10 @@
 The org runs **two update channels**, chosen by an Update Channel toggle in OpenMasjidOS. This repo has
 one branch per channel:
 
-| Branch | Channel | Image tags CI publishes | Compose `image:` |
-| --- | --- | --- | --- |
-| **`dev`** | development | `:dev` (moving) + `:dev-<sha>` (immutable) | `…:dev`, **not** digest-pinned |
-| **`main`** | stable | `:<manifest version>` + `:latest` | release tag **+ `@sha256:` digest** |
+| Branch | Channel | `manifest.yaml` `version:` | Image tags CI publishes | Compose `image:` |
+| --- | --- | --- | --- | --- |
+| **`dev`** | development | `X.Y.Z-dev.N` (prerelease) | `:X.Y.Z-dev.N` + `:dev` + `:dev-<sha>` | `…:X.Y.Z-dev.N` (the exact version) |
+| **`main`** | stable | `X.Y.Z` | `:X.Y.Z` + `:latest` | release tag **+ `@sha256:` digest** |
 
 **The rules, and they do not bend:**
 
@@ -44,33 +44,48 @@ one branch per channel:
 4. **That merge IS the release.** It carries the whole §19 runbook with it: bump the version in all six
    places, FF-merge, let CI build, **re-pin the `@sha256` digest in `docker-compose.yml`**, tag, then
    bump `OpenMasjidAPPS/registry.yaml`. Nothing is released until the registry bump lands.
-5. **Re-pinning the digest at step 4 is not optional bookkeeping.** `dev`'s compose names the *moving*
-   `:dev` tag. Merging that to `main` unchanged would point every stable install at a tag this repo
-   repoints on every dev push — the exact supply-chain hole that got another app delisted from the
-   catalog on 2026-08-01. `build-image.yml` refuses to publish a `v*` tag whose compose is not
-   digest-pinned, so the mistake fails loudly instead of shipping; do not treat that guard as the plan.
+5. **Re-pinning the digest at step 4 is not optional bookkeeping.** `dev`'s compose names a *prerelease*
+   tag. Merging that to `main` unchanged would ship a stable release pointing at a dev build's tag.
+   `build-image.yml` refuses to publish a `v*` tag whose compose is not digest-pinned, or whose manifest
+   version is still a prerelease — so the mistake fails loudly instead of shipping. Do not treat that
+   guard as the plan.
+6. **Every dev build gets its own version — `X.Y.Z-dev.N`.** `X.Y.Z` is the release being worked toward;
+   `N` increments on every dev build you publish. It must **never** equal a stable version. Bumping it is
+   part of pushing to `dev`, in the same six places §19 lists, **and in `docker-compose.yml`'s tag**.
+
+**Why the prerelease version is load-bearing, not bookkeeping.** OpenMasjidOS detects an app update by
+comparing the catalog's `version` against the installed one (`checkCatalogUpdate` → `isNewerVersion`);
+`updateCatalogApp` returns "already up to date" when it is not newer, so `docker compose pull` never
+runs. The dev channel was therefore **completely dead** for its first three builds: the dev catalog entry
+declared the same version as stable and pointed at `:dev`, a tag that silently moved — so nothing
+observable changed between builds, the platform could not notify anyone, and there was nothing to update
+to. Distinct versions and immutable per-build tags are the fix. Two consequences worth knowing:
+
+- **`isNewerVersion` is not semver.** It splits on `.` and `parseInt`s each part, so `0-dev` → `0` and
+  `-dev.N` becomes a fourth numeric component: `0.46.0-dev.1` → `[0,46,0,1]`. Forward detection is
+  correct (`0.45.2 < 0.46.0-dev.1 < 0.46.0-dev.2`), but a prerelease sorts **above** its own final
+  release, so `0.46.0-dev.3 → 0.46.0` is *not* detected. A host coming off the dev channel stays put
+  until the next patch. Platform-side; do not try to work around it here by inflating versions.
+- **Never publish a dev catalog entry before its image exists.** The catalog pins the exact tag, so an
+  entry that lands first gives a masjid a pull failure. Push to `dev`, let the build finish, then let the
+  catalog pick it up.
 
 **Channel wiring (what makes the dev channel actually a channel):**
 
-- `.github/workflows/build-image.yml` resolves tags from the ref. The two tag sets are **disjoint on
-  purpose**: `dev` carries `main`'s manifest version for most of its life, so publishing `:<version>`
-  from a dev push would overwrite an already-released stable tag with unreviewed content. Never add the
-  version tag or `:latest` to the dev list.
+- `.github/workflows/build-image.yml` resolves tags from the ref. Both channels publish
+  `:<manifest version>`; on `dev` that is the tag the catalog pins, and it is safe **only** because the
+  guard enforces that dev's version is always a `-dev.N` prerelease and so can never collide with a
+  released stable tag. `:latest` stays main-only.
+- The guard also refuses when the **compose tag and the manifest version disagree**, on any service — a
+  stale tag would install the previous build while the catalog advertised the new version, which is a lie
+  that looks exactly like success.
 - Both channels build **multi-arch (amd64 + arm64)**. Masajid run this on Raspberry Pis, and the dev
   channel is where a Pi-only regression should surface.
 - `ci.yml` (lint + test + build) runs on `dev` as well as `main`. `dev` is the branch that most needs it.
 - The catalog needs **`dev_ref: dev`** alongside the stable `ref:` in this app's `OpenMasjidAPPS/registry.yaml`
   entry. That edit belongs to the catalog repo, not here.
-
-**Known gap — a moving tag alone does not reach a dev host.** OpenMasjidOS decides an app has an update
-by comparing the catalog's `manifest.yaml` **version string** against the installed one
-(`checkCatalogUpdate` → `isNewerVersion`), and `updateCatalogApp` returns "already up to date" when it
-is not newer — so `docker compose pull` never runs. While `dev`'s manifest version equals the released
-one, `:dev` can be repointed any number of times and **no dev host will ever be offered it**. Closing
-this needs a platform-side change (on the dev channel, pull and recreate on a changed digest rather than
-a changed version) or a per-dev-build version scheme here. Do not invent either one unilaterally: the
-first is an OpenMasjidOS decision, and the second changes the release contract §19 and `version.test.ts`
-depend on.
+- The CHANGELOG is filed under the **release** (`## [0.46.0]`), not per dev build; `version.test.ts`
+  checks the base version, so `0.46.0-dev.3` is satisfied by the `0.46.0` heading.
 
 ---
 

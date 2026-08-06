@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * Authed serving of printable family statements (CLAUDE.md §4, §5, §14). Registered before the
- * SPA fallback and excluded from the tRPC/session middleware — it gates itself: session from the
- * cookie, role must be admin (LAN only) or finance (LAN + tunnel), re-checked on every request.
- * The statement carries a family's balance, payment history and every child's Student ID, so it is
- * NEVER on a public static mount.
+ * Authed serving of the app's printable documents (CLAUDE.md §4, §5, §14):
+ *   GET /statements/family/:id  — a household's balance, open bills and payment history
+ *   GET /sheets/family/:id      — a household's onboarding sheet (children, fees, how to pay)
+ *
+ * Both are registered before the SPA fallback and excluded from the tRPC/session middleware, so each
+ * gates itself: session from the cookie, role must be admin (LAN only) or finance (LAN + tunnel),
+ * re-checked on every request. They carry Student IDs, guardian contact details, a child's date of
+ * birth and payment history, so they are NEVER on a public static mount.
+ *
+ * They live in one module on purpose. The auth gate, the CSP and the QR base-URL derivation are the
+ * security-critical parts and are identical for both — duplicating them in a second file is how one
+ * copy quietly loses a header.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getSession, COOKIE } from '../auth/sessions';
 import { classifyOrigin } from '../security/origin';
 import { config } from '../config';
 import { buildFamilyStatementHtml, canServeStatement } from './statements';
+import { buildFamilySheetHtml } from '../people/onboardingSheet';
 
 /**
  * Defence in depth for a page assembled by string concatenation that carries a family's Student IDs
@@ -47,13 +55,18 @@ function baseUrlFor(req: FastifyRequest): string {
 }
 
 export function registerStatementRoutes(app: FastifyInstance): void {
-  app.get('/statements/family/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+  /** Shared by both documents: authorise, render, and send with the full header set. */
+  async function servePrintable(
+    req: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+    build: (id: string, baseUrl: string) => Promise<string | null>,
+  ) {
     const token = (req as unknown as { cookies?: Record<string, string> }).cookies?.[COOKIE];
     const session = getSession(token);
     if (!session || !canServeStatement(session.role, classifyOrigin(req))) {
       return reply.code(403).type('text/plain').send('You don’t have access to that.');
     }
-    const html = await buildFamilyStatementHtml(req.params.id, baseUrlFor(req));
+    const html = await build(req.params.id, baseUrlFor(req));
     if (html == null) return reply.code(404).type('text/plain').send('Not found.');
     return reply
       .header('Content-Type', 'text/html; charset=utf-8')
@@ -62,5 +75,16 @@ export function registerStatementRoutes(app: FastifyInstance): void {
       .header('X-Content-Type-Options', 'nosniff')
       .header('Referrer-Policy', 'no-referrer')
       .send(html);
-  });
+  }
+
+  app.get('/statements/family/:id', (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) =>
+    servePrintable(req, reply, buildFamilyStatementHtml),
+  );
+
+  // The onboarding sheet a household is handed when their children go on the system — one sheet for the
+  // family, not one per child. Same gate as the statement: it carries the children's dates of birth and
+  // the household's contact details, which finance and admin may see and nobody else may (§5).
+  app.get('/sheets/family/:id', (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) =>
+    servePrintable(req, reply, (id, base) => buildFamilySheetHtml(id, base)),
+  );
 }

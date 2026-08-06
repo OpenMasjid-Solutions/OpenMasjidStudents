@@ -11,14 +11,19 @@ name: Build image
 # (the Fabric contract — see docs/FABRIC_BILLING_CONTRACT.md).
 #
 # TWO CHANNELS (CLAUDE.md "Branching policy"):
-#   main / v* tags  ->  :<manifest version>  +  :latest     the stable channel masajid install
-#   dev             ->  :dev  +  :dev-<sha>                 the development channel
+#   main / v* tags  ->  :<manifest version>  +  :latest              the stable channel masajid install
+#   dev             ->  :<manifest version>  +  :dev  +  :dev-<sha>  the development channel
 #
-# The tag sets are disjoint on purpose, and that is the load-bearing part of this file. `dev` carries
-# main's manifest version for most of its life, so publishing :<version> from a dev push would
-# overwrite an ALREADY-RELEASED stable tag with unreviewed content — every masjid that reinstalled or
-# recreated that app would then pull a dev build under a released version number. Never add the
-# version tag or :latest to the dev branch's tag list.
+# Both channels publish :<manifest version>, and on dev that tag is the one the catalog pins. It is safe
+# only because of the invariant the guard below enforces: on `dev` the manifest version is ALWAYS a
+# `-dev.N` prerelease, so it can never collide with a released stable tag. If someone bumps dev's
+# manifest to a plain `0.46.0`, this workflow refuses rather than overwriting the tag that release will
+# need.
+#
+# :latest stays main-only. `:dev` remains as a convenience alias for `docker pull`, but nothing pins it:
+# a moving tag is what broke development-channel updates in the first place — the catalog declared the
+# same version as stable and pointed at a tag that silently moved, so the platform had nothing
+# observable to compare and nothing to update to.
 #
 # After the first run, make the GHCR package Public (owner -> Packages -> package
 # settings) so masjid hosts can pull it without authentication.
@@ -80,10 +85,11 @@ jobs:
 
           if [ "$GITHUB_REF" = refs/heads/dev ]; then
             channel=dev
-            # :dev moves; :dev-<sha> does not. The immutable companion costs nothing (same manifest,
-            # one more tag) and is the only way to put a dev host back on the previous dev build after
-            # a bad one, since a moving tag keeps no history.
-            tags="$img:dev
+            # :$ver is the immutable, versioned prerelease tag the catalog pins — the whole point of the
+            # dev channel working at all. :dev is a convenience alias for a human running docker pull,
+            # and :dev-<sha> ties a build to its commit.
+            tags="$img:$ver
+          $img:dev
           $img:dev-${GITHUB_SHA:0:7}"
           else
             channel=stable
@@ -102,22 +108,52 @@ jobs:
       # its registry entry pins), so this file IS a shipped artifact and the channel invariant belongs
       # right here, before anything is published.
       #
-      # dev must name the moving :dev tag; a v* tag must be digest-pinned. Pinning the tag alone is not
-      # enough — a tag can be repointed at different content, which is why another app was delisted from
-      # the catalog on 2026-08-01. A push to main is allowed to be unpinned for exactly one commit,
-      # because §19 pins the digest only AFTER the image has been built from main, so that case warns.
+      # On dev, THREE things must hold or development-channel updates break silently again:
+      #   1. the manifest version is a `-dev.N` prerelease — never a plain X.Y.Z, which would collide
+      #      with the stable tag that release will need, and would also read as "already released";
+      #   2. the compose names that exact version — the catalog embeds this compose, so a stale tag here
+      #      means every dev host installs the PREVIOUS build while the catalog claims the new version;
+      #   3. it is not the moving `:dev` alias — a tag that silently moves is what left the platform with
+      #      nothing observable to compare, and therefore nothing to notify anyone about.
+      # A v* tag must be digest-pinned: pinning a tag alone is not enough, since a tag can be repointed at
+      # different content, which is why another app was delisted from the catalog on 2026-08-01. A push to
+      # main may be unpinned for exactly one commit, because §19 pins the digest only AFTER the image has
+      # been built from main, so that case warns.
       - name: Check the compose image matches the channel
         run: |
+          ver='${{ steps.meta.outputs.version }}'
           img=$(grep -E '^[[:space:]]*image:' docker-compose.yml | head -1 | sed -E 's/^[[:space:]]*image:[[:space:]]*//')
-          echo "compose image: $img"
+          echo "manifest version: $ver"
+          echo "compose image:    $img"
+
+          # Every service must be pinned, not just the first: the catalog runs the whole file.
+          services=$(grep -cE '^[[:space:]]*image:' docker-compose.yml)
+          echo "services with an image: $services"
+          if [ "$(grep -E '^[[:space:]]*image:' docker-compose.yml | grep -cE ':dev$|:latest$')" != 0 ] \
+             && [ "$GITHUB_REF" != refs/heads/dev ]; then
+            echo "::error::a service references a moving tag (:dev or :latest)"; exit 1
+          fi
+
           case "$GITHUB_REF" in
             refs/heads/dev)
+              case "$ver" in
+                *-dev.[0-9]*) echo "ok — prerelease version" ;;
+                *) echo "::error::dev's manifest version must be a prerelease like 0.46.0-dev.1, got '$ver'. A plain X.Y.Z would collide with the stable tag for that release."; exit 1 ;;
+              esac
               case "$img" in
-                *@sha256:*) echo "::error::the dev compose must not digest-pin — :dev is a moving tag ($img)"; exit 1 ;;
-                *:dev) echo "ok — dev channel" ;;
-                *) echo "::error::the dev compose must reference the :dev tag, got '$img'"; exit 1 ;;
-              esac ;;
+                *:dev) echo "::error::the dev compose must name the versioned tag, not the moving :dev alias — the catalog pins what is here"; exit 1 ;;
+                *:"$ver") echo "ok — compose pins the exact prerelease tag" ;;
+                *@sha256:*) echo "ok — compose is digest-pinned" ;;
+                *) echo "::error::the dev compose must reference :$ver (or a digest), got '$img'. Bump the compose with the version."; exit 1 ;;
+              esac
+              # Every image line must carry the same version, so a second service cannot lag behind.
+              bad=$(grep -E '^[[:space:]]*image:' docker-compose.yml | grep -vcE ":${ver}\$|@sha256:") || true
+              [ "$bad" = 0 ] && echo "ok — all $services service image(s) pinned to $ver" \
+                || { echo "::error::$bad service image(s) are not pinned to $ver"; exit 1; } ;;
             refs/tags/v*)
+              case "$ver" in
+                *-*) echo "::error::a release must not carry a prerelease version, got '$ver'"; exit 1 ;;
+              esac
               case "$img" in
                 *@sha256:*) echo "ok — release is digest-pinned" ;;
                 *) echo "::error::a release compose must digest-pin the image (@sha256:…), got '$img'. Did a dev merge land without re-pinning?"; exit 1 ;;
@@ -166,10 +202,36 @@ jobs:
             echo "The moving :dev tag now points here. Nothing to pin — the dev channel tracks the tag."
           fi
 
-      # Optional: tell the OpenMasjidAPPS catalog to rebuild after a release.
-      # Requires a repo secret CATALOG_DISPATCH_TOKEN (a PAT with 'repo' scope).
-      # - name: Notify catalog
-      #   if: startsWith(github.ref, 'refs/tags/v')
-      #   env:
-      #     GH_TOKEN: ${{ secrets.CATALOG_DISPATCH_TOKEN }}
-      #   run: gh api repos/OpenMasjid-Solutions/OpenMasjidAPPS/dispatches -f event_type=rebuild-catalog
+      # ── Tell the catalog an image exists ───────────────────────────────────────────────────────────
+      # Publishing an image reaches nobody on its own. OpenMasjidOS reads versions from the catalog, and
+      # the catalog is only regenerated when something asks it to — so until this step existed, a dev
+      # build sat in GHCR while `dev/catalog.json` still advertised the previous version and every masjid
+      # was correctly told it was up to date. OpenMasjidAPPS listens for `repository_dispatch`
+      # (`types: [rebuild-catalog]`) and, across its whole history, had received exactly ZERO of them:
+      # every rebuild came from a push, the hourly cron, or a human. This step is the missing signal.
+      #
+      # It runs LAST, after the image is pushed, and that order is the point: the catalog reads
+      # `manifest.yaml` from the git ref, so asking it to rebuild before the image exists publishes an
+      # entry pointing at a tag nobody can pull.
+      #
+      # Fires on BOTH publishing paths — a `v*` release tag and a `dev` branch push. NOT on a plain push
+      # to `main`: the stable catalog entry pins the release TAG, which does not exist yet at that point,
+      # so a rebuild then would only re-publish the previous release.
+      #
+      # `continue-on-error` is deliberate. The image is already published and immutable by the time this
+      # runs; a failed dispatch must not turn a good build red. The hourly cron in OpenMasjidAPPS remains
+      # the floor under this — this step only removes the wait.
+      #
+      # Copied from OpenMasjidKiosk's build-image.yml so all app repos signal identically.
+      - name: Notify catalog to rebuild
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/dev'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.CATALOG_PUSH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "CATALOG_PUSH_TOKEN not set — skipping catalog dispatch (add it as an org/repo secret to auto-publish)."
+            exit 0
+          fi
+          gh api repos/OpenMasjid-Solutions/OpenMasjidAPPS/dispatches -f event_type=rebuild-catalog
+          echo "Requested an OpenMasjidAPPS catalog rebuild."

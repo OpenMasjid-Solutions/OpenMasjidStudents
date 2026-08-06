@@ -15,14 +15,15 @@ services:
     # Tag for humans + @sha256 digest for integrity. The digest is the real pin: a tag can be moved to
     # point at different content, a digest cannot. This is what every masjid installs.
     #
-    # On `dev` this same line is the MOVING `:dev` tag, deliberately unpinned, because the development
-    # channel exists to follow the newest build. So a merge from dev lands `:dev` here, and re-pinning
-    # is a STEP OF the release rather than an afterthought — CLAUDE.md "Branching policy" + §19:
-    # bump the version, merge, let CI build, pin the digest it prints, then tag.
+    # On `dev` this same line is an IMMUTABLE prerelease tag (`:X.Y.Z-dev.N`) matching that branch's
+    # manifest version, because the development channel needs a distinct version per build for the
+    # platform to detect one at all. So a merge from dev lands a prerelease tag here, and re-pinning is a
+    # STEP OF the release rather than an afterthought — CLAUDE.md "Branching policy" + §19: set the plain
+    # version, merge, let CI build, pin the digest it prints, then tag.
     #
-    # Skipping the pin would hand every stable install a tag this repo repoints on every dev push.
-    # `build-image.yml` refuses to publish a v* tag whose compose is not digest-pinned, so that
-    # mistake fails loudly instead of shipping — but the guard is the backstop, not the plan.
+    # Skipping the pin would ship every stable install a dev build's tag. `build-image.yml` refuses to
+    # publish a v* tag whose compose is not digest-pinned, or whose version is still a prerelease — but
+    # the guard is the backstop, not the plan.
     image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.45.2@sha256:25542ea87629f404344f2e70387c5084b892bec70416ad26674ce4de25c2a072
     restart: unless-stopped
     environment:
