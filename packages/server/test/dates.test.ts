@@ -7,6 +7,14 @@
  * human reads and what a human may type. If a future change ever lets a non-ISO string reach the
  * database, sorting breaks silently (dates are compared as text throughout) and `03/04` becomes two
  * different days depending on who is looking.
+ *
+ * EVERY CALL HERE PASSES ITS FORMAT EXPLICITLY, and has to. Both functions default that argument to
+ * `getDateFormat()`, which reads the settings table — and a default argument is evaluated before the
+ * body, so even `formatDate('')` would touch the database. This file has no harness and wants none:
+ * these are pure functions and the point is to test them as such. Omitting the format made the suite
+ * pass on a machine that happened to have a database and fail on a clean checkout, which is exactly
+ * what it did on CI for the whole of 0.47.0. The setting-reading path is covered where a database
+ * genuinely exists — import.test.ts, statements.test.ts and onboardingSheet.test.ts.
  */
 import { describe, it, expect } from 'vitest';
 import { DATE_FORMATS, DATE_FORMAT_SAMPLES, formatDate, parseDateInput } from '../src/settings/dates';
@@ -27,7 +35,7 @@ describe('formatDate', () => {
 
   it('renders a blank for anything that is not a stored date', () => {
     // A DOB is optional by design (§14), so absent must read as empty, never "Invalid Date".
-    for (const v of [null, undefined, '', 'not a date', '2026-3-4']) expect(formatDate(v as string)).toBe('');
+    for (const v of [null, undefined, '', 'not a date', '2026-3-4']) expect(formatDate(v as string, 'iso')).toBe('');
   });
 });
 
@@ -63,19 +71,19 @@ describe('parseDateInput', () => {
 
   it('rejects three plausible numbers that are not a calendar date', () => {
     // The whole reason parsing is not a regex: 2026-02-30 matches the shape and is not a day.
-    expect(parseDateInput('2026-02-30')).toBeNull();
+    expect(parseDateInput('2026-02-30', 'iso')).toBeNull();
     expect(parseDateInput('31/02/2026', 'uk')).toBeNull();
     expect(parseDateInput('13/13/2026', 'us')).toBeNull();
   });
 
   it('rejects anything that is not a date at all, and reads blank as absent', () => {
-    for (const v of ['sometime in 2015', 'N/A', '2026', 'March']) expect(parseDateInput(v)).toBeNull();
+    for (const v of ['sometime in 2015', 'N/A', '2026', 'March']) expect(parseDateInput(v, 'iso')).toBeNull();
     // Empty is NOT an error — a DOB column is allowed to be blank.
-    for (const v of ['', '   ', null, undefined]) expect(parseDateInput(v as string)).toBeNull();
+    for (const v of ['', '   ', null, undefined]) expect(parseDateInput(v as string, 'iso')).toBeNull();
   });
 
   it('refuses a year outside anything a madrasah would record', () => {
-    expect(parseDateInput('1899-01-01')).toBeNull();
-    expect(parseDateInput('2201-01-01')).toBeNull();
+    expect(parseDateInput('1899-01-01', 'iso')).toBeNull();
+    expect(parseDateInput('2201-01-01', 'iso')).toBeNull();
   });
 });
