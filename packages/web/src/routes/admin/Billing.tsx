@@ -14,7 +14,7 @@
  *  record payments, chase balances — but WHAT the madrasa charges is the office's decision, so
  *  creating, archiving and deleting fee plans is admin-only. Finance still READS the plans, because
  *  no invoice screen means anything without their names. The server enforces the same wall. */
-import { lazy, Suspense, useMemo, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Wallet, Users2, Pencil, CalendarClock, ArrowRight } from 'lucide-react';
@@ -33,6 +33,10 @@ const MidYearSetup = lazy(() => import('../../components/MidYearSetup').then((m)
 /** The channels the office can record by hand — kept in step with the server by the mutation's own
  *  input type, so a drift here fails `tsc` rather than at runtime. */
 const MANUAL_CHANNELS = ['cash', 'check', 'ach', 'zelle', 'other'] as const;
+
+/** Month names for the label PREVIEW only. The stored label is resolved server-side from the period key
+ *  (billing/period.ts) — this is what the office sees while typing, never what is written. */
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 type ManualChannel = (typeof MANUAL_CHANNELS)[number];
 
 /** The code-defined export sheets (the server owns the columns — §14, no query built from input). */
@@ -49,6 +53,9 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   const planArchive = trpc.billing.feePlanArchive.useMutation();
   const planDelete = trpc.billing.feePlanDelete.useMutation();
   const genPeriod = trpc.billing.generatePeriod.useMutation();
+  // The saved label template, the tags and the months worth billing — all from the server, so the form
+  // never invents a period key and the wording persists between months.
+  const labelCfg = trpc.billing.invoiceLabelConfig.useQuery();
   const reconcileStatusQ = trpc.billing.reconcileStatus.useQuery();
   const reconcileNow = trpc.billing.reconcileNow.useMutation();
 
@@ -84,6 +91,16 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
 
   const [plan, setPlan] = useState({ name: '', amount: '', cadence: 'monthly' });
   const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
+  /** Seed the month and the wording from the server ONCE it arrives, and only while the office has not
+   *  typed anything — re-seeding over an edit in progress is the classic controlled-input bug. */
+  useEffect(() => {
+    if (!labelCfg.data) return;
+    setGen((g) => ({
+      ...g,
+      periodKey: g.periodKey || labelCfg.data!.suggested,
+      label: g.label || labelCfg.data!.template,
+    }));
+  }, [labelCfg.data]);
   const [genMsg, setGenMsg] = useState<string | null>(null);
   const [reconcileMsg, setReconcileMsg] = useState<string | null>(null);
   const [item, setItem] = useState({ name: '', amount: '' });
@@ -192,10 +209,29 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   }
   async function runGenerate(e: FormEvent) {
     e.preventDefault();
-    if (!gen.periodKey.trim() || !gen.label.trim()) return;
-    const r = await genPeriod.mutateAsync({ periodKey: gen.periodKey.trim(), label: gen.label.trim(), dueDate: gen.dueDate || undefined });
+    if (!gen.periodKey || !gen.label.trim()) return;
+    // The TEMPLATE goes to the server, which resolves the tags from the period key it is filing the
+    // invoice under — so the label and the month cannot disagree, and the wording is remembered for next
+    // month and for the nightly job (billing/period.ts resolveInvoiceLabel).
+    const r = await genPeriod.mutateAsync({ periodKey: gen.periodKey, labelTemplate: gen.label.trim(), dueDate: gen.dueDate || undefined });
     setGenMsg(t('billing.generatedN', { n: r.created }));
-    setGen({ periodKey: '', label: '', dueDate: '' });
+    await utils.billing.invoiceLabelConfig.invalidate();
+    setGen({ ...gen, dueDate: '' });
+  }
+
+  /** The label as it will read, using the same tags the server resolves. A preview, not the source of
+   *  truth — the server derives the stored label from the period key itself. */
+  function previewLabel(template: string, periodKey: string): string {
+    const [y, m] = periodKey.split('-').map(Number);
+    if (!y || !m) return template;
+    const subs: Record<string, string> = {
+      month: MONTH_NAMES[m - 1],
+      mon: MONTH_NAMES[m - 1].slice(0, 3),
+      year: String(y),
+      yy: String(y).slice(-2),
+      period: periodKey,
+    };
+    return template.replace(/\[(month|mon|year|yy|period)\]/gi, (whole, tag: string) => subs[tag.toLowerCase()] ?? whole);
   }
   function openFamily(id: string, name: string) {
     open({ title: name, wide: true, dedupeKey: `billing:${id}`, icon: <Wallet size={15} />, node: <FamilyBilling familyId={id} currency={currency} /> });
@@ -502,11 +538,42 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
           </div>
         )}
 
+        {/* The month is PICKED and the label is a template with tags — neither is typed out from scratch
+            every month. Two free-text boxes that had to agree with each other was one keystroke away from
+            "Tuition — Jun 2026" filed under 2026-07, on a record that is never edited afterwards. */}
         <form className="inline-form glass-inset" onSubmit={runGenerate} style={{ marginBlockStart: 0 }}>
-          <div className="field"><label className="label">{t('billing.periodKey')}</label><input className="input glass-inset" value={gen.periodKey} onChange={(e) => setGen({ ...gen, periodKey: e.target.value })} placeholder="2026-07" /></div>
-          <div className="field"><label className="label">{t('billing.label')}</label><input className="input glass-inset" value={gen.label} onChange={(e) => setGen({ ...gen, label: e.target.value })} placeholder={t('billing.labelHint')} /></div>
+          <div className="field" style={{ flex: '0 1 12rem' }}>
+            <label className="label" htmlFor="gen-period">{t('billing.forMonth')}</label>
+            <select id="gen-period" className="input glass-inset" value={gen.periodKey} onChange={(e) => setGen({ ...gen, periodKey: e.target.value })}>
+              {(labelCfg.data?.months ?? []).map((m) => (
+                <option key={m.periodKey} value={m.periodKey}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="gen-label">{t('billing.label')}</label>
+            <input id="gen-label" className="input glass-inset" value={gen.label} onChange={(e) => setGen({ ...gen, label: e.target.value })} placeholder={t('billing.labelHint')} />
+            {/* Tag chips, so nobody has to remember the spelling — and a live preview, because a template
+                with tags in it is not what a parent will read. */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginBlockStart: '0.35rem', alignItems: 'center' }}>
+              {(labelCfg.data?.tags ?? []).map((tg) => (
+                <button
+                  key={tg.tag}
+                  type="button"
+                  className="chip"
+                  title={t('billing.tagInsert', { example: tg.example })}
+                  onClick={() => setGen((g) => ({ ...g, label: `${g.label}[${tg.tag}]` }))}
+                >
+                  [{tg.tag}]
+                </button>
+              ))}
+            </div>
+            {gen.label.trim() && gen.periodKey && (
+              <p className="hint" style={{ marginBlockStart: '0.35rem' }}>{t('billing.labelPreview', { label: previewLabel(gen.label, gen.periodKey) })}</p>
+            )}
+          </div>
           <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.due')}</label><input type="date" className="input glass-inset" value={gen.dueDate} onChange={(e) => setGen({ ...gen, dueDate: e.target.value })} /></div>
-          <button type="submit" className="btn btn--primary" disabled={genPeriod.isPending}>{t('billing.generateAll')}</button>
+          <button type="submit" className="btn btn--primary" disabled={genPeriod.isPending || !gen.periodKey || !gen.label.trim()}>{t('billing.generateAll')}</button>
         </form>
       </section>
 

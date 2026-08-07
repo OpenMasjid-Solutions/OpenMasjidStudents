@@ -63,6 +63,22 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     change that row again. Any row you haven't saved is called out, and the button top-right says
     **Next** rather than Skip once you've changed something.
 
+- **Generating invoices no longer means typing the month twice.** Pick the month from a list — the months
+  of your school year, not a free-typed `2026-07` — and write the name ONCE with tags in it:
+  `Tuition — [month] [year]`. Tap a tag to insert it, and the line underneath shows exactly how the
+  invoice will read.
+  - The tags are filled in **from the month you picked**, so the wording and the month an invoice is filed
+    under can no longer disagree. That mattered: an invoice is money history and is never edited, so
+    "Tuition — Jun 2026" saved under July stayed wrong for good.
+  - Your wording is **remembered** — next month's form opens with it, and **automatic generation uses it
+    too**, which it never did before (it always said "Tuition — Jul 2026" in its own words).
+
+- **The last admin account can be removed on an OpenMasjidOS install.** The app refused, on the grounds
+  that nobody could reach the admin screens afterwards. That's true standalone — but not when the app is
+  installed through OpenMasjidOS, where an admin can always open it from the dashboard on the masjid
+  network and be signed straight in. The rule now checks whether a way back actually exists rather than
+  assuming it doesn't, and when it does still refuse, it says which of the two things to do about it.
+
 - **Find a student by name** in the import's fee step and in the mid-year setup — type as you go. Both
   roster screens can be hundreds of rows long and you usually arrive wanting three particular families.
   Searching only narrows what's on screen: every answer or edit you've already made still counts, and

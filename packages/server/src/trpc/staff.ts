@@ -11,8 +11,10 @@
  * (auth/sessions.ts) — so a demotion bites immediately, including mid-session.
  *
  * Two things this deliberately refuses, because both are one-click ways to brick an install:
- *   - removing the LAST active admin (by demotion or by disabling). Admin is the only role that
- *     can reach settings, and it is LAN-only, so there is no remote way back in.
+ *   - removing the LAST active admin (by demotion or by disabling) — but ONLY on a standalone install.
+ *     Installed through OpenMasjidOS there is always another door in (SSO on the LAN mints an admin
+ *     session with no app account at all), so the rule protects nothing there and only stops an admin
+ *     tidying up. See `hasPlatformAdminDoor` (0.48.0).
  *   - changing your OWN role. It would drop your admin rights mid-session, and there is no
  *     legitimate reason to do it to yourself rather than from another admin account.
  *
@@ -28,6 +30,7 @@ import { db } from '../db';
 import { users, guardianUsers, userSchools } from '../db/schema';
 import { rid } from '../db/ids';
 import { hashPassword, MIN_PASSWORD_LENGTH } from '../auth/passwords';
+import { fabricConfigured } from '../config';
 import { audit } from '../audit';
 import { setUserSchools } from '../schools';
 
@@ -45,6 +48,29 @@ function otherActiveAdmins(exceptUserId: string): number {
     .where(and(eq(users.role, 'admin'), eq(users.status, 'active'), ne(users.id, exceptUserId)))
     .all().length;
 }
+
+/**
+ * Is there a way back in that does NOT depend on a local admin account? (0.48.0)
+ *
+ * The "you cannot remove the last admin" rule exists for one reason: there would be nobody able to reach
+ * Settings again, and admin sign-in is LAN-only (§12.4), so there is no remote way back. That reasoning
+ * is sound — but only on a STANDALONE install.
+ *
+ * When this app is installed through OpenMasjidOS there is always another door: the platform's own admin
+ * opens the app from its dashboard on the masjid network and the SSO fast-path mints an admin session
+ * (§12), with no app account involved at all. On such an install the rule is not protecting anything; it
+ * is just refusing to let an admin tidy up a staff account they no longer want. Which is exactly what
+ * was reported.
+ *
+ * So the guard now asks whether a way back actually exists, rather than assuming it does not.
+ */
+function hasPlatformAdminDoor(): boolean {
+  return fabricConfigured();
+}
+
+/** Why the last admin may not be removed, when they may not. Says what would break and what to do. */
+const LAST_ADMIN_MESSAGE =
+  'This is the only admin left, and this app is not connected to OpenMasjidOS — so removing it would leave no way to reach the admin screens. Make someone else an admin first.';
 
 /** A staff row that is not secretly a parent account. */
 function requireStaffUser(userId: string) {
@@ -126,9 +152,9 @@ export const staffRouter = router({
     }
     if (u.role === input.role) return { ok: true as const };
     // Demoting the last admin would leave nobody able to reach settings, and admin sign-in is
-    // LAN-only, so there would be no way back in remotely.
-    if (u.role === 'admin' && input.role !== 'admin' && otherActiveAdmins(u.id) === 0) {
-      throw new TRPCError({ code: 'CONFLICT', message: 'This is the only admin left. Make someone else an admin first.' });
+    // LAN-only — UNLESS the platform can still let one in (see hasPlatformAdminDoor).
+    if (u.role === 'admin' && input.role !== 'admin' && otherActiveAdmins(u.id) === 0 && !hasPlatformAdminDoor()) {
+      throw new TRPCError({ code: 'CONFLICT', message: LAST_ADMIN_MESSAGE });
     }
     db.update(users).set({ role: input.role, updatedAt: now() }).where(eq(users.id, u.id)).run();
     audit(auditActor(ctx), 'staff.setRole', { entity: 'user', entityId: u.id, detail: { from: u.role, to: input.role } });
@@ -142,8 +168,8 @@ export const staffRouter = router({
     }
     // Admins used to be undisablable outright. Now that an admin can create other admins, the rule
     // that actually matters is narrower and stricter where it counts: never disable the LAST one.
-    if (u.role === 'admin' && input.status === 'disabled' && otherActiveAdmins(u.id) === 0) {
-      throw new TRPCError({ code: 'CONFLICT', message: 'This is the only admin left. Make someone else an admin first.' });
+    if (u.role === 'admin' && input.status === 'disabled' && otherActiveAdmins(u.id) === 0 && !hasPlatformAdminDoor()) {
+      throw new TRPCError({ code: 'CONFLICT', message: LAST_ADMIN_MESSAGE });
     }
     db.update(users).set({ status: input.status, updatedAt: now() }).where(eq(users.id, u.id)).run();
     audit(auditActor(ctx), 'staff.setStatus', { entity: 'user', entityId: input.userId, detail: { status: input.status } });

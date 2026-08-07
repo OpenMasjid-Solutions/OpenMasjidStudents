@@ -18,7 +18,7 @@ import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTo
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
 import { schoolYearMonths } from '../billing/schoolYear';
 import { invoiceLines, payableLines } from '../billing/lines';
-import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD } from '../billing/period';
+import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
 import { commitCarryIn, defaultGoLivePeriod, midYearPlan, noteCarryIn } from '../billing/carryIn';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
@@ -34,6 +34,8 @@ import {
   setBillingStartPeriod,
   getMidYearDoneAt,
   setMidYearDoneAt,
+  getInvoiceLabelTemplate,
+  setInvoiceLabelTemplate,
 } from '../settings';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { relationKind, dedupeNumbers, type RelationKind } from '../people/relations';
@@ -105,6 +107,53 @@ function assertBillablePeriod(periodKey: string, periodKind: 'month' | 'term' = 
       message: `This install bills from ${floor} onwards. Anything earlier is already covered by the balances carried forward, so billing it again would charge it twice.`,
     });
   }
+}
+
+/**
+ * The label an invoice gets — resolved HERE, not in the browser (0.48.0).
+ *
+ * The form used to be two free-text boxes typed out every month: the period key AND the label, with
+ * nothing checking they agreed. "Tuition — Jun 2026" filed under `2026-07` was one keystroke away, and an
+ * invoice is money history — it is never edited afterwards (§9), so the wrong month would be on that
+ * parent's bill for good. Deriving the label from the period key the invoice is actually filed under is
+ * what makes that impossible rather than merely unlikely.
+ *
+ * The template is REMEMBERED, so next month's form opens with this madrasah's own wording and the nightly
+ * job says the same thing (settings.getInvoiceLabelTemplate).
+ *
+ * An explicit `label` still wins when given: it is what every existing caller and test sends, and a
+ * caller that has already decided on an exact string should get exactly that.
+ */
+function invoiceLabelFor(input: { periodKey: string; label?: string; labelTemplate?: string }): string {
+  if (input.label?.trim()) return input.label.trim();
+  const template = input.labelTemplate?.trim() || getInvoiceLabelTemplate();
+  if (input.labelTemplate?.trim()) setInvoiceLabelTemplate(input.labelTemplate.trim());
+  return resolveInvoiceLabel(template, input.periodKey);
+}
+
+/**
+ * The months worth offering in the Generate form: the current school year's, if one is configured.
+ *
+ * Not a free-typed period key, and not every month since 1970 — a madrasa bills the months it teaches,
+ * and the school year already says which those are (billing/schoolYear.ts). With no year set yet, a
+ * window around today keeps the form usable rather than empty.
+ */
+function invoiceMonthOptions(): { periodKey: string; label: string }[] {
+  const year = db.select().from(schoolYears).where(eq(schoolYears.isCurrent, true)).get();
+  if (year?.startYear != null) {
+    return schoolYearMonths(year.startYear, year.startMonth, year.endMonth).map((m) => ({
+      periodKey: m.periodKey,
+      label: resolveInvoiceLabel('[mon] [year]', m.periodKey),
+    }));
+  }
+  const now = new Date();
+  const out: { periodKey: string; label: string }[] = [];
+  for (let i = -6; i <= 6; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const periodKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    out.push({ periodKey, label: resolveInvoiceLabel('[mon] [year]', periodKey) });
+  }
+  return out;
 }
 
 function resolveTarget(target: z.infer<typeof BULK_TARGET>): string[] {
@@ -466,20 +515,38 @@ export const billingRouter = router({
   /** `periodKind` drives the cadence gate: a `month` period bills monthly plans, a `term` period
    *  bills per-term plans, and one-time plans bill once on whichever comes first. Defaults to
    *  `month` — the common case, and what every existing caller means. */
+  /**
+   * The label TEMPLATE this madrasah uses, and the months it makes sense to generate (0.48.0).
+   *
+   * The form used to be two free-text boxes — the period key AND the label — typed out every month, with
+   * nothing checking they agreed. "Tuition — Jun 2026" filed under `2026-07` was one keystroke away, and
+   * an invoice is money history: it is not edited afterwards (§9). So the month is picked from this list
+   * and the label is written once with tags in it.
+   */
+  invoiceLabelConfig: adminOrFinanceProcedure.query(() => ({
+    template: getInvoiceLabelTemplate(),
+    /** What the tags mean, resolved against the current month so the UI can show real examples. */
+    tags: ['month', 'mon', 'year', 'yy', 'period'].map((tag) => ({ tag, example: resolveInvoiceLabel(`[${tag}]`, defaultGoLivePeriod()) })),
+    /** The months of the current school year, if one is set — the only months worth billing. Falls back
+     *  to a window around today so the form still works before a year is configured. */
+    months: invoiceMonthOptions(),
+    suggested: defaultGoLivePeriod(),
+  })),
+
   generatePeriod: adminOrFinanceProcedure
-    .input(z.object({ periodKey: PERIOD, label: NAME, dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
+    .input(z.object({ periodKey: PERIOD, label: NAME.optional(), labelTemplate: NAME.optional(), dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
     .mutation(({ ctx, input }) => {
       assertBillablePeriod(input.periodKey, input.periodKind ?? 'month');
-      const r = generateForPeriod({ periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null, periodKind: input.periodKind });
+      const r = generateForPeriod({ periodKey: input.periodKey, label: invoiceLabelFor(input), dueDate: input.dueDate || null, periodKind: input.periodKind });
       audit(auditActor(ctx), 'invoice.generatePeriod', { entity: 'billing', detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
     }),
 
   generateFamily: adminOrFinanceProcedure
-    .input(z.object({ familyId: ID, periodKey: PERIOD, label: NAME, dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
+    .input(z.object({ familyId: ID, periodKey: PERIOD, label: NAME.optional(), labelTemplate: NAME.optional(), dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
     .mutation(({ ctx, input }) => {
       assertBillablePeriod(input.periodKey, input.periodKind ?? 'month');
-      const r = generateForFamily(input.familyId, { periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null, periodKind: input.periodKind });
+      const r = generateForFamily(input.familyId, { periodKey: input.periodKey, label: invoiceLabelFor(input), dueDate: input.dueDate || null, periodKind: input.periodKind });
       audit(auditActor(ctx), 'invoice.generateFamily', { entity: 'family', entityId: input.familyId, detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
     }),

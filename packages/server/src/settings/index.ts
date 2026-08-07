@@ -8,6 +8,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { settings } from '../db/schema';
+import { DEFAULT_INVOICE_LABEL } from '../billing/period';
 
 export const SETTING_KEYS = {
   schoolName: 'school_name',
@@ -26,6 +27,9 @@ export const SETTING_KEYS = {
   autoInvoiceDay: 'auto_invoice_day', // day of month (1-28+) to generate on; clamped to the month.
   autoInvoiceDueDay: 'auto_invoice_due_day', // optional day of month to set as the invoice due date.
   autoInvoiceLast: 'auto_invoice_last', // the last periodKey generated — the job's own idempotency.
+  // What an invoice is CALLED, as a template with [month]/[year] tags (0.48.0). One place, so the office
+  // writes their wording once and the manual form and the nightly job cannot disagree about it.
+  invoiceLabel: 'invoice_label',
   // The first month this install bills for (0.43.0). A madrasa that goes live mid-year records what
   // each child brings with them as ONE carried-forward figure; generating the months before that would
   // then bill the same arrears a second time, so anything earlier is refused rather than discouraged.
@@ -236,6 +240,23 @@ export function setChosenStripeAccount(id: string): void {
  * copy looks exactly as legitimate as the first. Refusing the earlier month is the only version of that
  * protection an office cannot forget about.
  */
+/**
+ * How an invoice is NAMED, as a template (0.48.0).
+ *
+ * Stored so the office writes their wording once — "Tuition — [month] [year]", or whatever their madrasah
+ * calls it — and both the manual Generate form and the nightly job produce the same thing. The tags are
+ * resolved by `resolveInvoiceLabel` (billing/period.ts) from the period key itself, so the label and the
+ * month an invoice is filed under cannot drift apart.
+ */
+export function getInvoiceLabelTemplate(): string {
+  return getSetting(SETTING_KEYS.invoiceLabel)?.trim() || DEFAULT_INVOICE_LABEL;
+}
+export function setInvoiceLabelTemplate(template: string): void {
+  // Blank clears it back to the default rather than storing nothing: an invoice with no name is a blank
+  // line on a parent's bill, and it cannot be corrected afterwards (money history is not edited, §9).
+  setSetting(SETTING_KEYS.invoiceLabel, template.trim());
+}
+
 export function getBillingStartPeriod(): string | null {
   const v = getSetting(SETTING_KEYS.billingStartPeriod);
   return v && v.trim() ? v.trim() : null;

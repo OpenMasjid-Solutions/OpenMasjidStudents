@@ -824,8 +824,8 @@
     "status": "Status",
     "void": "Void",
     "periodKey": "Period key",
-    "label": "Label",
-    "labelHint": "e.g. Tuition — Jul 2026",
+    "label": "What to call it",
+    "labelHint": "Tuition — [month] [year]",
     "generate": "Generate",
     "recordPayment": "Record a payment",
     "forStudent": "For",
@@ -850,7 +850,7 @@
     "cadence": "Cadence",
     "addPlan": "Add plan",
     "generateInvoices": "Generate invoices",
-    "generateHint": "Creates one invoice per family (from assigned fees) for this period. Re-running the same period changes nothing.",
+    "generateHint": "Creates one invoice per student (from their assigned fees) for the month you pick. The tags in the label are filled in from that month, so the wording and the month can never disagree — and what you write here is remembered for next month and for automatic generation. Re-running the same month changes nothing.",
     "generateAll": "Generate for all families",
     "generatedN": "Generated {{n}} invoice(s).",
     "paymentsSync": "Payment sync",
@@ -942,7 +942,10 @@
     "lineOwing": "{{amount}} to go",
     "family": "Household",
     "familiesMovedHint": "Looking for a household? Open the Year tab and press a child’s name — it opens the same record, and shows their class and paid months too.",
-    "ch_carry_in": "Carried forward"
+    "ch_carry_in": "Carried forward",
+    "forMonth": "For which month",
+    "labelPreview": "Invoices will read: {{label}}",
+    "tagInsert": "Insert this tag — becomes \"{{example}}\""
   },
   "family": {
     "title": "Parent Portal",
