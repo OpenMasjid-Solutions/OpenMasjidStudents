@@ -59,6 +59,24 @@ export function listSchools(includeArchived = false): SchoolRow[] {
 }
 
 /**
+ * Where a NEW school goes in the order: last (0.48.0).
+ *
+ * This exists because the first row of this list is the default school — the one every unscoped student,
+ * year and course belongs to — so what decides the order decides that. Ordering ends in a name tie-break,
+ * and with every school sharing `sortOrder: 0` a second school created in the same MILLISECOND as the
+ * first would be sorted by name: "Hifz programme" beats "Main school", and adding it would silently move
+ * the default. That is the exact bug 0.47.0 fixed, coming back through the tie-break rather than through
+ * the primary sort. CI found it; a fast machine is all it takes.
+ *
+ * Appending removes the tie instead of re-ranking it, so the answer no longer depends on a clock, and
+ * "the first school stays the default when you add a second" holds by construction.
+ */
+export function nextSchoolSortOrder(): number {
+  const rows = db.select({ sortOrder: schools.sortOrder }).from(schools).all();
+  return rows.reduce((max, r) => Math.max(max, r.sortOrder ?? 0), 0) + 1;
+}
+
+/**
  * The school everything unscoped belongs to — the first active one.
  *
  * Ordered rather than "whichever row comes back": an install with two schools must resolve this the

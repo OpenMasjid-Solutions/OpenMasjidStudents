@@ -79,6 +79,12 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     they're laid out for a sheet of paper, which was a page you had to pinch and drag on a phone. What
     comes out of a printer is unchanged.
 
+- **Fixed: adding a second school could quietly move which one is the "default".** The first school in
+  the list is where a student created without a class is filed, and a new school added in the same instant
+  as the first could sort itself ahead on an alphabetical tie-break — so a child could land in the wrong
+  school. New schools are now added to the END of the list, which removes the tie rather than re-ranking
+  it. Only reachable on a fast machine, and only with two schools, but it put a child in the wrong place.
+
 - **Pause all email to parents.** A switch in **Settings → Email alerts** that stops **everything** going
   to a parent — receipts, autopay notices, and even invites and password resets, which normally always
   send. It is for the situation where you are setting the app up with your **real families already in

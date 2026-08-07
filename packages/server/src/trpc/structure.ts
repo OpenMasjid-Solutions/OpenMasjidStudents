@@ -25,7 +25,7 @@ import { db } from '../db';
 import { schoolYears, schools, terms, courses, classes, students, families } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
-import { canAccessSchool, defaultSchoolId, listSchools, newSchoolId, resolveSchoolScope, schoolCounts, schoolIdForClass, visibleSchoolIds } from '../schools';
+import { canAccessSchool, defaultSchoolId, listSchools, newSchoolId, nextSchoolSortOrder, resolveSchoolScope, schoolCounts, schoolIdForClass, visibleSchoolIds } from '../schools';
 
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
@@ -92,7 +92,10 @@ export const structureRouter = router({
     }
     const id = newSchoolId();
     const ts = now();
-    db.insert(schools).values({ id, name: input.name, sortOrder: input.sortOrder ?? 0, status: 'active', createdAt: ts, updatedAt: ts }).run();
+    // Appended, not dropped in at 0: the FIRST school in the order is the default one, so a new
+    // school sharing a sortOrder could reorder itself ahead of it on a name tie-break and silently steal
+    // that role (schools/index.ts).
+    db.insert(schools).values({ id, name: input.name, sortOrder: input.sortOrder ?? nextSchoolSortOrder(), status: 'active', createdAt: ts, updatedAt: ts }).run();
     audit(auditActor(ctx), 'school.create', { entity: 'school', entityId: id });
     return { id };
   }),
