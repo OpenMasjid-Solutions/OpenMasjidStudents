@@ -32,6 +32,24 @@ export function relationKind(raw: string | null | undefined): RelationKind {
   return 'other';
 }
 
+/**
+ * A relation as it should READ on a printed sheet — "Father", not "father" (0.47.0).
+ *
+ * Only the first letter is touched. The column is free text and always will be, so an office that
+ * typed "Paternal uncle" keeps their sentence and gets a capital; one that typed "FATHER" keeps their
+ * shouting, because lower-casing what somebody deliberately wrote is the more annoying failure. A
+ * multi-word relation is not title-cased either — "Legal Guardian Of Record" reads worse than the
+ * sentence the office actually wrote.
+ *
+ * Returns '' for nothing, so callers keep control of their own placeholder (the sheet prints an
+ * em dash; a table cell may want to stay blank).
+ */
+export function relationLabel(raw: string | null | undefined): string {
+  const v = (raw ?? '').trim();
+  if (!v) return '';
+  return v.charAt(0).toUpperCase() + v.slice(1);
+}
+
 /** Distinct phone numbers, compared by digits so "(555) 123-4567" and "5551234567" count once. The
  *  first spelling wins, since that is the one the office chose to record. */
 export function dedupeNumbers(numbers: (string | null | undefined)[]): string[] {

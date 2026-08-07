@@ -18,6 +18,7 @@ import { ageFromDob } from '../../lib/age';
 import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
 import { useWindows } from '../../components/Windows';
+import { SchoolTabs, useSchool } from '../../components/SchoolTabs';
 import { FamilyDetail } from './FamilyDetail';
 import { ImportStudents } from './ImportStudents';
 import { StudentPicker } from '../../components/StudentPicker';
@@ -63,8 +64,11 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
   const [q, setQ] = useState('');
   /** '' = All, which is where the screen starts. */
   const [courseFilter, setCourseFilter] = useState('');
-  const list = trpc.structure.studentsByClass.useQuery({ includeWithdrawn: showWithdrawn });
-  const tree = trpc.structure.courseTree.useQuery();
+  /** The school in view (0.47.0) — '' / undefined on a single-school install, which is every query's
+   *  "no filter" and therefore costs that install nothing. */
+  const { arg: schoolId } = useSchool();
+  const list = trpc.structure.studentsByClass.useQuery({ includeWithdrawn: showWithdrawn, schoolId });
+  const tree = trpc.structure.courseTree.useQuery({ schoolId });
   const setClass = trpc.structure.setStudentClass.useMutation();
   const addStudent = trpc.people.studentAdd.useMutation();
   const plans = trpc.billing.feePlanList.useQuery();
@@ -92,6 +96,10 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
       dob: stu.dob || undefined,
       feePlanId: stu.feePlanId,
       classId: stu.classId || undefined,
+      // Only consulted when no class is chosen — a class already implies its school. Note this is
+      // NOT inherited from the sibling being linked to: two children in one household may attend
+      // different schools, which is the case the feature exists for.
+      schoolId,
       linkToStudentId: stu.linkToStudentId || undefined,
     });
     setStu({ fullName: '', dob: '', feePlanId: stu.feePlanId, classId: stu.classId, linkToStudentId: '' });
@@ -180,6 +188,9 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
           </>
         )}
       </div>
+
+      {/* Which school's roster. Draws nothing when there is only one. */}
+      <SchoolTabs />
 
       {adding && !readOnly && (
         <form className="inline-form glass-inset" onSubmit={submitStudent}>

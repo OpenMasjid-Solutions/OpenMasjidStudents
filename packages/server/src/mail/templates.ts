@@ -36,9 +36,49 @@ export function setEmailLogoUrl(url: string | null): void {
   emailLogoUrl = url;
 }
 
+/**
+ * How to reach the masjid, appended to the foot of every email (0.47.0).
+ *
+ * MODULE-LEVEL for the same reason as the logo above: it is chrome, not content, and threading it
+ * through eight builders (five of which are called from more than one place) would mean every future
+ * caller has to remember it. Set alongside the logo in mail/notify.ts.
+ *
+ * It matters because every one of these messages ends by asking the parent to do something — pay,
+ * update a card, check a balance — and none of them said who to ask when it goes wrong. A reply-to
+ * address on the platform's mail is not the same as the office's own number.
+ */
+let emailContactLine = '';
+export function setEmailContactLine(line: string | null): void {
+  emailContactLine = (line ?? '').trim();
+}
+
+/** The footer for a message, with the contact appended when there is one. */
+function withContact(footer: string | undefined, include: boolean): string | undefined {
+  if (!include || !emailContactLine) return footer;
+  return footer ? `${footer} · ${emailContactLine}` : emailContactLine;
+}
+
+/**
+ * The contact as its own trailing line for a PLAIN-TEXT body.
+ *
+ * The text part is a complete fallback, not a courtesy — plenty of parents read mail in a client that
+ * shows it — so it carries the same details rather than only the HTML doing so.
+ */
+function textContact(): string[] {
+  return emailContactLine ? ['', emailContactLine] : [];
+}
+
 /** A shared, restrained HTML shell — the logo, a heading, body paragraphs, and an optional
  *  call-to-action button. No web fonts (many clients block them); system font stack only. */
-function shell(heading: string, paragraphs: string[], cta?: { label: string; url: string }, footer?: string): string {
+function shell(
+  heading: string,
+  paragraphs: string[],
+  cta?: { label: string; url: string },
+  rawFooter?: string,
+  /** Staff alerts and the admin's own test set this false — the office does not need its own number. */
+  opts: { contact?: boolean } = {},
+): string {
+  const footer = withContact(rawFooter, opts.contact !== false);
   // `alt=""` on purpose: the school name is already the heading, so a client with images off should
   // show nothing here rather than repeat it.
   const logo = emailLogoUrl ? `<p style="margin:0 0 18px;"><img src="${esc(emailLogoUrl)}" alt="" style="max-height:48px;max-width:180px;width:auto;height:auto;border:0;" /></p>` : '';
@@ -80,6 +120,7 @@ export function inviteEmail(schoolName: string, guardianName: string, url: strin
     signIn,
     '',
     'This link works once and expires in 7 days. If it has expired, please ask the office for a new invite.',
+    ...textContact(),
   ].join('\n');
   const html = shell(
     hi,
@@ -104,6 +145,7 @@ export function receiptEmail(schoolName: string, amountFormatted: string, portal
     portalUrl ? `You can see your balance and payment history any time in the parent portal:\n${portalUrl}` : 'You can see your balance and payment history any time in the parent portal.',
     '',
     `— ${schoolName}`,
+    ...textContact(),
   ].join('\n');
   const html = shell(
     'Payment received',
@@ -129,6 +171,7 @@ export function autopayFailureEmail(schoolName: string, portalUrl: string, final
       portalUrl ? `Please pay your balance and update your card in the parent portal — then you can switch autopay back on:\n${portalUrl}` : 'Please pay your balance and update your card in the parent portal — then you can switch autopay back on.',
       '',
       `— ${schoolName}`,
+      ...textContact(),
     ].join('\n');
     const html = shell(
       'Autopay has been turned off',
@@ -150,6 +193,7 @@ export function autopayFailureEmail(schoolName: string, portalUrl: string, final
     portalUrl ? `You can also pay now or update your card in the parent portal:\n${portalUrl}` : 'You can also pay now or update your card in the parent portal.',
     '',
     `— ${schoolName}`,
+    ...textContact(),
   ].join('\n');
   const html = shell(
     "We couldn't charge your card",
@@ -173,6 +217,7 @@ export function resetEmail(schoolName: string, url: string): Email {
     url,
     '',
     "This link works once and expires in 1 hour. If you didn't ask to reset your password, you can ignore this email — nothing will change.",
+    ...textContact(),
   ].join('\n');
   const html = shell(
     'Reset your password',
@@ -197,7 +242,14 @@ export function resetEmail(schoolName: string, url: string): Email {
 export function alertEmail(schoolName: string, title: string, body: string, appUrl: string): Email {
   const subject = `${schoolName}: ${title}`;
   const text = [body, '', appUrl ? `Open the app:\n${appUrl}` : '', `— ${schoolName}`].filter(Boolean).join('\n');
-  const html = shell(title, [esc(body)], appUrl ? { label: 'Open the app', url: appUrl } : undefined, `You're receiving this because your email address is on the alert list for ${schoolName}. An admin can change that in Settings → Email alerts.`);
+  // No contact footer: this goes to the office, and telling the office its own phone number is noise.
+  const html = shell(
+    title,
+    [esc(body)],
+    appUrl ? { label: 'Open the app', url: appUrl } : undefined,
+    `You're receiving this because your email address is on the alert list for ${schoolName}. An admin can change that in Settings → Email alerts.`,
+    { contact: false },
+  );
   return { subject, text, html };
 }
 
@@ -205,6 +257,6 @@ export function alertEmail(schoolName: string, title: string, body: string, appU
 export function testEmail(schoolName: string): Email {
   const subject = `${schoolName}: test email`;
   const text = `This is a test email from ${schoolName}. If you received it, your email settings are working.`;
-  const html = shell('Email is working', [`This is a test email from <strong>${esc(schoolName)}</strong>. If you received it, your email settings are working.`]);
+  const html = shell('Email is working', [`This is a test email from <strong>${esc(schoolName)}</strong>. If you received it, your email settings are working.`], undefined, undefined, { contact: false });
   return { subject, text, html };
 }

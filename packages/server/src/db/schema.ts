@@ -67,6 +67,60 @@ export const sessions = sqliteTable('sessions', {
 });
 export type Session = typeof sessions.$inferSelect;
 
+// ── Schools (0.47.0) ─────────────────────────────────────────────────────────
+
+/**
+ * A school within the masjid — a maktab that runs Sep→Jun beside a hifz programme that runs
+ * year-round, each with its own calendar and its own classes.
+ *
+ * ONE INSTALL IS STILL ONE MASJID (CLAUDE.md §4 ❌ multi-tenant). This is not tenancy: schools share
+ * every setting, every staff account, every fee plan, the Stripe account, the alert list, and — the
+ * load-bearing part — THE HOUSEHOLD. A family with a child in the maktab and another in hifz is one
+ * family with one balance, one portal login and one printed sheet. What a school scopes is deliberately
+ * narrow: the school YEAR (so a term can start in a different month) and the COURSE tree beneath it
+ * (so "Level 1" can mean two different rooms). Nothing about money is scoped, because a parent pays
+ * the masjid once.
+ *
+ * Archived rather than deleted: a school owns years and courses, and those in turn label students.
+ */
+export const schools = sqliteTable(
+  'schools',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
+    status: text('status').$type<'active' | 'archived'>().notNull().default('active'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ nameUq: unique('schools_name_uq').on(t.name) }),
+);
+export type School = typeof schools.$inferSelect;
+
+/**
+ * Which schools a staff account is limited to. NO ROWS MEANS ALL SCHOOLS, and that default is the
+ * point: a masjid with one school must never have to think about this table, and adding a second
+ * school must not silently narrow what existing staff can see.
+ *
+ * So this is an opt-in restriction, not a grant — `visibleSchoolIds()` (schools/index.ts) returns
+ * every active school for an unrestricted account. It cannot widen a role either: a finance user
+ * restricted to one school still sees only what finance sees, and an admin is still LAN-only (§12.4).
+ */
+export const userSchools = sqliteTable(
+  'user_schools',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    schoolId: text('school_id')
+      .notNull()
+      .references(() => schools.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.userId, t.schoolId] }), schoolIdx: index('user_schools_school_idx').on(t.schoolId) }),
+);
+export type UserSchool = typeof userSchools.$inferSelect;
+
 // ── Structure (school year, terms, courses, classes) ─────────────────────────
 
 /** A school year — the billing calendar (e.g. "1447–1448 / 2026–2027" running Apr→Mar).
@@ -75,12 +129,16 @@ export type Session = typeof sessions.$inferSelect;
  *  concrete billing periods the year view is built from (billing/schoolYear.ts).
  *  `startYear` is nullable only because the column was added after `school_years` shipped in
  *  0022; it is required on create from 0.37.0 on, and the year view asks for it when absent.
- *  At most one row is `isCurrent` (the router clears the flag on the others). Archived, never
- *  hard-deleted — generated invoice periods derive from it. */
+ *  At most one row is `isCurrent` PER SCHOOL from 0.47.0 (the router clears the flag on that
+ *  school's other years) — two schools on different calendars each need a current year. Archived,
+ *  never hard-deleted — generated invoice periods derive from it. */
 export const schoolYears = sqliteTable(
   'school_years',
   {
     id: text('id').primaryKey(),
+    /** Which school's calendar this is (0.47.0). Nullable only because the column was added to a
+     *  populated table; `ensureDefaultSchool()` backfills every row at boot and every writer sets it. */
+    schoolId: text('school_id').references(() => schools.id, { onDelete: 'restrict' }),
     label: text('label').notNull(),
     startYear: integer('start_year'),
     startMonth: integer('start_month').notNull(),
@@ -90,7 +148,7 @@ export const schoolYears = sqliteTable(
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
-  (t) => ({ currentIdx: index('school_years_current_idx').on(t.isCurrent) }),
+  (t) => ({ currentIdx: index('school_years_current_idx').on(t.isCurrent), schoolIdx: index('school_years_school_idx').on(t.schoolId) }),
 );
 export type SchoolYear = typeof schoolYears.$inferSelect;
 
@@ -123,13 +181,19 @@ export const courses = sqliteTable(
   'courses',
   {
     id: text('id').primaryKey(),
+    /** Which school this course belongs to (0.47.0). Nullable for the same reason as
+     *  `school_years.school_id` — added to a populated table, backfilled at boot.
+     *
+     *  Uniqueness moved WITH it: "Level 1" is a perfectly ordinary name for a course in the maktab
+     *  and another in the hifz programme, so the unique index is now (school_id, name). */
+    schoolId: text('school_id').references(() => schools.id, { onDelete: 'restrict' }),
     name: text('name').notNull(),
     sortOrder: integer('sort_order').notNull().default(0),
     status: text('status').$type<'active' | 'archived'>().notNull().default('active'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
-  (t) => ({ nameUq: unique('courses_name_uq').on(t.name) }),
+  (t) => ({ nameUq: unique('courses_school_name_uq').on(t.schoolId, t.name), schoolIdx: index('courses_school_idx').on(t.schoolId) }),
 );
 export type Course = typeof courses.$inferSelect;
 
@@ -202,6 +266,17 @@ export const students = sqliteTable(
     dob: text('dob'), // optional ISO date (YYYY-MM-DD); minimal by design (§14)
     status: text('status').$type<'active' | 'withdrawn'>().notNull().default('active'),
     notes: text('notes'),
+    /**
+     * Which school this child attends (0.47.0). Their SIBLING may attend another one — the household
+     * is deliberately not scoped (see `schools`), which is what keeps one family on one sheet with one
+     * balance.
+     *
+     * Nullable only because the column was added to a populated table; `ensureDefaultSchool()`
+     * backfills it at boot and every writer sets it. It is kept consistent with `classId`: placing a
+     * child in a class moves them to that class's school, because a child cannot be in a maktab class
+     * while filed under the hifz programme.
+     */
+    schoolId: text('school_id').references(() => schools.id, { onDelete: 'restrict' }),
     /** Current class — grouping only (see `classes`). Nullable: a student can be unplaced. */
     classId: text('class_id').references(() => classes.id, { onDelete: 'restrict' }),
     /**
@@ -228,6 +303,7 @@ export const students = sqliteTable(
     codeUq: unique('students_code_uq').on(t.studentCode),
     familyIdx: index('students_family_idx').on(t.familyId),
     classIdx: index('students_class_idx').on(t.classId),
+    schoolIdx: index('students_school_idx').on(t.schoolId),
   }),
 );
 export type Student = typeof students.$inferSelect;

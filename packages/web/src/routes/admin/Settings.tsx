@@ -33,6 +33,32 @@ export function Settings() {
     await utils.settings.get.invalidate();
     setSchool(null);
   }
+
+  // ── How the masjid appears on paper and in email (0.47.0) ───────────────────
+  // Contact details, the date format, and the colour printed artifacts are ruled in. Held as one
+  // draft object with one Save, because they are edited together and a per-field autosave on a colour
+  // picker would fire on every drag.
+  type Contact = { address: string; phone: string; email: string; website: string };
+  const [look, setLook] = useState<{ contact: Contact; dateFormat: string; accentColor: string } | null>(null);
+  const lookEff = look ?? {
+    contact: appSettings.data?.contact ?? { address: '', phone: '', email: '', website: '' },
+    dateFormat: appSettings.data?.dateFormat ?? 'iso',
+    accentColor: appSettings.data?.accentColor ?? '#0f766e',
+  };
+  const setContact = (patch: Partial<Contact>) => setLook({ ...lookEff, contact: { ...lookEff.contact, ...patch } });
+
+  async function saveLook() {
+    await saveSettings.mutateAsync({
+      contact: lookEff.contact,
+      dateFormat: lookEff.dateFormat as 'iso' | 'us' | 'uk' | 'long',
+      accentColor: lookEff.accentColor,
+    });
+    await utils.settings.get.invalidate();
+    // Finance screens read the same two values from `settings.display`, so that has to go too or the
+    // year view keeps rendering yesterday's date format until something else refetches it.
+    await utils.settings.display.invalidate();
+    setLook(null);
+  }
   // School logo. Read in the browser as a data URI and sent as one — the server re-checks the magic
   // bytes, so nothing here is trusted; this is just the least fiddly way to move a small image
   // through tRPC without adding a multipart route for one field.
@@ -284,6 +310,61 @@ export function Settings() {
           </>
         )}
       </section>
+
+      {/* ── How the masjid appears on paper and in email (0.47.0) ───────────────
+          The contact details close a real gap: the family sheet, the statement and every parent email
+          end by asking the parent to "tell the office", and until now none of them said how. */}
+      {appSettings.data && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head"><h2>{t('settings.appearance')}</h2></div>
+          <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.75rem' }}>{t('settings.appearanceHint')}</p>
+
+          <div className="inline-form glass-inset" style={{ marginBlockStart: 0 }}>
+            <div className="field" style={{ flex: '2 1 18rem' }}>
+              <label className="label">{t('settings.contactAddress')}</label>
+              <input className="input glass-inset" value={lookEff.contact.address} onChange={(e) => setContact({ address: e.target.value })} maxLength={240} />
+            </div>
+            <div className="field" style={{ flex: '1 1 10rem' }}>
+              <label className="label">{t('settings.contactPhone')}</label>
+              <input className="input glass-inset" value={lookEff.contact.phone} onChange={(e) => setContact({ phone: e.target.value })} maxLength={60} />
+            </div>
+          </div>
+          <div className="inline-form glass-inset">
+            <div className="field" style={{ flex: '1 1 14rem' }}>
+              <label className="label">{t('settings.contactEmail')}</label>
+              <input className="input glass-inset" value={lookEff.contact.email} onChange={(e) => setContact({ email: e.target.value })} maxLength={200} />
+            </div>
+            <div className="field" style={{ flex: '1 1 14rem' }}>
+              <label className="label">{t('settings.contactWebsite')}</label>
+              <input className="input glass-inset" value={lookEff.contact.website} onChange={(e) => setContact({ website: e.target.value })} maxLength={200} />
+            </div>
+          </div>
+
+          <div className="inline-form glass-inset" style={{ alignItems: 'flex-end' }}>
+            <div className="field" style={{ flex: '1 1 12rem' }}>
+              <label className="label">{t('settings.dateFormat')}</label>
+              {/* The options SHOW their own output rather than naming a pattern — "DD/MM/YYYY" is
+                  jargon, and the whole point of the setting is what the office will actually read. */}
+              <select className="input glass-inset" value={lookEff.dateFormat} onChange={(e) => setLook({ ...lookEff, dateFormat: e.target.value })}>
+                {(appSettings.data.dateFormats ?? []).map((f) => (
+                  <option key={f.value} value={f.value}>{f.sample}</option>
+                ))}
+              </select>
+              <span className="hint">{t('settings.dateFormatHint')}</span>
+            </div>
+            <div className="field" style={{ flex: '0 1 10rem' }}>
+              <label className="label" htmlFor="accent">{t('settings.accent')}</label>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                <input id="accent" type="color" value={lookEff.accentColor} onChange={(e) => setLook({ ...lookEff, accentColor: e.target.value })} style={{ inlineSize: '2.6rem', blockSize: '2.1rem', padding: 0, border: 0, background: 'none', cursor: 'pointer' }} />
+                <input className="input glass-inset" value={lookEff.accentColor} onChange={(e) => setLook({ ...lookEff, accentColor: e.target.value })} maxLength={7} style={{ inlineSize: '6rem' }} aria-label={t('settings.accent')} />
+              </div>
+              <span className="hint">{t('settings.accentHint')}</span>
+            </div>
+            <button type="button" className="btn btn--primary" onClick={saveLook} disabled={saveSettings.isPending}>{t('common.save')}</button>
+            {look && <button type="button" className="btn btn--ghost" onClick={() => setLook(null)}>{t('common.cancel')}</button>}
+          </div>
+        </section>
+      )}
 
       {/* No mail PROVIDER settings here on purpose — OpenMasjidOS owns the provider and the From
           address, so there is nothing for a masjid to configure twice. What is ours to decide is who

@@ -24,6 +24,24 @@ export function Staff() {
   const setStatus = trpc.staff.setStatus.useMutation();
   const setRole = trpc.staff.setRole.useMutation();
   const resetPw = trpc.staff.resetPassword.useMutation();
+  // School access (0.47.0). NO rows means ALL schools, which is the default and what every existing
+  // account keeps — adding a second school must not silently lock anyone out of it.
+  const schools = trpc.structure.schoolList.useQuery();
+  const setSchools = trpc.staff.setSchools.useMutation();
+  const multiSchool = (schools.data?.schools.length ?? 0) > 1;
+
+  async function toggleSchool(userId: string, current: string[], schoolId: string, on: boolean) {
+    setErr('');
+    // Unticking the last one clears the restriction rather than leaving an account with access to
+    // nothing — "none" is never a state an admin means to create here.
+    const next = on ? [...current, schoolId] : current.filter((s) => s !== schoolId);
+    try {
+      await setSchools.mutateAsync({ userId, schoolIds: next });
+      await utils.staff.list.invalidate();
+    } catch (e2) {
+      setErr((e2 as Error).message);
+    }
+  }
   const [f, setF] = useState<{ username: string; displayName: string; tempPassword: string; role: StaffRole }>({ username: '', displayName: '', tempPassword: '', role: 'finance' });
   const [err, setErr] = useState('');
   /** The account having its password reset, with the new temporary one. */
@@ -82,7 +100,7 @@ export function Staff() {
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
-              <thead><tr><th>{t('staff.username')}</th><th>{t('staff.name')}</th><th>{t('staff.role')}</th><th>{t('directory.status')}</th><th className="actions" /></tr></thead>
+              <thead><tr><th>{t('staff.username')}</th><th>{t('staff.name')}</th><th>{t('staff.role')}</th>{multiSchool && <th>{t('staff.schools')}</th>}<th>{t('directory.status')}</th><th className="actions" /></tr></thead>
               <tbody>
                 {list.data?.map((u) => (
                   <tr key={u.id}>
@@ -102,6 +120,24 @@ export function Staff() {
                         <option value="admin">{t('role.admin')}</option>
                       </select>
                     </td>
+                    {multiSchool && (
+                      <td>
+                        {/* Nothing ticked = all schools, and the label says so rather than showing an
+                            empty set that reads like "no access". */}
+                        {u.schoolIds.length === 0 && <span className="chip is-muted" style={{ marginInlineEnd: '0.35rem' }}>{t('staff.allSchools')}</span>}
+                        <span className="chip-row" style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                          {(schools.data?.schools ?? []).map((s) => {
+                            const on = u.schoolIds.includes(s.id);
+                            return (
+                              <label key={s.id} className={`chip ${on ? '' : 'is-muted'}`} style={{ cursor: 'pointer', display: 'inline-flex', gap: '0.3rem', alignItems: 'center' }}>
+                                <input type="checkbox" checked={on} disabled={setSchools.isPending} onChange={(e) => void toggleSchool(u.id, u.schoolIds, s.id, e.target.checked)} />
+                                {s.name}
+                              </label>
+                            );
+                          })}
+                        </span>
+                      </td>
+                    )}
                     <td>{u.status === 'active' ? <span className="chip">{t('directory.active')}</span> : <span className="chip is-muted">{t('staff.disabled')}</span>}</td>
                     <td className="actions">
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggle(u.id, u.status)} disabled={setStatus.isPending}>{u.status === 'active' ? t('staff.disable') : t('staff.enable')}</button>

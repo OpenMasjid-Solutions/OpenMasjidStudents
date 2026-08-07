@@ -13,6 +13,7 @@
  *    is visible on a record instead of buried in a 200-row spreadsheet.
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { freshApp, makeCtx } from './harness';
 import { paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, students, classes, courses, families, terms, schoolYears, users, auditLog } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
@@ -140,19 +141,45 @@ describe('preview catches problems before anything is written', () => {
     expect(viaDefault.errorCount).toBe(0);
   });
 
-  it('rejects an unparseable amount, a malformed date, and a non-email', async () => {
+  it('rejects an unparseable amount, a date that is not a date, and a non-email', async () => {
     const { admin, planId } = await base();
     const r = await admin.people.importPreview({
       defaultFeePlanId: planId,
       rows: [
         { fullName: 'A B', amount: '350 ACH' },
-        { fullName: 'C D', dob: '03/04/2015' },
+        // Three plausible numbers that are not a calendar date — February has no 30th.
+        { fullName: 'C D', dob: '2015-02-30' },
         { fullName: 'E F', guardianEmail: 'not-an-email' },
+        { fullName: 'G H', dob: 'sometime in 2015' },
       ],
     });
     expect(r.rows[0].errors[0]).toMatch(/not a number/);
-    expect(r.rows[1].errors[0]).toMatch(/YYYY-MM-DD/);
+    expect(r.rows[1].errors[0]).toMatch(/isn’t a date we can read/);
     expect(r.rows[2].errors[0]).toMatch(/not an email/);
+    expect(r.rows[3].errors[0]).toMatch(/isn’t a date we can read/);
+  });
+
+  /**
+   * A slashed date used to be a hard error, so an office exporting from their old system had to
+   * reformat the column by hand — which is exactly where the wrong day gets introduced. From 0.47.0 the
+   * import reads the format the masjid set in Settings, and always still accepts ISO.
+   */
+  it('accepts a slashed date in the configured order, and normalises it to ISO', async () => {
+    const { admin, planId } = await base();
+
+    // Default (`iso`) reads an ambiguous slashed date month-first.
+    const us = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ fullName: 'C D', dob: '03/04/2015' }] });
+    expect(us.errorCount).toBe(0);
+
+    await admin.settings.set({ dateFormat: 'uk' });
+    const uk = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'C D', dob: '03/04/2015' }] });
+    const { db } = app.dbmod;
+    // Stored ISO whatever was typed — the storage format never moves (settings/dates.ts).
+    expect(db.select().from(students).where(eq(students.id, uk.students[0].studentId)).get()!.dob).toBe('2015-04-03');
+
+    // A date only one reading can explain ignores the setting rather than being rejected.
+    const unambiguous = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'E F', dob: '12/25/2015' }] });
+    expect(db.select().from(students).where(eq(students.id, unambiguous.students[0].studentId)).get()!.dob).toBe('2015-12-25');
   });
 });
 

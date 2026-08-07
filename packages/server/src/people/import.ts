@@ -16,7 +16,7 @@
  * "Hifz 1" — so an unknown name is a row error the admin resolves in the dialog. Families ARE
  * created on demand, because that is how siblings group.
  */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db } from '../db';
 import type { Tx } from '../billing/ledger';
 import { families, students, guardians, guardianFamilies, feePlans, studentFees, classes, courses } from '../db/schema';
@@ -24,6 +24,8 @@ import { rid } from '../db/ids';
 import { generateUniqueStudentCode } from '../billing/studentCodes';
 import { displayName } from './names';
 import { familyLabel } from './household';
+import { defaultSchoolId, schoolIdForClass } from '../schools';
+import { DATE_FORMAT_SAMPLES, getDateFormat, parseDateInput, type DateFormat } from '../settings/dates';
 
 /** The canonical import fields. The web dialog fetches this to build the blank template AND to
  *  auto-match incoming headers, so there is exactly one source of truth for the column set.
@@ -99,13 +101,40 @@ export function parseAmountCents(v: string | undefined): number | null | 'bad' {
   return Math.round(parseFloat(s) * 100);
 }
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * A spreadsheet's date column, read in the format this masjid uses (0.47.0).
+ *
+ * Was ISO-only, which meant an office exporting from their old system had to reformat a column by hand
+ * before every import — and reformatting a date column in a spreadsheet is exactly where 03/04 quietly
+ * becomes the wrong day. `parseDateInput` accepts the configured order, always accepts ISO, and lets
+ * the numbers settle it when they can (settings/dates.ts).
+ */
+function importDob(raw: string | undefined, fmt: DateFormat): { iso: string | null; bad: boolean } {
+  const s = norm(raw);
+  if (!s) return { iso: null, bad: false };
+  const iso = parseDateInput(s, fmt);
+  return { iso, bad: iso === null };
+}
 
-/** Everything the validator needs, read once so a 500-row import is not 500× the queries. */
-function lookups(tx: Tx) {
+/** Everything the validator needs, read once so a 500-row import is not 500× the queries.
+ *
+ *  Courses (and through them classes) are narrowed to the school being imported into (0.47.0).
+ *  Without that, "Level 1" existing in two schools would make every row using it ambiguous — the
+ *  file would be rejected with a message about a course the person importing has never heard of. */
+function lookups(tx: Tx, schoolId?: string | null) {
   const plans = tx.select({ id: feePlans.id, name: feePlans.name }).from(feePlans).where(eq(feePlans.status, 'active')).all();
-  const cls = tx.select({ id: classes.id, name: classes.name, courseId: classes.courseId }).from(classes).where(eq(classes.status, 'active')).all();
-  const crs = tx.select({ id: courses.id, name: courses.name }).from(courses).where(eq(courses.status, 'active')).all();
+  const crs = tx
+    .select({ id: courses.id, name: courses.name })
+    .from(courses)
+    .where(schoolId ? and(eq(courses.status, 'active'), eq(courses.schoolId, schoolId)) : eq(courses.status, 'active'))
+    .all();
+  const courseIds = new Set(crs.map((c) => c.id));
+  const cls = tx
+    .select({ id: classes.id, name: classes.name, courseId: classes.courseId })
+    .from(classes)
+    .where(eq(classes.status, 'active'))
+    .all()
+    .filter((c) => courseIds.has(c.courseId));
   // No family lookup: an import never matches an existing household, it always makes a new one.
   return {
     planByName: new Map(plans.map((p) => [key(p.name), p.id])),
@@ -134,8 +163,10 @@ function resolveClass(L: ReturnType<typeof lookups>, className: string, courseNa
 }
 
 /** Dry run: resolve every row and collect problems. Writes nothing. */
-export function validateRows(rows: ImportRow[], opts: { defaultFeePlanId?: string | null }): ValidateResult {
-  const L = lookups(db);
+export function validateRows(rows: ImportRow[], opts: { defaultFeePlanId?: string | null; schoolId?: string | null }): ValidateResult {
+  const L = lookups(db, opts.schoolId ?? defaultSchoolId());
+  // Read once for the file: the format is an install setting, not a per-row one.
+  const fmt = getDateFormat();
   const defaultPlanOk = opts.defaultFeePlanId ? !!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, opts.defaultFeePlanId)).get() : false;
   const out: RowResult[] = [];
 
@@ -144,8 +175,8 @@ export function validateRows(rows: ImportRow[], opts: { defaultFeePlanId?: strin
     const fullName = norm(r.fullName);
     if (!fullName) errors.push('Name is required.');
 
-    const dob = norm(r.dob);
-    if (dob && !ISO_DATE.test(dob)) errors.push(`Date of birth "${dob}" must be YYYY-MM-DD.`);
+    const dob = importDob(r.dob, fmt);
+    if (dob.bad) errors.push(`Date of birth "${norm(r.dob)}" isn’t a date we can read — use ${DATE_FORMAT_SAMPLES[fmt]} or 2026-03-04.`);
 
     let className: string | null = null;
     const rawClass = norm(r.className);
@@ -206,9 +237,15 @@ export interface CommitResult {
 
 /** Commit an import. Re-validates first and THROWS if anything is wrong, so the whole file either
  *  lands or does not — no partial roster. */
-export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string | null }): CommitResult {
+export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string | null; schoolId?: string | null }): CommitResult {
   const check = validateRows(rows, opts);
   if (check.errorCount > 0) throw new Error('invalid_rows');
+  // Which school these children join (0.47.0). Resolved ONCE for the file rather than per row: an
+  // import is one roster for one school, and the class column can still move an individual row to
+  // its class's school below. Falling back to the default school matters — a child left unscoped
+  // would be filed nowhere and disappear from every scoped list, which is a silent way to lose a
+  // whole import.
+  const fileSchoolId = opts.schoolId ?? defaultSchoolId();
 
   const result: CommitResult = { created: 0, familiesCreated: 0, guardiansCreated: 0, students: [] };
   const ts = new Date();
@@ -216,7 +253,7 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
   const touchedFamilies = new Set<string>();
 
   db.transaction((tx) => {
-    const L = lookups(tx);
+    const L = lookups(tx, fileSchoolId);
 
     rows.forEach((r, i) => {
       const fullName = displayName(norm(r.fullName));
@@ -235,6 +272,9 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
         const res = resolveClass(L, rawClass, norm(r.courseName));
         if (!('error' in res)) classId = res.id;
       }
+      // A named class wins over the file's school: the class belongs to exactly one school, and
+      // filing the child anywhere else would put them outside their own class in every scoped view.
+      const schoolId = (classId ? schoolIdForClass(classId) : null) ?? fileSchoolId;
 
       const rawPlan = norm(r.feePlanName);
       const feePlanId = rawPlan ? L.planByName.get(key(rawPlan))! : opts.defaultFeePlanId!;
@@ -245,15 +285,17 @@ export function commitRows(rows: ImportRow[], opts: { defaultFeePlanId?: string 
       // The kiosk ID is always generated here and never taken from the spreadsheet — an imported ID
       // could collide with an existing child's or be chosen to impersonate one.
       const studentCode = generateUniqueStudentCode(fullName);
-      const dob = norm(r.dob);
+      // Normalised to ISO on the way in — storage is always ISO whatever the office types (dates.ts).
+      const dob = importDob(r.dob, getDateFormat()).iso;
       tx.insert(students)
         .values({
           id: studentId,
           familyId,
           fullName,
-          dob: dob || null,
+          dob,
           status: 'active',
           notes: norm(r.note) || null,
+          schoolId,
           classId,
           studentCode,
           createdAt: ts,

@@ -19,8 +19,10 @@ import { Wallet, Settings2, Printer } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
 import { formatMoney } from '../../lib/money';
+import { formatDate, type DateFormat } from '../../lib/dates';
 import { formatUsPhone, telHref } from '../../lib/phone';
 import { useWindows } from '../../components/Windows';
+import { SchoolTabs, useSchool } from '../../components/SchoolTabs';
 import { FamilyBilling } from '../../components/FamilyBilling';
 
 const UNPLACED = '__unplaced';
@@ -43,10 +45,16 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
   const [yearId, setYearId] = useState<string>('');
   /** '' = All courses, which is where the screen starts. */
   const [courseFilter, setCourseFilter] = useState('');
-  const years = trpc.structure.schoolYearList.useQuery();
-  const grid = trpc.billing.yearGrid.useQuery({ schoolYearId: yearId || undefined });
+  // The school in view (0.47.0). Both queries take it: each school has its OWN current year, so the
+  // year list and the grid have to be asking about the same one.
+  const { arg: schoolId } = useSchool();
+  const years = trpc.structure.schoolYearList.useQuery({ schoolId });
+  const grid = trpc.billing.yearGrid.useQuery({ schoolYearId: yearId || undefined, schoolId });
   const cols = trpc.billing.yearViewColumnsGet.useQuery();
   const setCols = trpc.billing.yearViewColumnsSet.useMutation();
+  /** How this masjid writes dates. `settings.display` rather than `settings.get`, because this screen
+   *  is finance's too and `get` is admin-only. */
+  const dateFormat = (trpc.settings.display.useQuery().data?.dateFormat ?? 'iso') as DateFormat;
 
   const [showConfig, setShowConfig] = useState(false);
 
@@ -128,6 +136,8 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
           </button>
         )}
       </div>
+
+      <SchoolTabs />
 
       {/* ── Configure: which optional columns show. The school year itself is configured on the
              Structure tab — one place for it, and that tab can also edit an existing year. ───── */}
@@ -250,7 +260,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                           </td>
                         ))}
                         {enabled.includes('studentId') && <td><span className="code">{r.extra.studentCode ?? ''}</span></td>}
-                        {enabled.includes('dob') && <td>{r.extra.dob ?? ''}</td>}
+                        {enabled.includes('dob') && <td>{formatDate(r.extra.dob, dateFormat)}</td>}
                         {enabled.includes('balance') && <td className="tnum">{formatMoney(r.extra.balanceCents ?? 0, g.currency)}</td>}
                         {enabled.includes('guardianNames') && <td>{(r.extra.guardianNames ?? []).join(', ')}</td>}
                         {/* Tappable numbers and addresses. Formatted for display (lib/phone.ts leaves

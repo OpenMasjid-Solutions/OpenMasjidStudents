@@ -19,11 +19,12 @@
 import { useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { CalendarRange, Layers, Pencil, Plus, UserPlus } from 'lucide-react';
+import { CalendarRange, Layers, Pencil, Plus, School, UserPlus } from 'lucide-react';
 import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { MONTH_NAMES, schoolYearSpan } from '../../lib/months';
 import { useWindows } from '../../components/Windows';
+import { SchoolTabs, useSchool } from '../../components/SchoolTabs';
 import { ClassEnrol } from '../../components/ClassEnrol';
 
 /** The in-progress edit of one school year, or null when nothing is being edited. */
@@ -45,8 +46,11 @@ export function Structure() {
   const openEnrol = (classId: string, classLabel: string) =>
     open({ title: t('enrol.title'), wide: true, dedupeKey: `enrol:${classId}`, icon: <UserPlus size={15} />, node: <ClassEnrol classId={classId} classLabel={classLabel} /> });
 
-  const years = trpc.structure.schoolYearList.useQuery();
-  const tree = trpc.structure.courseTree.useQuery();
+  // Both scoped to the school in view (0.47.0): a school owns its own calendar AND its own courses,
+  // so this tab configures one school at a time.
+  const { arg: schoolId } = useSchool();
+  const years = trpc.structure.schoolYearList.useQuery({ schoolId });
+  const tree = trpc.structure.courseTree.useQuery({ schoolId });
 
   const yearCreate = trpc.structure.schoolYearCreate.useMutation();
   const yearUpdate = trpc.structure.schoolYearUpdate.useMutation();
@@ -77,6 +81,23 @@ export function Structure() {
   const termDelete = trpc.structure.termDelete.useMutation();
   const [newTerm, setNewTerm] = useState({ name: '', startDate: '', endDate: '' });
   const [termEdit, setTermEdit] = useState<{ id: string; name: string; startDate: string; endDate: string } | null>(null);
+
+  // ── Schools (0.47.0) ────────────────────────────────────────────────────────
+  const schoolsQ = trpc.structure.schoolList.useQuery();
+  const schoolCreate = trpc.structure.schoolCreate.useMutation();
+  const schoolUpdate = trpc.structure.schoolUpdate.useMutation();
+  const schoolDelete = trpc.structure.schoolDelete.useMutation();
+  const [newSchool, setNewSchool] = useState('');
+  const [schoolRename, setSchoolRename] = useState<{ id: string; name: string } | null>(null);
+  /** Adding or removing a school changes the switcher, the year list and the course tree at once. */
+  async function refreshSchools() {
+    await Promise.all([
+      utils.structure.schoolList.invalidate(),
+      utils.structure.schoolCounts.invalidate(),
+      utils.structure.schoolYearList.invalidate(),
+      utils.structure.courseTree.invalidate(),
+    ]);
+  }
 
   const [newCourse, setNewCourse] = useState('');
   /** Per-course "add a class" input, keyed by course id — so two courses can be edited at once. */
@@ -118,6 +139,9 @@ export function Structure() {
     await run(
       () =>
         yearCreate.mutateAsync({
+          // The school in view owns the new year; the server falls back to the only school when
+          // this is undefined, which is every single-school install.
+          schoolId,
           label: newYear.label.trim(),
           startYear: Number(newYear.startYear),
           startMonth: Number(newYear.startMonth),
@@ -184,7 +208,7 @@ export function Structure() {
   async function addCourse(e: FormEvent) {
     e.preventDefault();
     if (!newCourse.trim()) return;
-    await run(() => courseCreate.mutateAsync({ name: newCourse.trim() }), () => setNewCourse(''));
+    await run(() => courseCreate.mutateAsync({ schoolId, name: newCourse.trim() }), () => setNewCourse(''));
     await refreshTree();
   }
 
@@ -250,8 +274,86 @@ export function Structure() {
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('structure.title')}</h1>
       </div>
 
+      {/* Which school is being configured. Draws nothing when there is only one. */}
+      <SchoolTabs />
+
       {err && <div className="notice notice--warn">{err}</div>}
       {note && <div className="notice">{note}</div>}
+
+      {/* ── Schools (0.47.0) ────────────────────────────────────────────────
+          A masjid may run a maktab on one calendar beside a hifz programme on another. Each school
+          gets its own school year and its own courses; everything else — fee plans, staff, the
+          Stripe account, and above all the HOUSEHOLD — stays shared, so a family with a child in
+          each is still one family with one balance and one sheet. */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head">
+          <h2><School size={16} />{t('structure.schools')}</h2>
+        </div>
+        <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('structure.schoolsHint')}</p>
+        <table className="data-table">
+          <tbody>
+            {(schoolsQ.data?.schools ?? []).map((s) => (
+              <tr key={s.id}>
+                <td>
+                  {schoolRename?.id === s.id ? (
+                    <form
+                      className="inline-form"
+                      style={{ margin: 0 }}
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        await run(() => schoolUpdate.mutateAsync({ id: s.id, name: schoolRename.name.trim() }), () => setSchoolRename(null));
+                        await refreshSchools();
+                      }}
+                    >
+                      <input className="input glass-inset" value={schoolRename.name} onChange={(e) => setSchoolRename({ id: s.id, name: e.target.value })} autoFocus />
+                      <button type="submit" className="btn btn--primary btn--sm">{t('common.save')}</button>
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSchoolRename(null)}>{t('common.cancel')}</button>
+                    </form>
+                  ) : (
+                    <strong>{s.name}</strong>
+                  )}
+                </td>
+                <td className="actions">
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSchoolRename({ id: s.id, name: s.name })}>
+                    <Pencil size={14} /> {t('common.rename')}
+                  </button>
+                  {/* Only offered when there is more than one — the last school cannot go, and a
+                      button that always refuses is worse than no button. */}
+                  {(schoolsQ.data?.schools.length ?? 0) > 1 && (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      onClick={async () => {
+                        // Try the clean delete first; the server refuses when anything still points
+                        // at it and says what, which is more use than a confirm dialog guessing.
+                        await run(() => schoolDelete.mutateAsync({ id: s.id }));
+                        await refreshSchools();
+                      }}
+                    >
+                      {t('common.remove')}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <form
+          className="inline-form glass-inset"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!newSchool.trim()) return;
+            await run(() => schoolCreate.mutateAsync({ name: newSchool.trim() }), () => setNewSchool(''));
+            await refreshSchools();
+          }}
+        >
+          <div className="field">
+            <label className="label" htmlFor="new-school">{t('structure.addSchool')}</label>
+            <input id="new-school" className="input glass-inset" value={newSchool} onChange={(e) => setNewSchool(e.target.value)} placeholder={t('structure.addSchoolPlaceholder')} />
+          </div>
+          <button type="submit" className="btn btn--primary" disabled={schoolCreate.isPending || !newSchool.trim()}><Plus size={15} /> {t('common.add')}</button>
+        </form>
+      </section>
 
       {/* ── School years ───────────────────────────────────────────────────── */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>

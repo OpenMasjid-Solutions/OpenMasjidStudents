@@ -23,6 +23,7 @@ import { registerStatementRoutes } from './billing/statementRoutes';
 import { registerFabricProvider } from './fabric/provider';
 import { refreshSiteInfo } from './fabric/platform';
 import { backfillStudentCodes } from './billing/studentCodes';
+import { ensureDefaultSchool } from './schools';
 import { getSchoolLogo, parseLogoDataUri } from './settings';
 import { loadStripeKeys } from './payments/stripe';
 import { startSchedulers } from './payments/scheduler';
@@ -50,6 +51,9 @@ async function main(): Promise<void> {
   // lives here rather than in a migration — assigning unique codes needs collision retries, which is
   // application logic, not something to write in SQL.
   backfillStudentCodes();
+  // Make sure a school exists and nothing is left unscoped (0.47.0). Migration 0032 covers an install
+  // that had data; this covers a brand-new database and anything the migration could not see.
+  ensureDefaultSchool();
   startSchedulers(); // daily autopay run + reconciliation + public-URL refresh (no-op standalone)
 
   // The tunnel mount prefix (e.g. "/students"); "" when standalone / served at the root.

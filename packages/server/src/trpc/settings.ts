@@ -9,7 +9,8 @@ import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './t
 import { db } from '../db';
 import { families, paymentMethods, autopayEnrollments, alertRecipients } from '../db/schema';
 import { rid } from '../db/ids';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails } from '../settings';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor } from '../settings';
+import { DATE_FORMATS, DATE_FORMAT_SAMPLES, getDateFormat, setDateFormat } from '../settings/dates';
 import { ALERT_EVENTS, defaultEvents, listRecipients, sendAlertTest, type AlertEvent } from '../alerts';
 import { audit } from '../audit';
 import { mailAvailable, sendTestEmail } from '../mail/notify';
@@ -26,6 +27,24 @@ export const settingsRouter = router({
     selfRegistration: getSelfRegistrationEnabled(),
     externalPayments: getExternalPaymentsEnabled(),
     logo: getSchoolLogo(),
+    contact: getSchoolContact(),
+    dateFormat: getDateFormat(),
+    accentColor: getAccentColor(),
+    /** Rendered samples, so the settings screen shows each option rather than naming it. */
+    dateFormats: DATE_FORMATS.map((f) => ({ value: f, sample: DATE_FORMAT_SAMPLES[f] })),
+  })),
+
+  /**
+   * The handful of settings the NON-admin screens need (0.47.0).
+   *
+   * Admin | finance, unlike `get` above, because the year view and the directory are finance screens
+   * and they have to render dates in the masjid's chosen format. It carries only presentation — no
+   * Stripe account, no toggles, nothing that says anything about how the install is configured.
+   */
+  display: adminOrFinanceProcedure.query(() => ({
+    dateFormat: getDateFormat(),
+    accentColor: getAccentColor(),
+    currency: getCurrency(),
   })),
 
   /**
@@ -47,12 +66,36 @@ export const settingsRouter = router({
   }),
 
   set: adminProcedure
-    .input(z.object({ schoolName: z.string().trim().max(160).optional(), currency: z.enum(['usd', 'cad', 'gbp', 'eur']).optional(), selfRegistration: z.boolean().optional(), externalPayments: z.boolean().optional() }))
+    .input(
+      z.object({
+        schoolName: z.string().trim().max(160).optional(),
+        currency: z.enum(['usd', 'cad', 'gbp', 'eur']).optional(),
+        selfRegistration: z.boolean().optional(),
+        externalPayments: z.boolean().optional(),
+        dateFormat: z.enum(DATE_FORMATS).optional(),
+        /** Bounded well below anything a printed footer could hold — this lands on a sheet, not in a CRM. */
+        contact: z
+          .object({
+            address: z.string().trim().max(240).optional(),
+            phone: z.string().trim().max(60).optional(),
+            email: z.string().trim().max(200).optional(),
+            website: z.string().trim().max(200).optional(),
+          })
+          .optional(),
+        /** `''` clears it back to the default teal. */
+        accentColor: z.union([z.string().trim().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/), z.literal('')]).optional(),
+      }),
+    )
     .mutation(({ ctx, input }) => {
       if (input.schoolName !== undefined) setSetting(SETTING_KEYS.schoolName, input.schoolName);
       if (input.currency !== undefined) setSetting(SETTING_KEYS.currency, input.currency);
       if (input.selfRegistration !== undefined) setSetting(SETTING_KEYS.selfRegistration, input.selfRegistration ? '1' : '0');
       if (input.externalPayments !== undefined) setSetting(SETTING_KEYS.externalPayments, input.externalPayments ? '1' : '0');
+      if (input.dateFormat !== undefined) setDateFormat(input.dateFormat);
+      if (input.contact !== undefined) setSchoolContact(input.contact);
+      if (input.accentColor !== undefined) setAccentColor(input.accentColor);
+      // Key names only — an address and a phone number are the masjid's, but there is no reason to
+      // copy them into the audit trail to record that they changed (§14).
       audit(auditActor(ctx), 'settings.update', { entity: 'settings', detail: { keys: Object.keys(input) } });
       return { ok: true as const };
     }),

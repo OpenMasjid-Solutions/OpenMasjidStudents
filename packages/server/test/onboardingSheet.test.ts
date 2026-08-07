@@ -511,3 +511,94 @@ describe('escaping — the sheet renders user input as text', () => {
     expect(res.body).toContain('&lt;b&gt;Ibrahim&lt;/b&gt;');
   });
 });
+
+/**
+ * What 0.47.0 added to the sheet: the masjid's own contact details, the masjid's own colour, dates
+ * written the way the office writes them, and a relation that reads like a word rather than a
+ * database value.
+ */
+describe('the masjid on the sheet (0.47.0)', () => {
+  const K = () => settingsMod.SETTING_KEYS;
+
+  beforeEach(() => {
+    // Back to an install that has configured none of it, so each test opts in to what it asserts.
+    settingsMod.setSetting(K().schoolContact, '');
+    settingsMod.setSetting(K().accentColor, '');
+    settingsMod.setSetting(K().dateFormat, '');
+  });
+
+  /** Seeds from scratch each time, so a test may render twice to compare before and after a setting. */
+  async function render() {
+    const { db } = app.dbmod;
+    for (const t of [studentFees, feePlans, guardianFamilies, guardians, students, classes, courses, families]) db.delete(t).run();
+    household();
+    child('stu_1', 'Yusuf Ismail', { dob: '2016-03-04' });
+    fee('fp_1', 'stu_1', 'Tuition', 20000, 'monthly');
+    return (await sheet.buildFamilySheetHtml('fam_1', 'https://x.test', ALL_ON, NOW))!;
+  }
+
+  it('prints the contact details when they are set, and omits the block entirely when they are not', async () => {
+    // The ELEMENT, not the word — the class is always defined in the style block.
+    expect(await render()).not.toContain('<div class="contactline">');
+
+    settingsMod.setSchoolContact({ address: '12 Mosque Road', phone: '(555) 010-2030', email: 'office@masjid.test' });
+    const out = await render();
+    expect(out).toContain('<div class="contactline">');
+    expect(out).toContain('12 Mosque Road');
+    expect(out).toContain('(555) 010-2030');
+    // Repeated in the please-check block, which is the sentence that actually asks a parent to act —
+    // and it sits on the back of a sheet whose header they may not turn back to.
+    expect(out.match(/\(555\) 010-2030/g)!.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('rules the sheet in the masjid’s colour, defaulting to the original teal', async () => {
+    expect(await render()).toContain('--teal:#0f766e');
+    settingsMod.setAccentColor('#7c3aed');
+    const out = await render();
+    expect(out).toContain('--teal:#7c3aed');
+    expect(out).not.toContain('--teal:#0f766e');
+  });
+
+  it('never lets a hand-edited colour row escape the style block', async () => {
+    // Written straight into <style>, so a row edited outside the app must not be able to close the
+    // declaration and add its own CSS (§14). Invalid values fall back rather than being passed on.
+    // Set through the low-level writer on purpose — `setAccentColor` would reject it, and the point
+    // is that the READ side also refuses, for a row that got in some other way.
+    settingsMod.setSetting(K().accentColor, 'red; } body { display:none } .x{');
+    const out = await render();
+    expect(out).not.toContain('display:none');
+    expect(out).toContain('--teal:#0f766e');
+  });
+
+  it('writes dates the way the office writes them', async () => {
+    expect(await render()).toContain('2016-03-04');
+    settingsMod.setSetting(K().dateFormat, 'uk');
+    const uk = await render();
+    expect(uk).toContain('04/03/2016');
+    expect(uk).not.toContain('2016-03-04');
+  });
+
+  it('capitalises a guardian’s relation without rewriting what the office typed', async () => {
+    household();
+    child('stu_1', 'Yusuf Ismail');
+    fee('fp_1', 'stu_1', 'Tuition', 20000, 'monthly');
+    const { db } = app.dbmod;
+    db.insert(guardians).values({ id: 'grd_1', name: 'Ibrahim Ismail', phone: '555', email: null, createdAt: TS, updatedAt: TS }).run();
+    db.insert(guardianFamilies).values({ guardianId: 'grd_1', familyId: 'fam_1', relation: 'father', isEmergencyContact: false, createdAt: TS }).run();
+    db.insert(guardians).values({ id: 'grd_2', name: 'Khadija Ismail', phone: '556', email: null, createdAt: TS, updatedAt: TS }).run();
+    db.insert(guardianFamilies).values({ guardianId: 'grd_2', familyId: 'fam_1', relation: 'paternal aunt', isEmergencyContact: false, createdAt: TS }).run();
+
+    const out = (await sheet.buildFamilySheetHtml('fam_1', 'https://x.test', ALL_ON, NOW))!;
+    expect(out).toContain('<td>Father</td>');
+    // Only the first letter — the rest is the office's own sentence, not ours to title-case.
+    expect(out).toContain('<td>Paternal aunt</td>');
+    expect(out).not.toContain('<td>father</td>');
+  });
+
+  it('keeps the printed date on the brand row, so removing the family heading left no gap', async () => {
+    const out = await render();
+    // One header row: the printed date sits inside .brand rather than in a .meta row of its own.
+    expect(out).toContain('class="printed muted"');
+    expect(out).not.toContain('class="meta"');
+  });
+});
