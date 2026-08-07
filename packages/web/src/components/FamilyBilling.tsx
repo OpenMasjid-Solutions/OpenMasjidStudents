@@ -13,7 +13,7 @@ import { Printer, Pencil, Users } from 'lucide-react';
 import { trpc } from '../lib/trpc';
 import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
 import { formatDate, type DateFormat } from '../lib/dates';
-import { withBase } from '../lib/base';
+import { PrintableLink } from './PrintableLink';
 import { useWindows } from './Windows';
 import { FamilyDetail } from '../routes/admin/FamilyDetail';
 
@@ -164,7 +164,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
           <button type="button" className="btn btn--ghost btn--sm" onClick={() => open({ title: t('billing.familyRecord'), wide: true, dedupeKey: `family:${familyId}`, icon: <Users size={15} />, node: <FamilyDetail familyId={familyId} /> })}>
             <Users size={14} /> {t('billing.familyRecord')}
           </button>
-          <a className="btn btn--ghost btn--sm" href={withBase(`/statements/family/${familyId}`)} target="_blank" rel="noopener noreferrer"><Printer size={14} /> {t('billing.printStatement')}</a>
+          <PrintableLink path={`/statements/family/${familyId}`} filename={`statement-${familyId}`} title={t('billing.printStatement')}><Printer size={14} /> {t('billing.printStatement')}</PrintableLink>
         </div>
         {bal && (
           <div className="bal-big" style={{ color: bal.owedCents > 0 ? 'var(--color-danger)' : 'var(--color-success)' }}>
@@ -342,9 +342,9 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                         {/* The bill as a document a family can be handed — one child, one period,
                             line by line, on the masjid's letterhead. Opens in a tab so the browser's
                             own Print dialog gives a real preview and a save-as-PDF. */}
-                        <a className="btn btn--ghost btn--sm" href={withBase(`/invoices/${i.id}`)} target="_blank" rel="noopener noreferrer" title={t('billing.printInvoiceHint')}>
+                        <PrintableLink path={`/invoices/${i.id}`} filename={`invoice-${i.label.replace(/[^a-zA-Z0-9]+/g, '-')}`} title={i.label} linkTitle={t('billing.printInvoiceHint')}>
                           <Printer size={14} /> {t('billing.printInvoice')}
-                        </a>
+                        </PrintableLink>
                         {i.status !== 'void' && i.paidCents === 0 && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { await voidInv.mutateAsync({ id: i.id }); await refresh(); }}>{t('billing.void')}</button>}
                       </td>
                     </tr>

@@ -10,7 +10,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
-import { withBase } from '../../lib/base';
+import { PrintableLink } from '../../components/PrintableLink';
 import { autoMatchColumns, toCsv, downloadCsv } from '../../lib/csv';
 import { parseSpreadsheet, XlsxError } from '../../lib/xlsx';
 import { formatMoney } from '../../lib/money';
@@ -610,9 +610,9 @@ export function ImportStudents() {
                 two children to a row (people/idSheet.ts). It lists the whole active roster rather than
                 only this import's rows, which is both the more useful sheet and the reason it does not
                 need 36 ids in a URL. */}
-            <a className="btn btn--ghost btn--sm no-print" href={withBase(`/sheets/ids/${schoolId || 'all'}`)} target="_blank" rel="noopener noreferrer">
+            <PrintableLink path={`/sheets/ids/${schoolId || 'all'}`} filename="student-ids" title={t('import.printIdSheet')} className="btn btn--ghost btn--sm no-print">
               {t('import.printIdSheet')}
-            </a>
+            </PrintableLink>
           </div>
           <p className="hint">
             {t('import.summary', { students: commit.data.created, guardians: commit.data.guardiansCreated })}

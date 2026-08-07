@@ -17,7 +17,7 @@ import { staggerContainer, staggerItem } from '../../lib/motion';
 import { ageFromDob } from '../../lib/age';
 import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
-import { withBase } from '../../lib/base';
+import { PrintableLink } from '../../components/PrintableLink';
 import { useWindows } from '../../components/Windows';
 import { SchoolTabs, useSchool } from '../../components/SchoolTabs';
 import { FamilyDetail } from './FamilyDetail';
@@ -183,9 +183,9 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
             behind `readOnly`: finance reads Student IDs and prints these, and the route allows exactly
             the same two roles. It is a page of its own rather than a print of this screen, which is what
             the import's Print button used to do (people/idSheet.ts). */}
-        <a className="btn btn--ghost no-mobile" href={withBase(`/sheets/ids/${schoolId ?? 'all'}`)} target="_blank" rel="noopener noreferrer">
+        <PrintableLink path={`/sheets/ids/${schoolId ?? 'all'}`} filename="student-ids" title={t('students.printIds')} className="btn btn--ghost">
           <Printer size={14} /> {t('students.printIds')}
-        </a>
+        </PrintableLink>
         {!readOnly && (
           <>
             {/* Reachable outside the import too: an install that imported before 0.42.0 has households

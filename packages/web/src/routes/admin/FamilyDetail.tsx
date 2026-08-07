@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Pencil, Printer, Trash2 } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
-import { withBase } from '../../lib/base';
+import { PrintableLink } from '../../components/PrintableLink';
 import { formatUsPhone, telHref } from '../../lib/phone';
 import { StudentPicker } from '../../components/StudentPicker';
 
@@ -270,14 +270,9 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               showing what the household owes. It sits here rather than on a student row for that reason.
               Not behind `readOnly`: finance prints and hands these out too, and the route allows
               exactly the same two roles. */}
-          <a
-            className="btn btn--ghost btn--sm"
-            href={withBase(`/sheets/family/${familyId}`)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+          <PrintableLink path={`/sheets/family/${familyId}`} filename={`family-${familyId}`} title={t('directory.printSheet')}>
             <Printer size={14} /> {t('directory.printSheet')}
-          </a>
+          </PrintableLink>
           {!readOnly && <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowStudent((v) => !v)}>{t('directory.addStudent')}</button>}
         </div>
         {students.length === 0 ? (
