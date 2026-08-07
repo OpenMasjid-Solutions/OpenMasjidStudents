@@ -4,6 +4,7 @@
  * Authed serving of the app's printable documents (CLAUDE.md §4, §5, §14):
  *   GET /statements/family/:id  — a household's balance, open bills and payment history
  *   GET /sheets/family/:id      — a household's onboarding sheet (children, fees, how to pay)
+ *   GET /invoices/:id           — ONE child's bill for one period, line by line (0.47.0)
  *
  * Both are registered before the SPA fallback and excluded from the tRPC/session middleware, so each
  * gates itself: session from the cookie, role must be admin (LAN only) or finance (LAN + tunnel),
@@ -19,6 +20,7 @@ import { getSession, COOKIE } from '../auth/sessions';
 import { classifyOrigin } from '../security/origin';
 import { config } from '../config';
 import { buildFamilyStatementHtml, canServeStatement } from './statements';
+import { buildInvoiceHtml } from './invoiceDoc';
 import { buildFamilySheetHtml } from '../people/onboardingSheet';
 
 /**
@@ -86,5 +88,12 @@ export function registerStatementRoutes(app: FastifyInstance): void {
   // the household's contact details, which finance and admin may see and nobody else may (§5).
   app.get('/sheets/family/:id', (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) =>
     servePrintable(req, reply, (id, base) => buildFamilySheetHtml(id, base)),
+  );
+
+  // One child's bill for one period (0.47.0) — what a family asks for when they want "the invoice for
+  // September", as opposed to the household statement above. Same gate: it names a child and their
+  // household's money. `baseUrl` is unused here (there is no QR on a bill), hence the discard.
+  app.get('/invoices/:id', (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) =>
+    servePrintable(req, reply, async (id) => buildInvoiceHtml(id)),
   );
 }

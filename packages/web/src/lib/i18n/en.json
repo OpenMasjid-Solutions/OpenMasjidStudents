@@ -822,6 +822,8 @@
     "st_paid": "Paid",
     "st_void": "Void",
     "printStatement": "Print statement",
+    "printInvoice": "Invoice",
+    "printInvoiceHint": "Print this bill on its own — one child, one period, line by line, on your letterhead.",
     "autoOn": "Generate each month’s invoices automatically",
     "autoDay": "On day",
     "autoDueDay": "Due on day",

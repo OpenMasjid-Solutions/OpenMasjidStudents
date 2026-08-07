@@ -1,6 +1,6 @@
 {
   "name": "@openmasjid/students-web",
-  "version": "0.47.0-dev.1",
+  "version": "0.47.0-dev.2",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",

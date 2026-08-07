@@ -33,10 +33,23 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   - **If you only have one school, nothing about this appears.** No switcher, no tabs, no extra column
     — your existing students, courses and school years are simply filed under your madrasah's name.
 
+- **A printable invoice.** Open a family's billing and every bill now has an **Invoice** button beside
+  it. It gives you that one child's bill for that one period on your letterhead: what it is made up of
+  line by line, what is still owed on each line, the total, what has been paid and what is outstanding,
+  the payments that landed on it, and where the child stands overall — because a settled September bill
+  should not read as "you are square" when October is open. It is what to hand a parent who asks for
+  "the bill for Yusuf for September", which the household statement — everything, across every child —
+  was never the right shape for.
+  - The per-line figures say what each item **costs** and what is **still owed on it**, and nothing
+    else. A discount on the same bill reduces a line just as a payment does, so a per-line "paid"
+    column would have told a family they handed over more than they did. Money received is stated
+    once, for the bill, where it is unambiguous.
+
 - **Your address and phone number now appear where parents actually need them.** Set them once under
   **Settings → How you appear to parents** and they go on the **family information sheet**, the
-  **statement**, and the foot of **every email** a parent gets. Every one of those documents ends by
-  asking the family to "tell the office" if something is wrong, and until now not one of them said how.
+  **invoice**, the **statement**, and the foot of **every email** a parent gets. Every one of those
+  documents ends by asking the family to "tell the office" if something is wrong, and until now not one
+  of them said how.
 
 - **Dates are written the way your madrasah writes them.** Choose the format in the same settings
   section — `2026-03-04`, `03/04/2026`, `04/03/2026` or `4 Mar 2026` — and it applies everywhere,
