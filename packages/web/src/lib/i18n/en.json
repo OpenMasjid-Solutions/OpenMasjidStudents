@@ -277,7 +277,7 @@
     "paying": "Paying",
     "columns": "Extra columns",
     "columnsWarning": "Extra columns land on this page and on anything you print from it — the contact ones put phone numbers and email addresses on a whole-school sheet, so switch on only what you need. Numbers and addresses are tappable: on a phone, one tap calls or emails. “Other” covers guardians with no relation set, including everyone brought in by a CSV import.",
-    "legend": "✓ paid · ½ part-paid · ● not paid yet · — voided · blank means no invoice for that month yet. A dimmed column is a month from before you started billing here.",
+    "legend": "✓ paid · ½ part-paid · ● not paid yet · — voided · blank means no invoice for that month yet. In a dimmed column (before you started billing here) a hollow ✓ was already paid, ○ is still owed in the balance carried forward, and · means nobody recorded either way.",
     "cell_paid": "Paid",
     "cell_partial": "Part-paid",
     "cell_open": "Not paid",
@@ -296,7 +296,12 @@
     "col_balance": "Balance",
     "openBilling": "Open this child’s billing",
     "cell_before": "Before you started billing here",
-    "beforeStart": "This month is before your first billed month, so nothing was ever invoiced for it. Set when you went live (Billing → mid-year setup)."
+    "beforeStart": "This month is before your first billed month, so nothing was ever invoiced for it. Set when you went live (Billing → mid-year setup).",
+    "cell_settled": "Paid before you started here",
+    "cell_carried": "Owed when you went live",
+    "hint_settled": "The office recorded this month as already paid when the madrasah went live, so nothing was ever invoiced for it here.",
+    "hint_carried": "This month had not been paid when you went live, so it is part of that child’s “Balance carried forward” bill. It turns into a tick once that bill is settled.",
+    "hint_before": "This month is before your first billed month, so nothing was ever invoiced for it. Set when you went live (Billing → mid-year setup)."
   },
   "school": {
     "switch": "Which school",

@@ -64,11 +64,16 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     the screen says the send was held rather than failing. **Staff alerts and your own test send are
   unaffected** — and so is your own password reset, so an install can't lock itself out.
 
-- **The year view marks the months from before you started billing.** If you went live mid-year, the
-  months before it were never yours to bill — the autumn came in as one carried-forward figure. Those
-  columns now show as dimmed and settled instead of looking exactly like "somebody forgot to generate
-  September". It follows your go-live setting automatically, with nothing to keep in step by hand. A real
-  invoice in one of those months is never painted over.
+- **The year view shows how far each family had paid when you went live.** If you started mid-year, the
+  months before it were never yours to bill — but some families were up to date and some were behind, and
+  the go-live step already asked you which. The grid now reads that answer back, per child: **a hollow ✓
+  for a month they had already paid**, and **○ for a month they hadn't** — that one being part of their
+  "Balance carried forward" bill. Nothing to set up; running the mid-year step is what fills it in.
+  - **The ○ turns into a ✓ once that carried-forward bill is settled**, so the columns stay true as the
+    family pays it off rather than freezing at how things stood on go-live day.
+  - A child the go-live step was never given an answer for shows a plain dimmed **·** — "nobody recorded
+    either way", which is deliberately not the same as "paid". And a real invoice in one of those months
+    is never painted over.
 
 - **"Not paid" is now a bold ● instead of a faint dot** on the year view. It was the one state the office
   is actually scanning for and the hardest to see on the page.

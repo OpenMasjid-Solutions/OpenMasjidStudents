@@ -11,15 +11,15 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, ne, asc, desc, inArray } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
-import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
+import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, carryIns, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
 import { schoolYearMonths } from '../billing/schoolYear';
 import { invoiceLines, payableLines } from '../billing/lines';
-import { periodKeyError, periodBefore, isMonthPeriod } from '../billing/period';
-import { commitCarryIn, defaultGoLivePeriod, midYearPlan } from '../billing/carryIn';
+import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD } from '../billing/period';
+import { commitCarryIn, defaultGoLivePeriod, midYearPlan, noteCarryIn } from '../billing/carryIn';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
 import {
@@ -546,6 +546,27 @@ export const billingRouter = router({
       // keys are `YYYY-MM`, so a plain string compare orders them correctly.
       const startPeriod = getBillingStartPeriod();
 
+      /**
+       * What the office told the go-live wizard, per child, and whether the carried-forward bill it
+       * produced has since been paid (0.48.0).
+       *
+       * These two together are what lets a pre-go-live month say something useful. "Paid through
+       * November" means April–November were settled before this app existed and December–January were
+       * not — and the arrears sit in ONE carry-in invoice, so once that invoice is cleared those months
+       * are settled too. Read once for the grid rather than per cell.
+       */
+      const carryByStudent = new Map<string, { paidThrough: string | null }>();
+      const carrySettled = new Set<string>();
+      if (startPeriod) {
+        for (const c of db.select({ studentId: carryIns.studentId, paidThrough: carryIns.paidThrough }).from(carryIns).all()) {
+          carryByStudent.set(c.studentId, { paidThrough: c.paidThrough });
+        }
+        for (const inv of db.select({ id: invoices.id, studentId: invoices.studentId, status: invoices.status }).from(invoices).where(eq(invoices.periodKey, CARRY_IN_PERIOD)).all()) {
+          const total = invoiceTotal(db, inv.id);
+          if (inv.status !== 'void' && total > 0 && invoicePaid(db, inv.id) >= total) carrySettled.add(inv.studentId);
+        }
+      }
+
       const studentRows = db
         .select({
           id: students.id,
@@ -655,7 +676,20 @@ export const billingRouter = router({
             // adopted the app in February saw five empty columns and no way to tell. Marked from the
             // setting the wizard itself writes, so the grid follows the go-live with nothing to keep in
             // step by hand.
-            if (!c) return { periodKey: mo.periodKey, status: startPeriod && mo.periodKey < startPeriod ? ('before' as const) : ('none' as const) };
+            if (!c) {
+              if (!startPeriod || mo.periodKey >= startPeriod) return { periodKey: mo.periodKey, status: 'none' as const };
+              // What the office said about this child, if they were asked. `paidThrough` null means
+              // NOTHING was said, which is deliberately not the same as "square" — the grid must say
+              // "we don't know" rather than claim a month was paid.
+              const said = carryByStudent.get(s.id);
+              if (!said?.paidThrough) return { periodKey: mo.periodKey, status: 'before' as const };
+              // Settled before this app existed…
+              if (mo.periodKey <= said.paidThrough) return { periodKey: mo.periodKey, status: 'settled' as const };
+              // …or part of the arrears that came in as one carried-forward bill, which shows as settled
+              // once that bill is cleared. Following the invoice rather than storing an outcome keeps
+              // the screen true after a parent pays it off.
+              return { periodKey: mo.periodKey, status: carrySettled.has(s.id) ? ('settled' as const) : ('carried' as const) };
+            }
             const state = c.status === 'void' ? 'void' : c.paidCents >= c.totalCents && c.totalCents > 0 ? 'paid' : c.paidCents > 0 ? 'partial' : 'open';
             // A real invoice always wins, even in a pre-start month: one generated before the floor was
             // set is a fact about money and must not be painted over as "not ours".
@@ -1119,6 +1153,12 @@ export const billingRouter = router({
     let ahead = 0;
     let skipped = 0;
     for (const s of plan.students) {
+      // Keep the ANSWER first, and for every child the office actually answered for — including the
+      // square ones, who get no artifact at all (0.48.0). "Paid through November" is the only thing
+      // anybody knows about the months before go-live, and deriving an amount from it used to consume
+      // it; the year view needs it back to say which of those months a family had settled. It is a note
+      // beside the money, never a source of it (billing/carryIn.ts).
+      if (s.paidThrough) noteCarryIn({ studentId: s.studentId, goLivePeriod: input.goLivePeriod, paidThrough: s.paidThrough, kind: s.kind, amountCents: s.amountCents });
       if (s.already || s.kind === 'square' || s.amountCents <= 0) {
         if (s.already && s.kind !== 'square') skipped++;
         continue;

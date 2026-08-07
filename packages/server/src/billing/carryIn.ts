@@ -31,7 +31,7 @@
  */
 import { and, asc, eq } from 'drizzle-orm';
 import { db } from '../db';
-import { families, feePlans, invoiceItems, invoices, payments, schoolYears, studentFees, students } from '../db/schema';
+import { carryIns, families, feePlans, invoiceItems, invoices, payments, schoolYears, studentFees, students } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { reallocateStudent, recordPayment, studentBalance, type Balance } from './ledger';
@@ -66,6 +66,8 @@ export interface MidYearStudent {
   /** Months of the configured year that fall before go-live, oldest first. */
   monthsBefore: string[];
   kind: CarryInKind;
+  /** The month the office said was already settled, echoed back — null when they said nothing. */
+  paidThrough: string | null;
   /** Always ≥ 0. The size of the artifact about to be written. */
   amountCents: number;
   /** How the figure was arrived at, so the preview can say so. */
@@ -124,6 +126,41 @@ export function carryInKey(studentId: string): string {
   return `carry-in:${studentId}`;
 }
 
+/**
+ * Keep the ANSWER the office gave, beside the artifact derived from it (0.48.0).
+ *
+ * "Paid through November" is the only thing anybody knows about the months before go-live, and it was
+ * thrown away the moment it became an amount — so the year view could say those months were never
+ * billed here, but not which of them a family had actually settled. That is the distinction an office
+ * wants, and this is the smallest honest way to keep it: a note, written once, next to the money.
+ *
+ * Nothing bills from it (see the module header — the ledger is still the only source of truth), and it
+ * is recorded for a SQUARE child too, who gets no artifact at all: "they were up to date" is exactly
+ * the answer the screen needs, and it is indistinguishable from silence unless it is written down.
+ *
+ * First answer wins, matching the artifact's own idempotency — a second run of the wizard must not
+ * rewrite a history the first one already recorded.
+ */
+export function noteCarryIn(rec: { studentId: string; goLivePeriod: string; paidThrough?: string | null; kind: CarryInKind; amountCents: number }): void {
+  if (db.select({ id: carryIns.studentId }).from(carryIns).where(eq(carryIns.studentId, rec.studentId)).get()) return;
+  db.insert(carryIns)
+    .values({
+      studentId: rec.studentId,
+      goLivePeriod: rec.goLivePeriod,
+      paidThrough: rec.paidThrough?.trim() || null,
+      kind: rec.kind,
+      amountCents: rec.amountCents,
+      createdAt: new Date(),
+    })
+    .run();
+}
+
+/** What the office said about one child at go-live, or null if they were never asked. */
+export function carryInRecord(studentId: string): { paidThrough: string | null; goLivePeriod: string; kind: CarryInKind } | null {
+  const r = db.select().from(carryIns).where(eq(carryIns.studentId, studentId)).get();
+  return r ? { paidThrough: r.paidThrough, goLivePeriod: r.goLivePeriod, kind: r.kind } : null;
+}
+
 /** The roster the wizard works down: every active child with their rate, their current balance, and
  *  what the given rows would do to them. Pure — writes nothing. */
 export function midYearPlan(goLivePeriod: string, schoolYearId: string | null, rows: MidYearRow[]): { months: string[]; students: MidYearStudent[] } {
@@ -166,6 +203,7 @@ export function midYearPlan(goLivePeriod: string, schoolYearId: string | null, r
       monthlyCents,
       monthsBefore: months.filter((m) => m < goLivePeriod),
       kind,
+      paidThrough: row?.paidThrough?.trim() || null,
       amountCents,
       derivedFrom: useOverride ? ('override' as const) : derived.kind === 'square' ? ('none' as const) : ('months' as const),
       monthCount: useOverride ? 0 : derived.monthCount,

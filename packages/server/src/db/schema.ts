@@ -440,6 +440,37 @@ export type AuditEntry = typeof auditLog.$inferSelect;
  * The email is UNIQUE and stored lowercased so "Office@…" and "office@…" cannot both subscribe and
  * double every message.
  */
+/**
+ * What the office told the mid-year wizard about one child (0.48.0).
+ *
+ * The wizard asks a single question per child — "paid through which month?" — derives a carried-forward
+ * bill or a dated prepayment from it, and used to discard the answer. That left the year view able to
+ * say the months before go-live were never billed here, but not WHICH of them a family had settled and
+ * which they were behind on. That distinction is the thing an office actually wants from the screen.
+ *
+ * A RECORD OF AN ANSWER, not a setting and not a balance. Nothing reads it to decide what to bill — the
+ * money is entirely in the carry-in invoice and the carry-in payment, exactly as §9 requires ("a
+ * mid-year start is a ledger artifact, never a setting"). It is written once, beside the artifact, so it
+ * cannot drift from it; `paidThrough` is null when the office told us nothing, which is different from
+ * being told "square" and must stay different (the year view says "we don't know" rather than "paid").
+ *
+ * ON DELETE CASCADE, unlike every money path: this is a note about a child, so it goes when they do.
+ */
+export const carryIns = sqliteTable('carry_ins', {
+  studentId: text('student_id')
+    .primaryKey()
+    .references(() => students.id, { onDelete: 'cascade' }),
+  /** The go-live month this answer was given for. */
+  goLivePeriod: text('go_live_period').notNull(),
+  /** The last month already settled when the app came in. Null = nothing was said. */
+  paidThrough: text('paid_through'),
+  kind: text('kind', { enum: ['owes', 'ahead', 'square'] }).notNull(),
+  /** The figure that was written (0 for a child who was square). */
+  amountCents: integer('amount_cents').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+});
+export type CarryIn = typeof carryIns.$inferSelect;
+
 export const alertRecipients = sqliteTable('alert_recipients', {
   id: text('id').primaryKey(),
   email: text('email').notNull().unique(),

@@ -480,15 +480,25 @@
 }
 .year-cell.is-void .year-cell-btn { color: var(--color-ink-faint); text-decoration: line-through; }
 
-/* A month from before this install started billing (0.48.0): never ours to bill, so it must not read
-   as a gap. Not a button — there is no invoice behind it to open. */
-.year-cell.is-before { background: color-mix(in srgb, var(--color-ink) 4%, transparent); }
+/* Months from before this install started billing (0.48.0). None of the three is a button — there is no
+   invoice of ours behind them — and all three are quieter than the live states, because what happened
+   before go-live is history rather than work outstanding.
+     is-before   nobody said either way
+     is-settled  the office said it was paid before the app arrived — a hollow ✓, deliberately not the
+                 solid green one, which means "this app billed it and collected it"
+     is-carried  it was NOT paid, and sits in the carried-forward bill. Warning-toned, because it is
+                 real money still owed, but hollow for the same reason as above. */
+.year-cell.is-before,
+.year-cell.is-settled,
+.year-cell.is-carried { background: color-mix(in srgb, var(--color-ink) 4%, transparent); }
 .year-cell-flat {
   display: inline-block;
   min-width: 2.75rem;
   color: var(--color-ink-faint);
   cursor: default;
 }
+.year-cell.is-settled .year-cell-flat { color: color-mix(in srgb, var(--color-success) 65%, var(--color-ink-faint)); }
+.year-cell.is-carried .year-cell-flat { color: var(--color-warning); font-weight: 700; }
 .year-month.is-before { color: var(--color-ink-faint); }
 
 /* Tabular figures so money columns line up down the page. */
@@ -661,8 +671,13 @@
   }
   /* On paper the tints are gone, so the glyphs carry the whole meaning: ● must stay solid black and
      the pre-go-live months must stay grey, or a photocopy reads as a page of identical marks. */
-  .year-cell.is-before { background: none !important; }
+  .year-cell.is-before,
+  .year-cell.is-settled,
+  .year-cell.is-carried { background: none !important; }
   .year-cell-flat { color: #999 !important; min-width: 0 !important; }
+  /* …except the arrears carried in, which is money still owed and must survive a black-and-white
+     photocopy as something darker than the paid months around it. */
+  .year-cell.is-carried .year-cell-flat { color: #000 !important; }
 }
 
 /* ── On-scene vs in-glass text (light-theme legibility) ──────────────────────

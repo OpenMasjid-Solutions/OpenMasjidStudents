@@ -203,14 +203,15 @@ describe('optional columns are opt-in', () => {
    * setting the mid-year wizard writes, so it follows the go-live with nothing to keep in step by hand.
    */
   it('marks the months from before the first billed one, and leaves the rest alone', async () => {
-    const { admin, yusufId, saraId } = await seed();
+    const { admin } = await seed();
     // Driven through the REAL go-live step rather than by writing the setting, because the claim being
     // tested is that running the wizard marks the grid — not that a setting, once set, is read.
-    await admin.billing.midYearCommit({
-      goLivePeriod: '2026-10',
-      asOf: '2026-10-01',
-      rows: [{ studentId: yusufId, paidThrough: '2026-09' }, { studentId: saraId, paidThrough: '2026-09' }],
-    });
+    //
+    // No per-child answers here, which is a real case: the floor is set whether or not anything was
+    // written ("we start billing in October" is true of a school whose families were all square). With
+    // nothing recorded the grid says only "this was before us" — the settled/carried distinction below
+    // needs an answer to have been given.
+    await admin.billing.midYearCommit({ goLivePeriod: '2026-10', asOf: '2026-10-01', rows: [] });
 
     const g = await admin.billing.yearGrid();
     expect(g.startPeriod).toBe('2026-10');
@@ -231,6 +232,64 @@ describe('optional columns are opt-in', () => {
     await admin.billing.midYearCommit({ goLivePeriod: '2026-10', asOf: '2026-10-01', rows: [{ studentId: yusufId, paidThrough: '2026-09' }] });
     const yusuf = (await admin.billing.yearGrid()).rows.find((r) => r.fullName === 'Yusuf Ismail')!;
     expect(yusuf.cells.find((c) => c.periodKey === '2026-05')!.status).toBe('open');
+  });
+
+  /**
+   * The point of the whole thing (0.48.0): a family who was BEHIND at go-live must be visibly behind in
+   * the months they were behind on, and paid in the months they were not. The wizard is the only place
+   * that ever knows this — it asks "paid through which month?" — so the year view has to be able to read
+   * the answer back.
+   */
+  it('shows how far each child had actually paid when the app came in', async () => {
+    const { admin, yusufId, saraId } = await seed();
+    await admin.billing.midYearCommit({
+      goLivePeriod: '2026-10',
+      asOf: '2026-10-01',
+      rows: [
+        { studentId: yusufId, paidThrough: '2026-09' }, // square: Apr–Sep all settled
+        { studentId: saraId, paidThrough: '2026-07' }, // behind: Aug and Sep were not paid
+      ],
+    });
+
+    const g = await admin.billing.yearGrid();
+    const at = (name: string, p: string) => g.rows.find((r) => r.fullName === name)!.cells.find((c) => c.periodKey === p)!.status;
+
+    // Yusuf was up to date, so every month before go-live reads as paid.
+    expect(['2026-04', '2026-07', '2026-09'].map((p) => at('Yusuf Ismail', p))).toEqual(['settled', 'settled', 'settled']);
+    // Sara paid through July: April–July settled, August and September carried forward.
+    expect(at('Sara Ismail', '2026-07')).toBe('settled');
+    expect(at('Sara Ismail', '2026-08')).toBe('carried');
+    expect(at('Sara Ismail', '2026-09')).toBe('carried');
+    // …and that is exactly the arrears invoice she was given: 2 months at her rate.
+    const carry = (await admin.billing.studentBilling({ studentId: saraId })).invoices.find((i) => i.periodKey === 'carry-in')!;
+    expect(carry.totalCents).toBe(140000); // 2 × her 70000 override
+  });
+
+  /** The screen must stay true as the family pays, which is why the arrears months follow the carry-in
+   *  invoice rather than storing an outcome at go-live. */
+  it('turns the carried months into paid ones once the carried-forward bill is settled', async () => {
+    const { admin, saraId } = await seed();
+    await admin.billing.midYearCommit({ goLivePeriod: '2026-10', asOf: '2026-10-01', rows: [{ studentId: saraId, paidThrough: '2026-07' }] });
+    const before = await admin.billing.yearGrid();
+    expect(before.rows.find((r) => r.fullName === 'Sara Ismail')!.cells.find((c) => c.periodKey === '2026-08')!.status).toBe('carried');
+
+    await admin.billing.recordManualPayment({ studentId: saraId, amountCents: 140000, channel: 'cash', occurredAt: '2026-10-05' });
+
+    const after = await admin.billing.yearGrid();
+    const cells = after.rows.find((r) => r.fullName === 'Sara Ismail')!.cells;
+    expect(cells.find((c) => c.periodKey === '2026-08')!.status).toBe('settled');
+    expect(cells.find((c) => c.periodKey === '2026-09')!.status).toBe('settled');
+  });
+
+  /** Being told "square" and being told nothing are DIFFERENT, and the grid must not conflate them. */
+  it('says nothing about a child the wizard was never given an answer for', async () => {
+    const { admin, yusufId } = await seed();
+    // Only Yusuf gets a row; Sara and Bilal are left out entirely.
+    await admin.billing.midYearCommit({ goLivePeriod: '2026-10', asOf: '2026-10-01', rows: [{ studentId: yusufId, paidThrough: '2026-09' }] });
+    const g = await admin.billing.yearGrid();
+    expect(g.rows.find((r) => r.fullName === 'Yusuf Ismail')!.cells.find((c) => c.periodKey === '2026-05')!.status).toBe('settled');
+    // No claim is made about a child nobody recorded — "before" means "we don't know", not "paid".
+    expect(g.rows.find((r) => r.fullName === 'Sara Ismail')!.cells.find((c) => c.periodKey === '2026-05')!.status).toBe('before');
   });
 
   it('marks nothing when the madrasah has always billed everything', async () => {

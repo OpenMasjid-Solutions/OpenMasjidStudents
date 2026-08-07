@@ -256,15 +256,24 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                         </td>
                         {r.cells.map((c) => (
                           <td key={c.periodKey} className={`year-cell is-${c.status}`}>
-                            {/* `none` (nothing generated yet, and it could be) stays blank so a real gap
-                                still stands out. `before` is a month this install never billed — shown as
-                                a faint tick-less rule rather than blank, so it reads as settled rather
-                                than as work outstanding. Both are unclickable: there is no bill there. */}
+                            {/* Four unclickable states, because there is no invoice of this app's to open:
+                                  none     — nothing generated yet, and it COULD be. Blank, so a real gap
+                                             still stands out.
+                                  settled  — before go-live and the office said it was paid. A hollow ✓:
+                                             true, but not something this app collected.
+                                  carried  — before go-live and NOT paid. It is in the carried-forward
+                                             bill, and flips to `settled` server-side once that is
+                                             cleared, so the column stays true as the family pays.
+                                  before   — before go-live and nobody told us either way. */}
                             {c.status === 'none' ? (
                               ''
-                            ) : c.status === 'before' ? (
-                              <span className="year-cell-flat" title={t('year.beforeStart')} aria-label={`${r.fullName} ${c.periodKey} ${t('year.cell_before')}`}>
-                                ·
+                            ) : c.status === 'settled' || c.status === 'carried' || c.status === 'before' ? (
+                              <span
+                                className="year-cell-flat"
+                                title={t(`year.hint_${c.status}`)}
+                                aria-label={`${r.fullName} ${c.periodKey} ${t(`year.cell_${c.status}`)}`}
+                              >
+                                {c.status === 'settled' ? '✓' : c.status === 'carried' ? '○' : '·'}
                               </span>
                             ) : (
                               <button
