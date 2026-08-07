@@ -1088,7 +1088,7 @@
     "alreadyFloor": "This install already bills from {{period}} onwards.",
     "needsYear": "Set up a school year on the Structure tab first — the months come from it.",
     "step2": "2. What has each child already paid?",
-    "step2Hint": "Pick the last month they are square for. We work out the rest from their own rate — and if the book says otherwise, type the amount instead.",
+    "step2Hint": "Pick the last month they are square for — or “Hasn’t paid at all” if they have paid nothing since the year began. We work out the rest from their own rate, including any amount you have agreed just for that child, and if the book says otherwise you can type the figure instead. “Not said” records nothing for them at all.",
     "setAll": "Everyone paid through",
     "setAllPick": "Set the whole column…",
     "paidThrough": "Paid through",
@@ -1111,6 +1111,7 @@
     "doneBody_other": "{{count}} children carried a balance forward and {{ahead}} were already paid ahead. Billing starts at {{period}}.",
     "doneSkipped_one": "{{count}} child already had a record and was left alone.",
     "doneSkipped_other": "{{count}} children already had a record and were left alone.",
-    "doneNext": "Next: generate {{period}} on the Billing tab. Anything earlier is refused, so the balances you just recorded cannot be billed twice."
+    "doneNext": "Next: generate {{period}} on the Billing tab. Anything earlier is refused, so the balances you just recorded cannot be billed twice.",
+    "paidNothing": "Hasn’t paid at all"
   }
 }

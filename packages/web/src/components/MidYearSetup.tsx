@@ -27,6 +27,19 @@ import { formatMoney, parseCents } from '../lib/money';
 
 type Row = { paidThrough: string; amount: string; kind: 'owes' | 'ahead' };
 
+/**
+ * The dropdown's value for "they have paid nothing at all this year" (0.48.0).
+ *
+ * The list used to be "Not said" plus the months, which left no way to say the commonest awkward case: a
+ * family who has paid nothing since the year began. Picking the first month of the year is not the same
+ * answer — that says they paid THAT month — and "Not said" writes nothing at all.
+ *
+ * A sentinel only inside this component. It becomes the `paidNothing` FLAG on the wire, and the server
+ * turns that into the real month it means (the one before the year started), so no non-period string
+ * ever reaches a place that compares period keys. See MidYearRow in billing/carryIn.ts.
+ */
+const PAID_NOTHING = '__nothing__';
+
 /** A `YYYY-MM` key rendered the way an office reads it. */
 function monthLabel(periodKey: string): string {
   const [y, m] = periodKey.split('-').map(Number);
@@ -59,7 +72,9 @@ export function MidYearSetup({ currency }: { currency: string }) {
         .filter(([, r]) => r.paidThrough || r.amount)
         .map(([studentId, r]) => ({
           studentId,
-          paidThrough: r.paidThrough || undefined,
+          // The sentinel becomes a flag; a real month stays a month. Never both.
+          paidThrough: r.paidThrough && r.paidThrough !== PAID_NOTHING ? r.paidThrough : undefined,
+          ...(r.paidThrough === PAID_NOTHING ? { paidNothing: true } : {}),
           ...(parseCents(r.amount) ? { amountOverrideCents: parseCents(r.amount)!, kindOverride: r.kind } : {}),
         })),
       ...(memo.trim() ? { memo: memo.trim() } : {}),
@@ -154,6 +169,9 @@ export function MidYearSetup({ currency }: { currency: string }) {
                 <label className="label">{t('midyear.setAll')}</label>
                 <select className="input glass-inset" value="" onChange={(e) => { if (e.target.value) setAllPaidThrough(e.target.value); }}>
                   <option value="">{t('midyear.setAllPick')}</option>
+                  {/* Offered here too: a madrasah that collected nothing all year and is adopting the
+                      app to fix exactly that sets the whole column in one go. */}
+                  <option value={PAID_NOTHING}>{t('midyear.paidNothing')}</option>
                   {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
                 </select>
               </div>
@@ -185,6 +203,9 @@ export function MidYearSetup({ currency }: { currency: string }) {
                         <td>
                           <select className="input glass-inset" style={{ minWidth: '9rem' }} value={row?.paidThrough ?? ''} disabled={s.already} onChange={(e) => setRow(s.studentId, { paidThrough: e.target.value })}>
                             <option value="">{t('midyear.notSaid')}</option>
+                            {/* Right after "Not said", because it is the other answer that is not a
+                                month — and the commonest awkward one. */}
+                            <option value={PAID_NOTHING}>{t('midyear.paidNothing')}</option>
                             {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
                           </select>
                         </td>

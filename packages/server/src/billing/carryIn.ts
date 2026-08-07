@@ -47,6 +47,16 @@ export interface MidYearRow {
   studentId: string;
   /** The last month already settled before go-live. Null = tell me nothing, treat as square. */
   paidThrough?: string | null;
+  /**
+   * "They have paid nothing at all this year" (0.48.0).
+   *
+   * A separate flag rather than a sentinel in `paidThrough`, because that field is compared as a period
+   * key in three places — the derivation here, the year grid, and the `carry_ins` row it is stored in —
+   * and a non-period string would sort in ways that quietly mean the opposite ('2026-04' <= 'none' is
+   * true, which would read every month as PAID). `midYearPlan` turns it into the real month it means:
+   * the one before the school year began, which is literally what "nothing paid this year" says.
+   */
+  paidNothing?: boolean;
   /** The office's own figure, when the notebook disagrees with the derived one. */
   amountOverrideCents?: number | null;
   /** Which direction an override means. Ignored unless `amountOverrideCents` is given. */
@@ -184,7 +194,10 @@ export function midYearPlan(goLivePeriod: string, schoolYearId: string | null, r
   const out = kids.map((k) => {
     const row = byId.get(k.id);
     const monthlyCents = monthlyRateCents(k.id);
-    const derived = deriveCarryIn(monthlyCents, months, goLivePeriod, row?.paidThrough);
+    // "Paid nothing at all" IS a paid-through month: the one before the year started. Resolved here, once,
+    // so the derivation, the stored record and the year grid all see a real period key (0.48.0).
+    const paidThrough = row?.paidNothing && months.length ? previousPeriod(months[0]) : row?.paidThrough;
+    const derived = deriveCarryIn(monthlyCents, months, goLivePeriod, paidThrough);
     const override = row?.amountOverrideCents;
     const useOverride = typeof override === 'number' && override > 0 && !!row?.kindOverride;
     const kind: CarryInKind = useOverride ? (row!.kindOverride as CarryInKind) : derived.kind;
@@ -203,7 +216,7 @@ export function midYearPlan(goLivePeriod: string, schoolYearId: string | null, r
       monthlyCents,
       monthsBefore: months.filter((m) => m < goLivePeriod),
       kind,
-      paidThrough: row?.paidThrough?.trim() || null,
+      paidThrough: paidThrough?.trim() || null,
       amountCents,
       derivedFrom: useOverride ? ('override' as const) : derived.kind === 'square' ? ('none' as const) : ('months' as const),
       monthCount: useOverride ? 0 : derived.monthCount,

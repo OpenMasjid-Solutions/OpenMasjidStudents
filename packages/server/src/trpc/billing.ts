@@ -178,6 +178,9 @@ const MID_YEAR_INPUT = z.object({
       z.object({
         studentId: ID,
         paidThrough: z.union([PERIOD, z.literal('')]).optional(),
+        /** "They have paid nothing at all this year" — resolved to a real month in `midYearPlan`, so
+         *  nothing downstream ever sees a sentinel (0.48.0). */
+        paidNothing: z.boolean().optional(),
         amountOverrideCents: CENTS.optional(),
         kindOverride: z.enum(['owes', 'ahead']).optional(),
       }),
@@ -556,14 +559,20 @@ export const billingRouter = router({
        * are settled too. Read once for the grid rather than per cell.
        */
       const carryByStudent = new Map<string, { paidThrough: string | null }>();
-      const carrySettled = new Set<string>();
+      const carryOwing = new Set<string>();
       if (startPeriod) {
         for (const c of db.select({ studentId: carryIns.studentId, paidThrough: carryIns.paidThrough }).from(carryIns).all()) {
           carryByStudent.set(c.studentId, { paidThrough: c.paidThrough });
         }
+        // Which children still OWE something on their carried-forward bill. Deliberately the positive
+        // test rather than "has it been settled": a child can have been recorded as behind and yet have
+        // no carry-in invoice at all — one whose fees are per-term, or waived, has a monthly rate of
+        // zero, so the wizard derived nothing to bill. Asking "is anything outstanding" answers that
+        // correctly (nothing is), where asking "was it paid off" would have marked those months owed
+        // forever against money that never existed.
         for (const inv of db.select({ id: invoices.id, studentId: invoices.studentId, status: invoices.status }).from(invoices).where(eq(invoices.periodKey, CARRY_IN_PERIOD)).all()) {
-          const total = invoiceTotal(db, inv.id);
-          if (inv.status !== 'void' && total > 0 && invoicePaid(db, inv.id) >= total) carrySettled.add(inv.studentId);
+          if (inv.status === 'void') continue;
+          if (invoiceTotal(db, inv.id) - invoicePaid(db, inv.id) > 0) carryOwing.add(inv.studentId);
         }
       }
 
@@ -685,10 +694,12 @@ export const billingRouter = router({
               if (!said?.paidThrough) return { periodKey: mo.periodKey, status: 'before' as const };
               // Settled before this app existed…
               if (mo.periodKey <= said.paidThrough) return { periodKey: mo.periodKey, status: 'settled' as const };
-              // …or part of the arrears that came in as one carried-forward bill, which shows as settled
-              // once that bill is cleared. Following the invoice rather than storing an outcome keeps
-              // the screen true after a parent pays it off.
-              return { periodKey: mo.periodKey, status: carrySettled.has(s.id) ? ('settled' as const) : ('carried' as const) };
+              // …or one of the months that came in as the carried-forward bill. It reads as still-owed
+              // only while that bill actually is: following the money rather than storing an outcome
+              // keeps the screen true after a parent pays it off, and stops a child who was recorded as
+              // behind but had nothing billable (per-term fees, or a waived one) showing arrears that
+              // never existed.
+              return { periodKey: mo.periodKey, status: carryOwing.has(s.id) ? ('carried' as const) : ('settled' as const) };
             }
             const state = c.status === 'void' ? 'void' : c.paidCents >= c.totalCents && c.totalCents > 0 ? 'paid' : c.paidCents > 0 ? 'partial' : 'open';
             // A real invoice always wins, even in a pre-start month: one generated before the floor was

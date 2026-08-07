@@ -75,6 +75,11 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     either way", which is deliberately not the same as "paid". And a real invoice in one of those months
     is never painted over.
 
+- **"Hasn't paid at all" is now an option in the mid-year setup**, right after "Not said". Until now you
+  had to pick a month, and neither nearby answer was right: the year's first month says they paid *that*
+  month, and "Not said" records nothing at all. It carries in every month of the year before you went
+  live. It's on the "set the whole column" list too, for a madrasah adopting the app to fix exactly that.
+
 - **"Not paid" is now a bold ● instead of a faint dot** on the year view. It was the one state the office
   is actually scanning for and the hardest to see on the page.
 

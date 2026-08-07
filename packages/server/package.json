@@ -1,6 +1,6 @@
 {
   "name": "@openmasjid/students-server",
-  "version": "0.48.0-dev.4",
+  "version": "0.48.0-dev.5",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "commonjs",
