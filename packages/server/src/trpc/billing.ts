@@ -363,6 +363,7 @@ export const billingRouter = router({
           planAmountCents: feePlans.amountCents,
           cadence: feePlans.cadence,
           overrideAmountCents: studentFees.overrideAmountCents,
+          note: studentFees.note,
         })
         .from(students)
         .leftJoin(studentFees, eq(studentFees.studentId, students.id))
@@ -386,19 +387,22 @@ export const billingRouter = router({
    * fees (tuition plus a book fee) must be edited on their own record, not here.
    */
   setStudentFee: adminOrFinanceProcedure
-    .input(z.object({ studentId: ID, feePlanId: ID, overrideAmountCents: CENTS.nullable().optional() }))
+    .input(z.object({ studentId: ID, feePlanId: ID, overrideAmountCents: CENTS.nullable().optional(), note: NOTE.optional() }))
     .mutation(({ ctx, input }) => {
       if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
       if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.feePlanId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
       const ts = now();
       const override = input.overrideAmountCents ?? null;
+      // The note explains an override and only an override, so it goes when the override does — a
+      // "sibling rate" note left on a child back at the plan price is a claim about nothing.
+      const note = override == null ? null : input.note?.trim() || null;
       db.transaction((tx) => {
         // Any OTHER plan goes, so the child ends up billed once. Nothing here touches an invoice
         // already raised — a fee is configuration, and money already billed is history (§9).
         tx.delete(studentFees).where(and(eq(studentFees.studentId, input.studentId), ne(studentFees.feePlanId, input.feePlanId))).run();
         const existing = tx.select({ id: studentFees.id }).from(studentFees).where(and(eq(studentFees.studentId, input.studentId), eq(studentFees.feePlanId, input.feePlanId))).get();
-        if (existing) tx.update(studentFees).set({ overrideAmountCents: override, updatedAt: ts }).where(eq(studentFees.id, existing.id)).run();
-        else tx.insert(studentFees).values({ id: rid('stf'), studentId: input.studentId, feePlanId: input.feePlanId, overrideAmountCents: override, note: null, createdAt: ts, updatedAt: ts }).run();
+        if (existing) tx.update(studentFees).set({ overrideAmountCents: override, note, updatedAt: ts }).where(eq(studentFees.id, existing.id)).run();
+        else tx.insert(studentFees).values({ id: rid('stf'), studentId: input.studentId, feePlanId: input.feePlanId, overrideAmountCents: override, note, createdAt: ts, updatedAt: ts }).run();
       });
       audit(auditActor(ctx), 'fee.setStudent', { entity: 'student', entityId: input.studentId, detail: { feePlanId: input.feePlanId, overrideAmountCents: override } });
       return { ok: true as const };

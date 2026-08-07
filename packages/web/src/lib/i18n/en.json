@@ -259,11 +259,16 @@
     "toFees": "Next — check the fees",
     "backToFees": "Back to fees",
     "feesTitle": "Fees",
-    "feesIntro": "Every imported student was given the same plan, because a spreadsheet cannot say \"the second child pays less\". Now that the brothers and sisters are grouped, change anyone’s plan or amount here. Leave the amount at the plan’s own price and they simply follow the plan — including any later change you make to it.",
+    "feesIntro": "Every imported student was given the same plan, because a spreadsheet cannot say \"the second child pays less\". Now that the brothers and sisters are grouped, change anyone’s plan or amount here — and say why, if you have agreed something with the family. Leave the amount at the plan’s own price and they simply follow the plan, including any later change you make to it.",
     "feeAmount": "Amount",
     "feeSaved": "Saved",
     "feeBadAmount": "That amount isn’t a number we can read — try 350 or 350.00.",
-    "feesLater": "You can change any of this later on a student’s own record, or for a whole class at once from Billing."
+    "feesLater": "You can change any of this later on a student’s own record, or for a whole class at once from Billing.",
+    "feeNote": "Why",
+    "feesNext": "Next — show the Student IDs",
+    "feesUnsaved_one": "{{count}} row hasn’t been saved yet — press Save on it, or it won’t be kept.",
+    "feesUnsaved_other": "{{count}} rows haven’t been saved yet — press Save on each, or they won’t be kept.",
+    "feeNoPlan": "— pick a plan —"
   },
   "year": {
     "title": "Year view",

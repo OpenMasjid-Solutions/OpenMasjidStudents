@@ -552,6 +552,25 @@ describe('fixing up fees after an import', () => {
     expect((await admin.billing.studentBilling({ studentId: id })).invoices[0].totalCents).toBe(15000);
   });
 
+  /**
+   * The WHY of an override, the same field the billing tab has offered all along (0.48.0). "$45 instead
+   * of $100" is unreadable six months later; "sibling discount" is the whole story, and it is what the
+   * year view and the family sheet print beside the figure.
+   */
+  it('keeps the reason for an override, and drops it when the override goes', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }] });
+    const id = res.students[0].studentId;
+
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: 20000, note: 'Sibling discount' });
+    expect((await admin.billing.studentFeeList({ studentIds: [id] }))[0]).toMatchObject({ overrideAmountCents: 20000, note: 'Sibling discount' });
+
+    // Back to the plan's own price: there is no longer an agreed amount, so a note claiming there is
+    // one would be a statement about nothing.
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: null, note: 'Sibling discount' });
+    expect((await admin.billing.studentFeeList({ studentIds: [id] }))[0]).toMatchObject({ overrideAmountCents: null, note: null });
+  });
+
   it('clearing the override puts the child back on the plan’s own price', async () => {
     const { admin, planId } = await base();
     const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail', amount: '700' }] });

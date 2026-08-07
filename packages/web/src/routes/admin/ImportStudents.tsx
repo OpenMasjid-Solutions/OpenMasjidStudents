@@ -8,6 +8,7 @@
  *  file with any error cannot half-import. */
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Check } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
 import { autoMatchColumns, toCsv, downloadCsv } from '../../lib/csv';
@@ -59,7 +60,8 @@ function fileLines(sourceRows: number[]): string {
  * roster becomes what the office actually charges.
  *
  * Saved PER ROW rather than as one big submit: 36 children is a long screen, and an office that
- * corrects three of them should not have to wonder whether the other 33 were rewritten.
+ * corrects three of them should not have to wonder whether the other 33 were rewritten. Which makes the
+ * per-row FEEDBACK load-bearing — see `dirty` below.
  */
 function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () => void }) {
   const { t } = useTranslation();
@@ -67,34 +69,45 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
   const fees = trpc.billing.studentFeeList.useQuery({ studentIds });
   const plans = trpc.billing.feePlanList.useQuery();
   const setFee = trpc.billing.setStudentFee.useMutation();
-  /** Only the rows the office has actually touched, so an untouched row is never written. */
-  const [draft, setDraft] = useState<Record<string, { feePlanId: string; amount: string }>>({});
+  /** Only the rows the office has actually touched, so an untouched row is never written. A row's draft
+   *  is DELETED once it saves, which is what makes the Save button disappear and the tick appear. */
+  const [draft, setDraft] = useState<Record<string, Draft>>({});
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [err, setErr] = useState('');
 
   const rows = fees.data ?? [];
+  const planById = new Map((plans.data ?? []).map((p) => [p.id, p]));
+  const unsaved = Object.keys(draft).length;
+  /** Anything touched at all — a saved change or one still pending. The way out says "Next" rather than
+   *  "Skip" once that is true: an office that has just edited three fees has not skipped this step. */
+  const touched = unsaved > 0 || Object.keys(saved).length > 0;
 
-  async function save(studentId: string, planFallbackId: string | null) {
+  async function save(studentId: string, fallbackPlanId: string | null) {
     const d = draft[studentId];
     if (!d) return;
-    const planId = d.feePlanId || planFallbackId;
+    const planId = d.feePlanId || fallbackPlanId;
     if (!planId) return;
-    const plan = (plans.data ?? []).find((p) => p.id === planId);
+    const plan = planById.get(planId);
     const cents = parseAmount(d.amount);
     if (cents === 'bad') {
       setErr(t('import.feeBadAmount'));
       return;
     }
     setErr('');
-    await setFee.mutateAsync({
-      studentId,
-      feePlanId: planId,
-      // Matching the plan's own price is NOT an override — storing one would freeze this child at
-      // today's figure, so a later change to the plan would silently skip them.
-      overrideAmountCents: cents == null || (plan && cents === plan.amountCents) ? null : cents,
+    // Matching the plan's own price is NOT an override — storing one would freeze this child at today's
+    // figure, so a later change to the plan would silently skip them. The note explains an override, so
+    // it goes with it.
+    const override = cents == null || (plan && cents === plan.amountCents) ? null : cents;
+    await setFee.mutateAsync({ studentId, feePlanId: planId, overrideAmountCents: override, note: override == null ? '' : d.note.trim() });
+    // Refetch BEFORE dropping the draft, so the row never flashes its old figures in the gap between the
+    // two. Then the draft goes, `dirty` turns false, and the row shows a tick instead of a button.
+    await Promise.all([utils.billing.studentFeeList.invalidate({ studentIds }), utils.people.directory.invalidate(), utils.billing.yearGrid.invalidate()]);
+    setDraft((s) => {
+      const next = { ...s };
+      delete next[studentId];
+      return next;
     });
     setSaved((s) => ({ ...s, [studentId]: true }));
-    await Promise.all([utils.billing.studentFeeList.invalidate({ studentIds }), utils.people.directory.invalidate(), utils.billing.yearGrid.invalidate()]);
   }
 
   return (
@@ -102,11 +115,15 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
       <div className="section-head">
         <h2>{t('import.feesTitle')}</h2>
         <span className="spacer" />
-        <button type="button" className="btn btn--primary btn--sm" onClick={onDone}>{t('import.toIds')}</button>
+        <button type="button" className="btn btn--primary btn--sm" onClick={onDone}>
+          {touched ? t('import.feesNext') : t('import.toIds')}
+        </button>
       </div>
       <p className="hint" style={{ marginBlockStart: 0 }}>{t('import.feesIntro')}</p>
       {err && <p className="form-error">{err}</p>}
       {setFee.error && <p className="form-error">{setFee.error.message}</p>}
+      {/* Said plainly rather than left for somebody to discover: leaving now loses these. */}
+      {unsaved > 0 && <p className="form-error">{t('import.feesUnsaved', { count: unsaved })}</p>}
       <div style={{ overflowX: 'auto', maxHeight: '24rem' }}>
         <table className="data-table">
           <thead>
@@ -114,6 +131,7 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
               <th>{t('students.name')}</th>
               <th>{t('directory.feePlan')}</th>
               <th>{t('import.feeAmount')}</th>
+              <th>{t('import.feeNote')}</th>
               <th className="actions" />
             </tr>
           </thead>
@@ -121,11 +139,17 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
             {rows.map((r) => {
               const d = draft[r.studentId];
               const planId = d?.feePlanId ?? r.feePlanId ?? '';
-              const amount = d?.amount ?? (r.effectiveAmountCents != null ? (r.effectiveAmountCents / 100).toFixed(2) : '');
+              const amount = d?.amount ?? (r.effectiveAmountCents != null ? money2(r.effectiveAmountCents) : '');
+              const note = d?.note ?? r.note ?? '';
               const dirty = !!d;
+              const plan = planById.get(planId);
+              const cents = parseAmount(amount);
+              /** An override is in force when the amount differs from the plan's own price — which is
+               *  the only thing a note has to explain, so the field appears with it and not otherwise. */
+              const overridden = cents !== 'bad' && cents != null && !!plan && cents !== plan.amountCents;
               // First edit seeds the draft from what is on screen; later ones patch the draft.
-              const set = (patch: Partial<{ feePlanId: string; amount: string }>) =>
-                setDraft((s) => ({ ...s, [r.studentId]: { ...(s[r.studentId] ?? { feePlanId: planId, amount }), ...patch } }));
+              const set = (patch: Partial<Draft>) =>
+                setDraft((s) => ({ ...s, [r.studentId]: { ...(s[r.studentId] ?? { feePlanId: planId, amount, note }), ...patch } }));
               return (
                 <tr key={r.studentId}>
                   <td>{r.fullName}</td>
@@ -138,11 +162,16 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
                       onChange={(e) => {
                         // Switching plan re-fills the amount from the NEW plan's price, so the box shows
                         // what will be billed rather than the old plan's figure sitting there as a
-                        // now-meaningless override.
-                        const p = (plans.data ?? []).find((x) => x.id === e.target.value);
-                        set({ feePlanId: e.target.value, amount: p ? (p.amountCents / 100).toFixed(2) : '' });
+                        // now-meaningless override. A note about the old amount goes with it.
+                        const p = planById.get(e.target.value);
+                        set({ feePlanId: e.target.value, amount: p ? money2(p.amountCents) : '', note: '' });
                       }}
                     >
+                      {/* A child with no fee at all cannot happen through the import (a plan is
+                          required), but the query left-joins so it is representable — and without an
+                          option to match, the select would show a plan this child does not have and
+                          Save would quietly do nothing. */}
+                      {!planId && <option value="">{t('import.feeNoPlan')}</option>}
                       {(plans.data ?? []).map((p) => (
                         <option key={p.id} value={p.id}>{p.name} — {formatMoney(p.amountCents)}</option>
                       ))}
@@ -156,15 +185,39 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
                       value={amount}
                       aria-label={`${r.fullName} ${t('import.feeAmount')}`}
                       onChange={(e) => set({ amount: e.target.value })}
+                      onBlur={(e) => {
+                        // Typing "100" and leaving it reading `100` beside every other figure written
+                        // `100.00` looks like a different kind of number. Tidied on the way OUT, never
+                        // while typing — reformatting under the cursor fights the person doing it.
+                        const c = parseAmount(e.target.value);
+                        if (c !== 'bad' && c != null) set({ amount: money2(c) });
+                      }}
                     />
                   </td>
+                  <td>
+                    {overridden ? (
+                      <input
+                        className="input glass-inset"
+                        style={{ minWidth: '9rem', padding: '0.25rem 0.4rem' }}
+                        value={note}
+                        maxLength={200}
+                        placeholder={t('billing.overrideNoteHint')}
+                        aria-label={`${r.fullName} ${t('import.feeNote')}`}
+                        onChange={(e) => set({ note: e.target.value })}
+                      />
+                    ) : (
+                      <span className="muted" style={{ fontSize: '0.85rem' }}>—</span>
+                    )}
+                  </td>
                   <td className="actions">
+                    {/* The whole point of clearing the draft above: a Save button that stays put after a
+                        successful save reads as a button that did nothing. */}
                     {dirty ? (
                       <button type="button" className="btn btn--primary btn--sm" onClick={() => void save(r.studentId, r.feePlanId)} disabled={setFee.isPending}>
                         {t('common.save')}
                       </button>
                     ) : saved[r.studentId] ? (
-                      <span className="chip">{t('import.feeSaved')}</span>
+                      <span className="chip"><Check size={12} /> {t('import.feeSaved')}</span>
                     ) : null}
                   </td>
                 </tr>
@@ -177,6 +230,12 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
     </section>
   );
 }
+
+type Draft = { feePlanId: string; amount: string; note: string };
+
+/** Cents as an office writes money: always two decimal places, so a typed "100" does not sit in a
+ *  column of "100.00" looking like a different kind of number. */
+const money2 = (cents: number): string => (cents / 100).toFixed(2);
 
 /** "350", "350.00", "$350" → cents. `null` = blank (use the plan's own price), `'bad'` = not a number.
  *  Deliberately the same shapes the import's Amount column accepts (people/import.ts). */

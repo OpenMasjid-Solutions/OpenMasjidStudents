@@ -54,6 +54,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   - Changing a child's plan **replaces** the old one. It does not add a second — that would bill them
     twice. Leave the amount at the plan's own price and they simply follow the plan, including any
     later change you make to it.
+  - **A "why" box appears whenever you change an amount** — "sibling discount", "hardship" — the same
+    note the billing tab has always taken, and it prints beside the figure. It only shows when there is
+    an override to explain, and it's cleared if you put the amount back to the plan's price.
+  - **Amounts tidy themselves to two decimal places** when you leave the box, so a typed `100` doesn't
+    sit in a column of `100.00` looking like a different kind of number.
+  - **Save now shows that it worked**: the button is replaced by a tick, and comes back the moment you
+    change that row again. Any row you haven't saved is called out, and the button top-right says
+    **Next** rather than Skip once you've changed something.
 
 - **Pause all email to parents.** A switch in **Settings → Email alerts** that stops **everything** going
   to a parent — receipts, autopay notices, and even invites and password resets, which normally always
