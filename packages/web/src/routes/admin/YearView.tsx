@@ -202,7 +202,17 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                 <tr>
                   <th className="year-sticky">{t('students.name')}</th>
                   <th>{t('year.paying')}</th>
-                  {g.months.map((m) => <th key={m.periodKey} className="year-month">{m.label}</th>)}
+                  {/* A month before the go-live is marked in the HEADING as well as in the cells: it is
+                      a property of the month, not of each child in it, and one dimmed column reads far
+                      faster than forty identical cells. */}
+                  {g.months.map((m) => {
+                    const before = !!g.startPeriod && m.periodKey < g.startPeriod;
+                    return (
+                      <th key={m.periodKey} className={cn('year-month', before && 'is-before')} title={before ? t('year.beforeStart') : undefined}>
+                        {m.label}
+                      </th>
+                    );
+                  })}
                   {enabled.includes('studentId') && <th>{t('year.col_studentId')}</th>}
                   {enabled.includes('dob') && <th>{t('year.col_dob')}</th>}
                   {enabled.includes('balance') && <th>{t('year.col_balance')}</th>}
@@ -246,8 +256,16 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                         </td>
                         {r.cells.map((c) => (
                           <td key={c.periodKey} className={`year-cell is-${c.status}`}>
+                            {/* `none` (nothing generated yet, and it could be) stays blank so a real gap
+                                still stands out. `before` is a month this install never billed — shown as
+                                a faint tick-less rule rather than blank, so it reads as settled rather
+                                than as work outstanding. Both are unclickable: there is no bill there. */}
                             {c.status === 'none' ? (
                               ''
+                            ) : c.status === 'before' ? (
+                              <span className="year-cell-flat" title={t('year.beforeStart')} aria-label={`${r.fullName} ${c.periodKey} ${t('year.cell_before')}`}>
+                                ·
+                              </span>
                             ) : (
                               <button
                                 type="button"
@@ -256,7 +274,10 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                                 title={`${c.periodKey} — ${t(`year.cell_${c.status}`)}`}
                                 aria-label={`${r.fullName} ${c.periodKey} ${t(`year.cell_${c.status}`)}`}
                               >
-                                {c.status === 'paid' ? '✓' : c.status === 'partial' ? '½' : c.status === 'void' ? '—' : '·'}
+                                {/* A filled ● for "billed, nothing paid". It was `·`, which at this size
+                                    was almost invisible against the paid ticks — the one state the office
+                                    is scanning FOR was the one hardest to see. */}
+                                {c.status === 'paid' ? '✓' : c.status === 'partial' ? '½' : c.status === 'void' ? '—' : '●'}
                               </button>
                             )}
                           </td>

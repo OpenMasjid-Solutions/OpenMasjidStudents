@@ -26,8 +26,13 @@ import { SiblingSuggestions } from '../../components/SiblingSuggestions';
  *
  * `contacts` is skipped entirely unless the file names a relationship we cannot place (0.48.0) — a
  * file of fathers and mothers should not stop to ask a question with one obvious answer.
+ *
+ * `fees` follows siblings, and follows it for a reason (0.48.0). Every imported row gets the SAME plan,
+ * because a spreadsheet column cannot say "the second child pays less" — but the discounts a madrasah
+ * actually gives are per household, so the moment to correct them is once the siblings are grouped and
+ * you can see who is whose brother. Skippable, and reachable afterwards from any child's record.
  */
-type Step = 'pick' | 'map' | 'contacts' | 'preview' | 'siblings' | 'done';
+type Step = 'pick' | 'map' | 'contacts' | 'preview' | 'siblings' | 'fees' | 'done';
 
 type Placement = 'guardian' | 'emergency';
 
@@ -41,6 +46,145 @@ function fileLines(sourceRows: number[]): string {
   const first = sourceRows[0] + 2;
   const last = sourceRows[sourceRows.length - 1] + 2;
   return first === last ? String(first) : `${first}–${last}`;
+}
+
+/**
+ * The fee step: every imported child, their plan, and what they will actually be billed.
+ *
+ * Both halves are editable because both are wrong for somebody. The PLAN is wrong when a madrasah runs
+ * more than one (a full-time rate and a weekend rate) and the file had no column for it; the AMOUNT is
+ * wrong wherever the office agreed something — a sibling rate, a hardship reduction — which is per
+ * household and cannot live in a spreadsheet column at all. Since 0.39.0 that reduction IS the
+ * per-student override (the family discount went with per-child invoices), so this screen is where a
+ * roster becomes what the office actually charges.
+ *
+ * Saved PER ROW rather than as one big submit: 36 children is a long screen, and an office that
+ * corrects three of them should not have to wonder whether the other 33 were rewritten.
+ */
+function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () => void }) {
+  const { t } = useTranslation();
+  const utils = trpc.useUtils();
+  const fees = trpc.billing.studentFeeList.useQuery({ studentIds });
+  const plans = trpc.billing.feePlanList.useQuery();
+  const setFee = trpc.billing.setStudentFee.useMutation();
+  /** Only the rows the office has actually touched, so an untouched row is never written. */
+  const [draft, setDraft] = useState<Record<string, { feePlanId: string; amount: string }>>({});
+  const [saved, setSaved] = useState<Record<string, boolean>>({});
+  const [err, setErr] = useState('');
+
+  const rows = fees.data ?? [];
+
+  async function save(studentId: string, planFallbackId: string | null) {
+    const d = draft[studentId];
+    if (!d) return;
+    const planId = d.feePlanId || planFallbackId;
+    if (!planId) return;
+    const plan = (plans.data ?? []).find((p) => p.id === planId);
+    const cents = parseAmount(d.amount);
+    if (cents === 'bad') {
+      setErr(t('import.feeBadAmount'));
+      return;
+    }
+    setErr('');
+    await setFee.mutateAsync({
+      studentId,
+      feePlanId: planId,
+      // Matching the plan's own price is NOT an override — storing one would freeze this child at
+      // today's figure, so a later change to the plan would silently skip them.
+      overrideAmountCents: cents == null || (plan && cents === plan.amountCents) ? null : cents,
+    });
+    setSaved((s) => ({ ...s, [studentId]: true }));
+    await Promise.all([utils.billing.studentFeeList.invalidate({ studentIds }), utils.people.directory.invalidate(), utils.billing.yearGrid.invalidate()]);
+  }
+
+  return (
+    <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+      <div className="section-head">
+        <h2>{t('import.feesTitle')}</h2>
+        <span className="spacer" />
+        <button type="button" className="btn btn--primary btn--sm" onClick={onDone}>{t('import.toIds')}</button>
+      </div>
+      <p className="hint" style={{ marginBlockStart: 0 }}>{t('import.feesIntro')}</p>
+      {err && <p className="form-error">{err}</p>}
+      {setFee.error && <p className="form-error">{setFee.error.message}</p>}
+      <div style={{ overflowX: 'auto', maxHeight: '24rem' }}>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>{t('students.name')}</th>
+              <th>{t('directory.feePlan')}</th>
+              <th>{t('import.feeAmount')}</th>
+              <th className="actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const d = draft[r.studentId];
+              const planId = d?.feePlanId ?? r.feePlanId ?? '';
+              const amount = d?.amount ?? (r.effectiveAmountCents != null ? (r.effectiveAmountCents / 100).toFixed(2) : '');
+              const dirty = !!d;
+              // First edit seeds the draft from what is on screen; later ones patch the draft.
+              const set = (patch: Partial<{ feePlanId: string; amount: string }>) =>
+                setDraft((s) => ({ ...s, [r.studentId]: { ...(s[r.studentId] ?? { feePlanId: planId, amount }), ...patch } }));
+              return (
+                <tr key={r.studentId}>
+                  <td>{r.fullName}</td>
+                  <td>
+                    <select
+                      className="input glass-inset"
+                      style={{ width: 'auto', minWidth: '10rem', padding: '0.25rem 0.4rem' }}
+                      value={planId}
+                      aria-label={`${r.fullName} ${t('directory.feePlan')}`}
+                      onChange={(e) => {
+                        // Switching plan re-fills the amount from the NEW plan's price, so the box shows
+                        // what will be billed rather than the old plan's figure sitting there as a
+                        // now-meaningless override.
+                        const p = (plans.data ?? []).find((x) => x.id === e.target.value);
+                        set({ feePlanId: e.target.value, amount: p ? (p.amountCents / 100).toFixed(2) : '' });
+                      }}
+                    >
+                      {(plans.data ?? []).map((p) => (
+                        <option key={p.id} value={p.id}>{p.name} — {formatMoney(p.amountCents)}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <input
+                      className="input glass-inset"
+                      style={{ width: '7rem', padding: '0.25rem 0.4rem' }}
+                      inputMode="decimal"
+                      value={amount}
+                      aria-label={`${r.fullName} ${t('import.feeAmount')}`}
+                      onChange={(e) => set({ amount: e.target.value })}
+                    />
+                  </td>
+                  <td className="actions">
+                    {dirty ? (
+                      <button type="button" className="btn btn--primary btn--sm" onClick={() => void save(r.studentId, r.feePlanId)} disabled={setFee.isPending}>
+                        {t('common.save')}
+                      </button>
+                    ) : saved[r.studentId] ? (
+                      <span className="chip">{t('import.feeSaved')}</span>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="hint">{t('import.feesLater')}</p>
+    </section>
+  );
+}
+
+/** "350", "350.00", "$350" → cents. `null` = blank (use the plan's own price), `'bad'` = not a number.
+ *  Deliberately the same shapes the import's Amount column accepts (people/import.ts). */
+function parseAmount(v: string): number | null | 'bad' {
+  const s = v.replace(/[$,\s]/g, '');
+  if (s === '') return null;
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return 'bad';
+  return Math.round(parseFloat(s) * 100);
 }
 
 export function ImportStudents() {
@@ -368,17 +512,20 @@ export function ImportStudents() {
             </div>
             <p className="hint" style={{ marginBlockStart: 0 }}>{t('import.siblingsStepIntro')}</p>
           </section>
-          <SiblingSuggestions onDone={() => setStep('done')} doneLabel={t('import.toIds')} />
+          <SiblingSuggestions onDone={() => setStep('fees')} doneLabel={t('import.toFees')} />
         </>
       )}
 
-      {/* ── Step 6: done — the generated Student IDs ────────────────────── */}
+      {/* ── Step 6: fees — correct the ones the file could not express ──── */}
+      {step === 'fees' && commit.data && <ImportFees studentIds={commit.data.students.map((s) => s.studentId)} onDone={() => setStep('done')} />}
+
+      {/* ── Step 7: done — the generated Student IDs ────────────────────── */}
       {step === 'done' && commit.data && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head">
             <h2>{t('import.done')}</h2>
             <span className="spacer" />
-            <button type="button" className="btn btn--ghost btn--sm no-print" onClick={() => setStep('siblings')}>{t('import.backToSiblings')}</button>
+            <button type="button" className="btn btn--ghost btn--sm no-print" onClick={() => setStep('fees')}>{t('import.backToFees')}</button>
             {/* A real document, not `window.print()` on this window. That printed the app — the page
                 behind, the window chrome, the dock — and spread 39 children over five sheets. The sheet
                 behind this link is built on the server with the masjid's letterhead, grouped by class,

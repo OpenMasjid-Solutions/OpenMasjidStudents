@@ -129,6 +129,7 @@ export function Settings() {
   const removeRecipient = trpc.settings.alertRecipientRemove.useMutation();
   const testAlert = trpc.settings.alertTest.useMutation();
   const saveParentEmails = trpc.settings.parentEmailsSet.useMutation();
+  const pauseParentMail = trpc.settings.parentMailPauseSet.useMutation();
   const [newRecipient, setNewRecipient] = useState({ email: '', label: '' });
   const [alertMsg, setAlertMsg] = useState<string | null>(null);
 
@@ -164,6 +165,11 @@ export function Settings() {
     } catch (e) {
       setAlertMsg((e as Error).message);
     }
+  }
+
+  async function togglePause() {
+    await pauseParentMail.mutateAsync({ paused: !alerts.data?.parentMailPaused });
+    await utils.settings.alertsGet.invalidate();
   }
 
   async function toggleParentEmail(key: 'receipt' | 'autopayFailure') {
@@ -398,6 +404,20 @@ export function Settings() {
         <h3 className="label" style={{ marginBlock: '0 0.4rem' }}>{t('settings.parentEmails')}</h3>
         {alerts.data && (
           <>
+            {/* The master stop, FIRST and on its own — it overrides everything below it, including the
+                invites and resets that are otherwise always sent. Shown as a standing warning while it
+                is on, because a paused install that nobody remembers pausing looks like broken email. */}
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer', marginBlockEnd: '0.6rem' }}>
+              <input
+                type="checkbox"
+                style={{ marginBlockStart: '0.2rem' }}
+                checked={alerts.data.parentMailPaused}
+                onChange={() => void togglePause()}
+                disabled={pauseParentMail.isPending}
+              />
+              <span>{t('settings.parentMailPause')}<br /><span className="hint">{t('settings.parentMailPauseHint')}</span></span>
+            </label>
+            {alerts.data.parentMailPaused && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{t('settings.parentMailPausedNotice')}</div>}
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
               <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={alerts.data.parentEmails.receipt} onChange={() => void toggleParentEmail('receipt')} disabled={saveParentEmails.isPending} />
               <span>{t('settings.parentReceipt')}<br /><span className="hint">{t('settings.parentReceiptHint')}</span></span>

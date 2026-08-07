@@ -501,6 +501,81 @@ describe('commit is all-or-nothing', () => {
   });
 });
 
+/**
+ * Correcting the fees an import could not express (0.48.0).
+ *
+ * Every row gets the SAME plan, because a spreadsheet column cannot say "the second child pays less" —
+ * and since 0.39.0 that reduction IS the per-student override (the family discount went with per-child
+ * invoices). So the step after the import is where a roster becomes what the office actually charges.
+ *
+ * The dangerous half is the PLAN change: `assignFee` adds a plan and never removes the wrong one, so
+ * doing this through it left a child carrying both and billed twice. That is what these pin.
+ */
+describe('fixing up fees after an import', () => {
+  it('lists what each imported child is set to be billed', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }, { fullName: 'Sara Ismail', amount: '700' }] });
+    const rows = await admin.billing.studentFeeList({ studentIds: res.students.map((s) => s.studentId) });
+    expect(rows.map((r) => [r.fullName, r.feePlanName, r.effectiveAmountCents])).toEqual([
+      ['Sara Ismail', 'Monthly tuition', 70000], // the file's Amount column became her override
+      ['Yusuf Ismail', 'Monthly tuition', 35000], // no column, so the plan's own price
+    ]);
+  });
+
+  it('changes the amount without changing the plan', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }] });
+    const id = res.students[0].studentId;
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: 20000 });
+
+    const [row] = await admin.billing.studentFeeList({ studentIds: [id] });
+    expect(row).toMatchObject({ feePlanId: planId, overrideAmountCents: 20000, effectiveAmountCents: 20000 });
+    // …and it is what actually gets billed, which is the only thing that matters.
+    await admin.billing.generatePeriod({ periodKey: '2026-07', label: 'Jul' });
+    expect((await admin.billing.studentBilling({ studentId: id })).invoices[0].totalCents).toBe(20000);
+  });
+
+  /** The whole reason this procedure exists rather than reusing assignFee. */
+  it('replaces the plan instead of leaving the child carrying both', async () => {
+    const { admin, planId } = await base();
+    const weekend = await admin.billing.feePlanCreate({ name: 'Weekend rate', amountCents: 15000, cadence: 'monthly' });
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }] });
+    const id = res.students[0].studentId;
+
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: weekend.id, overrideAmountCents: null });
+
+    const rows = await admin.billing.studentFeeList({ studentIds: [id] });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ feePlanId: weekend.id, effectiveAmountCents: 15000 });
+    // Billed ONCE, at the new plan's price — not 35000 + 15000.
+    await admin.billing.generatePeriod({ periodKey: '2026-07', label: 'Jul' });
+    expect((await admin.billing.studentBilling({ studentId: id })).invoices[0].totalCents).toBe(15000);
+  });
+
+  it('clearing the override puts the child back on the plan’s own price', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail', amount: '700' }] });
+    const id = res.students[0].studentId;
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: null });
+    const [row] = await admin.billing.studentFeeList({ studentIds: [id] });
+    // Null, not 35000: an override equal to today's price would freeze this child at it, so a later
+    // change to the plan would silently skip them.
+    expect(row.overrideAmountCents).toBeNull();
+    expect(row.effectiveAmountCents).toBe(35000);
+  });
+
+  it('is admin+finance, and refuses a plan or a student that does not exist', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }] });
+    const id = res.students[0].studentId;
+    // Finance runs billing, so finance may fix a fee (§5 — they assign fees already).
+    await caller('finance').billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: 1000 });
+    await expect(caller('parent').billing.setStudentFee({ studentId: id, feePlanId: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(admin.billing.setStudentFee({ studentId: id, feePlanId: 'fee_nope' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(admin.billing.setStudentFee({ studentId: 'stu_nope', feePlanId: planId })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
 describe('walls', () => {
   it('import is admin-only and LAN-only', async () => {
     const rows = [{ fullName: 'A B' }];

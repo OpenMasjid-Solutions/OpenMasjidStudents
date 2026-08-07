@@ -45,6 +45,34 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   - A phone number or email with **no name beside it** is reported instead of being dropped, and the
     same adult listed twice for one child becomes **one record** holding what both lines said.
 
+- **Set the right fee before you leave the import.** After the sibling step, the import now shows every
+  student it added with their **plan** and the **amount** they'll be billed, both editable on the spot.
+  Every row came in on the same plan because a spreadsheet cannot say "the second child pays less" — and
+  the reductions a madrasah actually gives are per household, so the moment to fix them is once the
+  brothers and sisters are grouped and you can see who is whose. Skippable, and all of it is still
+  changeable later on a child's own record.
+  - Changing a child's plan **replaces** the old one. It does not add a second — that would bill them
+    twice. Leave the amount at the plan's own price and they simply follow the plan, including any
+    later change you make to it.
+
+- **Pause all email to parents.** A switch in **Settings → Email alerts** that stops **everything** going
+  to a parent — receipts, autopay notices, and even invites and password resets, which normally always
+  send. It is for the situation where you are setting the app up with your **real families already in
+  it**, trying an import or a test payment, and one stray receipt to 200 households is not something
+  you can take back.
+  - Nothing is lost while it is on: an invite or a reset still gives you the link to copy or print, and
+    the screen says the send was held rather than failing. **Staff alerts and your own test send are
+  unaffected** — and so is your own password reset, so an install can't lock itself out.
+
+- **The year view marks the months from before you started billing.** If you went live mid-year, the
+  months before it were never yours to bill — the autumn came in as one carried-forward figure. Those
+  columns now show as dimmed and settled instead of looking exactly like "somebody forgot to generate
+  September". It follows your go-live setting automatically, with nothing to keep in step by hand. A real
+  invoice in one of those months is never painted over.
+
+- **"Not paid" is now a bold ● instead of a faint dot** on the year view. It was the one state the office
+  is actually scanning for and the hardest to see on the page.
+
 - **A printable Student ID sheet.** **Students → Print IDs** gives you every active child's Student ID,
   grouped by class, two to a row, on your letterhead with your address at the foot — one page for a
   class roster instead of five. It is also what the Print button at the end of an import now opens.

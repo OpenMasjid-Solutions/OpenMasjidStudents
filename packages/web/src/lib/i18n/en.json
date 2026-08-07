@@ -160,7 +160,8 @@
     "addContact": "Add contact",
     "noContacts": "No emergency contacts",
     "inviteToPortal": "Invite to portal",
-    "inviteHint": "Creates a one-time sign-up link (valid 7 days) — copy it to the guardian. They need an email on file."
+    "inviteHint": "Creates a one-time sign-up link (valid 7 days) — copy it to the guardian. They need an email on file.",
+    "mailPaused": "Not sent — email to parents is paused in Settings. Use the link below."
   },
   "students": {
     "title": "Students",
@@ -254,7 +255,15 @@
       "tooBig": "That workbook is too large to read here. Save the sheet you need as its own file and upload that.",
       "compression": "That workbook is packed in a way we cannot read. Open it in Excel and use Save As to make a fresh .xlsx or CSV."
     },
-    "printIdSheet": "Print the ID sheet"
+    "printIdSheet": "Print the ID sheet",
+    "toFees": "Next — check the fees",
+    "backToFees": "Back to fees",
+    "feesTitle": "Fees",
+    "feesIntro": "Every imported student was given the same plan, because a spreadsheet cannot say \"the second child pays less\". Now that the brothers and sisters are grouped, change anyone’s plan or amount here. Leave the amount at the plan’s own price and they simply follow the plan — including any later change you make to it.",
+    "feeAmount": "Amount",
+    "feeSaved": "Saved",
+    "feeBadAmount": "That amount isn’t a number we can read — try 350 or 350.00.",
+    "feesLater": "You can change any of this later on a student’s own record, or for a whole class at once from Billing."
   },
   "year": {
     "title": "Year view",
@@ -268,7 +277,7 @@
     "paying": "Paying",
     "columns": "Extra columns",
     "columnsWarning": "Extra columns land on this page and on anything you print from it — the contact ones put phone numbers and email addresses on a whole-school sheet, so switch on only what you need. Numbers and addresses are tappable: on a phone, one tap calls or emails. “Other” covers guardians with no relation set, including everyone brought in by a CSV import.",
-    "legend": "✓ paid · ½ part-paid · · not paid yet · — voided · blank means no invoice for that month. A month is the family’s bill, so siblings share it.",
+    "legend": "✓ paid · ½ part-paid · ● not paid yet · — voided · blank means no invoice for that month yet. A dimmed column is a month from before you started billing here.",
     "cell_paid": "Paid",
     "cell_partial": "Part-paid",
     "cell_open": "Not paid",
@@ -285,7 +294,9 @@
     "col_motherEmail": "Mother’s email",
     "col_otherEmail": "Other email",
     "col_balance": "Balance",
-    "openBilling": "Open this child’s billing"
+    "openBilling": "Open this child’s billing",
+    "cell_before": "Before you started billing here",
+    "beforeStart": "This month is before your first billed month, so nothing was ever invoiced for it. Set when you went live (Billing → mid-year setup)."
   },
   "school": {
     "switch": "Which school",
@@ -702,7 +713,7 @@
     "parentReceiptHint": "However the money arrived — in the portal, by autopay, at the kiosk, on the donation site, or cash you recorded here.",
     "parentAutopay": "A notice when their card is declined",
     "parentAutopayHint": "Sent on each failed autopay attempt, and again when autopay switches itself off after the third.",
-    "parentAlwaysHint": "Invites and password resets always send — they’re the only way a parent can reach their account.",
+    "parentAlwaysHint": "Invites and password resets always send — they’re the only way a parent can reach their account. The pause above is the one exception — it holds those too.",
     "staffAlerts": "Who to tell at the masjid",
     "staffAlertsHint": "Add any address — the treasurer, the imām, a trustee. It grants no access to the app; it only receives the alerts you tick. Alerts can name a household and an amount, so add addresses you trust.",
     "noRecipients": "Nobody is being alerted yet.",
@@ -721,7 +732,10 @@
     "ev_lookup-lockout": "Student ID locked",
     "ev_payment-recovered": "Payment recovered",
     "ev_payment-short": "Payment partly recorded",
-    "ev_invoices-generated": "Invoices generated"
+    "ev_invoices-generated": "Invoices generated",
+    "parentMailPause": "Pause all email to parents",
+    "parentMailPauseHint": "Nothing at all is sent to a parent while this is on — not receipts, not autopay notices, and not invites or password resets. Turn it on while you are setting up or testing with your real families in the system, so nothing goes out by accident. Staff alerts and your own test sends are unaffected.",
+    "parentMailPausedNotice": "Email to parents is paused. Invites and resets still give you a link to copy or print, and nothing is being sent."
   },
   "ftype": {
     "text": "Text",

@@ -6,7 +6,7 @@
  * SMTP is unconfigured (returns false / 0) — callers degrade gracefully. Nothing here throws or logs
  * PII. The parent-portal link uses OPENMASJID_PUBLIC_URL when set (empty → no button, still valid).
  */
-import { getSchoolName, getSchoolLogo, getParentEmails, getSchoolContact } from '../settings';
+import { getSchoolName, getSchoolLogo, getParentEmails, getParentMailPaused, getSchoolContact } from '../settings';
 import { guardianEmailsForFamily } from './recipients';
 import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail, testEmail, alertEmail, setEmailLogoUrl, setEmailContactLine } from './templates';
 import { portalBase } from '../auth/invites';
@@ -20,7 +20,7 @@ function portalHome(): string {
 
 /** Why a send didn't happen, so a caller can tell the admin something actionable instead of failing
  *  silently — which is how invites and resets used to disappear. */
-export type MailSkip = 'no_transport' | 'no_public_url' | 'no_recipient';
+export type MailSkip = 'no_transport' | 'no_public_url' | 'no_recipient' | 'parents_paused';
 
 export interface MailOutcome {
   sent: boolean;
@@ -76,7 +76,11 @@ async function deliver(to: string, subject: string, text: string, html?: string)
  * knows the tunnel isn't exposed yet — rather than the send vanishing.
  */
 export async function sendInvite(email: string, url: string, guardianName: string): Promise<MailOutcome> {
-  // Transport first: it is configured INSIDE this app, so it is the reason an admin can act on
+  // The master stop comes FIRST, ahead of every other reason (0.48.0). An invite is exempt from the
+  // per-type parent switches on purpose, but not from this one: it is the single most embarrassing thing
+  // to send to 200 families by accident, and the caller still gets the link to copy or print.
+  if (getParentMailPaused()) return { sent: false, skipped: 'parents_paused' };
+  // Transport next: it is configured INSIDE this app, so it is the reason an admin can act on
   // immediately. A missing public URL is an OpenMasjidOS Remote-access setting.
   if (!mailAvailable()) return { sent: false, skipped: 'no_transport' };
   if (!portalBase()) return { sent: false, skipped: 'no_public_url' };
@@ -87,8 +91,16 @@ export async function sendInvite(email: string, url: string, guardianName: strin
   return { sent: await deliver(email, m.subject, m.text, m.html) };
 }
 
-/** Email a password-reset link. Same absolute-link requirement as invites, same explicit reasons. */
-export async function sendReset(email: string, url: string): Promise<MailOutcome> {
+/**
+ * Email a password-reset link. Same absolute-link requirement as invites, same explicit reasons.
+ *
+ * `audience` is REQUIRED so every call site has to say who it is writing to (0.48.0). The public reset
+ * door serves staff and parents through one procedure, and the parent-mail stop must hold a parent's
+ * reset while never touching an admin's — a boolean the compiler forces you to pass is the only version
+ * of that which cannot rot.
+ */
+export async function sendReset(email: string, url: string, audience: 'staff' | 'parent'): Promise<MailOutcome> {
+  if (audience === 'parent' && getParentMailPaused()) return { sent: false, skipped: 'parents_paused' };
   if (!mailAvailable()) return { sent: false, skipped: 'no_transport' };
   if (!portalBase()) return { sent: false, skipped: 'no_public_url' };
   refreshEmailLogo();
@@ -105,7 +117,7 @@ export async function sendReset(email: string, url: string): Promise<MailOutcome
  * over the Fabric, and the office's own cash entry). A check per caller is a check somebody forgets.
  */
 export async function sendReceipt(familyId: string, amountFormatted: string): Promise<number> {
-  if (!mailAvailable() || !getParentEmails().receipt) return 0;
+  if (getParentMailPaused() || !mailAvailable() || !getParentEmails().receipt) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   refreshEmailLogo();
@@ -135,7 +147,7 @@ export async function sendTestEmail(to: string): Promise<boolean> {
 /** Email an autopay-failure notice to a family's guardians (§13.3). `final` = the third strike (autopay
  *  now off). Returns how many were sent. */
 export async function sendAutopayFailure(familyId: string, final: boolean): Promise<number> {
-  if (!mailAvailable() || !getParentEmails().autopayFailure) return 0;
+  if (getParentMailPaused() || !mailAvailable() || !getParentEmails().autopayFailure) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   refreshEmailLogo();

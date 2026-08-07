@@ -8,7 +8,7 @@
  */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { and, eq, asc, desc, inArray } from 'drizzle-orm';
+import { and, eq, ne, asc, desc, inArray } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
 import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
@@ -340,6 +340,67 @@ export const billingRouter = router({
       return { ok: true as const };
     }),
 
+  /**
+   * The fee assignments of a named set of students (0.48.0) — what the import's fee step reads.
+   *
+   * `familyFees` above answers the same question per HOUSEHOLD, which is the wrong shape right after an
+   * import: the office is looking at the 36 children they just added, each in a household of their own,
+   * and 36 queries to show one table is silly. Bounded to the import's own cap.
+   */
+  studentFeeList: adminOrFinanceProcedure
+    .input(z.object({ studentIds: z.array(ID).min(1).max(2000) }))
+    .query(({ input }) =>
+      db
+        .select({
+          studentId: students.id,
+          fullName: students.fullName,
+          feeId: studentFees.id,
+          feePlanId: feePlans.id,
+          feePlanName: feePlans.name,
+          planAmountCents: feePlans.amountCents,
+          cadence: feePlans.cadence,
+          overrideAmountCents: studentFees.overrideAmountCents,
+        })
+        .from(students)
+        .leftJoin(studentFees, eq(studentFees.studentId, students.id))
+        .leftJoin(feePlans, eq(feePlans.id, studentFees.feePlanId))
+        .where(inArray(students.id, input.studentIds))
+        .orderBy(asc(students.fullName))
+        .all()
+        .map((r) => ({ ...r, effectiveAmountCents: r.feeId ? (r.overrideAmountCents ?? r.planAmountCents) : null })),
+    ),
+
+  /**
+   * "This child carries exactly this plan, at this amount" (0.48.0).
+   *
+   * The import gives every row the SAME default plan, because a spreadsheet column cannot express "the
+   * second child pays less"; the office then wants to correct a handful of them without opening 36
+   * household records. `assignFee` alone could not do it — it adds a plan but never takes the wrong one
+   * away, so changing a child's plan through it left them carrying both and billed twice.
+   *
+   * So this REPLACES the student's assignments with the one given, which is what "set the fee" means.
+   * That is destructive by design and therefore stated plainly: a child who legitimately carries several
+   * fees (tuition plus a book fee) must be edited on their own record, not here.
+   */
+  setStudentFee: adminOrFinanceProcedure
+    .input(z.object({ studentId: ID, feePlanId: ID, overrideAmountCents: CENTS.nullable().optional() }))
+    .mutation(({ ctx, input }) => {
+      if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+      if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.feePlanId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
+      const ts = now();
+      const override = input.overrideAmountCents ?? null;
+      db.transaction((tx) => {
+        // Any OTHER plan goes, so the child ends up billed once. Nothing here touches an invoice
+        // already raised — a fee is configuration, and money already billed is history (§9).
+        tx.delete(studentFees).where(and(eq(studentFees.studentId, input.studentId), ne(studentFees.feePlanId, input.feePlanId))).run();
+        const existing = tx.select({ id: studentFees.id }).from(studentFees).where(and(eq(studentFees.studentId, input.studentId), eq(studentFees.feePlanId, input.feePlanId))).get();
+        if (existing) tx.update(studentFees).set({ overrideAmountCents: override, updatedAt: ts }).where(eq(studentFees.id, existing.id)).run();
+        else tx.insert(studentFees).values({ id: rid('stf'), studentId: input.studentId, feePlanId: input.feePlanId, overrideAmountCents: override, note: null, createdAt: ts, updatedAt: ts }).run();
+      });
+      audit(auditActor(ctx), 'fee.setStudent', { entity: 'student', entityId: input.studentId, detail: { feePlanId: input.feePlanId, overrideAmountCents: override } });
+      return { ok: true as const };
+    }),
+
   /** Change (or clear, by omitting `overrideAmountCents`) one student's amount for a plan they
    *  already carry — the "override per student instead of making a whole new plan" path. */
   setFeeOverride: adminOrFinanceProcedure
@@ -469,18 +530,21 @@ export const billingRouter = router({
       const year = input?.schoolYearId
         ? db.select().from(schoolYears).where(and(eq(schoolYears.id, input.schoolYearId), inArray(schoolYears.schoolId, scope.ids))).get()
         : db.select().from(schoolYears).where(and(eq(schoolYears.isCurrent, true), inArray(schoolYears.schoolId, scope.ids))).orderBy(asc(schoolYears.label)).get();
-      if (!year) return { year: null, needsStartYear: false, months: [], columns: [], rows: [], currency: getCurrency() };
+      if (!year) return { year: null, needsStartYear: false, months: [], columns: [], rows: [], currency: getCurrency(), startPeriod: null as string | null };
       // Rows follow the YEAR's school, not the requested filter: asking for a specific year implies its
       // school, and mixing another school's children into it would be nonsense.
       const rowSchoolIds = year.schoolId ? [year.schoolId] : scope.ids;
       if (year.startYear == null) {
         // Configured before start_year existed — the UI asks for it rather than guessing a calendar.
-        return { year: { id: year.id, label: year.label }, needsStartYear: true, months: [], columns: [], rows: [], currency: getCurrency() };
+        return { year: { id: year.id, label: year.label }, needsStartYear: true, months: [], columns: [], rows: [], currency: getCurrency(), startPeriod: getBillingStartPeriod() };
       }
 
       const months = schoolYearMonths(year.startYear, year.startMonth, year.endMonth);
       const columns = getYearViewColumns();
       const periodKeys = months.map((m) => m.periodKey);
+      // The first month this install bills for, set by the mid-year go-live (settings, 0.43.0). Period
+      // keys are `YYYY-MM`, so a plain string compare orders them correctly.
+      const startPeriod = getBillingStartPeriod();
 
       const studentRows = db
         .select({
@@ -585,8 +649,16 @@ export const billingRouter = router({
           feeNote: m?.note ?? null,
           cells: months.map((mo) => {
             const c = cells?.get(mo.periodKey);
-            if (!c) return { periodKey: mo.periodKey, status: 'none' as const };
+            // A month BEFORE this install started billing is not a gap, it is a month that was never
+            // ours to bill (0.48.0). Until now it looked identical to "somebody forgot to generate
+            // September", which is the one thing the mid-year go-live exists to settle — an office that
+            // adopted the app in February saw five empty columns and no way to tell. Marked from the
+            // setting the wizard itself writes, so the grid follows the go-live with nothing to keep in
+            // step by hand.
+            if (!c) return { periodKey: mo.periodKey, status: startPeriod && mo.periodKey < startPeriod ? ('before' as const) : ('none' as const) };
             const state = c.status === 'void' ? 'void' : c.paidCents >= c.totalCents && c.totalCents > 0 ? 'paid' : c.paidCents > 0 ? 'partial' : 'open';
+            // A real invoice always wins, even in a pre-start month: one generated before the floor was
+            // set is a fact about money and must not be painted over as "not ours".
             return { periodKey: mo.periodKey, status: state, totalCents: c.totalCents, paidCents: c.paidCents, invoiceId: c.invoiceId };
           }),
           // Only enabled columns are populated — a disabled one is absent from the payload entirely.
@@ -611,7 +683,9 @@ export const billingRouter = router({
         };
       });
 
-      return { year: { id: year.id, label: year.label }, needsStartYear: false, months, columns, rows, currency: getCurrency() };
+      // startPeriod goes to the browser so the month HEADINGS can be marked too, not just the cells —
+      // a whole column being pre-go-live is a property of the month, not of each child in it.
+      return { year: { id: year.id, label: year.label }, needsStartYear: false, months, columns, rows, currency: getCurrency(), startPeriod };
     }),
 
   /** The optional year-view columns and which are on. Admin-only to change — the guardian-contact

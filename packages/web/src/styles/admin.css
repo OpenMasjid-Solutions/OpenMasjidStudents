@@ -467,8 +467,29 @@
 .year-cell-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 .year-cell.is-paid .year-cell-btn { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 16%, transparent); }
 .year-cell.is-partial .year-cell-btn { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 16%, transparent); }
-.year-cell.is-open .year-cell-btn { color: var(--color-ink-faint); }
+/* "Billed, nothing paid" — the state the office is actually scanning for, and it used to be a faint
+   `·` in the faintest ink the palette has: invisible next to the tinted paid and part-paid cells. A
+   solid ● at full ink weight, on its own tint so the cell reads as filled rather than empty. NOT the
+   danger colour: an invoice generated this morning and not yet due is normal, and a page of red would
+   train the office to ignore it. */
+.year-cell.is-open .year-cell-btn {
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-ink) 9%, transparent);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
 .year-cell.is-void .year-cell-btn { color: var(--color-ink-faint); text-decoration: line-through; }
+
+/* A month from before this install started billing (0.48.0): never ours to bill, so it must not read
+   as a gap. Not a button — there is no invoice behind it to open. */
+.year-cell.is-before { background: color-mix(in srgb, var(--color-ink) 4%, transparent); }
+.year-cell-flat {
+  display: inline-block;
+  min-width: 2.75rem;
+  color: var(--color-ink-faint);
+  cursor: default;
+}
+.year-month.is-before { color: var(--color-ink-faint); }
 
 /* Tabular figures so money columns line up down the page. */
 .tnum { font-variant-numeric: tabular-nums; }
@@ -638,6 +659,10 @@
     background: none !important;
     color: #000 !important;
   }
+  /* On paper the tints are gone, so the glyphs carry the whole meaning: ● must stay solid black and
+     the pre-go-live months must stay grey, or a photocopy reads as a page of identical marks. */
+  .year-cell.is-before { background: none !important; }
+  .year-cell-flat { color: #999 !important; min-width: 0 !important; }
 }
 
 /* ── On-scene vs in-glass text (light-theme legibility) ──────────────────────

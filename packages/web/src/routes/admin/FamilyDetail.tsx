@@ -142,6 +142,9 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   /** Turn the server's reason for not emailing into something the office can act on. */
   function explainSkip(skipped: string | null | undefined, emailed: boolean): string {
     if (emailed) return t('directory.mailSent');
+    // The pause is a DELIBERATE choice somebody made in Settings, so it is named as such rather than
+    // reported as a failure — otherwise a paused install looks like broken email.
+    if (skipped === 'parents_paused') return t('directory.mailPaused');
     if (skipped === 'no_public_url') return t('directory.mailNoUrl');
     if (skipped === 'no_transport') return t('directory.mailNoTransport');
     return t('directory.mailNotSent');

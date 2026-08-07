@@ -32,6 +32,9 @@ export const SETTING_KEYS = {
   billingStartPeriod: 'billing_start_period',
   midYearDoneAt: 'midyear_committed_at', // ISO timestamp — the wizard has been run (hides the banner).
   parentEmails: 'parent_emails', // JSON {receipt, autopayFailure} — which emails PARENTS get (0.44.0).
+  // '1' → send NOTHING to any parent, including invites and resets (0.48.0). The switch you throw
+  // before working through a real roster; see `getParentMailPaused`.
+  parentMailPaused: 'parent_mail_paused',
   // The masjid's own logo, stored as a `data:` URI so it travels with the DB and needs no file
   // handling or attachment plumbing. Bounded and magic-byte checked on the way in (§14).
   schoolLogo: 'school_logo',
@@ -270,6 +273,31 @@ export function getParentEmails(): ParentEmailPrefs {
 
 export function setParentEmails(patch: Partial<ParentEmailPrefs>): void {
   setSetting(SETTING_KEYS.parentEmails, JSON.stringify({ ...getParentEmails(), ...patch }));
+}
+
+/**
+ * The master stop: send NOTHING to any parent while this is on (0.48.0).
+ *
+ * It exists for one situation, and it is a real one — an office setting the app up with their ACTUAL
+ * roster in it, complete with real addresses, trying out an import, a payment, an autopay run. Every one
+ * of those paths emails somebody. There was no way to hold that back, and "we accidentally emailed 200
+ * families a receipt for a test payment" is not a mistake anybody can take back.
+ *
+ * Unlike `ParentEmailPrefs` this DELIBERATELY OVERRIDES the always-send messages too — invites and
+ * password resets. Those are exempt from the per-type switches for a good reason (they are the only way
+ * a parent reaches their account, so a switch that stops them is a support call), but that reasoning is
+ * about an install in service. A kill switch that let invites through would not be a kill switch, and
+ * an invite is the single most embarrassing thing to send by accident.
+ *
+ * Consequences are made VISIBLE rather than silent: every skipped send reports `parents_paused`, the
+ * office still gets the copy/print link for an invite or a reset, and Settings says the switch is on.
+ * Default OFF — an install in service must behave as it always has.
+ */
+export function getParentMailPaused(): boolean {
+  return getSetting(SETTING_KEYS.parentMailPaused) === '1';
+}
+export function setParentMailPaused(on: boolean): void {
+  setSetting(SETTING_KEYS.parentMailPaused, on ? '1' : '0');
 }
 
 /**

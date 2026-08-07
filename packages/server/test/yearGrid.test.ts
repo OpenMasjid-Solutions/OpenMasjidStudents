@@ -196,6 +196,50 @@ describe('optional columns are opt-in', () => {
     expect(bilal.extra.emergencyPhone).toEqual([]);
   });
 
+  /**
+   * The months before go-live (0.48.0). A madrasah that adopted the app in February has no September
+   * invoice and never will — the autumn came in as one carried-forward figure — and until now those
+   * five columns looked exactly like "somebody forgot to generate September". The grid reads the same
+   * setting the mid-year wizard writes, so it follows the go-live with nothing to keep in step by hand.
+   */
+  it('marks the months from before the first billed one, and leaves the rest alone', async () => {
+    const { admin, yusufId, saraId } = await seed();
+    // Driven through the REAL go-live step rather than by writing the setting, because the claim being
+    // tested is that running the wizard marks the grid — not that a setting, once set, is read.
+    await admin.billing.midYearCommit({
+      goLivePeriod: '2026-10',
+      asOf: '2026-10-01',
+      rows: [{ studentId: yusufId, paidThrough: '2026-09' }, { studentId: saraId, paidThrough: '2026-09' }],
+    });
+
+    const g = await admin.billing.yearGrid();
+    expect(g.startPeriod).toBe('2026-10');
+    const yusuf = g.rows.find((r) => r.fullName === 'Yusuf Ismail')!;
+    const at = (p: string) => yusuf.cells.find((c) => c.periodKey === p)!.status;
+    expect(at('2026-04')).toBe('before');
+    expect(at('2026-09')).toBe('before');
+    // October onwards is an ordinary un-generated month — a real gap, and it must still look like one.
+    expect(at('2026-10')).toBe('none');
+    expect(at('2027-03')).toBe('none');
+  });
+
+  it('never paints over a real invoice, even in a month before the start', async () => {
+    const { admin, yusufId } = await seed();
+    // Generated first, go-live run afterwards — the order an office actually does it in when they try
+    // the app out and only then set their start month. The money is a fact and outranks the marking.
+    await admin.billing.generatePeriod({ periodKey: '2026-05', label: 'May' });
+    await admin.billing.midYearCommit({ goLivePeriod: '2026-10', asOf: '2026-10-01', rows: [{ studentId: yusufId, paidThrough: '2026-09' }] });
+    const yusuf = (await admin.billing.yearGrid()).rows.find((r) => r.fullName === 'Yusuf Ismail')!;
+    expect(yusuf.cells.find((c) => c.periodKey === '2026-05')!.status).toBe('open');
+  });
+
+  it('marks nothing when the madrasah has always billed everything', async () => {
+    const { admin } = await seed();
+    const g = await admin.billing.yearGrid();
+    expect(g.startPeriod).toBeNull();
+    expect(g.rows.flatMap((r) => r.cells).every((c) => c.status !== 'before')).toBe(true);
+  });
+
   it('shows one number once, however differently the same digits were typed', async () => {
     const { admin, ismailId } = await seed();
     // The office recorded the father's mobile twice, punctuated differently, on two guardian rows.

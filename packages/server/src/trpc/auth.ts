@@ -249,7 +249,9 @@ export const authRouter = router({
     db.insert(passwordResets).values({ id: rid('pwr'), tokenHash: hashToken(token), userId: user.id, createdAt: ts, expiresAt: new Date(ts.getTime() + RESET_TTL_MS) }).run();
     const url = `${portalBase()}/family/reset?token=${token}`;
     const to = user.email && user.email.includes('@') ? user.email : user.username;
-    const mail = await sendReset(to, url);
+    // A guardian's own reset, so it is parent mail and the pause switch holds it (0.48.0). The link is
+    // returned either way, which is what the office reads out when nothing can be sent.
+    const mail = await sendReset(to, url, 'parent');
     audit(auditActor(ctx), 'password.reset.staff', { entity: 'user', entityId: user.id, detail: { guardianId: g.id, emailed: mail.sent, skipped: mail.skipped ?? null } });
     return { url, email: to, guardianName: g.name, emailed: mail.sent, mailSkipped: mail.skipped ?? null };
   }),
@@ -330,13 +332,15 @@ export const authRouter = router({
     // user. An ambiguous email match — or none — resets nothing, so a username⇄email collision can
     // never reset the wrong account (§14). The response stays generic regardless.
     let user = db
-      .select({ id: users.id, email: users.email, username: users.username })
+      // `role` is selected so the parent-mail pause can be applied to a PARENT's reset without
+      // touching a staff member's — see the send below (0.48.0).
+      .select({ id: users.id, email: users.email, username: users.username, role: users.role })
       .from(users)
       .where(and(eq(users.status, 'active'), sql`lower(${users.username}) = ${email}`))
       .get();
     if (!user) {
       const byEmail = db
-        .select({ id: users.id, email: users.email, username: users.username })
+        .select({ id: users.id, email: users.email, username: users.username, role: users.role })
         .from(users)
         .where(and(eq(users.status, 'active'), eq(sql`lower(coalesce(${users.email}, ''))`, email)))
         .all();
@@ -354,7 +358,9 @@ export const authRouter = router({
       // exists, or it becomes an account-enumeration oracle. The delivery OUTCOME is audited from the
       // callback instead, so a suppressed reset leaves a trail — on a default install with no public
       // URL every reset is silently dropped, and that used to be invisible.
-      void sendReset(to, `${portalBase()}/family/reset?token=${token}`).then((mail) => {
+      // This door serves staff AND parents, so the audience comes from the account itself: pausing
+      // parent mail must never lock an admin out of their own password reset (0.48.0).
+      void sendReset(to, `${portalBase()}/family/reset?token=${token}`, user.role === 'parent' ? 'parent' : 'staff').then((mail) => {
         audit({ userId: user.id, role: null, name: null }, 'password.reset.mail', { entity: 'user', entityId: user.id, detail: { emailed: mail.sent, skipped: mail.skipped ?? null } });
       });
       audit({ userId: user.id, role: null, name: null }, 'password.reset.request', { entity: 'user', entityId: user.id });

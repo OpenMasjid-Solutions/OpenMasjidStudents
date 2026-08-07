@@ -9,7 +9,7 @@ import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './t
 import { db } from '../db';
 import { families, paymentMethods, autopayEnrollments, alertRecipients } from '../db/schema';
 import { rid } from '../db/ids';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor } from '../settings';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor } from '../settings';
 import { DATE_FORMATS, DATE_FORMAT_SAMPLES, getDateFormat, setDateFormat } from '../settings/dates';
 import { ALERT_EVENTS, defaultEvents, listRecipients, sendAlertTest, type AlertEvent } from '../alerts';
 import { audit } from '../audit';
@@ -169,6 +169,8 @@ export const settingsRouter = router({
     events: ALERT_EVENTS,
     recipients: listRecipients(),
     parentEmails: getParentEmails(),
+    /** The master stop — nothing at all goes to a parent while it is on (0.48.0). */
+    parentMailPaused: getParentMailPaused(),
     /** Nothing can be delivered without a transport; the UI says so rather than looking broken. */
     mailAvailable: mailAvailable(),
   })),
@@ -223,6 +225,19 @@ export const settingsRouter = router({
         message: 'That didn’t send. Check that email is set up in OpenMasjidOS → Settings, then try again.',
       });
     }
+    return { ok: true as const };
+  }),
+
+  /**
+   * The master stop: hold ALL parent email, invites and resets included (0.48.0).
+   *
+   * Separate from `parentEmailsSet` because it is a different kind of decision — not "which
+   * notifications does this madrasah send" but "do not write to anybody while I am working on this".
+   * Audited both ways: turning it back ON is the change somebody will want a record of.
+   */
+  parentMailPauseSet: adminProcedure.input(z.object({ paused: z.boolean() })).mutation(({ ctx, input }) => {
+    setParentMailPaused(input.paused);
+    audit(auditActor(ctx), 'settings.parentMailPause', { entity: 'settings', detail: { paused: input.paused } });
     return { ok: true as const };
   }),
 
