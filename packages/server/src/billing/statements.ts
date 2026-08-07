@@ -41,7 +41,17 @@ export function canServeStatement(role: Role, origin: Origin): boolean {
  * copied into each, because four copies is how one of them quietly stops matching.
  */
 export const SHEET_PHONE_CSS = `
+  /* A line that exists only on a phone — see .phone-tip in the markup. Hidden by default so a desktop
+     never shows it, and hidden again in print because a phone printing this page matches BOTH queries. */
+  .phone-tip { display: none; }
+  @media print { .phone-tip { display: none !important; } }
   @media (max-width: 700px) {
+    .phone-tip {
+      display: block;
+      margin: 0 0 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
     /* The paper column is the whole screen now; the padding was margin for a page that isn't there. */
     body { padding: 12px; font-size: 13px; }
     .sheet { max-width: none; }
@@ -228,6 +238,7 @@ ${SHEET_PHONE_CSS}
 <body>
 <div class="sheet">
   <div class="toolbar"><button class="btn" onclick="window.print()">Print</button></div>
+  <p class="phone-tip">On a phone, Print opens your phone&rsquo;s own print preview &mdash; from there the share button will email it, send it, or save it as a PDF.</p>
   <header>
     <div class="brand">
       ${logo ? `<img class="logo" src="${esc(logo)}" alt="" />` : ''}

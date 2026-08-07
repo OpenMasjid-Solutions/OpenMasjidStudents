@@ -249,6 +249,7 @@ ${SHEET_PHONE_CSS}
 <body>
 <div class="sheet">
   <div class="toolbar"><button class="btn" onclick="window.print()">Print</button></div>
+  <p class="phone-tip">On a phone, Print opens your phone&rsquo;s own print preview &mdash; from there the share button will email it, send it, or save it as a PDF.</p>
   <header>
     <div class="brand">
       ${logo ? `<img class="logo" src="${esc(logo)}" alt="" />` : ''}

@@ -78,6 +78,9 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   - **Statements, invoices, the family sheet and the ID sheet now read properly on a phone too** —
     they're laid out for a sheet of paper, which was a page you had to pinch and drag on a phone. What
     comes out of a printer is unchanged.
+  - Each printable also tells you, **on a phone only**, that Print opens your phone's own preview — and
+    that the share button there will email it, send it, or save it as a PDF. That's how you get a
+    document off a phone and to a parent.
 
 - **Fixed: adding a second school could quietly move which one is the "default".** The first school in
   the list is where a student created without a class is filed, and a new school added in the same instant
