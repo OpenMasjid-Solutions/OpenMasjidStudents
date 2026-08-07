@@ -57,6 +57,7 @@ export function MidYearSetup({ currency }: { currency: string }) {
   const [goLive, setGoLive] = useState('');
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [memo, setMemo] = useState('');
+  const [query, setQuery] = useState('');
   const [done, setDone] = useState<{ owed: number; ahead: number; skipped: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -96,7 +97,9 @@ export function MidYearSetup({ currency }: { currency: string }) {
   /** Set the whole column at once — most of a roster paid through the same month. */
   function setAllPaidThrough(periodKey: string) {
     const next: Record<string, Row> = {};
-    for (const s of preview.data?.students ?? []) next[s.studentId] = { ...BLANK, ...rows[s.studentId], paidThrough: periodKey };
+    // Every child, not the filtered ones: the control says "the whole column", and quietly meaning
+    // "the ones matching your search" would be the wrong kind of surprise on a screen about money.
+    for (const s of allStudents) next[s.studentId] = { ...BLANK, ...rows[s.studentId], paidThrough: periodKey };
     setRows(next);
   }
 
@@ -111,8 +114,13 @@ export function MidYearSetup({ currency }: { currency: string }) {
     }
   }
 
-  const students = preview.data?.students ?? [];
-  const willWrite = students.filter((s) => !s.already && s.kind !== 'square' && s.amountCents > 0);
+  const allStudents = preview.data?.students ?? [];
+  /** Type-as-you-go name filter. A whole-school roster is a long table and the office works down it
+   *  family by family. It narrows only what is SHOWN — every answer already given is still committed,
+   *  and the counts below are still of everybody, so searching cannot quietly change what gets written. */
+  const needle = query.trim().toLowerCase();
+  const students = needle ? allStudents.filter((s) => s.fullName.toLowerCase().includes(needle)) : allStudents;
+  const willWrite = allStudents.filter((s) => !s.already && s.kind !== 'square' && s.amountCents > 0);
 
   if (done) {
     return (
@@ -175,9 +183,23 @@ export function MidYearSetup({ currency }: { currency: string }) {
                   {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
                 </select>
               </div>
+              {/* Beside the bulk control, not above the table: set most of the roster in one go, then
+                  search out the handful that differ. */}
+              <div className="field" style={{ flex: '1 1 12rem' }}>
+                <label className="label" htmlFor="midyear-search">{t('midyear.search')}</label>
+                <input
+                  id="midyear-search"
+                  className="input glass-inset"
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('midyear.searchHint')}
+                />
+              </div>
             </div>
+            {needle && <p className="hint">{t('midyear.searchCount', { shown: students.length, total: allStudents.length })}</p>}
             <div style={{ overflowX: 'auto' }}>
-              <table className="data-table">
+              <table className="data-table stack-phone">
                 <thead>
                   <tr>
                     <th>{t('students.name')}</th>
@@ -192,15 +214,17 @@ export function MidYearSetup({ currency }: { currency: string }) {
                     const row = rows[s.studentId];
                     return (
                       <tr key={s.studentId}>
-                        <td>
+                        {/* data-label lets each cell name itself once the row stacks into a card on a
+                            phone (.stack-phone in admin.css). Desktop ignores it. */}
+                        <td className="row-title">
                           {s.fullName}
                           {/* A child who left before go-live can still owe money, so they are here — but
                               say so, or the office wonders why a withdrawn name is on the list. */}
                           {s.withdrawn && <span className="chip is-muted" style={{ marginInlineStart: '0.4rem' }}>{t('students.withdrawn')}</span>}
                           {s.already && <span className="chip is-muted" style={{ marginInlineStart: '0.4rem' }}>{t('midyear.alreadyDone')}</span>}
                         </td>
-                        <td className="tnum">{money(s.monthlyCents)}</td>
-                        <td>
+                        <td className="tnum" data-label={t('year.paying')}>{money(s.monthlyCents)}</td>
+                        <td data-label={t('midyear.paidThrough')}>
                           <select className="input glass-inset" style={{ minWidth: '9rem' }} value={row?.paidThrough ?? ''} disabled={s.already} onChange={(e) => setRow(s.studentId, { paidThrough: e.target.value })}>
                             <option value="">{t('midyear.notSaid')}</option>
                             {/* Right after "Not said", because it is the other answer that is not a
@@ -209,7 +233,7 @@ export function MidYearSetup({ currency }: { currency: string }) {
                             {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
                           </select>
                         </td>
-                        <td>
+                        <td data-label={t('midyear.carried')}>
                           {/* The derived figure, editable. Typing a number is what an office does when
                               the notebook and the rate disagree — a child who missed two weeks, say. */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
@@ -234,7 +258,7 @@ export function MidYearSetup({ currency }: { currency: string }) {
                             )}
                           </div>
                         </td>
-                        <td className={s.afterOwedCents > 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>
+                        <td data-label={t('midyear.result')} className={s.afterOwedCents > 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>
                           {s.afterOwedCents > 0 ? money(s.afterOwedCents) : s.afterCreditCents > 0 ? `${money(s.afterCreditCents)} ${t('billing.credit')}` : money(0)}
                         </td>
                       </tr>

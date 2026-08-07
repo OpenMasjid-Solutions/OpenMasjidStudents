@@ -31,7 +31,7 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import { classes, courses, students } from '../db/schema';
-import { esc } from '../billing/statements';
+import { esc, SHEET_PHONE_CSS } from '../billing/statements';
 import { accentWash, getAccentColor, getSchoolContact, getSchoolLogo, getSchoolName } from '../settings';
 import { formatDate } from '../settings/dates';
 import { listSchools } from '../schools';
@@ -243,6 +243,7 @@ export function buildIdSheetHtml(scope: string, reader: IdSheetScope, now: Date 
     /* A solid block of colour is what drains a masjid's toner. */
     .note { background: #fff; }
   }
+${SHEET_PHONE_CSS}
 </style>
 </head>
 <body>

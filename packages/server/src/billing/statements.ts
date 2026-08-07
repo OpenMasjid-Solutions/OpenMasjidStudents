@@ -29,6 +29,35 @@ export function canServeStatement(role: Role, origin: Origin): boolean {
   return roleAllowedFromOrigin(role, origin);
 }
 
+/**
+ * The phone rules every printable document shares (0.48.0).
+ *
+ * These pages are laid out for a sheet of letter paper — a 7.5in column, half-inch margins, 24px of
+ * screen padding around it — and that is right, because paper is what they are for. On a phone opening
+ * one to read or to hand to the office, the same layout is a wide page you pinch and drag.
+ *
+ * SCREEN ONLY. It lives in a `max-width` query, so `@media print` in each document is untouched and what
+ * comes out of a printer does not move. Interpolated into all four documents from here rather than
+ * copied into each, because four copies is how one of them quietly stops matching.
+ */
+export const SHEET_PHONE_CSS = `
+  @media (max-width: 700px) {
+    /* The paper column is the whole screen now; the padding was margin for a page that isn't there. */
+    body { padding: 12px; font-size: 13px; }
+    .sheet { max-width: none; }
+    /* A thumb, not a mouse pointer. Full width because there is nothing to sit beside. */
+    .toolbar { justify-content: stretch; }
+    .btn { width: 100%; min-height: 2.75rem; font-size: 1rem; }
+    /* Tables are the part that overflows: let long values break instead of setting an unbreakable
+       minimum width for their column, and lose a little of the padding rather than the content. */
+    table { table-layout: fixed; }
+    th, td { padding: 4px 4px; overflow-wrap: anywhere; }
+    /* Rows of boxes and the QR block are side-by-side arrangements that assume width. */
+    .signup { flex-direction: column; align-items: flex-start; }
+    .idrow { flex-direction: column; }
+    .idcard { width: 100%; }
+  }`;
+
 /** Escape the five HTML-significant characters. Applied to every dynamic value below. */
 export function esc(v: unknown): string {
   return String(v ?? '')
@@ -193,6 +222,7 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   .signup .cap b { display: block; font-size: 15px; margin-bottom: 4px; color: var(--ink); }
   footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
   @media print { body { padding: 0; } .toolbar { display: none; } .signup { border-color: #999; } }
+${SHEET_PHONE_CSS}
 </style>
 </head>
 <body>

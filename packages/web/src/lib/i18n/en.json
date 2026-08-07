@@ -268,7 +268,9 @@
     "feesNext": "Next — show the Student IDs",
     "feesUnsaved_one": "{{count}} row hasn’t been saved yet — press Save on it, or it won’t be kept.",
     "feesUnsaved_other": "{{count}} rows haven’t been saved yet — press Save on each, or they won’t be kept.",
-    "feeNoPlan": "— pick a plan —"
+    "feeNoPlan": "— pick a plan —",
+    "feeSearch": "Search by name",
+    "feeSearchCount": "Showing {{shown}} of {{total}}."
   },
   "year": {
     "title": "Year view",
@@ -1117,6 +1119,9 @@
     "doneSkipped_one": "{{count}} child already had a record and was left alone.",
     "doneSkipped_other": "{{count}} children already had a record and were left alone.",
     "doneNext": "Next: generate {{period}} on the Billing tab. Anything earlier is refused, so the balances you just recorded cannot be billed twice.",
-    "paidNothing": "Hasn’t paid at all"
+    "paidNothing": "Hasn’t paid at all",
+    "search": "Find a student",
+    "searchHint": "Type a name",
+    "searchCount": "Showing {{shown}} of {{total}} — everyone else keeps whatever you have already set for them."
   }
 }

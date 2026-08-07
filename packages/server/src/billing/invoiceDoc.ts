@@ -31,7 +31,7 @@ import { families, guardianFamilies, guardians, invoices, paymentAllocations, pa
 import { formatMoney } from '../db/money';
 import { invoicePaid, invoiceTotal, studentBalance } from './ledger';
 import { invoiceLines, type PayableLine } from './lines';
-import { esc } from './statements';
+import { esc, SHEET_PHONE_CSS } from './statements';
 import {
   accentWash,
   getAccentColor,
@@ -289,6 +289,7 @@ export function buildInvoiceHtml(invoiceId: string, now: Date = new Date()): str
     /* A solid block of colour is what drains a masjid's toner. */
     .due { background: #fff; }
   }
+${SHEET_PHONE_CSS}
 </style>
 </head>
 <body>

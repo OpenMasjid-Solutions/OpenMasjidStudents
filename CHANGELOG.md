@@ -63,6 +63,22 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     change that row again. Any row you haven't saved is called out, and the button top-right says
     **Next** rather than Skip once you've changed something.
 
+- **Find a student by name** in the import's fee step and in the mid-year setup — type as you go. Both
+  roster screens can be hundreds of rows long and you usually arrive wanting three particular families.
+  Searching only narrows what's on screen: every answer or edit you've already made still counts, and
+  "set the whole column" still means the whole column, not just what you're looking at.
+
+- **The phone layout is fixed on the screens that do the most work.** The dialogs — importing, the
+  go-live wizard, a family record — kept desktop-sized controls and desktop-width forms inside a
+  full-screen sheet, because the existing phone rules only ever applied to the main tabs and a window
+  isn't one. Now: thumb-sized buttons and inputs, forms in one column instead of two squeezed ones, and
+  **the editing tables become cards** — one student per card with its fields labelled, instead of five
+  controls crammed into a row you have to drag sideways. Read-only grids like the year view still scroll,
+  which is the right way to read a grid. **Nothing about the desktop layout changed.**
+  - **Statements, invoices, the family sheet and the ID sheet now read properly on a phone too** —
+    they're laid out for a sheet of paper, which was a page you had to pinch and drag on a phone. What
+    comes out of a printer is unchanged.
+
 - **Pause all email to parents.** A switch in **Settings → Email alerts** that stops **everything** going
   to a parent — receipts, autopay notices, and even invites and password resets, which normally always
   send. It is for the situation where you are setting the app up with your **real families already in

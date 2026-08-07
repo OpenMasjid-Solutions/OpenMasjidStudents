@@ -60,7 +60,7 @@ import {
 } from '../db/schema';
 import { formatMoney } from '../db/money';
 import { familyBalance, invoicePaid, invoiceTotal, studentBalance } from '../billing/ledger';
-import { esc } from '../billing/statements';
+import { esc, SHEET_PHONE_CSS } from '../billing/statements';
 import {
   accentWash,
   getAccentColor,
@@ -532,6 +532,7 @@ export async function buildFamilySheetHtml(
     /* Tinted panels print as white — a solid block of colour is what drains a masjid's toner. */
     .balance, .check, .idcard { background: #fff; }
   }
+${SHEET_PHONE_CSS}
 </style>
 </head>
 <body>

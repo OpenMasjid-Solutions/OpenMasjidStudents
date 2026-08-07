@@ -1135,4 +1135,90 @@ ul.picker-list {
   /* The window's own content uses the same page rhythm as a tab, so section padding
      that reads as generous on a desktop just eats the width here. */
   .win-body .section { padding: 0.8rem 0.85rem !important; }
+
+  /* ── Inside a window, on a phone (0.48.0) ───────────────────────────────────
+     Everything below fixes the same oversight: the phone rules further up this file are
+     all scoped to `.page`, and a window is not a page. So the dialogs that do the most
+     WORK — the import steps, the go-live wizard, a family record — kept desktop-sized
+     controls and desktop-width forms inside a full-screen sheet. Nothing here can reach
+     a desktop: the whole block is inside `max-width: 700px`. */
+
+  /* `min-width` on a flex/grid child that holds a table is what actually forces a
+     window to scroll sideways as a whole. Let the content be as narrow as the screen
+     and let the TABLE do the scrolling, in its own scroller. */
+  .win-content { min-width: 0 !important; }
+  .win-body .section > div[style*='overflow'] { max-width: 100%; }
+
+  /* Thumb-sized targets, same rule the page surfaces already get (WCAG 2.5.8). */
+  .win-body .btn,
+  .win-body .input,
+  .win-body select.input { min-height: 2.75rem; }
+  .win-body .btn--sm { min-height: 2.5rem; }
+  /* …but not the traffic lights, which are deliberately small and already spaced. */
+  .win-head .tl { min-height: 0; }
+
+  /* A window's inline forms stack, like the page ones do. Fixed flex bases are desk
+     measurements: `flex: 0 1 16rem` on a 360px screen is most of the width. */
+  .win-body .inline-form { flex-wrap: wrap; gap: 0.5rem; }
+  .win-body .inline-form .field,
+  .win-body .field { min-width: 0; flex: 1 1 100% !important; }
+  .win-body .field .input,
+  .win-body .field select.input { width: 100%; }
+
+  /* A two- or three-up form grid becomes one column; two 50% columns on a phone give
+     two unusable columns rather than one usable one. */
+  .win-body .form-grid,
+  .win-body .grid-2,
+  .win-body .grid-3 { grid-template-columns: 1fr !important; }
+
+  /* ── Wide EDITING tables become cards ──────────────────────────────────────
+     Opt-in, via `.stack-phone`, and only on the tables where a row is a form: the
+     import's fee step and the go-live wizard. Five controls in a row cannot be made to
+     fit 360px by any amount of shrinking — the row has to stop being a row.
+
+     A read-only table is deliberately NOT converted: horizontal scrolling is a fine way
+     to read a grid (the year view depends on it), and stacking one would turn 40 rows
+     into 40 screens. */
+  .data-table.stack-phone thead { display: none; }
+  .data-table.stack-phone,
+  .data-table.stack-phone tbody,
+  .data-table.stack-phone tr,
+  .data-table.stack-phone td { display: block; width: auto; }
+  .data-table.stack-phone tr {
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.16));
+    border-radius: var(--radius-card);
+    padding: 0.6rem 0.7rem;
+    margin-block-end: 0.6rem;
+  }
+  .data-table.stack-phone td {
+    border: 0;
+    padding: 0.25rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  /* Each cell names itself from its own data-label, so the header row can go. */
+  .data-table.stack-phone td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 7.5rem;
+    color: var(--color-ink-muted);
+    font-size: 0.8rem;
+  }
+  .data-table.stack-phone td[data-label] > * { flex: 1 1 auto; min-width: 0; }
+  .data-table.stack-phone td[data-label] input,
+  .data-table.stack-phone td[data-label] select { width: 100% !important; }
+  /* The name is the card's heading rather than a labelled field. */
+  .data-table.stack-phone td.row-title {
+    font-weight: 650;
+    font-size: 1rem;
+    color: var(--color-ink);
+    padding-block-end: 0.4rem;
+    flex-wrap: wrap;
+  }
+  /* An action cell is the card's footer: full-width button, easy to hit. */
+  .data-table.stack-phone td.actions { padding-block-start: 0.5rem; }
+  .data-table.stack-phone td.actions .btn { flex: 1 1 auto; }
+  /* A stacked table has no columns to scroll, so its scroller must not cap the height
+     and trap the cards in a tiny window inside an already-scrolling sheet. */
+  .win-body div[style*='overflow'] { max-height: none !important; }
 }

@@ -75,7 +75,13 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [err, setErr] = useState('');
 
-  const rows = fees.data ?? [];
+  /** Type-as-you-go name filter. A 200-child import is a very long table, and the office arrives at it
+   *  wanting three particular families. Filtering only what is SHOWN — a hidden row's draft is still
+   *  saved, and the unsaved count below still counts it, so a search cannot lose an edit. */
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const all = fees.data ?? [];
+  const rows = needle ? all.filter((r) => r.fullName.toLowerCase().includes(needle)) : all;
   const planById = new Map((plans.data ?? []).map((p) => [p.id, p]));
   const unsaved = Object.keys(draft).length;
   /** Anything touched at all — a saved change or one still pending. The way out says "Next" rather than
@@ -124,8 +130,19 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
       {setFee.error && <p className="form-error">{setFee.error.message}</p>}
       {/* Said plainly rather than left for somebody to discover: leaving now loses these. */}
       {unsaved > 0 && <p className="form-error">{t('import.feesUnsaved', { count: unsaved })}</p>}
+      <div className="field" style={{ marginBlockEnd: '0.6rem' }}>
+        <input
+          className="input glass-inset"
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={t('import.feeSearch')}
+          aria-label={t('import.feeSearch')}
+        />
+        {needle && <p className="hint">{t('import.feeSearchCount', { shown: rows.length, total: all.length })}</p>}
+      </div>
       <div style={{ overflowX: 'auto', maxHeight: '24rem' }}>
-        <table className="data-table">
+        <table className="data-table stack-phone">
           <thead>
             <tr>
               <th>{t('students.name')}</th>
@@ -152,8 +169,10 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
                 setDraft((s) => ({ ...s, [r.studentId]: { ...(s[r.studentId] ?? { feePlanId: planId, amount, note }), ...patch } }));
               return (
                 <tr key={r.studentId}>
-                  <td>{r.fullName}</td>
-                  <td>
+                  {/* data-label is what lets each cell name itself once the row stacks into a card on a
+                      phone (see .stack-phone in admin.css). Desktop ignores it entirely. */}
+                  <td className="row-title">{r.fullName}</td>
+                  <td data-label={t('directory.feePlan')}>
                     <select
                       className="input glass-inset"
                       style={{ width: 'auto', minWidth: '10rem', padding: '0.25rem 0.4rem' }}
@@ -177,7 +196,7 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
                       ))}
                     </select>
                   </td>
-                  <td>
+                  <td data-label={t('import.feeAmount')}>
                     <input
                       className="input glass-inset"
                       style={{ width: '7rem', padding: '0.25rem 0.4rem' }}
@@ -194,7 +213,7 @@ function ImportFees({ studentIds, onDone }: { studentIds: string[]; onDone: () =
                       }}
                     />
                   </td>
-                  <td>
+                  <td data-label={t('import.feeNote')}>
                     {overridden ? (
                       <input
                         className="input glass-inset"
