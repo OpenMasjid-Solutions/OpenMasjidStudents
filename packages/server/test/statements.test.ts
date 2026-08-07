@@ -107,3 +107,26 @@ describe('buildFamilyStatementHtml', () => {
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });
 });
+
+/**
+ * The masjid's own details on the statement (0.47.0), in ONE place: the foot, on its own line.
+ *
+ * The same rule as the family sheet and the invoice — a reader looks for an address at the bottom, and
+ * repeating it in the header meant every printed artifact said it twice.
+ */
+describe('the masjid on the statement (0.47.0)', () => {
+  it('prints the contact details once, in the footer, and omits the line when unset', async () => {
+    const settings = await import('../src/settings');
+    settings.setSchoolContact({ address: '', phone: '', email: '', website: '' });
+    const { familyId } = await seed();
+
+    expect((await statements.buildFamilyStatementHtml(familyId, 'https://x.test'))!).not.toContain('<div class="contactline">');
+
+    settings.setSchoolContact({ address: '12 Mosque Road', phone: '(555) 010-2030', email: 'office@masjid.test' });
+    const html = (await statements.buildFamilyStatementHtml(familyId, 'https://x.test'))!;
+    expect(html).toContain('12 Mosque Road');
+    expect(html.match(/\(555\) 010-2030/g)!).toHaveLength(1);
+    expect(/<footer>[\s\S]*contactline[\s\S]*<\/footer>/.test(html)).toBe(true);
+    expect(/<header>[\s\S]*contactline[\s\S]*<\/header>/.test(html)).toBe(false);
+  });
+});

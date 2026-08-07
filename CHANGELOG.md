@@ -30,6 +30,9 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     **Staff** if that is useful, but nothing changes for anyone until they do — adding a second school
     never quietly locks a colleague out of the first. Limiting someone narrows what they are looking
     at; it never changes what their role is allowed to do.
+  - **Year and Structure always show exactly one school** — there is no "all schools" option on either,
+    because there could not honestly be one. The year grid is a single school year laid out as months,
+    and two schools have different years; Structure configures one school's calendar and classes.
   - **If you only have one school, nothing about this appears.** No switcher, no tabs, no extra column
     — your existing students, courses and school years are simply filed under your madrasah's name.
 
@@ -47,9 +50,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 - **Your address and phone number now appear where parents actually need them.** Set them once under
   **Settings → How you appear to parents** and they go on the **family information sheet**, the
-  **invoice**, the **statement**, and the foot of **every email** a parent gets. Every one of those
-  documents ends by asking the family to "tell the office" if something is wrong, and until now not one
-  of them said how.
+  **invoice**, the **statement**, and the foot of **every email** a parent gets — in one place on each,
+  at the bottom, on their own line. Every one of those documents ends by asking the family to "tell the
+  office" if something is wrong, and until now not one of them said how. The phone number is written
+  the same way guardian numbers are, `(555) 123-4567`, as you type it.
 
 - **Dates are written the way your madrasah writes them.** Choose the format in the same settings
   section — `2026-03-04`, `03/04/2026`, `04/03/2026` or `4 Mar 2026` — and it applies everywhere,
@@ -63,7 +67,9 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 - **Fixes to what you print and read.**
   - The **year view print** no longer cuts off the right-hand months. Cells can now wrap, which is what
-    lets the grid shrink onto the page, and the margins are tighter so there is more room for it.
+    lets the grid shrink onto the page, and the margins are tighter so there is more room for it. The
+    month headings themselves stay on one line — letting them wrap turned "Jan" into a column of single
+    letters.
   - The family information sheet no longer has a **gap under the title** where the family name used to
     sit — the printed date has moved up onto the same line.
   - **Father** and **Mother** are capitalised in the parents and guardians list, including relations

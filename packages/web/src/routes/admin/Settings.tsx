@@ -7,6 +7,7 @@ import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Trash2, Send } from 'lucide-react';
 import { fadeRise } from '../../lib/motion';
+import { formatUsPhone } from '../../lib/phone';
 import { trpc, type RouterOutputs } from '../../lib/trpc';
 
 /** The alert catalogue comes from the server (alerts/index.ts owns it), so the UI never hard-codes the
@@ -326,7 +327,18 @@ export function Settings() {
             </div>
             <div className="field" style={{ flex: '1 1 10rem' }}>
               <label className="label">{t('settings.contactPhone')}</label>
-              <input className="input glass-inset" value={lookEff.contact.phone} onChange={(e) => setContact({ phone: e.target.value })} maxLength={60} />
+              {/* The same as-you-type mask as every guardian number (lib/phone.ts), so the masjid's own
+                  number is written the way the rest of the app writes numbers — including on the
+                  printed sheet, the invoice and the statement, which is where it is read. It leaves a
+                  non-US number alone rather than mangling it. */}
+              <input
+                className="input glass-inset"
+                type="tel"
+                inputMode="tel"
+                value={formatUsPhone(lookEff.contact.phone)}
+                onChange={(e) => setContact({ phone: formatUsPhone(e.target.value) })}
+                maxLength={60}
+              />
             </div>
           </div>
           <div className="inline-form glass-inset">

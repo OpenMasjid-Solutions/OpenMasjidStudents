@@ -70,7 +70,6 @@ import {
   getSchoolLogo,
   getSchoolName,
   getSelfRegistrationEnabled,
-  hasSchoolContact,
 } from '../settings';
 import { formatDate } from '../settings/dates';
 import { relationLabel } from './relations';
@@ -386,17 +385,14 @@ export async function buildFamilySheetHtml(
    * said how. A parent reading this at home with a question about a fee had nothing to act on. Omitted
    * entirely when nothing is configured rather than printed as an empty box.
    */
-  const contactBits = [
-    contact.address.trim() && `<span>${esc(contact.address.trim())}</span>`,
-    contact.phone.trim() && `<span><b>${esc(contact.phone.trim())}</b></span>`,
-    contact.email.trim() && `<span>${esc(contact.email.trim())}</span>`,
-    contact.website.trim() && `<span>${esc(contact.website.trim())}</span>`,
-  ].filter(Boolean) as string[];
-  const contactLine = hasSchoolContact(contact) ? `<div class="contactline">${contactBits.join('<span class="dot">·</span>')}</div>` : '';
-  /** The same details as one plain string, for the footer and the please-check line. */
+  /**
+   * How to reach the masjid — printed in exactly ONE place, the very bottom, on its own line.
+   *
+   * It was in the header and repeated in the please-check block as well. Three copies of an address on
+   * a two-side sheet is noise, and the sheet's whole constraint is space. The bottom is where a reader
+   * looks for it and where it survives being folded.
+   */
   const contactFooter = [contact.address, contact.phone, contact.email, contact.website].map((v) => v.trim()).filter(Boolean).join(' · ');
-  /** What to actually ring or write to — the footer carries the address, this carries the action. */
-  const contactAction = [contact.phone, contact.email].map((v) => v.trim()).filter(Boolean).join(' · ') || contact.address.trim();
 
   const ways = ['cash'];
   if (routes.card) ways.push('card');
@@ -489,9 +485,9 @@ export async function buildFamilySheetHtml(
   h1 { font-size: 19px; color: var(--teal); margin: 0; }
   .sub { color: var(--muted); margin-top: 1px; font-size: 12px; }
   .printed { margin-inline-start: auto; font-size: 11.5px; white-space: nowrap; align-self: flex-end; }
-  /* The masjid's own address and number, so "tell the office" is actionable from the kitchen table. */
-  .contactline { margin-top: 6px; font-size: 11.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0 6px; }
-  .contactline .dot { color: var(--line); }
+  /* The masjid's own address and number, so "tell the office" is actionable from the kitchen table.
+     ONE place only — the foot of the sheet, on its own line. */
+  .contactline { margin-top: 4px; }
   .intro { margin: 0 0 10px; }
   /* One box per child, the Student ID set large: it is the single thing a parent has to type to pay
      anywhere, so it is the most legible thing on the sheet. Wraps to a second row rather than shrinking,
@@ -550,7 +546,6 @@ export async function buildFamilySheetHtml(
       </div>
       <span class="printed muted">Printed ${esc(printedOn)}</span>
     </div>
-    ${contactLine}
   </header>
 
   <p class="intro">${namesSentence
@@ -603,13 +598,12 @@ export async function buildFamilySheetHtml(
 
   <div class="check"><b>Please check this sheet.</b> If a name is spelled differently, a date of birth or
   a phone number is wrong, a child is missing, a fee is not what you agreed, or a payment you have made
-  is not showing — tell the office. It is much easier to fix now than at the end of the year.${
-    // Repeating the contact here is deliberate: this is the sentence that asks a parent to DO
-    // something, and it sits on the back of a sheet whose header they may not turn back to.
-    contactAction ? ` <b>${esc(contactAction)}</b>` : ''
-  }</div>
+  is not showing — tell the office. It is much easier to fix now than at the end of the year.</div>
 
-  <footer>${esc([schoolName, contactFooter, `Correct as of ${printedOn}`, 'Keep this for your records.'].filter(Boolean).join(' · '))}</footer>
+  <footer>
+    <div>${esc(schoolName)} · Correct as of ${esc(printedOn)} · Keep this for your records.</div>
+    ${contactFooter ? `<div class="contactline">${esc(contactFooter)}</div>` : ''}
+  </footer>
 </div>
 </body>
 </html>`;

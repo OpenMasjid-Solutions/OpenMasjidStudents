@@ -24,7 +24,7 @@ import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { MONTH_NAMES, schoolYearSpan } from '../../lib/months';
 import { useWindows } from '../../components/Windows';
-import { SchoolTabs, useSchool } from '../../components/SchoolTabs';
+import { SchoolTabs, useRequiredSchool } from '../../components/SchoolTabs';
 import { ClassEnrol } from '../../components/ClassEnrol';
 
 /** The in-progress edit of one school year, or null when nothing is being edited. */
@@ -46,9 +46,10 @@ export function Structure() {
   const openEnrol = (classId: string, classLabel: string) =>
     open({ title: t('enrol.title'), wide: true, dedupeKey: `enrol:${classId}`, icon: <UserPlus size={15} />, node: <ClassEnrol classId={classId} classLabel={classLabel} /> });
 
-  // Both scoped to the school in view (0.47.0): a school owns its own calendar AND its own courses,
-  // so this tab configures one school at a time.
-  const { arg: schoolId } = useSchool();
+  // Scoped to the school in view (0.47.0), and ALWAYS exactly one of them: a school owns its own
+  // calendar and its own course tree, so "all schools" here would mean editing something that belongs
+  // to nobody. Hence `useRequiredSchool` and a switcher with no "All" tab.
+  const { arg: schoolId } = useRequiredSchool();
   const years = trpc.structure.schoolYearList.useQuery({ schoolId });
   const tree = trpc.structure.courseTree.useQuery({ schoolId });
 
@@ -275,7 +276,7 @@ export function Structure() {
       </div>
 
       {/* Which school is being configured. Draws nothing when there is only one. */}
-      <SchoolTabs />
+      <SchoolTabs requireOne />
 
       {err && <div className="notice notice--warn">{err}</div>}
       {note && <div className="notice">{note}</div>}

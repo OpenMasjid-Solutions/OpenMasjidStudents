@@ -202,17 +202,17 @@ describe('payments listed on the bill', () => {
 });
 
 describe('the masjid on the invoice', () => {
-  it('prints the school’s contact details — the reason the document exists', () => {
+  it('prints the school’s contact details ONCE, at the foot — the reason the document exists', () => {
     const id = seed();
     expect(doc.buildInvoiceHtml(id, NOW)!).not.toContain('<div class="contactline">');
 
     settingsMod.setSchoolContact({ address: '412 Greenlane Road', phone: '(555) 010-2030', email: 'office@annoor.example' });
     const html = doc.buildInvoiceHtml(id, NOW)!;
-    expect(html).toContain('<div class="contactline">');
     expect(html).toContain('412 Greenlane Road');
-    expect(html).toContain('(555) 010-2030');
-    // And again in the footer, which is what survives being folded into a wallet.
-    expect(html.match(/\(555\) 010-2030/g)!.length).toBeGreaterThanOrEqual(2);
+    // One place on the page, the same rule as the statement and the family sheet.
+    expect(html.match(/\(555\) 010-2030/g)!).toHaveLength(1);
+    expect(/<footer>[\s\S]*contactline[\s\S]*<\/footer>/.test(html)).toBe(true);
+    expect(/<header>[\s\S]*contactline[\s\S]*<\/header>/.test(html)).toBe(false);
   });
 
   it('uses the masjid’s colour and date format, like the other printed artifacts', () => {

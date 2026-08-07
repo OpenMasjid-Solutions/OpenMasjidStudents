@@ -39,7 +39,6 @@ import {
   getSchoolContact,
   getSchoolLogo,
   getSchoolName,
-  hasSchoolContact,
 } from '../settings';
 import { formatDate } from '../settings/dates';
 
@@ -190,13 +189,9 @@ export function buildInvoiceHtml(invoiceId: string, now: Date = new Date()): str
   const accent = getAccentColor();
   const wash = accentWash(accent);
   const contact = getSchoolContact();
+  /** Printed in ONE place — the foot of the page, on its own line. Same rule as the statement and the
+   *  family sheet, so all three read the same way. */
   const contactFooter = [contact.address, contact.phone, contact.email, contact.website].map((v) => v.trim()).filter(Boolean).join(' · ');
-  const contactBits = [
-    contact.address.trim() && `<span>${esc(contact.address.trim())}</span>`,
-    contact.phone.trim() && `<span><b>${esc(contact.phone.trim())}</b></span>`,
-    contact.email.trim() && `<span>${esc(contact.email.trim())}</span>`,
-    contact.website.trim() && `<span>${esc(contact.website.trim())}</span>`,
-  ].filter(Boolean) as string[];
   const printedOn = day(asDate(now));
 
   const settled = d.outstandingCents <= 0;
@@ -263,9 +258,9 @@ export function buildInvoiceHtml(invoiceId: string, now: Date = new Date()): str
   .sub { color: var(--muted); margin-top: 2px; font-size: 12.5px; }
   .docref { margin-inline-start: auto; text-align: right; font-size: 12px; }
   .docref b { display: block; font-size: 14px; color: var(--ink); }
-  /* The masjid's address and number, so a parent holding this can act on it. */
-  .contactline { margin-top: 7px; font-size: 11.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0 6px; }
-  .contactline .dot { color: var(--line); }
+  /* The masjid's address and number, so a parent holding this can act on it — at the foot, on its
+     own line, and nowhere else on the page. */
+  .contactline { margin-top: 4px; }
   .parties { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; }
   .party { flex: 1 1 14rem; }
   h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 5px; }
@@ -311,7 +306,6 @@ export function buildInvoiceHtml(invoiceId: string, now: Date = new Date()): str
         <span class="muted">Issued ${esc(day(d.issuedOn) || '—')}</span>
       </div>
     </div>
-    ${hasSchoolContact(contact) ? `<div class="contactline">${contactBits.join('<span class="dot">·</span>')}</div>` : ''}
   </header>
 
   <div class="parties">
@@ -356,7 +350,10 @@ export function buildInvoiceHtml(invoiceId: string, now: Date = new Date()): str
 
   ${voided || settled ? '' : `<p class="how">To pay: use the parent portal, pay with ${d.studentCode ? 'the Student ID above' : 'your child’s Student ID'} on the masjid website or at the kiosk, or hand cash, a check, Zelle or a bank transfer to the office — please make sure the office records it against the right child.</p>`}
 
-  <footer>${esc([schoolName, contactFooter, `Printed ${printedOn}`].filter(Boolean).join(' · '))}</footer>
+  <footer>
+    <div>${esc(schoolName)} · Printed ${esc(printedOn)}</div>
+    ${contactFooter ? `<div class="contactline">${esc(contactFooter)}</div>` : ''}
+  </footer>
 </div>
 </body>
 </html>`;

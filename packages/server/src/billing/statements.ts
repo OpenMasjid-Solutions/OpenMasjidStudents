@@ -20,7 +20,7 @@ import { db } from '../db';
 import { families, students, invoices, payments } from '../db/schema';
 import { formatMoney } from '../db/money';
 import { familyBalance, studentBalance, invoiceTotal, invoicePaid } from './ledger';
-import { accentWash, getAccentColor, getSchoolContact, getSchoolName, getCurrency, getSchoolLogo, hasSchoolContact } from '../settings';
+import { accentWash, getAccentColor, getSchoolContact, getSchoolName, getCurrency, getSchoolLogo } from '../settings';
 import { formatDate } from '../settings/dates';
 
 /** Only admin (LAN) and finance (LAN + tunnel) may print statements (§5 permission matrix). */
@@ -172,7 +172,10 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   .meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; }
   .fam { font-size: 17px; font-weight: 700; }
   .balance { margin: 18px 0; padding: 12px 16px; border: 1px solid var(--teal); border-radius: 8px; background: var(--wash); font-size: 16px; }
-  .contactline { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  /* The masjid's address and number live in exactly ONE place on every printed document: the very
+     bottom, on their own line. They were in the header too, which made three artifacts each repeat
+     the same details twice — noise on a page whose whole job is to be scanned once. */
+  .contactline { margin-top: 4px; }
   .owed { color: #b42318; font-weight: 700; }
   .credit, .settled { color: var(--teal); font-weight: 700; }
   section { margin-top: 22px; page-break-inside: avoid; }
@@ -204,7 +207,6 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
       </div>
     </div>
     <div class="meta"><span class="fam">${esc(fam.name)}</span><span class="muted">Printed ${esc(printedOn)}</span></div>
-    ${hasSchoolContact(contact) ? `<div class="contactline">${esc(contactFooter)}</div>` : ''}
   </header>
 
   <div class="balance">Balance: ${balanceLine}</div>
@@ -230,7 +232,10 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
     <div class="cap"><b>Sign up for the parent portal</b>Scan to see your balance and pay online.<br /><span class="muted">${esc(signupUrl)}</span></div>
   </div>
 
-  <footer>${esc([schoolName, contactFooter].filter(Boolean).join(' · '))} · This statement reflects activity as of ${esc(printedOn)}.</footer>
+  <footer>
+    <div>${esc(schoolName)} · This statement reflects activity as of ${esc(printedOn)}.</div>
+    ${contactFooter ? `<div class="contactline">${esc(contactFooter)}</div>` : ''}
+  </footer>
 </div>
 </body>
 </html>`;

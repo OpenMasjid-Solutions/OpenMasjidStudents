@@ -537,7 +537,7 @@ describe('the masjid on the sheet (0.47.0)', () => {
     return (await sheet.buildFamilySheetHtml('fam_1', 'https://x.test', ALL_ON, NOW))!;
   }
 
-  it('prints the contact details when they are set, and omits the block entirely when they are not', async () => {
+  it('prints the contact details ONCE, at the foot, and omits the line entirely when unset', async () => {
     // The ELEMENT, not the word — the class is always defined in the style block.
     expect(await render()).not.toContain('<div class="contactline">');
 
@@ -545,10 +545,14 @@ describe('the masjid on the sheet (0.47.0)', () => {
     const out = await render();
     expect(out).toContain('<div class="contactline">');
     expect(out).toContain('12 Mosque Road');
-    expect(out).toContain('(555) 010-2030');
-    // Repeated in the please-check block, which is the sentence that actually asks a parent to act —
-    // and it sits on the back of a sheet whose header they may not turn back to.
-    expect(out.match(/\(555\) 010-2030/g)!.length).toBeGreaterThanOrEqual(2);
+    // EXACTLY once. It used to be in the header and repeated in the please-check block as well;
+    // three copies of an address on a sheet with a hard two-side budget is noise, and a reader looks
+    // for it at the bottom.
+    expect(out.match(/\(555\) 010-2030/g)!).toHaveLength(1);
+    expect(out.match(/<div class="contactline">/g)!).toHaveLength(1);
+    // And that one copy is inside the footer, not the header.
+    expect(/<footer>[\s\S]*contactline[\s\S]*<\/footer>/.test(out)).toBe(true);
+    expect(/<header>[\s\S]*contactline[\s\S]*<\/header>/.test(out)).toBe(false);
   });
 
   it('rules the sheet in the masjid’s colour, defaulting to the original teal', async () => {

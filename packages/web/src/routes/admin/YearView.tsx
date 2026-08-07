@@ -22,7 +22,7 @@ import { formatMoney } from '../../lib/money';
 import { formatDate, type DateFormat } from '../../lib/dates';
 import { formatUsPhone, telHref } from '../../lib/phone';
 import { useWindows } from '../../components/Windows';
-import { SchoolTabs, useSchool } from '../../components/SchoolTabs';
+import { SchoolTabs, useRequiredSchool } from '../../components/SchoolTabs';
 import { FamilyBilling } from '../../components/FamilyBilling';
 
 const UNPLACED = '__unplaced';
@@ -45,9 +45,11 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
   const [yearId, setYearId] = useState<string>('');
   /** '' = All courses, which is where the screen starts. */
   const [courseFilter, setCourseFilter] = useState('');
-  // The school in view (0.47.0). Both queries take it: each school has its OWN current year, so the
-  // year list and the grid have to be asking about the same one.
-  const { arg: schoolId } = useSchool();
+  // The school in view (0.47.0). ALWAYS exactly one: the grid is one school year laid out as months,
+  // and two schools have different years — different start month, different length — so there is no
+  // set of columns that could honestly show both. Both queries take it, because each school has its
+  // own current year and the list and the grid must be asking about the same one.
+  const { arg: schoolId } = useRequiredSchool();
   const years = trpc.structure.schoolYearList.useQuery({ schoolId });
   const grid = trpc.billing.yearGrid.useQuery({ schoolYearId: yearId || undefined, schoolId });
   const cols = trpc.billing.yearViewColumnsGet.useQuery();
@@ -137,7 +139,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
         )}
       </div>
 
-      <SchoolTabs />
+      <SchoolTabs requireOne />
 
       {/* ── Configure: which optional columns show. The school year itself is configured on the
              Structure tab — one place for it, and that tab can also edit an existing year. ───── */}

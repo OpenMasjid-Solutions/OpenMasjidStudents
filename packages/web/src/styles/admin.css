@@ -565,12 +565,18 @@
     padding: 0.12rem 0.24rem;
     vertical-align: top;
   }
-  /* Twelve month columns are ticks, not text — hold them narrow so the space goes to the names. */
+  /* …but NOT the month headings. Allowing them to wrap turned "Jan" into a column of single letters
+     stacked three rows deep, which is worse than the clipping it was meant to fix. They are three
+     characters and must stay on one line; the wrapping that makes the grid fit is only wanted on the
+     long values (names, emails), and `overflow-wrap` above still handles those.
+     No fixed width either — auto layout sizes a nowrap heading to its own text, which is exactly the
+     narrow column wanted, without guessing an em value that a different font would break. */
   .year-grid .year-month,
   .year-grid .year-cell {
-    inline-size: 1.5em;
+    white-space: nowrap !important;
+    overflow-wrap: normal;
     text-align: center;
-    padding-inline: 0.04rem;
+    padding-inline: 0.18rem;
   }
   .year-contact { white-space: normal !important; }
   .year-sticky { position: static !important; background: transparent !important; }
