@@ -24,7 +24,7 @@ services:
     # Skipping the pin would ship every stable install a dev build's tag. `build-image.yml` refuses to
     # publish a v* tag whose compose is not digest-pinned, or whose version is still a prerelease — but
     # the guard is the backstop, not the plan.
-    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.45.2@sha256:25542ea87629f404344f2e70387c5084b892bec70416ad26674ce4de25c2a072
+    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.46.0@sha256:bda8b9441c8b13940947721e04aab32dc0619b139ce3c06534d10d92a6978d64
     restart: unless-stopped
     environment:
       PORT: "8080"
