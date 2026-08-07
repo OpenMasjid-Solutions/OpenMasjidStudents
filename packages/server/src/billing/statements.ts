@@ -42,10 +42,7 @@ export function canServeStatement(role: Role, origin: Origin): boolean {
  */
 export const SHEET_PHONE_CSS = `
   /* A line that exists only on a phone — see .phone-tip in the markup. Hidden by default so a desktop
-     never shows it, and hidden again in print because a phone printing this page matches BOTH queries.
-     Since 0.48.0 the app itself shares a PDF on a phone rather than opening this page, so this is for
-     somebody who got here by the URL — still worth saying, because that is the one route left where the
-     iOS header and footer would appear. */
+     never shows it, and hidden again in print because a phone printing this page matches BOTH queries. */
   .phone-tip { display: none; }
   @media print { .phone-tip { display: none !important; } }
   @media (max-width: 700px) {

@@ -63,18 +63,6 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     change that row again. Any row you haven't saved is called out, and the button top-right says
     **Next** rather than Skip once you've changed something.
 
-- **On a phone, Print shares a PDF.** Tapping Print on a statement, an invoice, a family sheet or the ID
-  sheet now builds a proper PDF and opens your phone's share sheet — mail it, WhatsApp it, save it to Files,
-  or send it to a printer, all from one tap. **Because iOS Safari stamps its own header and footer onto
-  anything it prints** — the date, the page title, the URL — and there is no setting to turn that off. A
-  masjid's statement should not reach a parent with Safari's furniture across the top of it.
-  - On a computer nothing changes: the link opens the document and you print it as before.
-  - The PDF is built **on your own device**, so the document never leaves the masjid to become one. If
-    anything goes wrong — no share support, or a name the PDF fonts can't draw — the link just opens the
-    document as it always did, so the button never does nothing.
-  - **Print IDs now appears on a phone too.** It used to be hidden there, because printing from a phone
-    wasn't worth offering.
-
 - **Parents get a "My year" tab.** Their own children, month by month, showing which months are settled
   and which still have something on them — the question a parent rings the office about most, and one the
   portal could never answer before (it could only show what was owed, never the shape of the year).

@@ -1,6 +1,6 @@
 {
   "name": "@openmasjid/students-web",
-  "version": "0.48.0-dev.12",
+  "version": "0.48.0-dev.13",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -25,7 +25,6 @@
     "i18next": "^24.2.0",
     "lucide-react": "^0.469.0",
     "motion": "^11.15.0",
-    "pdf-lib": "^1.17.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-i18next": "^15.4.0"
@@ -36,7 +35,6 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
-    "happy-dom": "^20.11.2",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.6.3",
     "vite": "^6.0.7",
