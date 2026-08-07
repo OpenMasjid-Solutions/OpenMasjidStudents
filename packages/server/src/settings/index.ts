@@ -35,6 +35,14 @@ export const SETTING_KEYS = {
   // The masjid's own logo, stored as a `data:` URI so it travels with the DB and needs no file
   // handling or attachment plumbing. Bounded and magic-byte checked on the way in (§14).
   schoolLogo: 'school_logo',
+  // How dates are written and read across the whole app (0.47.0). Storage stays ISO — see
+  // settings/dates.ts for why only the two edges move.
+  dateFormat: 'date_format',
+  // JSON — the masjid's own address/phone/email/website, printed on the sheet and the statement and
+  // put at the foot of every parent email (0.47.0).
+  schoolContact: 'school_contact',
+  // The colour the printed artifacts are ruled in (0.47.0). One hex value; see `getAccentColor`.
+  accentColor: 'accent_color',
 } as const;
 
 /** Image types a logo may be. Kept to the three that every browser, print path and mail client
@@ -262,6 +270,86 @@ export function getParentEmails(): ParentEmailPrefs {
 
 export function setParentEmails(patch: Partial<ParentEmailPrefs>): void {
   setSetting(SETTING_KEYS.parentEmails, JSON.stringify({ ...getParentEmails(), ...patch }));
+}
+
+/**
+ * How to reach the masjid (0.47.0). Every field optional — a madrasah that only wants to print a
+ * phone number should not have to invent an address.
+ *
+ * It exists because the printed sheet, the statement and every parent email all end with some version
+ * of "tell the office", and until now none of them said HOW. A parent holding a sheet at home with a
+ * question about a fee had no number on it.
+ */
+export interface SchoolContact {
+  address: string;
+  phone: string;
+  email: string;
+  website: string;
+}
+
+const EMPTY_CONTACT: SchoolContact = { address: '', phone: '', email: '', website: '' };
+
+export function getSchoolContact(): SchoolContact {
+  const raw = getSetting(SETTING_KEYS.schoolContact);
+  if (!raw) return { ...EMPTY_CONTACT };
+  try {
+    const p = JSON.parse(raw) as Partial<SchoolContact>;
+    // Coerced field by field: this value is interpolated into printed HTML and email bodies, so a
+    // hand-edited row must not be able to put a non-string (or a nested object) in front of `esc()`.
+    return {
+      address: typeof p.address === 'string' ? p.address : '',
+      phone: typeof p.phone === 'string' ? p.phone : '',
+      email: typeof p.email === 'string' ? p.email : '',
+      website: typeof p.website === 'string' ? p.website : '',
+    };
+  } catch {
+    return { ...EMPTY_CONTACT };
+  }
+}
+
+export function setSchoolContact(patch: Partial<SchoolContact>): void {
+  const next = { ...getSchoolContact(), ...patch };
+  setSetting(SETTING_KEYS.schoolContact, JSON.stringify(next));
+}
+
+/** Is there anything to print? Used so a contact block is omitted entirely rather than left as an
+ *  empty box with a heading. */
+export function hasSchoolContact(c: SchoolContact = getSchoolContact()): boolean {
+  return !!(c.address.trim() || c.phone.trim() || c.email.trim() || c.website.trim());
+}
+
+/** The teal every printed artifact has been ruled in since the first statement. */
+export const DEFAULT_ACCENT = '#0f766e';
+
+/**
+ * The masjid's colour, used for the rules, headings and boxes on printed artifacts (0.47.0).
+ *
+ * VALIDATED ON READ, not just on write, and that is not paranoia: this value is interpolated straight
+ * into a `<style>` block on a page served to a browser, so a row edited by hand (or surviving from an
+ * older build) must not be able to close the declaration and add its own CSS. Only `#rgb` / `#rrggbb`
+ * gets through; anything else falls back to the default rather than being passed along.
+ */
+export function getAccentColor(): string {
+  const v = (getSetting(SETTING_KEYS.accentColor) ?? '').trim();
+  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v) ? v : DEFAULT_ACCENT;
+}
+
+export function setAccentColor(hex: string | null): void {
+  const v = (hex ?? '').trim();
+  if (v && !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)) throw new Error('invalid_colour');
+  setSetting(SETTING_KEYS.accentColor, v);
+}
+
+/**
+ * A very pale wash of the accent, for the tinted panels on the sheet.
+ *
+ * `color-mix` in sRGB rather than a hand-computed tint: it follows whatever accent is set without a
+ * second setting to keep in step, and every browser that can print these pages supports it. The
+ * printed rules already force these panels to white (toner), so this only affects the on-screen
+ * preview and a colour print.
+ */
+export function accentWash(accent: string = getAccentColor()): string {
+  return `color-mix(in srgb, ${accent} 7%, #ffffff)`;
 }
 
 /** When the mid-year go-live step was committed, or null. Only used to stop nagging about it. */

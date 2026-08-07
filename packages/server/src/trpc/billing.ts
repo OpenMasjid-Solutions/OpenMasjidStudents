@@ -38,6 +38,7 @@ import {
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { relationKind, dedupeNumbers, type RelationKind } from '../people/relations';
 import { alertStaff, householdName } from '../alerts';
+import { resolveSchoolScope } from '../schools';
 import { sendReceipt } from '../mail/notify';
 import { formatMoney } from '../db/money';
 
@@ -459,12 +460,19 @@ export const billingRouter = router({
    *  Optional columns are admin-configured (settings) and resolved server-side, so a column the
    *  admin has not switched on is never sent to the browser at all. */
   yearGrid: adminOrFinanceProcedure
-    .input(z.object({ schoolYearId: ID.optional(), includeWithdrawn: z.boolean().optional() }).optional())
-    .query(({ input }) => {
+    .input(z.object({ schoolYearId: ID.optional(), includeWithdrawn: z.boolean().optional(), schoolId: ID.optional() }).optional())
+    .query(({ ctx, input }) => {
+      // The grid is one school's year, so both halves are scoped (0.47.0): the YEAR comes from the
+      // school in view — "current" is per school now, and an unscoped lookup would pick whichever
+      // school's current year the planner returned first — and so do the student rows below.
+      const scope = resolveSchoolScope(ctx.session?.userId ?? null, input?.schoolId);
       const year = input?.schoolYearId
-        ? db.select().from(schoolYears).where(eq(schoolYears.id, input.schoolYearId)).get()
-        : db.select().from(schoolYears).where(eq(schoolYears.isCurrent, true)).get();
+        ? db.select().from(schoolYears).where(and(eq(schoolYears.id, input.schoolYearId), inArray(schoolYears.schoolId, scope.ids))).get()
+        : db.select().from(schoolYears).where(and(eq(schoolYears.isCurrent, true), inArray(schoolYears.schoolId, scope.ids))).orderBy(asc(schoolYears.label)).get();
       if (!year) return { year: null, needsStartYear: false, months: [], columns: [], rows: [], currency: getCurrency() };
+      // Rows follow the YEAR's school, not the requested filter: asking for a specific year implies its
+      // school, and mixing another school's children into it would be nonsense.
+      const rowSchoolIds = year.schoolId ? [year.schoolId] : scope.ids;
       if (year.startYear == null) {
         // Configured before start_year existed — the UI asks for it rather than guessing a calendar.
         return { year: { id: year.id, label: year.label }, needsStartYear: true, months: [], columns: [], rows: [], currency: getCurrency() };
@@ -492,7 +500,7 @@ export const billingRouter = router({
         .innerJoin(families, eq(families.id, students.familyId))
         .leftJoin(classes, eq(classes.id, students.classId))
         .leftJoin(courses, eq(courses.id, classes.courseId))
-        .where(input?.includeWithdrawn ? undefined : eq(students.status, 'active'))
+        .where(and(inArray(students.schoolId, rowSchoolIds), input?.includeWithdrawn ? undefined : eq(students.status, 'active')))
         .orderBy(asc(courses.sortOrder), asc(courses.name), asc(classes.sortOrder), asc(classes.name), asc(students.fullName))
         .all();
 

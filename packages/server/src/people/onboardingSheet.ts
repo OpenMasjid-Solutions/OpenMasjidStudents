@@ -61,7 +61,18 @@ import {
 import { formatMoney } from '../db/money';
 import { familyBalance, invoicePaid, invoiceTotal, studentBalance } from '../billing/ledger';
 import { esc } from '../billing/statements';
-import { getCurrency, getExternalPaymentsEnabled, getSchoolLogo, getSchoolName, getSelfRegistrationEnabled } from '../settings';
+import {
+  accentWash,
+  getAccentColor,
+  getCurrency,
+  getExternalPaymentsEnabled,
+  getSchoolContact,
+  getSchoolLogo,
+  getSchoolName,
+  getSelfRegistrationEnabled,
+} from '../settings';
+import { formatDate } from '../settings/dates';
+import { relationLabel } from './relations';
 import { stripeReady } from '../payments/stripe';
 
 const asDate = (v: unknown): string => {
@@ -271,7 +282,13 @@ export async function buildFamilySheetHtml(
   const logo = getSchoolLogo();
   const currency = getCurrency();
   const money = (c: number) => formatMoney(c, currency);
-  const printedOn = asDate(now);
+  // Dates the way this masjid writes them (0.47.0). `2019-03-04` on a sheet handed to a parent is a
+  // developer's date; the office picks the format once in Settings and every surface follows.
+  const day = (iso: string | null | undefined) => formatDate(iso);
+  const printedOn = day(asDate(now));
+  const accent = getAccentColor();
+  const wash = accentWash(accent);
+  const contact = getSchoolContact();
   const kids = d.children;
   const firstNames = kids.map((k) => k.fullName.trim().split(/\s+/)[0]).filter(Boolean);
   const namesSentence =
@@ -300,9 +317,10 @@ export async function buildFamilySheetHtml(
           const age = ageFromDob(k.dob, now);
           // No Student ID column: the ID has its own box above, at four times this size, and printing
           // it twice on a page with a two-side budget buys nothing.
+          const born = k.dob ? day(k.dob) : '';
           return `<tr>
         <td><b>${esc(k.fullName)}</b>${k.status === 'withdrawn' ? ' <span class="muted">(withdrawn)</span>' : ''}</td>
-        <td>${esc(k.dob ? (age != null ? `${k.dob} (${age})` : k.dob) : '—')}</td>
+        <td>${esc(born ? (age != null ? `${born} (${age})` : born) : '—')}</td>
         <td>${esc(k.className ?? '—')}</td>
         <td class="num">${balanceOf(k.owedCents, k.creditCents)}</td>
       </tr>`;
@@ -333,7 +351,7 @@ export async function buildFamilySheetHtml(
     : '<p class="muted">No fees assigned yet — the office will confirm these with you.</p>';
 
   const invoiceRows = kids
-    .flatMap((k) => k.openInvoices.map((i) => `<tr><td>${esc(k.fullName)}</td><td>${esc(i.label)}</td><td>${esc(i.dueDate || '—')}</td><td class="num">${esc(money(i.balanceCents))}</td></tr>`))
+    .flatMap((k) => k.openInvoices.map((i) => `<tr><td>${esc(k.fullName)}</td><td>${esc(i.label)}</td><td>${esc(day(i.dueDate) || '—')}</td><td class="num">${esc(money(i.balanceCents))}</td></tr>`))
     .join('');
 
   const familyBalanceLine = d.owedCents > 0
@@ -343,9 +361,11 @@ export async function buildFamilySheetHtml(
       : '<span class="settled">Nothing due</span>';
 
   // ── Back: the household, the portal, paying ────────────────────────────────────
+  // "Father", not "father" — the column is free text, so the capital is applied at the point of
+  // printing rather than by rewriting what an office typed (people/relations.ts).
   const guardianRows = d.guardians.length
     ? d.guardians
-        .map((g) => `<tr><td>${esc(g.name)}${g.emergency ? ' <span class="tag">emergency</span>' : ''}</td><td>${esc(g.relation ?? '—')}</td><td>${esc(g.phone ?? '—')}</td><td>${esc(g.email ?? '—')}</td></tr>`)
+        .map((g) => `<tr><td>${esc(g.name)}${g.emergency ? ' <span class="tag">emergency</span>' : ''}</td><td>${esc(relationLabel(g.relation) || '—')}</td><td>${esc(g.phone ?? '—')}</td><td>${esc(g.email ?? '—')}</td></tr>`)
         .join('')
     : '<tr><td colspan="4" class="muted">No parent or guardian details on file — please give these to the office.</td></tr>';
 
@@ -353,10 +373,26 @@ export async function buildFamilySheetHtml(
     ? `<section>
     <h2>Emergency contacts</h2>
     <table><thead><tr><th>Name</th><th>Relation</th><th>Phone</th></tr></thead><tbody>${d.contacts
-      .map((c) => `<tr><td>${esc(c.name)}</td><td>${esc(c.relation ?? '—')}</td><td>${esc(c.phone ?? '—')}</td></tr>`)
+      .map((c) => `<tr><td>${esc(c.name)}</td><td>${esc(relationLabel(c.relation) || '—')}</td><td>${esc(c.phone ?? '—')}</td></tr>`)
       .join('')}</tbody></table>
   </section>`
     : '';
+
+  /**
+   * How to reach the masjid (0.47.0).
+   *
+   * The sheet ends by telling a parent to "tell the office" four separate times and, until now, never
+   * said how. A parent reading this at home with a question about a fee had nothing to act on. Omitted
+   * entirely when nothing is configured rather than printed as an empty box.
+   */
+  /**
+   * How to reach the masjid — printed in exactly ONE place, the very bottom, on its own line.
+   *
+   * It was in the header and repeated in the please-check block as well. Three copies of an address on
+   * a two-side sheet is noise, and the sheet's whole constraint is space. The bottom is where a reader
+   * looks for it and where it survives being folded.
+   */
+  const contactFooter = [contact.address, contact.phone, contact.email, contact.website].map((v) => v.trim()).filter(Boolean).join(' · ');
 
   const ways = ['cash'];
   if (routes.card) ways.push('card');
@@ -429,20 +465,29 @@ export async function buildFamilySheetHtml(
   /* Sized for ONE DOUBLE-SIDED LETTER SHEET: front is who + what, back is how. The margin and the type
      scale are set together — dropping either loosens the fit enough to push a third side. */
   @page { size: letter; margin: 0.5in; }
-  :root { --ink:#1a1a1a; --teal:#0f766e; --line:#cbcbcb; --muted:#666; }
+  /* --teal is the masjid's own colour (Settings → Appearance), defaulting to the original teal. Every
+     rule, heading and box on this sheet reads from it, so one setting re-colours the whole page.
+     Validated as a hex literal before it gets here — this is interpolated into a style block. */
+  :root { --ink:#1a1a1a; --teal:${accent}; --wash:${wash}; --line:#cbcbcb; --muted:#666; }
   * { box-sizing: border-box; }
   body { font: 13px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); margin: 0; padding: 24px; background: #fff; }
   .sheet { max-width: 7.5in; margin: 0 auto; }
   .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
   .btn { font: inherit; padding: 8px 16px; border: 1px solid var(--teal); background: var(--teal); color: #fff; border-radius: 8px; cursor: pointer; }
   header { border-bottom: 2px solid var(--teal); padding-bottom: 9px; margin-bottom: 12px; }
+  /* No family name here on purpose — the school name plus "Family information & how to pay" is the
+     heading, and the opening sentence already names the children.
+     The printed date sits on the SAME ROW as the brand rather than on one of its own beneath it:
+     dropping the family name left that row holding nothing but a right-aligned date, which read as a
+     gap under the title. One row closes it and buys back a line of the two-side budget. */
   .brand { display: flex; align-items: center; gap: 12px; }
   .logo { max-height: 46px; max-width: 170px; width: auto; height: auto; }
   h1 { font-size: 19px; color: var(--teal); margin: 0; }
   .sub { color: var(--muted); margin-top: 1px; font-size: 12px; }
-  /* No family name here on purpose — the school name plus "Family information & how to pay" is the
-     heading, and the opening sentence already names the children. */
-  .meta { display: flex; justify-content: flex-end; align-items: baseline; margin-top: 7px; }
+  .printed { margin-inline-start: auto; font-size: 11.5px; white-space: nowrap; align-self: flex-end; }
+  /* The masjid's own address and number, so "tell the office" is actionable from the kitchen table.
+     ONE place only — the foot of the sheet, on its own line. */
+  .contactline { margin-top: 4px; }
   .intro { margin: 0 0 10px; }
   /* One box per child, the Student ID set large: it is the single thing a parent has to type to pay
      anywhere, so it is the most legible thing on the sheet. Wraps to a second row rather than shrinking,
@@ -450,7 +495,7 @@ export async function buildFamilySheetHtml(
   .idrow { display: flex; flex-wrap: wrap; gap: 8px; }
   .idcard {
     flex: 1 1 auto; min-width: 8.4rem; display: flex; flex-direction: column; gap: 1px;
-    padding: 7px 12px; border: 1px solid var(--teal); border-radius: 8px; background: #f4faf8;
+    padding: 7px 12px; border: 1px solid var(--teal); border-radius: 8px; background: var(--wash);
   }
   .idcard .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
   .idcard .code { font-size: 21px; }
@@ -468,7 +513,7 @@ export async function buildFamilySheetHtml(
   .tag { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--teal); border: 1px solid var(--teal); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
   .owed { color: #b42318; font-weight: 700; }
   .credit, .settled { color: var(--teal); font-weight: 700; }
-  .balance { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--teal); border-radius: 8px; background: #f4faf8; font-size: 14px; }
+  .balance { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--teal); border-radius: 8px; background: var(--wash); font-size: 14px; }
   ul.pay, ul.plain { margin: 0; padding-left: 18px; }
   ul.pay li { margin-bottom: 5px; }
   ul.plain li { margin-bottom: 2px; }
@@ -499,8 +544,8 @@ export async function buildFamilySheetHtml(
         <h1>${esc(schoolName)}</h1>
         <div class="sub">Family information &amp; how to pay</div>
       </div>
+      <span class="printed muted">Printed ${esc(printedOn)}</span>
     </div>
-    <div class="meta"><span class="muted">Printed ${esc(printedOn)}</span></div>
   </header>
 
   <p class="intro">${namesSentence
@@ -555,7 +600,10 @@ export async function buildFamilySheetHtml(
   a phone number is wrong, a child is missing, a fee is not what you agreed, or a payment you have made
   is not showing — tell the office. It is much easier to fix now than at the end of the year.</div>
 
-  <footer>${esc(schoolName)} · Correct as of ${esc(printedOn)} · Keep this for your records.</footer>
+  <footer>
+    <div>${esc(schoolName)} · Correct as of ${esc(printedOn)} · Keep this for your records.</div>
+    ${contactFooter ? `<div class="contactline">${esc(contactFooter)}</div>` : ''}
+  </footer>
 </div>
 </body>
 </html>`;

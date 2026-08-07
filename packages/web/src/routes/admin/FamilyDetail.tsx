@@ -21,11 +21,14 @@ import { StudentPicker } from '../../components/StudentPicker';
  *  lowercase codes and translated for display, so the DB never holds a locale-specific label. */
 const RELATIONS = ['father', 'mother', 'relative', 'other'] as const;
 
-/** A relation for display. Anything not in the list — free text from before 0.41.0 — is shown as it
- *  was typed, because "Uncle" is still the truth about that guardian. */
+/** A relation for display. Anything not in the list — free text from before 0.41.0, and every
+ *  CSV-imported one — is shown as it was typed, because "Uncle" is still the truth about that
+ *  guardian; only the first letter is raised, so it reads like a label beside the four known ones
+ *  rather than like a database value (matches the printed sheet — people/relations.ts). */
 function relationLabel(t: TFunction, raw: string | null | undefined): string {
   if (!raw) return '';
-  return t(`relation.${raw}`, { defaultValue: raw });
+  const fallback = raw.charAt(0).toUpperCase() + raw.slice(1);
+  return t(`relation.${raw}`, { defaultValue: fallback });
 }
 
 export function FamilyDetail({ familyId, readOnly = false }: { familyId: string; readOnly?: boolean }) {

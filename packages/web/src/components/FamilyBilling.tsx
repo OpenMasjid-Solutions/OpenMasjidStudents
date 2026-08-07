@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { Printer, Pencil, Users } from 'lucide-react';
 import { trpc } from '../lib/trpc';
 import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
+import { formatDate, type DateFormat } from '../lib/dates';
 import { withBase } from '../lib/base';
 import { useWindows } from './Windows';
 import { FamilyDetail } from '../routes/admin/FamilyDetail';
@@ -51,6 +52,9 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
   const [charge, setCharge] = useState({ studentId: focusStudentId ?? '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
   const [chargeErr, setChargeErr] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
+  /** How this masjid writes dates (0.47.0). `settings.display` — admin AND finance, unlike
+   *  `settings.get`, and this screen is finance's. */
+  const dateFormat = (trpc.settings.display.useQuery().data?.dateFormat ?? 'iso') as DateFormat;
   /** Whose invoice / payment this is. Every row carries a child now, so the tables say so. */
   const nameOf = (studentId: string) => {
     const s = (billing.data?.students ?? []).find((k) => k.id === studentId);
@@ -330,11 +334,19 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                     <tr>
                       <td>{nameOf(i.studentId)}</td>
                       <td>{i.label}</td>
-                      <td>{i.dueDate ?? '—'}</td>
+                      <td>{formatDate(i.dueDate, dateFormat) || '—'}</td>
                       <td>{money(i.totalCents)}</td>
                       <td>{money(i.paidCents)}</td>
                       <td><span className={`chip ${i.status === 'paid' ? 'is-accent' : 'is-muted'}`}>{t(`billing.st_${i.status}`)}</span></td>
-                      <td className="actions">{i.status !== 'void' && i.paidCents === 0 && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { await voidInv.mutateAsync({ id: i.id }); await refresh(); }}>{t('billing.void')}</button>}</td>
+                      <td className="actions">
+                        {/* The bill as a document a family can be handed — one child, one period,
+                            line by line, on the masjid's letterhead. Opens in a tab so the browser's
+                            own Print dialog gives a real preview and a save-as-PDF. */}
+                        <a className="btn btn--ghost btn--sm" href={withBase(`/invoices/${i.id}`)} target="_blank" rel="noopener noreferrer" title={t('billing.printInvoiceHint')}>
+                          <Printer size={14} /> {t('billing.printInvoice')}
+                        </a>
+                        {i.status !== 'void' && i.paidCents === 0 && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { await voidInv.mutateAsync({ id: i.id }); await refresh(); }}>{t('billing.void')}</button>}
+                      </td>
                     </tr>
                     {/* The lines of that bill. Shown for every invoice with more than one, because a
                         parent asking "what is this $250?" is the question this answers — and it says
@@ -416,7 +428,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                     <td>{nameOf(p.studentId)}</td>
                     <td className={p.amountCents < 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>{money(p.amountCents)}</td>
                     <td>{t(`billing.ch_${p.channel}`, p.channel)}</td>
-                    <td>{new Date(p.occurredAt as unknown as number).toISOString().slice(0, 10)}</td>
+                    <td>{formatDate(new Date(p.occurredAt as unknown as number).toISOString().slice(0, 10), dateFormat)}</td>
                     <td className="muted">{p.memo ?? ''}</td>
                     {/* A card payment records itself, so there is no person to name — say so rather
                         than leaving a blank cell that reads like missing data. */}

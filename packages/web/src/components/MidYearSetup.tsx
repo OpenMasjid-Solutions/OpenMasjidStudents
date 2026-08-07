@@ -104,7 +104,8 @@ export function MidYearSetup({ currency }: { currency: string }) {
       <div className="win-content">
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head"><h2><CheckCircle2 size={16} /> {t('midyear.doneTitle')}</h2></div>
-          <p>{t('midyear.doneBody', { owed: done.owed, ahead: done.ahead, period: monthLabel(goLivePeriod) })}</p>
+          {/* `count` rather than `owed`: i18next selects the singular/plural key from `count`. */}
+          <p>{t('midyear.doneBody', { count: done.owed, ahead: done.ahead, period: monthLabel(goLivePeriod) })}</p>
           {done.skipped > 0 && <p className="hint">{t('midyear.doneSkipped', { count: done.skipped })}</p>}
           <p className="hint">{t('midyear.doneNext', { period: monthLabel(goLivePeriod) })}</p>
         </section>

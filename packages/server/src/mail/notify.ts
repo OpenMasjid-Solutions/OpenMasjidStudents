@@ -6,9 +6,9 @@
  * SMTP is unconfigured (returns false / 0) — callers degrade gracefully. Nothing here throws or logs
  * PII. The parent-portal link uses OPENMASJID_PUBLIC_URL when set (empty → no button, still valid).
  */
-import { getSchoolName, getSchoolLogo, getParentEmails } from '../settings';
+import { getSchoolName, getSchoolLogo, getParentEmails, getSchoolContact } from '../settings';
 import { guardianEmailsForFamily } from './recipients';
-import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail, testEmail, alertEmail, setEmailLogoUrl } from './templates';
+import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail, testEmail, alertEmail, setEmailLogoUrl, setEmailContactLine } from './templates';
 import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
 import { fabricConfigured } from '../config';
@@ -56,6 +56,10 @@ export function mailAvailable(): boolean {
 function refreshEmailLogo(): void {
   const base = portalBase();
   setEmailLogoUrl(base && getSchoolLogo() ? `${base.replace(/\/+$/, '')}/api/logo` : null);
+  // The masjid's own contact details, for the foot of every parent-facing message (0.47.0). Read on
+  // the same schedule and for the same reason: an admin can change them at any moment.
+  const c = getSchoolContact();
+  setEmailContactLine([c.address, c.phone, c.email, c.website].map((v) => v.trim()).filter(Boolean).join(' · '));
 }
 
 /** One email, through the platform. Returns false when it did not actually send. */

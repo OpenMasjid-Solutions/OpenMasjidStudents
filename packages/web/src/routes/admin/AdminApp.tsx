@@ -5,6 +5,7 @@
  *  Admin-only (LAN, §12.4). */
 import { useState } from 'react';
 import { WindowsProvider } from '../../components/Windows';
+import { SchoolProvider } from '../../components/SchoolTabs';
 import { AppShell } from '../../components/AppShell';
 import { ADMIN_ITEMS, type Section } from '../../components/Dock';
 import { trpc } from '../../lib/trpc';
@@ -23,6 +24,8 @@ export function AdminApp() {
 
   return (
     <WindowsProvider>
+      {/* Outside the shell so the chosen school survives moving between tabs — see SchoolTabs.tsx. */}
+      <SchoolProvider>
       <AppShell items={ADMIN_ITEMS} active={section} onNavigate={(s) => setSection(s as Section)} onSignedOut={onSignedOut}>
         {section === 'dashboard' ? (
           <Dashboard onNavigate={setSection} />
@@ -40,6 +43,7 @@ export function AdminApp() {
           <Settings />
         )}
       </AppShell>
+      </SchoolProvider>
     </WindowsProvider>
   );
 }

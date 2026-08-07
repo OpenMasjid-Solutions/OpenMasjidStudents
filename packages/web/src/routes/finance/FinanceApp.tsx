@@ -9,6 +9,7 @@
  *  false. */
 import { useState } from 'react';
 import { WindowsProvider } from '../../components/Windows';
+import { SchoolProvider } from '../../components/SchoolTabs';
 import { AppShell } from '../../components/AppShell';
 import { FINANCE_ITEMS, type FinanceSection } from '../../components/Dock';
 import { trpc } from '../../lib/trpc';
@@ -22,9 +23,14 @@ export function FinanceApp() {
   const onSignedOut = () => void utils.auth.session.invalidate();
   return (
     <WindowsProvider>
-      <AppShell items={FINANCE_ITEMS} active={section} onNavigate={(s) => setSection(s as FinanceSection)} onSignedOut={onSignedOut}>
-        {section === 'year' ? <YearView canConfigure={false} /> : section === 'students' ? <Students readOnly /> : <Billing canManagePlans={false} />}
-      </AppShell>
+      {/* Finance shares the Students and Year screens with admin, so it needs the same school
+          switcher — and a finance account limited to one school (Staff → Schools) sees only that
+          one's tab. Without the provider those screens would render with no switcher at all. */}
+      <SchoolProvider>
+        <AppShell items={FINANCE_ITEMS} active={section} onNavigate={(s) => setSection(s as FinanceSection)} onSignedOut={onSignedOut}>
+          {section === 'year' ? <YearView canConfigure={false} /> : section === 'students' ? <Students readOnly /> : <Billing canManagePlans={false} />}
+        </AppShell>
+      </SchoolProvider>
     </WindowsProvider>
   );
 }

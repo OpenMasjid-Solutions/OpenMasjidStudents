@@ -225,6 +225,13 @@
       "when": 1785505431462,
       "tag": "0031_alert_recipients",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1785591831462,
+      "tag": "0032_schools",
+      "breakpoints": true
     }
   ]
 }

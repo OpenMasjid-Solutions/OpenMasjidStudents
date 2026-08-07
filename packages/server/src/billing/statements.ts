@@ -20,7 +20,8 @@ import { db } from '../db';
 import { families, students, invoices, payments } from '../db/schema';
 import { formatMoney } from '../db/money';
 import { familyBalance, studentBalance, invoiceTotal, invoicePaid } from './ledger';
-import { getSchoolName, getCurrency, getSchoolLogo } from '../settings';
+import { accentWash, getAccentColor, getSchoolContact, getSchoolName, getCurrency, getSchoolLogo } from '../settings';
+import { formatDate } from '../settings/dates';
 
 /** Only admin (LAN) and finance (LAN + tunnel) may print statements (§5 permission matrix). */
 export function canServeStatement(role: Role, origin: Origin): boolean {
@@ -65,6 +66,14 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   const currency = getCurrency();
   const money = (c: number) => formatMoney(c, currency);
   const bal = familyBalance(familyId);
+  // Same three install settings the family sheet reads (0.47.0), so the two printed artifacts a
+  // masjid hands out cannot end up looking like they came from different schools.
+  const accent = getAccentColor();
+  const wash = accentWash(accent);
+  const contact = getSchoolContact();
+  const contactFooter = [contact.address, contact.phone, contact.email, contact.website].map((v) => v.trim()).filter(Boolean).join(' · ');
+  /** Dates the way this masjid writes them; storage stays ISO (settings/dates.ts). */
+  const day = (iso: string | null | undefined) => formatDate(iso);
 
   // Every child on the family, not just the active ones: a withdrawn child's unpaid bill is still
   // owed, and a statement that hid it would understate the total the parent is being asked for.
@@ -128,14 +137,14 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
     : `<tr><td colspan="3" class="muted">No students on this record.</td></tr>`;
 
   const invoiceRows = openInvs.length
-    ? openInvs.map((i) => `<tr><td>${esc(nameOf.get(i.studentId) ?? '')}</td><td>${esc(i.label)}</td><td>${esc(asDate(i.dueDate) || '—')}</td><td class="num">${esc(money(i.balanceCents))}</td></tr>`).join('')
+    ? openInvs.map((i) => `<tr><td>${esc(nameOf.get(i.studentId) ?? '')}</td><td>${esc(i.label)}</td><td>${esc(day(asDate(i.dueDate)) || '—')}</td><td class="num">${esc(money(i.balanceCents))}</td></tr>`).join('')
     : `<tr><td colspan="4" class="muted">No open invoices.</td></tr>`;
 
   const paymentRows = recent.length
-    ? recent.map((p) => `<tr><td>${esc(asDate(p.occurredAt))}</td><td>${esc(nameOf.get(p.studentId) ?? '')}</td><td>${esc(CHANNEL_LABELS[p.channel] ?? p.channel)}</td><td>${esc(p.memo ?? '')}</td><td class="num ${p.amountCents < 0 ? 'owed' : ''}">${esc(money(p.amountCents))}</td></tr>`).join('')
+    ? recent.map((p) => `<tr><td>${esc(day(asDate(p.occurredAt)))}</td><td>${esc(nameOf.get(p.studentId) ?? '')}</td><td>${esc(CHANNEL_LABELS[p.channel] ?? p.channel)}</td><td>${esc(p.memo ?? '')}</td><td class="num ${p.amountCents < 0 ? 'owed' : ''}">${esc(money(p.amountCents))}</td></tr>`).join('')
     : `<tr><td colspan="5" class="muted">No payments recorded yet.</td></tr>`;
 
-  const printedOn = asDate(new Date());
+  const printedOn = day(asDate(new Date()));
 
   return `<!doctype html>
 <html lang="en">
@@ -144,7 +153,10 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Statement — ${esc(fam.name)}</title>
 <style>
-  :root { --ink:#1a1a1a; --teal:#0f766e; --line:#cbcbcb; --muted:#666; }
+  /* --teal is the masjid's own colour (Settings → Appearance), defaulting to the original teal, so
+     the statement and the family sheet are ruled in the same ink. Validated as a hex literal before
+     it reaches here — this is interpolated into a style block. */
+  :root { --ink:#1a1a1a; --teal:${accent}; --wash:${wash}; --line:#cbcbcb; --muted:#666; }
   * { box-sizing: border-box; }
   body { font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); margin: 0; padding: 24px; background: #fff; }
   .sheet { max-width: 760px; margin: 0 auto; }
@@ -159,7 +171,11 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   .sub { color: var(--muted); margin-top: 2px; }
   .meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; }
   .fam { font-size: 17px; font-weight: 700; }
-  .balance { margin: 18px 0; padding: 12px 16px; border: 1px solid var(--teal); border-radius: 8px; background: #f4faf8; font-size: 16px; }
+  .balance { margin: 18px 0; padding: 12px 16px; border: 1px solid var(--teal); border-radius: 8px; background: var(--wash); font-size: 16px; }
+  /* The masjid's address and number live in exactly ONE place on every printed document: the very
+     bottom, on their own line. They were in the header too, which made three artifacts each repeat
+     the same details twice — noise on a page whose whole job is to be scanned once. */
+  .contactline { margin-top: 4px; }
   .owed { color: #b42318; font-weight: 700; }
   .credit, .settled { color: var(--teal); font-weight: 700; }
   section { margin-top: 22px; page-break-inside: avoid; }
@@ -216,7 +232,10 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
     <div class="cap"><b>Sign up for the parent portal</b>Scan to see your balance and pay online.<br /><span class="muted">${esc(signupUrl)}</span></div>
   </div>
 
-  <footer>${esc(schoolName)} · This statement reflects activity as of ${esc(printedOn)}.</footer>
+  <footer>
+    <div>${esc(schoolName)} · This statement reflects activity as of ${esc(printedOn)}.</div>
+    ${contactFooter ? `<div class="contactline">${esc(contactFooter)}</div>` : ''}
+  </footer>
 </div>
 </body>
 </html>`;

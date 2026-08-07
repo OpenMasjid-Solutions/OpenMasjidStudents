@@ -57,6 +57,7 @@
     "copy": "Copy",
     "add": "Add",
     "edit": "Edit",
+    "rename": "Rename",
     "remove": "Remove",
     "cancel": "Cancel",
     "clear": "Clear",
@@ -255,8 +256,16 @@
     "col_balance": "Balance",
     "openBilling": "Open this child’s billing"
   },
+  "school": {
+    "switch": "Which school",
+    "all": "All schools"
+  },
   "structure": {
     "title": "Structure",
+    "schools": "Schools",
+    "schoolsHint": "Add a second school if your madrasah runs programmes on different calendars — a weekend maktab and a full-time hifz programme, say. Each school gets its own school year and its own classes. Everything else is shared: fee plans, staff, payments, and families. A parent with a child in each still gets one balance and one sheet.",
+    "addSchool": "Add a school",
+    "addSchoolPlaceholder": "Hifz programme",
     "years": "School years",
     "yearsHint": "The billing calendar. A madrasa year usually runs across two calendar years — April to March, say — and the months you set here become the columns on the year view and the periods invoices are generated for.",
     "noYears": "No school year yet.",
@@ -577,6 +586,8 @@
     "resetPwFor": "New temporary password for {{username}}",
     "resetPwHint": "They’ll be asked to choose their own password the next time they sign in.",
     "roleHint": "Finance runs billing and can work from home over the internet. Admin can change everything, including settings, and can only sign in on the masjid network. Changing someone’s role takes effect straight away — they don’t need to sign out.",
+    "schools": "Schools",
+    "allSchools": "All schools",
     "formHint": "Enter a username and a temporary password of at least 12 characters."
   },
   "settings": {
@@ -602,6 +613,16 @@
     "logoUpload": "Upload a logo",
     "logoHint": "PNG, JPEG or WebP, up to 512 KB. Used on printed statements and every email the app sends. A plain logo on a transparent or white background photocopies best.",
     "logoEmailNeedsUrl": "Statements will show your logo right away. Emails can only show it once Remote access is on for this app in OpenMasjidOS — an email has to load the image from a web address. Send a test email to see exactly what parents will get.",
+    "appearance": "How you appear to parents",
+    "appearanceHint": "Your contact details go on the family information sheet, the statement, and the foot of every email to a parent — so “tell the office” actually tells them how. The date format and colour apply everywhere, printed and on screen.",
+    "contactAddress": "Address",
+    "contactPhone": "Phone",
+    "contactEmail": "Email",
+    "contactWebsite": "Website",
+    "dateFormat": "How dates are written",
+    "dateFormatHint": "Applies everywhere, and to dates you type into a CSV import. Dates are always stored the same way, so changing this is safe.",
+    "accent": "Your colour",
+    "accentHint": "The rules and headings on printed sheets.",
     "logoTooBig": "That image is over 512 KB. Export it smaller and try again.",
     "payments": "Payments",
     "paymentsHint": "Choose which of your OpenMasjidOS Stripe accounts tuition is collected into. This is used for card payments in the parent portal and for the tuition option on your donation site and kiosk.",
@@ -801,6 +822,8 @@
     "st_paid": "Paid",
     "st_void": "Void",
     "printStatement": "Print statement",
+    "printInvoice": "Invoice",
+    "printInvoiceHint": "Print this bill on its own — one child, one period, line by line, on your letterhead.",
     "autoOn": "Generate each month’s invoices automatically",
     "autoDay": "On day",
     "autoDueDay": "Due on day",
@@ -1030,11 +1053,14 @@
     "k_square": "square",
     "step3": "3. What each parent will see",
     "step3Hint": "These are the balances this will produce. Nothing has been written yet.",
-    "commit": "Record it ({{count}} child(ren))",
+    "commit_one": "Record it ({{count}} child)",
+    "commit_other": "Record it ({{count}} children)",
     "commitHint": "Writes one dated record per child and bills from {{period}} onwards.",
     "doneTitle": "Done",
-    "doneBody": "{{owed}} child(ren) carried a balance forward and {{ahead}} were already paid ahead. Billing starts at {{period}}.",
-    "doneSkipped": "{{count}} child(ren) already had a record and were left alone.",
+    "doneBody_one": "{{count}} child carried a balance forward and {{ahead}} were already paid ahead. Billing starts at {{period}}.",
+    "doneBody_other": "{{count}} children carried a balance forward and {{ahead}} were already paid ahead. Billing starts at {{period}}.",
+    "doneSkipped_one": "{{count}} child already had a record and was left alone.",
+    "doneSkipped_other": "{{count}} children already had a record and were left alone.",
     "doneNext": "Next: generate {{period}} on the Billing tab. Anything earlier is refused, so the balances you just recorded cannot be billed twice."
   }
 }

@@ -543,11 +543,47 @@
     print-color-adjust: economy;
   }
 
-  /* A printed sheet has no scroll — let the grid lay out in full and shrink to fit. */
+  /* A printed sheet has no scroll — let the grid lay out in full and shrink to fit.
+   *
+   * `white-space: normal` is the line that actually stops the right-hand months being CUT OFF. On
+   * screen every cell is `nowrap` so the grid scrolls sideways with the name column pinned, which is
+   * right there and fatal here: a table that may not wrap cannot be narrowed, so the browser lays it
+   * out at its natural width and the page simply clips whatever runs past the paper. Allowing wraps
+   * (plus `width: 100%`) lets auto table layout do what it is good at and squeeze the grid onto the
+   * sheet. `overflow-wrap: anywhere` is for the optional email columns, where one long address would
+   * otherwise set an unbreakable minimum width for its whole column. */
   .year-scroll { overflow: visible !important; }
-  .year-grid { min-width: 0 !important; font-size: 0.7rem; }
+  .year-grid {
+    min-width: 0 !important;
+    width: 100% !important;
+    font-size: 0.66rem;
+  }
+  .year-grid th,
+  .year-grid td {
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+    padding: 0.12rem 0.24rem;
+    vertical-align: top;
+  }
+  /* …but NOT the month headings. Allowing them to wrap turned "Jan" into a column of single letters
+     stacked three rows deep, which is worse than the clipping it was meant to fix. They are three
+     characters and must stay on one line; the wrapping that makes the grid fit is only wanted on the
+     long values (names, emails), and `overflow-wrap` above still handles those.
+     No fixed width either — auto layout sizes a nowrap heading to its own text, which is exactly the
+     narrow column wanted, without guessing an em value that a different font would break. */
+  .year-grid .year-month,
+  .year-grid .year-cell {
+    white-space: nowrap !important;
+    overflow-wrap: normal;
+    text-align: center;
+    padding-inline: 0.18rem;
+  }
+  .year-contact { white-space: normal !important; }
   .year-sticky { position: static !important; background: transparent !important; }
   .year-cell-btn { min-width: 0 !important; min-height: 0 !important; background: none !important; }
+  /* The shell's own gutters are screen chrome; on paper they are just lost width. */
+  .page { padding: 0 !important; }
+  .section { padding: 0 !important; margin-block: 0 !important; }
   .no-print,
   .topbar,
   .dock,
@@ -564,8 +600,10 @@
   }
   .week-day-name { color: #000 !important; }
 
-  /* The year grid is wide; landscape with narrow margins is what makes twelve months fit. */
-  @page { size: landscape; margin: 10mm; }
+  /* The year grid is wide; landscape with narrow margins is what makes twelve months fit. 6mm is
+     about as tight as consumer laser printers will honour before they start clipping on their own —
+     most have a hardware unprintable edge near 5mm — so this is the usable maximum, not a guess. */
+  @page { size: landscape; margin: 6mm; }
 
   /* Table lines must be visible in black and white on a masjid photocopier (§15). */
   .year-grid th,

@@ -10,8 +10,71 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 ## [Unreleased]
 
 <!-- Entries are filed under the RELEASE they are heading toward, not per dev build. The dev branch's
-     manifest reads `0.46.0-dev.N`, and the version test checks the CHANGELOG for the base `0.46.0`,
+     manifest reads `0.47.0-dev.N`, and the version test checks the CHANGELOG for the base `0.47.0`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
+
+## [0.47.0]
+
+- **More than one school, in one masjid.** If your madrasah runs programmes on different calendars —
+  a weekend maktab alongside a full-time hifz programme, say — you can now set them up as separate
+  **schools** under **Structure → Schools**. Each school gets **its own school year** and **its own
+  courses and classes**, so one can run September to June while the other runs all year, and "Level 1"
+  can mean a different room in each. A switcher appears across the top of **Students**, **Year** and
+  **Structure** to move between them, and the dashboard gains a tile per school with its headcount.
+  - **Families are deliberately not split up.** A parent with one child in the maktab and another in
+    hifz is still **one family**: one balance, one portal login, one payment, one printed sheet. Fee
+    plans, staff accounts, payment settings and the whole ledger stay shared across schools — the only
+    things a school owns are its calendar and its class list. Linking two children as siblings works
+    across schools exactly as it does within one.
+  - **Staff see every school by default.** An admin can limit an account to particular schools under
+    **Staff** if that is useful, but nothing changes for anyone until they do — adding a second school
+    never quietly locks a colleague out of the first. Limiting someone narrows what they are looking
+    at; it never changes what their role is allowed to do.
+  - **Year and Structure always show exactly one school** — there is no "all schools" option on either,
+    because there could not honestly be one. The year grid is a single school year laid out as months,
+    and two schools have different years; Structure configures one school's calendar and classes.
+  - **If you only have one school, nothing about this appears.** No switcher, no tabs, no extra column
+    — your existing students, courses and school years are simply filed under your madrasah's name.
+
+- **A printable invoice.** Open a family's billing and every bill now has an **Invoice** button beside
+  it. It gives you that one child's bill for that one period on your letterhead: what it is made up of
+  line by line, what is still owed on each line, the total, what has been paid and what is outstanding,
+  the payments that landed on it, and where the child stands overall — because a settled September bill
+  should not read as "you are square" when October is open. It is what to hand a parent who asks for
+  "the bill for Yusuf for September", which the household statement — everything, across every child —
+  was never the right shape for.
+  - The per-line figures say what each item **costs** and what is **still owed on it**, and nothing
+    else. A discount on the same bill reduces a line just as a payment does, so a per-line "paid"
+    column would have told a family they handed over more than they did. Money received is stated
+    once, for the bill, where it is unambiguous.
+
+- **Your address and phone number now appear where parents actually need them.** Set them once under
+  **Settings → How you appear to parents** and they go on the **family information sheet**, the
+  **invoice**, the **statement**, and the foot of **every email** a parent gets — in one place on each,
+  at the bottom, on their own line. Every one of those documents ends by asking the family to "tell the
+  office" if something is wrong, and until now not one of them said how. The phone number is written
+  the same way guardian numbers are, `(555) 123-4567`, as you type it.
+
+- **Dates are written the way your madrasah writes them.** Choose the format in the same settings
+  section — `2026-03-04`, `03/04/2026`, `04/03/2026` or `4 Mar 2026` — and it applies everywhere,
+  printed and on screen. **CSV imports read it too**, so a spreadsheet with a `03/04/2015` column no
+  longer has to be reformatted by hand before it will import, which is exactly where the wrong day used
+  to creep in. Dates are always stored the same way underneath, so changing this is safe at any time
+  and never alters a record.
+
+- **Printed sheets can be in your masjid's colour.** Pick one in the same place and the rules,
+  headings and boxes on the family sheet and the statement follow it.
+
+- **Fixes to what you print and read.**
+  - The **year view print** no longer cuts off the right-hand months. Cells can now wrap, which is what
+    lets the grid shrink onto the page, and the margins are tighter so there is more room for it. The
+    month headings themselves stay on one line — letting them wrap turned "Jan" into a column of single
+    letters.
+  - The family information sheet no longer has a **gap under the title** where the family name used to
+    sit — the printed date has moved up onto the same line.
+  - **Father** and **Mother** are capitalised in the parents and guardians list, including relations
+    typed in by hand.
+  - The mid-year setup step says **"1 child"** rather than **"1 child(ren)"**.
 
 ## [0.46.0]
 

@@ -40,6 +40,7 @@ import { suggestSiblingGroups } from '../people/siblingSuggest';
 import type { Tx } from '../billing/ledger';
 import { audit } from '../audit';
 import { IMPORT_FIELDS, validateRows, commitRows, type ImportRow } from '../people/import';
+import { defaultSchoolId, resolveSchoolScope, schoolIdForClass } from '../schools';
 
 // ── input helpers ────────────────────────────────────────────────────────────
 const REQ_NAME = z.string().trim().min(1).max(120);
@@ -91,6 +92,8 @@ interface NewStudent {
   overrideAmountCents?: number;
   feeNote?: string;
   classId?: string;
+  /** Which school to file them under (0.47.0). Ignored when `classId` is set — the class decides. */
+  schoolId?: string;
 }
 
 /**
@@ -117,6 +120,12 @@ function createStudentRow(input: NewStudent, actor: ReturnType<typeof auditActor
     }
     const id = rid('stu');
     const ts = now();
+    // Which school this child attends (0.47.0). The class decides it when there is one — a class
+    // belongs to exactly one school, so anything else would file the child away from their own class
+    // — otherwise the caller's chosen school, otherwise the only/first school there is. A sibling's
+    // school is deliberately NOT inherited: two children in one household can attend different
+    // schools, which is the case this whole feature exists for.
+    const schoolId = (input.classId ? schoolIdForClass(input.classId) : null) ?? input.schoolId ?? defaultSchoolId();
     // The typed ID a parent uses at the kiosk. Derived from the given name, so it is generated here
     // rather than accepted from the caller — never importable, never chosen (§14).
     const studentCode = generateUniqueStudentCode(input.fullName);
@@ -128,6 +137,7 @@ function createStudentRow(input: NewStudent, actor: ReturnType<typeof auditActor
         dob: blankToNull(input.dob),
         status: 'active',
         notes: blankToNull(input.notes),
+        schoolId,
         classId: input.classId ?? null,
         studentCode,
         createdAt: ts,
@@ -159,15 +169,47 @@ function requireStudent(id: string) {
   return s;
 }
 
+/**
+ * Which school an import lands in — the one the admin picked, if they may use it, else their first
+ * visible school (0.47.0).
+ *
+ * Both preview and commit resolve it through here so they cannot disagree: a preview that validated
+ * class names against one school while the commit wrote them into another would report a clean file
+ * and then import it wrong.
+ */
+function importSchool(ctx: { session?: { userId?: string | null } | null }, requested?: string): string | null {
+  const scope = resolveSchoolScope(ctx.session?.userId ?? null, requested);
+  return scope.requested ?? scope.ids[0] ?? defaultSchoolId();
+}
+
 export const peopleRouter = router({
   // ── Directory (admin | finance) ────────────────────────────────────────────
-  /** Families with their students + guardians. */
-  directory: adminOrFinanceProcedure.query(() => {
-    const fams = db.select().from(families).all();
+  /**
+   * Families with their students + guardians.
+   *
+   * SCHOOL FILTERING (0.47.0) picks WHICH HOUSEHOLDS to list — those with at least one child in the
+   * school in view — and then shows each of them WHOLE, siblings in other schools included.
+   *
+   * That is deliberate, and it follows from the household not being scoped (schools/index.ts). A
+   * household has one balance covering every child in it; showing a filtered subset of the children
+   * next to the full balance would be an arithmetic lie, and the office answering the phone about that
+   * balance needs to see what makes it up. So the school switcher is a way to narrow a long list to the
+   * families you are working with today, not an information boundary — the boundary is the ROLE, which
+   * is enforced on every procedure regardless.
+   */
+  directory: adminOrFinanceProcedure.input(z.object({ schoolId: ID.optional() }).optional()).query(({ ctx, input }) => {
+    const scope = resolveSchoolScope(ctx.session?.userId ?? null, input?.schoolId);
+    const inScope = new Set(
+      db.select({ familyId: students.familyId }).from(students).where(inArray(students.schoolId, scope.ids)).all().map((r) => r.familyId),
+    );
+    // A household with no children at all still belongs in the list — it is usually one mid-creation,
+    // and hiding it would make it unreachable.
+    const withKids = new Set(db.select({ familyId: students.familyId }).from(students).all().map((r) => r.familyId));
+    const fams = db.select().from(families).all().filter((f) => inScope.has(f.id) || !withKids.has(f.id));
     const ids = fams.map((f) => f.id);
     const studs = ids.length
       ? db
-          .select({ id: students.id, familyId: students.familyId, fullName: students.fullName, status: students.status, classId: students.classId })
+          .select({ id: students.id, familyId: students.familyId, fullName: students.fullName, status: students.status, classId: students.classId, schoolId: students.schoolId })
           .from(students)
           .where(inArray(students.familyId, ids))
           .all()
@@ -305,6 +347,9 @@ export const peopleRouter = router({
         overrideAmountCents: z.number().int().min(0).max(100_000_000).optional(),
         feeNote: z.string().trim().max(200).optional(),
         classId: ID.optional(),
+        /** Which school to file them under (0.47.0). Only consulted when no class is chosen — a class
+         *  already implies its school. Absent on a single-school install, where there is nothing to ask. */
+        schoolId: ID.optional(),
         /** An existing sibling to share a household (and therefore guardians) with. */
         linkToStudentId: ID.optional(),
       }),
@@ -569,17 +614,17 @@ export const peopleRouter = router({
    *  can show them before anything is written. A mutation, not a query, because the rows go in the
    *  request BODY — a few hundred rows would not survive a query string. */
   importPreview: adminProcedure
-    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional() }))
-    .mutation(({ input }) => validateRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null })),
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional() }))
+    .mutation(({ ctx, input }) => validateRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null, schoolId: importSchool(ctx, input.schoolId) })),
 
   /** Commit. Re-validates and writes everything in ONE transaction — all rows land or none do.
    *  Returns each new student's ID so the admin can print them (never logged, never audited). */
   importCommit: adminProcedure
-    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional() }))
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional() }))
     .mutation(({ ctx, input }) => {
       let res;
       try {
-        res = commitRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null });
+        res = commitRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null, schoolId: importSchool(ctx, input.schoolId) });
       } catch (e) {
         if ((e as Error).message === 'invalid_rows') {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Some rows still have problems — fix them and try again.' });
