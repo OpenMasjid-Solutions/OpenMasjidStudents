@@ -90,6 +90,27 @@ describe('autoMatchColumns', () => {
     const m = autoMatchColumns(['Phone number', 'Guardian phone'], fields);
     expect(m.guardianPhone).toBe(1);
   });
+
+  /**
+   * The headers of a real QuickSchools export, which is the file offices actually arrive with.
+   *
+   * These labels and aliases MIRROR people/import.ts' IMPORT_FIELDS — the server owns them, and it
+   * cannot be imported here (it opens the database at module load). The server suite asserts the
+   * aliases this leans on still exist, so a drift breaks there rather than silently passing here.
+   */
+  it('maps a real export’s headers — none of which are words we chose', () => {
+    const canonical = [
+      { key: 'fullName', label: 'Full name', aliases: ['name', 'full name', 'fullname', 'student', 'student name', 'first name', 'child', 'child name'] },
+      { key: 'dob', label: 'Date of birth', aliases: ['dob', 'birthdate', 'birthday', 'date of birth', 'birth date'] },
+      { key: 'className', label: 'Class', aliases: ['class', 'section', 'level', 'grade', 'homeroom'] },
+      { key: 'guardianName', label: 'Guardian name', aliases: ['guardian', 'parent', 'father', 'mother', 'guardian name'] },
+      { key: 'guardianRelation', label: 'Relationship', aliases: ['relationship', 'relation', 'guardian relationship', 'parent relationship'] },
+      { key: 'guardianPhone', label: 'Guardian phone', aliases: ['phone', 'mobile', 'cell', 'guardian phone', 'contact'] },
+      { key: 'guardianEmail', label: 'Guardian email', aliases: ['email', 'guardian email', 'e-mail'] },
+    ];
+    const m = autoMatchColumns(['Student Name', 'Homeroom', 'Birthday', 'Parent / Guardian', 'Relationship', 'Cell Phone', 'Email'], canonical);
+    expect(m).toMatchObject({ fullName: 0, className: 1, dob: 2, guardianName: 3, guardianRelation: 4, guardianPhone: 5, guardianEmail: 6 });
+  });
 });
 
 describe('toCsv keeps the export safe to open', () => {

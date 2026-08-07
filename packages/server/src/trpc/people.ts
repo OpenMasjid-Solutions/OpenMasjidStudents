@@ -64,7 +64,7 @@ const DOB = z
 const ID = z.string().min(1).max(64);
 const blankToNull = (v: string | undefined): string | null => (v && v.trim() !== '' ? v.trim() : null);
 
-/** One CSV row as the dialog sends it: every cell optional and length-bounded. The real
+/** One spreadsheet row as the dialog sends it: every cell optional and length-bounded. The real
  *  validation lives in people/import.ts so problems can be reported per row, not as one
  *  opaque zod failure the admin can't act on. */
 const CELL = z.string().max(300).optional();
@@ -76,10 +76,15 @@ const IMPORT_ROW = z.object({
   feePlanName: CELL,
   amount: CELL,
   guardianName: CELL,
+  guardianRelation: CELL,
   guardianPhone: CELL,
   guardianEmail: CELL,
   note: CELL,
 });
+
+/** The office's answer to "is a Relative a guardian or an emergency contact?", once per distinct
+ *  relation label the file used (0.48.0). Bounded because it is keyed by text out of a file. */
+const PLACEMENTS = z.record(z.string().max(60), z.enum(['guardian', 'emergency'])).refine((r) => Object.keys(r).length <= 200, 'Too many relationships to place.');
 
 const now = () => new Date();
 
@@ -614,17 +619,23 @@ export const peopleRouter = router({
    *  can show them before anything is written. A mutation, not a query, because the rows go in the
    *  request BODY — a few hundred rows would not survive a query string. */
   importPreview: adminProcedure
-    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional() }))
-    .mutation(({ ctx, input }) => validateRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null, schoolId: importSchool(ctx, input.schoolId) })),
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional(), placements: PLACEMENTS.optional() }))
+    .mutation(({ ctx, input }) =>
+      validateRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null, schoolId: importSchool(ctx, input.schoolId), placements: input.placements }),
+    ),
 
   /** Commit. Re-validates and writes everything in ONE transaction — all rows land or none do.
    *  Returns each new student's ID so the admin can print them (never logged, never audited). */
   importCommit: adminProcedure
-    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional() }))
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional(), placements: PLACEMENTS.optional() }))
     .mutation(({ ctx, input }) => {
       let res;
       try {
-        res = commitRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null, schoolId: importSchool(ctx, input.schoolId) });
+        res = commitRows(input.rows as ImportRow[], {
+          defaultFeePlanId: input.defaultFeePlanId ?? null,
+          schoolId: importSchool(ctx, input.schoolId),
+          placements: input.placements,
+        });
       } catch (e) {
         if ((e as Error).message === 'invalid_rows') {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Some rows still have problems — fix them and try again.' });
@@ -632,7 +643,18 @@ export const peopleRouter = router({
         throw e;
       }
       // Counts only: never the names or the Student IDs (§14).
-      audit(auditActor(ctx), 'student.import', { entity: 'people', detail: { created: res.created, familiesCreated: res.familiesCreated, guardiansCreated: res.guardiansCreated } });
+      audit(auditActor(ctx), 'student.import', {
+        entity: 'people',
+        detail: {
+          created: res.created,
+          familiesCreated: res.familiesCreated,
+          guardiansCreated: res.guardiansCreated,
+          contactsCreated: res.contactsCreated,
+          // How many file rows were folded into the student above them — the one number that says
+          // whether the file was the multi-row shape, without recording any of its contents.
+          mergedRows: res.mergedCount,
+        },
+      });
       return res;
     }),
 

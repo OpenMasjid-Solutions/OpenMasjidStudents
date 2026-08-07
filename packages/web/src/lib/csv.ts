@@ -15,13 +15,38 @@ export function toCsv(headers: string[], rows: unknown[][]): string {
   return [headers.map(escapeCell).join(','), ...rows.map((r) => r.map(escapeCell).join(','))].join('\r\n');
 }
 
+/** A parsed table: the header row, and every data row padded/truncated to its width. */
+export interface Grid {
+  headers: string[];
+  rows: string[][];
+}
+
+/**
+ * The raw cells of a file → a header row + data rows, trimmed and rectangular.
+ *
+ * Shared by both readers (CSV here, XLSX in xlsx.ts) so the two cannot disagree about what the first
+ * row means or how a short row is padded — the import dialog maps columns BY INDEX, so a difference
+ * of one column between the two paths would silently shift every field.
+ *
+ * Fully blank rows are dropped (a spreadsheet is full of them, and a trailing one is not a student);
+ * the first row with anything in it is the header.
+ */
+export function shapeGrid(cells: string[][]): Grid {
+  const nonEmpty = cells.filter((r) => r.some((v) => (v ?? '').trim() !== ''));
+  if (nonEmpty.length === 0) return { headers: [], rows: [] };
+  const headers = nonEmpty[0].map((h) => (h ?? '').trim());
+  const width = headers.length;
+  const rows = nonEmpty.slice(1).map((r) => Array.from({ length: width }, (_, i) => (r[i] ?? '').trim()));
+  return { headers, rows };
+}
+
 /** Parse a CSV file into a header row + data rows (RFC 4180: double-quoted fields, "" escapes, and
  *  newlines inside quotes). Hand-rolled deliberately — a spreadsheet export is the one input we
  *  cannot control the shape of, and this is far less weight than a parser dependency.
  *
  *  Tolerates CRLF or LF, a UTF-8 BOM, and trailing blank lines. Ragged rows are padded/truncated to
  *  the header width so a short final row can't shift every column. */
-export function parseCsv(text: string): { headers: string[]; rows: string[][] } {
+export function parseCsv(text: string): Grid {
   const src = text.replace(/^﻿/, '');
   const rows: string[][] = [];
   let row: string[] = [];
@@ -46,12 +71,7 @@ export function parseCsv(text: string): { headers: string[]; rows: string[][] } 
   // Flush the last cell/row unless the file ended on a clean newline.
   if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
 
-  const nonEmpty = rows.filter((r) => r.some((v) => v.trim() !== ''));
-  if (nonEmpty.length === 0) return { headers: [], rows: [] };
-  const headers = nonEmpty[0].map((h) => h.trim());
-  const width = headers.length;
-  const data = nonEmpty.slice(1).map((r) => Array.from({ length: width }, (_, i) => (r[i] ?? '').trim()));
-  return { headers, rows: data };
+  return shapeGrid(rows);
 }
 
 /** Best-effort header → field matching for the import dialog. Exact label/key wins, then a known

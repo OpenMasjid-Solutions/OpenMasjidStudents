@@ -10,8 +10,36 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 ## [Unreleased]
 
 <!-- Entries are filed under the RELEASE they are heading toward, not per dev build. The dev branch's
-     manifest reads `0.47.0-dev.N`, and the version test checks the CHANGELOG for the base `0.47.0`,
+     manifest reads `0.48.0-dev.N`, and the version test checks the CHANGELOG for the base `0.48.0`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
+
+## [0.48.0]
+
+- **Import the file you already have.** The importer now takes an **Excel workbook (.xlsx)** as well as
+  a CSV, so there is no "save it as a CSV first" step — which was also the step where a date column got
+  reformatted by hand and birthdays quietly moved. Dates come straight out of the workbook as the dates
+  they are. If you upload an older `.xls`, it says so and tells you what to do instead.
+
+- **A student can span several lines.** Exports name the child once and then give each extra parent or
+  relative a **row of their own**, with the name and class columns left blank — a child with a father, a
+  mother and two relatives takes up four lines. Those lines are now **added to the student above them**,
+  so that child ends up with all four adults on one household record instead of three rejected rows.
+  The review step shows which lines became which student, so you confirm the grouping rather than
+  trusting it.
+  - Two kinds of nameless line are **not** merged, on purpose. One that comes before any student has
+    nobody to belong to, and one carrying a class, a birthday or an amount is a **child whose name was
+    left out** — not extra details for the child above. Both are reported as problems to fix, because
+    folding either in would lose a person somewhere nobody would think to look.
+
+- **Fathers and mothers are filed as parents; you decide about everyone else.** A **Relationship**
+  column is now read. Anything that plainly means father or mother is added as a **parent/guardian**
+  without asking. For **Relative** — or anything else the file says — the importer stops once and asks
+  whether people with that relationship should be **parents/guardians** or **emergency contacts**. You
+  answer once per relationship, not once per person, and the choice applies to everybody carrying it.
+  - **"Homeroom", "Birthday", "Relationship" and "Parent / Guardian"** are recognised as column names
+    now, so a QuickSchools export maps itself and you only confirm it.
+  - A phone number or email with **no name beside it** is reported instead of being dropped, and the
+    same adult listed twice for one child becomes **one record** holding what both lines said.
 
 ## [0.47.0]
 
