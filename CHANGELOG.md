@@ -63,6 +63,15 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     change that row again. Any row you haven't saved is called out, and the button top-right says
     **Next** rather than Skip once you've changed something.
 
+- **Parents get a "My year" tab.** Their own children, month by month, showing which months are settled
+  and which still have something on them — the question a parent rings the office about most, and one the
+  portal could never answer before (it could only show what was owed, never the shape of the year).
+  - Built for a phone: each child's months are **chips that wrap**, so twelve months lay out as three rows
+    of four on a phone and one row on a laptop — no sideways dragging anywhere, every chip thumb-sized.
+  - The squares are computed by the **same code as the office's year view**, so a parent ringing up about
+    November is looking at exactly what the volunteer is looking at. Your go-live answers carry through
+    too, so a month you'd already paid before the madrasah started using the app shows as paid.
+
 - **Generating invoices no longer means typing the month twice.** Pick the month from a list — the months
   of your school year, not a free-typed `2026-07` — and write the name ONCE with tags in it:
   `Tuition — [month] [year]`. Tap a tag to insert it, and the line underneath shows exactly how the

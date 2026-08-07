@@ -17,8 +17,11 @@ import { MasjidMark } from '../../components/Glyphs';
 import { trpc } from '../../lib/trpc';
 import { FamilyHome } from './Home';
 import { FamilyPayMethods } from './PayMethods';
+import { FamilyYear } from './Year';
 
-type Tab = 'home' | 'autopay';
+/** The year tab is always available — it needs no Stripe account, only a school year (0.48.0). The
+ *  autopay tab still appears only when card payments are configured; there is nothing behind it otherwise. */
+type Tab = 'home' | 'year' | 'autopay';
 
 export function FamilyApp() {
   const { t } = useTranslation();
@@ -29,7 +32,9 @@ export function FamilyApp() {
   const payConfig = trpc.portal.payConfig.useQuery();
   const cardsOn = !!payConfig.data?.ready;
   // With cards unavailable there is no second tab, and the page is exactly what it was before.
-  const active: Tab = cardsOn ? tab : 'home';
+  const active: Tab = tab === 'autopay' && !cardsOn ? 'home' : tab;
+  /** The year tab has no Stripe dependency, so the bar is worth drawing even without cards. */
+  const tabs: Tab[] = cardsOn ? ['home', 'year', 'autopay'] : ['home', 'year'];
 
   return (
     <div className="family-shell">
@@ -43,9 +48,9 @@ export function FamilyApp() {
         <ProfileMenu onSignedOut={onSignedOut} />
       </header>
       <main className="family-main">
-        {cardsOn && (
+        {tabs.length > 1 && (
           <nav className="fam-tabs" role="tablist" aria-label={t('family.title')}>
-            {(['home', 'autopay'] as const).map((k) => (
+            {tabs.map((k) => (
               <button
                 key={k}
                 type="button"
@@ -54,7 +59,7 @@ export function FamilyApp() {
                 className={`fam-tab ${active === k ? 'is-active' : ''}`}
                 onClick={() => setTab(k)}
               >
-                {t(k === 'home' ? 'family.myFamily' : 'family.autopayCards')}
+                {t(k === 'home' ? 'family.myFamily' : k === 'year' ? 'famYear.tab' : 'family.autopayCards')}
               </button>
             ))}
           </nav>
@@ -67,6 +72,14 @@ export function FamilyApp() {
             </div>
             {/* The home tab's autopay card sends the parent here rather than opening a dialog. */}
             <FamilyHome onManageAutopay={() => setTab('autopay')} />
+          </>
+        ) : active === 'year' ? (
+          <>
+            <div className="fam-hello">
+              <h1>{t('famYear.title')}</h1>
+              <p>{t('famYear.sub')}</p>
+            </div>
+            <FamilyYear />
           </>
         ) : (
           <>

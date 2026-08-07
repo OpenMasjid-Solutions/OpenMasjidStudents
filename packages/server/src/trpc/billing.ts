@@ -17,6 +17,7 @@ import { audit } from '../audit';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
 import { schoolYearMonths } from '../billing/schoolYear';
+import { yearCellsFor } from '../billing/yearCells';
 import { invoiceLines, payableLines } from '../billing/lines';
 import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
 import { commitCarryIn, defaultGoLivePeriod, midYearPlan, noteCarryIn } from '../billing/carryIn';
@@ -616,36 +617,9 @@ export const billingRouter = router({
       const months = schoolYearMonths(year.startYear, year.startMonth, year.endMonth);
       const columns = getYearViewColumns();
       const periodKeys = months.map((m) => m.periodKey);
-      // The first month this install bills for, set by the mid-year go-live (settings, 0.43.0). Period
-      // keys are `YYYY-MM`, so a plain string compare orders them correctly.
+      // The pre-go-live marking and the invoice states both come from billing/yearCells.ts, shared with
+      // the parent portal so a family and the office are never looking at different squares (0.48.0).
       const startPeriod = getBillingStartPeriod();
-
-      /**
-       * What the office told the go-live wizard, per child, and whether the carried-forward bill it
-       * produced has since been paid (0.48.0).
-       *
-       * These two together are what lets a pre-go-live month say something useful. "Paid through
-       * November" means April–November were settled before this app existed and December–January were
-       * not — and the arrears sit in ONE carry-in invoice, so once that invoice is cleared those months
-       * are settled too. Read once for the grid rather than per cell.
-       */
-      const carryByStudent = new Map<string, { paidThrough: string | null }>();
-      const carryOwing = new Set<string>();
-      if (startPeriod) {
-        for (const c of db.select({ studentId: carryIns.studentId, paidThrough: carryIns.paidThrough }).from(carryIns).all()) {
-          carryByStudent.set(c.studentId, { paidThrough: c.paidThrough });
-        }
-        // Which children still OWE something on their carried-forward bill. Deliberately the positive
-        // test rather than "has it been settled": a child can have been recorded as behind and yet have
-        // no carry-in invoice at all — one whose fees are per-term, or waived, has a monthly rate of
-        // zero, so the wizard derived nothing to bill. Asking "is anything outstanding" answers that
-        // correctly (nothing is), where asking "was it paid off" would have marked those months owed
-        // forever against money that never existed.
-        for (const inv of db.select({ id: invoices.id, studentId: invoices.studentId, status: invoices.status }).from(invoices).where(eq(invoices.periodKey, CARRY_IN_PERIOD)).all()) {
-          if (inv.status === 'void') continue;
-          if (invoiceTotal(db, inv.id) - invoicePaid(db, inv.id) > 0) carryOwing.add(inv.studentId);
-        }
-      }
 
       const studentRows = db
         .select({
@@ -683,18 +657,7 @@ export const billingRouter = router({
         monthly.set(r.studentId, { amountCents: amt, note: r.note ?? prev?.note ?? null });
       }
 
-      // One pass over the year's invoices → per (STUDENT, period) status. Each row now reports the
-      // child's own bill rather than the household's, so two siblings can legitimately differ in the
-      // same month — which is the whole point of per-student invoices.
-      const cellByStudent = new Map<string, Map<string, { status: string; totalCents: number; paidCents: number; invoiceId: string }>>();
-      if (periodKeys.length) {
-        for (const inv of db.select({ id: invoices.id, studentId: invoices.studentId, periodKey: invoices.periodKey, status: invoices.status }).from(invoices).where(inArray(invoices.periodKey, periodKeys)).all()) {
-          const total = invoiceTotal(db, inv.id);
-          const paid = invoicePaid(db, inv.id);
-          if (!cellByStudent.has(inv.studentId)) cellByStudent.set(inv.studentId, new Map());
-          cellByStudent.get(inv.studentId)!.set(inv.periodKey, { status: inv.status, totalCents: total, paidCents: paid, invoiceId: inv.id });
-        }
-      }
+      const cellsByStudent = yearCellsFor(studentRows.map((r) => r.id), periodKeys);
 
       // Guardian contact, only when a guardian column is actually enabled — and classified by WHO each
       // adult is, so each number gets its own labelled, tappable column (§ settings/YEAR_VIEW_COLUMNS).
@@ -734,7 +697,7 @@ export const billingRouter = router({
 
       const rows = studentRows.map((s) => {
         const m = monthly.get(s.id);
-        const cells = cellByStudent.get(s.id);
+        const cells = cellsByStudent.get(s.id) ?? [];
         const gs = guardiansByFamily.get(s.familyId) ?? [];
         return {
           studentId: s.id,
@@ -748,35 +711,7 @@ export const billingRouter = router({
           courseName: s.courseName,
           monthlyAmountCents: m?.amountCents ?? 0,
           feeNote: m?.note ?? null,
-          cells: months.map((mo) => {
-            const c = cells?.get(mo.periodKey);
-            // A month BEFORE this install started billing is not a gap, it is a month that was never
-            // ours to bill (0.48.0). Until now it looked identical to "somebody forgot to generate
-            // September", which is the one thing the mid-year go-live exists to settle — an office that
-            // adopted the app in February saw five empty columns and no way to tell. Marked from the
-            // setting the wizard itself writes, so the grid follows the go-live with nothing to keep in
-            // step by hand.
-            if (!c) {
-              if (!startPeriod || mo.periodKey >= startPeriod) return { periodKey: mo.periodKey, status: 'none' as const };
-              // What the office said about this child, if they were asked. `paidThrough` null means
-              // NOTHING was said, which is deliberately not the same as "square" — the grid must say
-              // "we don't know" rather than claim a month was paid.
-              const said = carryByStudent.get(s.id);
-              if (!said?.paidThrough) return { periodKey: mo.periodKey, status: 'before' as const };
-              // Settled before this app existed…
-              if (mo.periodKey <= said.paidThrough) return { periodKey: mo.periodKey, status: 'settled' as const };
-              // …or one of the months that came in as the carried-forward bill. It reads as still-owed
-              // only while that bill actually is: following the money rather than storing an outcome
-              // keeps the screen true after a parent pays it off, and stops a child who was recorded as
-              // behind but had nothing billable (per-term fees, or a waived one) showing arrears that
-              // never existed.
-              return { periodKey: mo.periodKey, status: carryOwing.has(s.id) ? ('carried' as const) : ('settled' as const) };
-            }
-            const state = c.status === 'void' ? 'void' : c.paidCents >= c.totalCents && c.totalCents > 0 ? 'paid' : c.paidCents > 0 ? 'partial' : 'open';
-            // A real invoice always wins, even in a pre-start month: one generated before the floor was
-            // set is a fact about money and must not be painted over as "not ours".
-            return { periodKey: mo.periodKey, status: state, totalCents: c.totalCents, paidCents: c.paidCents, invoiceId: c.invoiceId };
-          }),
+          cells,
           // Only enabled columns are populated — a disabled one is absent from the payload entirely.
           extra: {
             ...(columns.includes('studentId') ? { studentCode: s.studentCode } : {}),

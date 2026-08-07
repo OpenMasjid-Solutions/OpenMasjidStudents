@@ -247,3 +247,51 @@
 }
 
 /* The anonymous invite-accept / register pages reuse the .auth-card look — no extra CSS. */
+
+/* ── The year at a glance (0.48.0) ─────────────────────────────────────────────
+   Chips that WRAP, not a table. The office's version is a 200×12 grid you read across, which is right at
+   a desk; on a phone twelve columns is a sideways drag with a sticky name column. Wrapping lays the same
+   twelve months out as three rows of four on a phone and one row of twelve on a laptop, with no
+   horizontal scrolling and every chip a thumb-sized target. */
+.year-strip { margin-block-end: 1rem; }
+.year-strip-name { font-size: 1rem; margin: 0 0 0.4rem; }
+.year-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.year-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  min-width: 2.9rem;
+  min-height: 2.9rem;
+  justify-content: center;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.16));
+  border-radius: var(--radius-button, 10px);
+  background: color-mix(in srgb, var(--color-ink) 5%, transparent);
+}
+.year-chip-month {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-muted);
+}
+.year-chip-mark { font-size: 1.05rem; line-height: 1; font-weight: 700; }
+
+/* The same four meanings the office's grid uses, in the same colours, so a parent on the phone and the
+   volunteer at the desk are describing one thing. `settled` is a month paid before this app arrived and
+   `carried` is one still inside a carried-forward bill — both hollow, because neither is an invoice this
+   app raised and collected. */
+.year-chip.is-paid { border-color: color-mix(in srgb, var(--color-success) 45%, transparent); background: color-mix(in srgb, var(--color-success) 14%, transparent); }
+.year-chip.is-paid .year-chip-mark { color: var(--color-success); }
+.year-chip.is-partial { border-color: color-mix(in srgb, var(--color-warning) 45%, transparent); background: color-mix(in srgb, var(--color-warning) 14%, transparent); }
+.year-chip.is-partial .year-chip-mark { color: var(--color-warning); }
+.year-chip.is-open .year-chip-mark { color: var(--color-ink); }
+.year-chip.is-carried .year-chip-mark { color: var(--color-warning); }
+.year-chip.is-settled .year-chip-mark { color: color-mix(in srgb, var(--color-success) 65%, var(--color-ink-faint)); }
+.year-chip.is-void .year-chip-mark,
+.year-chip.is-none .year-chip-mark,
+.year-chip.is-before .year-chip-mark { color: var(--color-ink-faint); }

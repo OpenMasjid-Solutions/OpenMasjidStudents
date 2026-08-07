@@ -12,9 +12,12 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, desc, inArray } from 'drizzle-orm';
 import { router, parentProcedure } from './trpc';
 import { db } from '../db';
-import { families, students, invoices, invoiceItems, payments, paymentMethods, autopayEnrollments } from '../db/schema';
+import { families, students, invoices, invoiceItems, payments, paymentMethods, autopayEnrollments, schoolYears } from '../db/schema';
 import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit, type SplitShare } from '../billing/ledger';
 import { invoiceLines, type LineKind } from '../billing/lines';
+import { schoolYearMonths } from '../billing/schoolYear';
+import { yearCellsFor, type YearCell } from '../billing/yearCells';
+import { listSchools } from '../schools';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getCurrency } from '../settings';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
@@ -24,6 +27,16 @@ import { sendReceipt } from '../mail/notify';
 import { makeLog } from '../logger';
 
 const payLog = makeLog('portal');
+
+/** One school's year, as the portal's year tab renders it. A household can span two schools, and each has
+ *  its own calendar — hence blocks rather than one grid (0.48.0). */
+interface PortalYearBlock {
+  /** Set only when this masjid runs more than one school. */
+  schoolName: string | null;
+  yearLabel: string;
+  months: { periodKey: string; label: string }[];
+  students: { studentId: string; fullName: string; cells: YearCell[] }[];
+}
 
 /**
  * Turn the lines a parent ticked into a per-child split carrying each child's instruction — or null if
@@ -62,6 +75,62 @@ function lineShares(familyId: string, lines: { itemId: string; amountCents: numb
 }
 
 export const portalRouter = router({
+  /**
+   * The year at a glance, for this parent's own children (0.48.0).
+   *
+   * The office has had this view since 0.42.0 and it answers the question a parent asks most often —
+   * "which months have we actually paid?" — better than a list of open bills does, because the months
+   * that are FINE are the useful context. A parent could see what they owed but never see the shape of
+   * the year.
+   *
+   * The squares are computed by `yearCellsFor`, the same function the staff grid uses, so a parent ringing
+   * the office about November is looking at exactly what the office is looking at.
+   *
+   * GROUPED BY SCHOOL, because a school year belongs to a school (0.47.0) and a household is not scoped to
+   * one — a family with a child in the weekend maktab and another in the full-time hifz programme has two
+   * different sets of months, and laying them on one axis would be nonsense. Almost always one group.
+   *
+   * Scoping is by `parentFamilyIds`, the same wall as every other procedure here: a parent can only ever
+   * name their own children because they never name any (§14 — enforced in the query, not the UI).
+   */
+  yearGrid: parentProcedure.query(({ ctx }) => {
+    const famIds = parentFamilyIds(ctx);
+    if (!famIds.length) return { blocks: [] as PortalYearBlock[] };
+
+    const kids = db
+      .select({ id: students.id, fullName: students.fullName, schoolId: students.schoolId })
+      .from(students)
+      .where(and(inArray(students.familyId, famIds), eq(students.status, 'active')))
+      .orderBy(students.fullName)
+      .all();
+    if (!kids.length) return { blocks: [] as PortalYearBlock[] };
+
+    const schoolIds = [...new Set(kids.map((k) => k.schoolId ?? ''))];
+    const multiSchool = listSchools().length > 1;
+    const blocks: PortalYearBlock[] = [];
+
+    for (const schoolId of schoolIds) {
+      const mine = kids.filter((k) => (k.schoolId ?? '') === schoolId);
+      const year = schoolId
+        ? db.select().from(schoolYears).where(and(eq(schoolYears.isCurrent, true), eq(schoolYears.schoolId, schoolId))).get()
+        : db.select().from(schoolYears).where(eq(schoolYears.isCurrent, true)).get();
+      // No year configured, or one without a start year: there are no months to lay out, so the block is
+      // skipped rather than rendered empty. The home tab still shows every bill and the balance.
+      if (!year || year.startYear == null) continue;
+      const months = schoolYearMonths(year.startYear, year.startMonth, year.endMonth);
+      const cells = yearCellsFor(mine.map((k) => k.id), months.map((m) => m.periodKey));
+      blocks.push({
+        // Named only when this masjid runs more than one school; otherwise the name is just the madrasah's
+        // and repeating it above the grid reads like a fault.
+        schoolName: multiSchool && schoolId ? listSchools().find((s) => s.id === schoolId)?.name ?? null : null,
+        yearLabel: year.label,
+        months: months.map((m) => ({ periodKey: m.periodKey, label: m.label })),
+        students: mine.map((k) => ({ studentId: k.id, fullName: k.fullName, cells: cells.get(k.id) ?? [] })),
+      });
+    }
+    return { blocks };
+  }),
+
   /** Everything the My-Family home needs, for each family this parent is linked to. */
   myFamily: parentProcedure.query(({ ctx }) => {
     const currency = getCurrency();

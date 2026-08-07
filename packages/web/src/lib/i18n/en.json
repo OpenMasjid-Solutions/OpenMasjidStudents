@@ -1126,5 +1126,20 @@
     "search": "Find a student",
     "searchHint": "Type a name",
     "searchCount": "Showing {{shown}} of {{total}} — everyone else keeps whatever you have already set for them."
+  },
+  "famYear": {
+    "tab": "My year",
+    "title": "Your year at a glance",
+    "sub": "Which months are settled, and which still have something on them.",
+    "none": "There is no school year set up yet, so there are no months to show. Everything you owe is on the My family tab.",
+    "cell_paid": "Paid",
+    "cell_partial": "Part paid",
+    "cell_open": "Not paid yet",
+    "cell_void": "Cancelled",
+    "cell_none": "Not billed yet",
+    "cell_settled": "Paid — before the madrasah started using this app",
+    "cell_carried": "Owed — part of your carried-forward balance",
+    "cell_before": "Before the madrasah started using this app",
+    "legend": "✓ paid · ½ part paid · ● still to pay · · not billed yet. A hollow ✓ is a month you had already paid before the madrasah started using this app. If anything here looks wrong, tell the office."
   }
 }
