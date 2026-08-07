@@ -9,9 +9,11 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { trpc } from '../../lib/trpc';
+import { withBase } from '../../lib/base';
 import { autoMatchColumns, toCsv, downloadCsv } from '../../lib/csv';
 import { parseSpreadsheet, XlsxError } from '../../lib/xlsx';
 import { formatMoney } from '../../lib/money';
+import { useSchool } from '../../components/SchoolTabs';
 import { SiblingSuggestions } from '../../components/SiblingSuggestions';
 
 /**
@@ -44,6 +46,12 @@ function fileLines(sourceRows: number[]): string {
 export function ImportStudents() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
+  // Which school the roster lands in, and which school's ID sheet the Print link opens. '' / undefined
+  // means the switcher is on "all" — which is what a single-school install always is, and where the
+  // server applies its own scope. Passed to BOTH preview and commit so they cannot disagree: a preview
+  // that checked class names against one school while the commit wrote them into another would report
+  // a clean file and then import it wrong.
+  const { schoolId, arg: schoolArg } = useSchool();
   const fields = trpc.people.importTemplate.useQuery();
   const plans = trpc.billing.feePlanList.useQuery();
   const preview = trpc.people.importPreview.useMutation();
@@ -114,6 +122,7 @@ export function ImportStudents() {
     const res = await preview.mutateAsync({
       rows,
       defaultFeePlanId: defaultFeePlanId || undefined,
+      schoolId: schoolArg,
       placements: Object.keys(chosen).length ? chosen : undefined,
     });
     const unanswered = res.askRelations.filter((r) => !(r.key in chosen));
@@ -131,6 +140,7 @@ export function ImportStudents() {
     await commit.mutateAsync({
       rows,
       defaultFeePlanId: defaultFeePlanId || undefined,
+      schoolId: schoolArg,
       placements: Object.keys(placements).length ? placements : undefined,
     });
     await Promise.all([
@@ -369,7 +379,15 @@ export function ImportStudents() {
             <h2>{t('import.done')}</h2>
             <span className="spacer" />
             <button type="button" className="btn btn--ghost btn--sm no-print" onClick={() => setStep('siblings')}>{t('import.backToSiblings')}</button>
-            <button type="button" className="btn btn--ghost btn--sm no-print" onClick={() => window.print()}>{t('import.print')}</button>
+            {/* A real document, not `window.print()` on this window. That printed the app — the page
+                behind, the window chrome, the dock — and spread 39 children over five sheets. The sheet
+                behind this link is built on the server with the masjid's letterhead, grouped by class,
+                two children to a row (people/idSheet.ts). It lists the whole active roster rather than
+                only this import's rows, which is both the more useful sheet and the reason it does not
+                need 36 ids in a URL. */}
+            <a className="btn btn--ghost btn--sm no-print" href={withBase(`/sheets/ids/${schoolId || 'all'}`)} target="_blank" rel="noopener noreferrer">
+              {t('import.printIdSheet')}
+            </a>
           </div>
           <p className="hint">
             {t('import.summary', { students: commit.data.created, guardians: commit.data.guardiansCreated })}

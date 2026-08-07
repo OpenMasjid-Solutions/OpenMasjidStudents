@@ -70,6 +70,56 @@ const get = (familyId: string, opts: { cookie?: string; tunnel?: boolean } = {})
     },
   });
 
+/** The Student ID sheet (0.48.0) shares the gate. It lists EVERY child's ID, so it is if anything the
+ *  most worth confirming is behind it — a leak there is the whole install, not one household. */
+const getIds = (scope: string, opts: { cookie?: string; tunnel?: boolean } = {}) =>
+  http.inject({
+    method: 'GET',
+    url: `/sheets/ids/${scope}`,
+    headers: {
+      ...(opts.cookie ? { cookie: opts.cookie } : {}),
+      ...(opts.tunnel ? { 'cf-ray': 'test-ray' } : {}),
+    },
+  });
+
+describe('GET /sheets/ids/:id — the access wall', () => {
+  it('serves admin on the LAN and finance from either origin', async () => {
+    household();
+    expect((await getIds('all', { cookie: cookieFor('admin') })).statusCode).toBe(200);
+    expect((await getIds('all', { cookie: cookieFor('finance') })).statusCode).toBe(200);
+    expect((await getIds('all', { cookie: cookieFor('finance'), tunnel: true })).statusCode).toBe(200);
+  });
+
+  it('refuses an admin over the tunnel, a parent, and no session — and leaks no ID in the refusal', async () => {
+    household();
+    for (const res of [
+      await getIds('all', { cookie: cookieFor('admin'), tunnel: true }),
+      await getIds('all', { cookie: cookieFor('parent') }),
+      await getIds('all'),
+    ]) {
+      expect(res.statusCode).toBe(403);
+      expect(res.body).not.toContain('YUS1234');
+    }
+  });
+
+  it('404s a school that does not exist rather than falling back to every student', async () => {
+    household();
+    const res = await getIds('sch_nope', { cookie: cookieFor('admin') });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).not.toContain('YUS1234');
+  });
+
+  it('renders the roster under the same hardened headers as the statement', async () => {
+    household();
+    const res = await getIds('all', { cookie: cookieFor('admin') });
+    expect(res.body).toContain('YUS1234');
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    expect(String(res.headers['content-security-policy'])).toContain("default-src 'none'");
+  });
+});
+
 describe('GET /statements/family/:id — the access wall', () => {
   it('serves admin on the LAN and finance from either origin', async () => {
     const fam = household();

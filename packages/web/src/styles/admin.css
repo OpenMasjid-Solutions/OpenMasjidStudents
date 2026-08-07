@@ -584,11 +584,18 @@
   /* The shell's own gutters are screen chrome; on paper they are just lost width. */
   .page { padding: 0 !important; }
   .section { padding: 0 !important; margin-block: 0 !important; }
+  /* `.win-pos` is the floating window, and it MUST be hidden here. This said `.win-frame` — a class
+     that does not exist anywhere in the app (WindowManager renders win-pos > win > win-head/win-body),
+     so it hid nothing and every print with a window open came out as a picture of the app: the page
+     behind it, the window chrome, and the roster inside it spread over five sheets. Nothing prints
+     from inside a window now — the printable documents are server-rendered pages of their own
+     (billing/statementRoutes.ts) — so the only correct thing for a window to do on paper is vanish.
+     The Year view is the one screen that prints ITSELF, and it prints the page, not a window. */
   .no-print,
   .topbar,
   .dock,
   .scene-bg,
-  .win-frame { display: none !important; }
+  .win-pos { display: none !important; }
   .app-main { padding: 0 !important; }
   .print-area, .week-grid { break-inside: avoid; }
   .week-day, .week-session, .glass, .glass-inset {

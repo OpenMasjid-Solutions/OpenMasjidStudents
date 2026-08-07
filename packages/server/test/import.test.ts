@@ -280,6 +280,53 @@ describe('a student can span several rows', () => {
     expect(res).toMatchObject({ guardiansCreated: 4, contactsCreated: 0 });
   });
 
+  /**
+   * The rule that keeps a household contactable. An aunt may be an emergency contact for a child whose
+   * parents are on file; for a child whose ONLY listed adult is the aunt, filing her as one would leave
+   * the household with no guardian at all — nobody to invite to the portal, nobody the office may ring
+   * about tuition, and a family sheet that prints "no parent or guardian details on file".
+   */
+  it('keeps the only adult a child has as a guardian, whatever the answer was', async () => {
+    const { admin, planId } = await base();
+    const rows = [
+      // Parents on file, so the relative genuinely could go either way.
+      { fullName: 'Abrar Aadi', guardianName: 'Rashed Shahin', guardianRelation: 'Father' },
+      { guardianName: 'Shyd Chowdhury', guardianRelation: 'Relative', guardianPhone: '(718) 427-5235' },
+      // No parent anywhere on this child's rows — the aunt is all there is.
+      { fullName: 'Anas Hasnat', guardianName: 'Halima Begum', guardianRelation: 'Relative', guardianPhone: '(347) 963-0213' },
+    ];
+
+    const p = await admin.people.importPreview({ defaultFeePlanId: planId, rows, placements: { relative: 'emergency' } });
+    const abrar = p.rows.find((r) => r.resolved?.fullName === 'Abrar Aadi')!;
+    const anas = p.rows.find((r) => r.resolved?.fullName === 'Anas Hasnat')!;
+    expect(abrar.contacts.find((c) => c.name === 'Shyd Chowdhury')).toMatchObject({ placement: 'emergency', asked: true });
+    // Same relationship, same answer, different outcome — because it is the last adult this child has.
+    expect(anas.contacts[0]).toMatchObject({ name: 'Halima Begum', placement: 'guardian', asked: false });
+
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows, placements: { relative: 'emergency' } });
+    expect(res).toMatchObject({ created: 2, guardiansCreated: 2, contactsCreated: 1 });
+
+    // Every household ends up with somebody the office can contact, which is the point.
+    for (const fam of await admin.people.directory()) {
+      const d = await admin.people.familyGet({ id: fam.id });
+      expect(d.guardians.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('does not ask at all when no child has a parent to place a relative alongside', async () => {
+    const { admin, planId } = await base();
+    const r = await admin.people.importPreview({
+      defaultFeePlanId: planId,
+      rows: [
+        { fullName: 'Anas Hasnat', guardianName: 'Halima Begum', guardianRelation: 'Relative' },
+        { fullName: 'Aryan Ahmed', guardianName: 'Uncle Nadir', guardianRelation: 'Uncle' },
+      ],
+    });
+    // A question whose answer could not change anything is worse than no question.
+    expect(r.askRelations).toEqual([]);
+    expect(r.rows.every((row) => row.contacts.every((c) => c.placement === 'guardian' && !c.asked))).toBe(true);
+  });
+
   it('normalises the words an office types for a parent, and asks about the ones that only look like one', async () => {
     const { admin, planId } = await base();
     const r = await admin.people.importPreview({

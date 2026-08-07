@@ -12,11 +12,12 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { Users, Upload } from 'lucide-react';
+import { Printer, Users, Upload } from 'lucide-react';
 import { staggerContainer, staggerItem } from '../../lib/motion';
 import { ageFromDob } from '../../lib/age';
 import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
+import { withBase } from '../../lib/base';
 import { useWindows } from '../../components/Windows';
 import { SchoolTabs, useSchool } from '../../components/SchoolTabs';
 import { FamilyDetail } from './FamilyDetail';
@@ -178,6 +179,13 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('students.title')}</h1>
         <span className="chip is-muted">{t('students.count', { count: total })}</span>
         <span className="spacer" />
+        {/* The Student ID sheet (0.48.0) — the whole active roster with everyone's ID, by class. Not
+            behind `readOnly`: finance reads Student IDs and prints these, and the route allows exactly
+            the same two roles. It is a page of its own rather than a print of this screen, which is what
+            the import's Print button used to do (people/idSheet.ts). */}
+        <a className="btn btn--ghost no-mobile" href={withBase(`/sheets/ids/${schoolId ?? 'all'}`)} target="_blank" rel="noopener noreferrer">
+          <Printer size={14} /> {t('students.printIds')}
+        </a>
         {!readOnly && (
           <>
             {/* Reachable outside the import too: an install that imported before 0.42.0 has households

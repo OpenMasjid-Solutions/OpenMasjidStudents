@@ -182,7 +182,8 @@
     "allCourses": "All",
     "filterByCourse": "Filter by course",
     "showingOf": "Showing {{shown}} of {{total}} students",
-    "withdrawn": "Withdrawn"
+    "withdrawn": "Withdrawn",
+    "printIds": "Print IDs"
   },
   "import": {
     "title": "Import students",
@@ -222,7 +223,7 @@
     "commit": "Import {{count}} students",
     "done": "Import complete",
     "summary": "Added {{students}} students and {{guardians}} guardians.",
-    "idsAssigned": "These are the Student IDs each child was given. Print them now if it helps — they’re also on every student’s record and on their statement.",
+    "idsAssigned": "These are the Student IDs each child was given. They’re also on every student’s record and on their family’s statement — and the ID sheet below gives you the whole roster, by class, on one page you can print.",
     "print": "Print",
     "pickFileHint": "An Excel workbook (.xlsx) or a CSV. Exported straight from your old system is fine — you don’t need to tidy it up first.",
     "tooManyRows": "That file has {{count}} rows, and an import can take {{max}} at a time. Split it into a few files and import them one after another.",
@@ -236,7 +237,7 @@
     "contactNoName": "no name",
     "emergencyShort": "Emergency",
     "placeContacts": "Where do these people go?",
-    "placeContactsIntro": "A father or a mother is added as a parent automatically. These relationships could be either — decide once for each and everybody with that relationship follows.",
+    "placeContactsIntro": "A father or a mother is added as a parent automatically. These relationships could be either — decide once for each and everybody with that relationship follows. A child whose only listed adult is a relative keeps them as a guardian either way, so the household still has somebody the office can contact.",
     "relationship": "Relationship",
     "asGuardian": "Parent / guardian",
     "asEmergency": "Emergency contact",
@@ -252,7 +253,8 @@
       "noInflate": "This browser cannot open .xlsx files. Save the sheet as a CSV and upload that instead.",
       "tooBig": "That workbook is too large to read here. Save the sheet you need as its own file and upload that.",
       "compression": "That workbook is packed in a way we cannot read. Open it in Excel and use Save As to make a fresh .xlsx or CSV."
-    }
+    },
+    "printIdSheet": "Print the ID sheet"
   },
   "year": {
     "title": "Year view",

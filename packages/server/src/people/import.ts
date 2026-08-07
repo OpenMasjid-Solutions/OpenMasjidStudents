@@ -195,11 +195,31 @@ export function needsPlacement(relation: string): boolean {
   return k !== '' && !PARENT_RELATIONS.has(k);
 }
 
-function placementFor(relation: string, placements: Placements): ContactPlacement {
-  if (!needsPlacement(relation)) return 'guardian';
-  // An unanswered label defaults to guardian: these came out of a guardian column, and losing a
-  // parent's phone number because a question went unanswered is the worse of the two failures.
-  return placements[key(relation)] ?? 'guardian';
+/**
+ * Where one child's adults are filed. Per CHILD, not per contact, because the answer depends on who
+ * else is on that child's rows (0.48.0).
+ *
+ * A CHILD WITH NO FATHER OR MOTHER LISTED KEEPS EVERY ADULT AS A GUARDIAN, whatever the office said
+ * about that relationship. An aunt may be an emergency contact for a child whose parents are on file;
+ * for a child whose only listed adult IS the aunt, filing her as an emergency contact leaves the
+ * household with nobody — nobody to invite to the parent portal, nobody the office may ring about
+ * tuition, and a family sheet that prints "no parent or guardian details on file". The answer to
+ * "guardian or emergency contact?" only makes sense as "as well as the parents", so where there are no
+ * parents it does not apply.
+ *
+ * The same function serves the preview and the commit, so what the office is shown is what is written.
+ */
+function resolveContacts(list: ImportContact[], placements: Placements): ResolvedContact[] {
+  const hasParent = list.some((c) => PARENT_RELATIONS.has(key(c.relation)));
+  return list.map((c) => ({
+    ...c,
+    // An unanswered label defaults to guardian too: these came out of a guardian column, and losing a
+    // parent's phone number because a question went unanswered is the worse of the two failures.
+    placement: !hasParent || !needsPlacement(c.relation) ? 'guardian' : placements[key(c.relation)] ?? 'guardian',
+    // Not asked about when the child has no parent — the answer could not change anything, and a
+    // question whose answer is ignored is worse than no question.
+    asked: hasParent && needsPlacement(c.relation),
+  }));
 }
 
 /** How a guardian's relation is STORED: the canonical code when the word is one the guardian form
@@ -416,11 +436,7 @@ export function validateRows(rows: ImportRow[], opts: ImportOpts): ValidateResul
     const amt = parseAmountCents(r.amount);
     if (amt === 'bad') errors.push(`Amount "${norm(r.amount)}" is not a number.`);
 
-    const contacts: ResolvedContact[] = dedupeContacts(m.contacts).map((c) => ({
-      ...c,
-      placement: placementFor(c.relation, placements),
-      asked: needsPlacement(c.relation),
-    }));
+    const contacts = resolveContacts(dedupeContacts(m.contacts), placements);
     for (const c of contacts) {
       // A phone number with nobody attached to it cannot be filed, and dropping it silently would
       // lose the one detail the office cares most about. Which row it came from changes the advice:
@@ -551,8 +567,8 @@ export function commitRows(rows: ImportRow[], opts: ImportOpts): CommitResult {
       // dedupe: two children's blocks naming the same parent get a guardian record each, because
       // they are in separate households until somebody links the children — and that link is what
       // merges the duplicate, on a record where it is visible and can be removed.
-      for (const c of dedupeContacts(m.contacts)) {
-        if (placementFor(c.relation, placements) === 'emergency') {
+      for (const c of resolveContacts(dedupeContacts(m.contacts), placements)) {
+        if (c.placement === 'emergency') {
           // An emergency contact keeps a name, a number and what they are to the child. There is no
           // email column on one, by design — they are who you ring, not who you bill or invite.
           tx.insert(emergencyContacts)

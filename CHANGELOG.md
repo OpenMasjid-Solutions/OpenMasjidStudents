@@ -36,10 +36,23 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   without asking. For **Relative** — or anything else the file says — the importer stops once and asks
   whether people with that relationship should be **parents/guardians** or **emergency contacts**. You
   answer once per relationship, not once per person, and the choice applies to everybody carrying it.
+  - **A child whose only listed adult is a relative keeps them as a guardian**, whichever way you
+    answered. Filing them as an emergency contact would leave that household with nobody — nobody to
+    invite to the portal and nobody the office may ring about tuition — so the question is only asked
+    where there is a parent for the relative to sit alongside.
   - **"Homeroom", "Birthday", "Relationship" and "Parent / Guardian"** are recognised as column names
     now, so a QuickSchools export maps itself and you only confirm it.
   - A phone number or email with **no name beside it** is reported instead of being dropped, and the
     same adult listed twice for one child becomes **one record** holding what both lines said.
+
+- **A printable Student ID sheet.** **Students → Print IDs** gives you every active child's Student ID,
+  grouped by class, two to a row, on your letterhead with your address at the foot — one page for a
+  class roster instead of five. It is also what the Print button at the end of an import now opens.
+  - This replaces a button that printed **whatever was on the screen**: the page behind the window, the
+    window frame, the dock, and a roster of 39 children spread over five sheets of paper. Printing
+    anything from a window did that; it now prints the document, not the app.
+  - The sheet is admin and finance only, like your statements and invoices, and it says on its own face
+    that it is an office copy — a Student ID is all somebody needs to look up a child's balance.
 
 ## [0.47.0]
 
