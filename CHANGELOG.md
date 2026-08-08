@@ -15,196 +15,94 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [0.48.0]
 
-- **Import the file you already have.** The importer now takes an **Excel workbook (.xlsx)** as well as
-  a CSV, so there is no "save it as a CSV first" step — which was also the step where a date column got
-  reformatted by hand and birthdays quietly moved. Dates come straight out of the workbook as the dates
-  they are. If you upload an older `.xls`, it says so and tells you what to do instead.
+- **Import an Excel workbook (.xlsx)**, not just a CSV — no "save it as a CSV first" step, and birthdays
+  come out as the dates they are. An older `.xls` is refused with a note on what to do instead.
 
-- **A student can span several lines.** Exports name the child once and then give each extra parent or
-  relative a **row of their own**, with the name and class columns left blank — a child with a father, a
-  mother and two relatives takes up four lines. Those lines are now **added to the student above them**,
-  so that child ends up with all four adults on one household record instead of three rejected rows.
-  The review step shows which lines became which student, so you confirm the grouping rather than
-  trusting it.
-  - Two kinds of nameless line are **not** merged, on purpose. One that comes before any student has
-    nobody to belong to, and one carrying a class, a birthday or an amount is a **child whose name was
-    left out** — not extra details for the child above. Both are reported as problems to fix, because
-    folding either in would lose a person somewhere nobody would think to look.
+- **A student can span several lines.** Exports give each extra parent or relative a row of their own,
+  with the name column blank. Those lines are now added to the student above them, and the review step
+  shows which lines became which student. A nameless line that carries a class, a birthday or an amount
+  is treated as a child whose name was left out, and reported rather than folded in.
 
-- **Fathers and mothers are filed as parents; you decide about everyone else.** A **Relationship**
-  column is now read. Anything that plainly means father or mother is added as a **parent/guardian**
-  without asking. For **Relative** — or anything else the file says — the importer stops once and asks
-  whether people with that relationship should be **parents/guardians** or **emergency contacts**. You
-  answer once per relationship, not once per person, and the choice applies to everybody carrying it.
-  - **A child whose only listed adult is a relative keeps them as a guardian**, whichever way you
-    answered. Filing them as an emergency contact would leave that household with nobody — nobody to
-    invite to the portal and nobody the office may ring about tuition — so the question is only asked
-    where there is a parent for the relative to sit alongside.
-  - **"Homeroom", "Birthday", "Relationship" and "Parent / Guardian"** are recognised as column names
-    now, so a QuickSchools export maps itself and you only confirm it.
-  - A phone number or email with **no name beside it** is reported instead of being dropped, and the
-    same adult listed twice for one child becomes **one record** holding what both lines said.
+- **Fathers and mothers are filed as parents; you decide about everyone else.** The **Relationship**
+  column is now read. For "Relative" — or anything else — the importer asks once whether people with
+  that relationship are parents/guardians or emergency contacts, and applies your answer to all of them.
+  A child whose only listed adult is a relative keeps them as a guardian either way, so no household is
+  left with nobody to contact.
 
-- **Set the right fee before you leave the import.** After the sibling step, the import now shows every
-  student it added with their **plan** and the **amount** they'll be billed, both editable on the spot.
-  Every row came in on the same plan because a spreadsheet cannot say "the second child pays less" — and
-  the reductions a madrasah actually gives are per household, so the moment to fix them is once the
-  brothers and sisters are grouped and you can see who is whose. Skippable, and all of it is still
-  changeable later on a child's own record.
-  - Changing a child's plan **replaces** the old one. It does not add a second — that would bill them
-    twice. Leave the amount at the plan's own price and they simply follow the plan, including any
-    later change you make to it.
-  - **A "why" box appears whenever you change an amount** — "sibling discount", "hardship" — the same
-    note the billing tab has always taken, and it prints beside the figure. It only shows when there is
-    an override to explain, and it's cleared if you put the amount back to the plan's price.
-  - **Amounts tidy themselves to two decimal places** when you leave the box, so a typed `100` doesn't
-    sit in a column of `100.00` looking like a different kind of number.
-  - **Save now shows that it worked**: the button is replaced by a tick, and comes back the moment you
-    change that row again. Any row you haven't saved is called out, and the button top-right says
-    **Next** rather than Skip once you've changed something.
+- **Set the right fee before you leave the import.** After the sibling step you get every student it
+  added, with their plan and amount, both editable — including a note for why ("sibling discount",
+  "hardship"), which prints beside the figure. Changing a plan replaces the old one rather than billing
+  twice. Skippable, and all of it stays editable later.
 
-- **Parents get a "My year" tab.** Their own children, month by month, showing which months are settled
-  and which still have something on them — the question a parent rings the office about most, and one the
-  portal could never answer before (it could only show what was owed, never the shape of the year).
-  - Built for a phone: each child's months are **chips that wrap**, so twelve months lay out as three rows
-    of four on a phone and one row on a laptop — no sideways dragging anywhere, every chip thumb-sized.
-  - The squares are computed by the **same code as the office's year view**, so a parent ringing up about
-    November is looking at exactly what the volunteer is looking at. Your go-live answers carry through
-    too, so a month you'd already paid before the madrasah started using the app shows as paid.
+- **Parents get a "My year" tab** — their own children, month by month, showing what's settled and what
+  isn't. Built for a phone: the months are chips that wrap, so nothing drags sideways. It uses the same
+  code as the office's year view, so a parent ringing up sees what the volunteer sees.
 
-- **Generating invoices no longer means typing the month twice.** Pick the month from a list — the months
-  of your school year, not a free-typed `2026-07` — and write the name ONCE with tags in it:
-  `Tuition — [month] [year]`. Tap a tag to insert it, and the line underneath shows exactly how the
-  invoice will read.
-  - The tags are filled in **from the month you picked**, so the wording and the month an invoice is filed
-    under can no longer disagree. That mattered: an invoice is money history and is never edited, so
-    "Tuition — Jun 2026" saved under July stayed wrong for good.
-  - Your wording is **remembered** — next month's form opens with it, and **automatic generation uses it
-    too**, which it never did before (it always said "Tuition — Jul 2026" in its own words).
+- **Generating invoices no longer means typing the month twice.** Pick the month from your school year's
+  own months, and write the name once with tags in it — `Tuition — [month] [year]`. The tags fill in from
+  the month you picked, so the wording and the month can no longer disagree. Your wording is remembered,
+  and automatic generation uses it too. The Generate box inside a family's record works the same way now.
 
-- **The last admin account can be removed on an OpenMasjidOS install.** The app refused, on the grounds
-  that nobody could reach the admin screens afterwards. That's true standalone — but not when the app is
-  installed through OpenMasjidOS, where an admin can always open it from the dashboard on the masjid
-  network and be signed straight in. The rule now checks whether a way back actually exists rather than
-  assuming it doesn't, and when it does still refuse, it says which of the two things to do about it.
+- **The last admin account can be removed on an OpenMasjidOS install**, where an admin can always open
+  the app from the dashboard. It still refuses on a standalone install, and says which of the two things
+  to do about it.
 
-- **Find a student by name** in the import's fee step and in the mid-year setup — type as you go. Both
-  roster screens can be hundreds of rows long and you usually arrive wanting three particular families.
-  Searching only narrows what's on screen: every answer or edit you've already made still counts, and
-  "set the whole column" still means the whole column, not just what you're looking at.
+- **Find a student by name** in the import's fee step and the mid-year setup — type as you go. Searching
+  only narrows what's on screen; answers you've already made still count.
 
-- **The phone layout is fixed on the screens that do the most work.** The dialogs — importing, the
-  go-live wizard, a family record — kept desktop-sized controls and desktop-width forms inside a
-  full-screen sheet, because the existing phone rules only ever applied to the main tabs and a window
-  isn't one. Now: thumb-sized buttons and inputs, forms in one column instead of two squeezed ones, and
-  **the editing tables become cards** — one student per card with its fields labelled, instead of five
-  controls crammed into a row you have to drag sideways. Read-only grids like the year view still scroll,
-  which is the right way to read a grid. **Nothing about the desktop layout changed.**
-  - **Statements, invoices, the family sheet and the ID sheet now read properly on a phone too** —
-    they're laid out for a sheet of paper, which was a page you had to pinch and drag on a phone. What
-    comes out of a printer is unchanged.
-  - Each printable also tells you, **on a phone only**, that Print opens your phone's own preview — and
-    that the share button there will email it, send it, or save it as a PDF. That's how you get a
-    document off a phone and to a parent.
+- **The phone layout is fixed on the dialogs** — importing, the go-live wizard, a family record. Bigger
+  controls, one-column forms, and the editing tables become one card per student instead of a row you
+  drag sideways. Statements and the printed sheets read properly on a phone now too, and each tells you
+  that Print opens your phone's own preview, where the share button will email it or save it as a PDF.
+  Nothing about the desktop layout changed.
 
-- **Fixed: adding a second school could quietly move which one is the "default".** The first school in
-  the list is where a student created without a class is filed, and a new school added in the same instant
-  as the first could sort itself ahead on an alphabetical tie-break — so a child could land in the wrong
-  school. New schools are now added to the END of the list, which removes the tie rather than re-ranking
-  it. Only reachable on a fast machine, and only with two schools, but it put a child in the wrong place.
+- **Fixed: adding a second school could move which one is the "default"**, and file a student created
+  without a class into the wrong one. New schools are added to the end of the list.
 
-- **Pause all email to parents.** A switch in **Settings → Email alerts** that stops **everything** going
-  to a parent — receipts, autopay notices, and even invites and password resets, which normally always
-  send. It is for the situation where you are setting the app up with your **real families already in
-  it**, trying an import or a test payment, and one stray receipt to 200 households is not something
-  you can take back.
-  - Nothing is lost while it is on: an invite or a reset still gives you the link to copy or print, and
-    the screen says the send was held rather than failing. **Staff alerts and your own test send are
-  unaffected** — and so is your own password reset, so an install can't lock itself out.
+- **Pause all email to parents** — a switch in Settings → Email alerts that holds everything, including
+  invites and password resets. For setting the app up with your real families already in it. Nothing is
+  lost: an invite still gives you the link to copy or print, and staff email is unaffected.
 
-- **The year view shows how far each family had paid when you went live.** If you started mid-year, the
-  months before it were never yours to bill — but some families were up to date and some were behind, and
-  the go-live step already asked you which. The grid now reads that answer back, per child: **a hollow ✓
-  for a month they had already paid**, and **○ for a month they hadn't** — that one being part of their
-  "Balance carried forward" bill. Nothing to set up; running the mid-year step is what fills it in.
-  - **The ○ turns into a ✓ once that carried-forward bill is settled**, so the columns stay true as the
-    family pays it off rather than freezing at how things stood on go-live day.
-  - A child the go-live step was never given an answer for shows a plain dimmed **·** — "nobody recorded
-    either way", which is deliberately not the same as "paid". And a real invoice in one of those months
-    is never painted over.
+- **The year view shows how far each family had paid when you went live.** The go-live step already
+  asked; the grid now reads that answer back per child — a hollow ✓ for a month already paid, ○ for one
+  still in their carried-forward bill, which turns into a ✓ once that bill is settled.
 
-- **"Hasn't paid at all" is now an option in the mid-year setup**, right after "Not said". Until now you
-  had to pick a month, and neither nearby answer was right: the year's first month says they paid *that*
-  month, and "Not said" records nothing at all. It carries in every month of the year before you went
-  live. It's on the "set the whole column" list too, for a madrasah adopting the app to fix exactly that.
+- **"Hasn't paid at all" is now an option in the mid-year setup**, after "Not said". It carries in every
+  month of the year before you went live, and it's on the "set the whole column" list too.
 
-- **"Not paid" is now a bold ● instead of a faint dot** on the year view. It was the one state the office
-  is actually scanning for and the hardest to see on the page.
+- **"Not paid" is a bold ● instead of a faint dot** on the year view — the one state you're scanning for
+  was the hardest to see.
 
-- **A printable Student ID sheet.** **Students → Print IDs** gives you every active child's Student ID,
-  grouped by class, two to a row, on your letterhead with your address at the foot — one page for a
-  class roster instead of five. It is also what the Print button at the end of an import now opens.
-  - This replaces a button that printed **whatever was on the screen**: the page behind the window, the
-    window frame, the dock, and a roster of 39 children spread over five sheets of paper. Printing
-    anything from a window did that; it now prints the document, not the app.
-  - The sheet is admin and finance only, like your statements and invoices, and it says on its own face
-    that it is an office copy — a Student ID is all somebody needs to look up a child's balance.
+- **A printable Student ID sheet.** Students → Print IDs gives every active child's ID, grouped by class,
+  two to a row, on your letterhead. It replaces a button that printed whatever was on the screen — the
+  window frame, the dock and all. Admin and finance only.
 
-- **The family sheet says what you want it to say.** Every sentence on the printed family information
-  sheet is now yours to write, under **Settings → Wording on the family sheet**: the opening line, each
-  way of paying, the please-check notice, the foot of the page. Put `*stars*` around words to make them
-  **bold**, and use `[names]`, `[child]`, `[school]`, `[website]` or `[date]` to have the sheet fill them
-  in per family. Clear a box to put our wording back; there's a Restore-all button too.
-  - The children, the fees and the balances are still worked out for you — a settings box that could
-    change what a family is told they owe would be a way to print something untrue.
-  - Re-wording a payment route cannot **add** one. If your kiosk is off, the kiosk line stays off however
-    it is worded.
+- **The family sheet says what you want it to say.** Every sentence on it is yours to write, under
+  Settings → Wording on the family sheet. Put `*stars*` around words for **bold**, and use `[names]`,
+  `[child]`, `[school]`, `[website]` or `[date]` to have it fill them in per family. Clear a box to put
+  our wording back. The figures and balances are still worked out for you, and re-wording a payment route
+  can't switch one on.
 
-- **New default wording, and some old wording gone.** The cash/check/Zelle/ACH line no longer tells you to
-  "ask for confirmation before you leave" — it says **you'll get a receipt by email** once the office
-  records it, and that sentence only appears when receipts are actually switched on and email is working.
-  "A payment nobody enters is a payment nobody can see" is gone. **"Masjid's website" now reads "madrasah's
-  website"** throughout, on the sheet and the statement.
+- **New default wording.** The cash/check/Zelle/ACH line no longer says to "ask for confirmation" — it
+  says you'll get a receipt by email, and only when receipts are actually switched on. "Masjid's website"
+  now reads "madrasah's website", on the sheet and the statement.
 
-- **Your donations page, in brackets.** Add the page tuition is paid on (**Settings → Page where tuition
-  is paid** — `/donate`, `/donations`, or a whole address if it's somewhere else) and both the family sheet
-  and the statement print it beside "on the madrasah's website", so a parent reading at the kitchen table
-  knows where to go. Nothing configured, no empty brackets.
+- **Your donations page, in brackets.** Add the page tuition is paid on (Settings → Page where tuition is
+  paid — `/donate`, or a whole address if it's elsewhere) and the family sheet and statement print it
+  beside "on the madrasah's website".
 
-- **Past-due reminders — to you, and to parents.** A bill whose due date has passed now gets chased.
-  **Settings → Email alerts → Chasing an overdue balance** shows who is behind right now, and lets you
-  set how long after the due date to wait and how often to follow up. Your own summary lists each
-  household and what they owe; there's a **Run now** button when you don't want to wait for tomorrow.
-  - **Emails to parents start switched off.** This is a message the app has never sent before, and
-    turning it on by itself would mean a madrasah that updated on Tuesday emailed two hundred families
-    about money on Wednesday. You switch it on, after seeing how many families that is.
-  - It's a reminder, not a demand: what's owed, since when, where to pay, and an invitation to speak to
-    the office. **At most one every few days per family** — a daily email about money is how a school's
-    mail ends up in spam folders, taking the invites and receipts with it.
-  - It counts only what's left on bills that are actually overdue — not the whole balance, so next
-    month's invoice never makes a family look behind when they aren't. A bill with no due date is never
-    chased, because nobody was ever told a date.
+- **Past-due reminders, to you and to parents.** Settings → Email alerts shows who is behind, and lets
+  you set how long to wait after the due date and how often to follow up. Your summary lists each
+  household and what they owe; there's a Run now button. **Emails to parents start switched off** — it's
+  a message the app has never sent before — and when on, it's one reminder per family per cadence, not a
+  daily email. Only bills that are actually overdue count, so next month's invoice never makes a family
+  look behind.
 
-- **A list of the families you can't email.** Under **Settings → Email alerts**: every student whose
-  household has nobody with an email address on file, with the parent's name and phone number so you can
-  ring and ask for one. Receipts, invites, password resets and reminders all need an address — until now
-  those simply didn't send, and there was no way to find out.
+- **A list of the families you can't email**, under Settings → Email alerts: every student whose
+  household has nobody with an email address, with a name and phone number to ring. Receipts, invites,
+  resets and reminders all need an address.
 
-- **The account menu in the parent portal is opaque.** The tab strip behind it was reading straight
-  through "Light mode" and "Sign out".
-
-- **Generating for one family uses the same month picker as the whole school.** The Generate box inside a
-  family's record still had the old pair of typed boxes — a period key like `2026-07` and a label typed out
-  by hand, with nothing checking they agreed. It is now the same form as the Billing tab: pick the month,
-  write the label once with `[month]` / `[year]` tags in it, see how it will read before you commit it.
-  - One difference on purpose: a label typed **here** is not saved as your madrasah's wording. This form is
-    usually a catch-up for one household, and their label should not quietly rename everybody else's bills
-    or the nightly run. The whole-school Generate is what sets the wording.
-
-- **The fee note on the year view can be turned off.** The note you wrote when you changed a child's fee —
-  "sibling rate", "hardship" — is useful in front of you all year and less welcome on a page that gets
-  printed and left on a desk. **Year view → Configure** now has a switch for it; off means it isn't sent
-  to the browser at all.
+- **The account menu in the parent portal is opaque.** The tabs behind it were reading through it.
 
 ## [0.47.0]
 
