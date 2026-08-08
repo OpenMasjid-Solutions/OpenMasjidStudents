@@ -150,6 +150,32 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   - The sheet is admin and finance only, like your statements and invoices, and it says on its own face
     that it is an office copy — a Student ID is all somebody needs to look up a child's balance.
 
+- **The family sheet says what you want it to say.** Every sentence on the printed family information
+  sheet is now yours to write, under **Settings → Wording on the family sheet**: the opening line, each
+  way of paying, the please-check notice, the foot of the page. Put `*stars*` around words to make them
+  **bold**, and use `[names]`, `[child]`, `[school]`, `[website]` or `[date]` to have the sheet fill them
+  in per family. Clear a box to put our wording back; there's a Restore-all button too.
+  - The children, the fees and the balances are still worked out for you — a settings box that could
+    change what a family is told they owe would be a way to print something untrue.
+  - Re-wording a payment route cannot **add** one. If your kiosk is off, the kiosk line stays off however
+    it is worded.
+
+- **New default wording, and some old wording gone.** The cash/check/Zelle/ACH line no longer tells you to
+  "ask for confirmation before you leave" — it says **you'll get a receipt by email** once the office
+  records it, and that sentence only appears when receipts are actually switched on and email is working.
+  "A payment nobody enters is a payment nobody can see" is gone. **"Masjid's website" now reads "madrasah's
+  website"** throughout, on the sheet and the statement.
+
+- **Your donations page, in brackets.** Add the page tuition is paid on (**Settings → Page where tuition
+  is paid** — `/donate`, `/donations`, or a whole address if it's somewhere else) and both the family sheet
+  and the statement print it beside "on the madrasah's website", so a parent reading at the kitchen table
+  knows where to go. Nothing configured, no empty brackets.
+
+- **The fee note on the year view can be turned off.** The note you wrote when you changed a child's fee —
+  "sibling rate", "hardship" — is useful in front of you all year and less welcome on a page that gets
+  printed and left on a desk. **Year view → Configure** now has a switch for it; off means it isn't sent
+  to the browser at all.
+
 ## [0.47.0]
 
 - **More than one school, in one masjid.** If your madrasah runs programmes on different calendars —

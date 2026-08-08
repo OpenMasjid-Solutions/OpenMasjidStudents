@@ -71,6 +71,13 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
     await refresh();
   }
 
+  /** The fee-override note beside "Paying" — the office's own words about why a child pays less. Not a
+   *  column, so it has its own switch; off means the server stops sending it at all. */
+  async function toggleFeeNote(on: boolean) {
+    await setCols.mutateAsync({ feeNote: on });
+    await refresh();
+  }
+
   const g = grid.data;
   const enabled = cols.data?.enabled ?? [];
 
@@ -161,6 +168,25 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
               })}
             </div>
             <p className="hint">{t('year.columnsWarning')}</p>
+          </div>
+
+          {/* Separate from the column chips because it is not a column: it is the note inside the
+              "Paying" cell. Some offices want it in front of them all year; others don't want a
+              bursary reason on a page that gets printed and left on a desk. */}
+          <div className="field">
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                style={{ marginBlockStart: '0.2rem' }}
+                checked={cols.data?.feeNote ?? true}
+                onChange={(e) => void toggleFeeNote(e.target.checked)}
+                disabled={setCols.isPending}
+              />
+              <span>
+                {t('year.showFeeNote')}
+                <span className="hint" style={{ display: 'block' }}>{t('year.showFeeNoteHint')}</span>
+              </span>
+            </label>
           </div>
         </section>
       )}

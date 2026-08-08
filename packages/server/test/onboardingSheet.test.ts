@@ -56,7 +56,7 @@ beforeEach(() => {
   settingsMod.setSetting(settingsMod.SETTING_KEYS.selfRegistration, '1');
 });
 
-const ALL_ON = { card: true, external: true, selfRegister: true };
+const ALL_ON = { card: true, external: true, selfRegister: true, receipts: true };
 const TS = new Date('2026-01-15T00:00:00Z');
 const NOW = new Date('2026-06-01T00:00:00Z');
 
@@ -351,7 +351,7 @@ describe('it must not promise a payment route this install does not have', () =>
     child('stu_1', 'Yusuf Ismail');
     const out = (await html(ALL_ON))!;
     expect(out).toContain('parent portal, by card');
-    expect(out).toContain('masjid website');
+    expect(out).toContain('On the madrasah’s website');
     expect(out).toContain('kiosk in the masjid');
     expect(out).toContain('Apple Pay and Google Pay');
   });
@@ -359,8 +359,8 @@ describe('it must not promise a payment route this install does not have', () =>
   it('drops the kiosk and the website when external payments are off', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
-    const out = (await html({ card: true, external: false, selfRegister: true }))!;
-    expect(out).not.toContain('masjid website');
+    const out = (await html({ ...ALL_ON, external: false }))!;
+    expect(out).not.toContain('madrasah’s website');
     expect(out).not.toContain('kiosk in the masjid');
     expect(out).not.toContain('Apple Pay');
     expect(out).toContain('parent portal, by card');
@@ -369,7 +369,7 @@ describe('it must not promise a payment route this install does not have', () =>
   it('drops every card mention when there is no Stripe account behind it', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
-    const out = (await html({ card: false, external: false, selfRegister: true }))!;
+    const out = (await html({ ...ALL_ON, card: false, external: false }))!;
     expect(out).not.toContain('by card');
     expect(out).not.toContain('autopay');
   });
@@ -377,18 +377,32 @@ describe('it must not promise a payment route this install does not have', () =>
   it('always offers the office routes — they need no integration, only a person', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
-    const out = (await html({ card: false, external: false, selfRegister: false }))!;
+    const out = (await html({ card: false, external: false, selfRegister: false, receipts: true }))!;
     expect(out).toContain('Cash, check, Zelle or bank transfer (ACH)');
     expect(out).toContain('through the office');
-    expect(out).toContain('Ask for confirmation');
+    // 0.48.0 wording: a parent is told a receipt is coming, not told to police the office. Both of the
+    // sentences that used to be here are gone for good.
+    expect(out).toContain('you will get a receipt by email');
+    expect(out).not.toContain('Ask for confirmation');
+    expect(out).not.toContain('nobody can see');
+  });
+
+  it('does not promise a receipt by email when no receipt will be sent', async () => {
+    household();
+    child('stu_1', 'Yusuf Ismail');
+    // Receipts off (or no mail, or parent mail paused) — the office line still appears, without the
+    // sentence this install cannot honour.
+    const out = (await html({ ...ALL_ON, receipts: false }))!;
+    expect(out).toContain('through the office');
+    expect(out).not.toContain('receipt by email');
   });
 
   it('does not describe a payment history the family could never have had', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
-    const out = (await html({ card: false, external: false, selfRegister: false }))!;
+    const out = (await html({ card: false, external: false, selfRegister: false, receipts: false }))!;
     expect(out).toContain('Every payment the office has recorded for you');
-    expect(out).not.toContain('the kiosk or the masjid website');
+    expect(out).not.toContain('the kiosk or the madrasah’s website');
   });
 
   it('points the QR at signup when self-registration is on, and says one account covers all', async () => {
@@ -403,7 +417,7 @@ describe('it must not promise a payment route this install does not have', () =>
   it('asks for an invite instead of printing a QR to a door that is shut', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
-    const out = (await html({ card: true, external: true, selfRegister: false }))!;
+    const out = (await html({ ...ALL_ON, selfRegister: false }))!;
     expect(out).not.toContain('/family/register');
     expect(out).toContain('Ask the office for a portal invite');
   });
@@ -411,8 +425,8 @@ describe('it must not promise a payment route this install does not have', () =>
   it('tells the family what the IDs are for, differently when nothing external is on', async () => {
     household();
     child('stu_1', 'Yusuf Ismail', { code: 'YUS1234' });
-    expect((await html(ALL_ON))!).toContain('to pay at the kiosk or on the masjid website');
-    const off = (await html({ card: true, external: false, selfRegister: true }))!;
+    expect((await html(ALL_ON))!).toContain('to pay at the kiosk or on the madrasah’s website');
+    const off = (await html({ ...ALL_ON, external: false }))!;
     expect(off).toContain('when the office enters it');
     expect(off).not.toContain('pay at the kiosk');
   });
@@ -423,6 +437,119 @@ describe('it must not promise a payment route this install does not have', () =>
     const r = sheet.payRoutes();
     expect(r.external).toBe(false);
     expect(r.selfRegister).toBe(false);
+  });
+
+  /** The receipt promise has three parts, and any one of them being false makes it a lie. */
+  it('payRoutes().receipts needs mail, receipts on, AND parents not paused', () => {
+    // No Fabric in this harness, so there is no mail transport at all — nothing can be promised.
+    expect(sheet.payRoutes().receipts).toBe(false);
+    settingsMod.setParentEmails({ receipt: false });
+    expect(sheet.payRoutes().receipts).toBe(false);
+    settingsMod.setParentEmails({ receipt: true });
+    settingsMod.setParentMailPaused(true);
+    expect(sheet.payRoutes().receipts).toBe(false);
+    settingsMod.setParentMailPaused(false);
+  });
+});
+
+/**
+ * The wording is the madrasah's (0.48.0).
+ *
+ * Four things matter and the prose itself is not one of them:
+ *  1. An office's sentence REPLACES ours, and clearing it puts ours back.
+ *  2. The tags substitute — including the one that has to disappear with its brackets.
+ *  3. An office's text is still INERT (§14). It is user input like any other; the only markup it can
+ *     produce is the `<b>` the star syntax asks for.
+ *  4. Re-wording cannot re-open a route this install does not have. A settings box must not be a way to
+ *     print "pay at the kiosk" on an install with no kiosk.
+ */
+describe('the madrasah’s own wording (0.48.0)', () => {
+  let text: typeof import('../src/people/sheetText');
+
+  beforeAll(async () => {
+    text = await import('../src/people/sheetText');
+  });
+
+  beforeEach(() => {
+    settingsMod.setSetting(settingsMod.SETTING_KEYS.sheetText, '');
+    settingsMod.setSchoolContact({ website: '', donatePath: '' });
+  });
+
+  /** Seeds from scratch, so a test may render twice to compare before and after a wording change. */
+  async function render(routes = ALL_ON) {
+    const { db } = app.dbmod;
+    for (const t of [studentFees, feePlans, guardianFamilies, guardians, students, classes, courses, families]) db.delete(t).run();
+    household();
+    child('stu_1', 'Yusuf Ismail', { code: 'YUS1234' });
+    return (await sheet.buildFamilySheetHtml('fam_1', 'https://x.test', routes, NOW))!;
+  }
+
+  it('prints the shipped sentence until the office writes their own, and again once they clear it', async () => {
+    expect(await render()).toContain('Please read it through and tell the office');
+
+    settingsMod.setSheetTextOverrides({ intro: 'Everything we hold for [names]. Ask us anything.' });
+    const mine = await render();
+    expect(mine).toContain('Everything we hold for Yusuf. Ask us anything.');
+    expect(mine).not.toContain('Please read it through and tell the office');
+
+    // Clearing the box is how an office reverts — a blank is not wording, it is "use the default".
+    settingsMod.setSheetTextOverrides({ intro: '' });
+    expect(await render()).toContain('Please read it through and tell the office');
+    expect(settingsMod.getSheetTextOverrides()).toEqual({});
+  });
+
+  it('fills in every tag, in whichever box the office puts it', async () => {
+    settingsMod.setSchoolContact({ website: 'https://madani.test/', donatePath: '/donate' });
+    settingsMod.setSheetTextOverrides({ check: '[school] · [names] ([child]) · [date] · [website]' });
+    const out = await render();
+    expect(out).toContain('Our Madrasa · Yusuf (child) · 2026-06-01 · madani.test/donate');
+  });
+
+  it('drops an empty [website] together with its brackets', async () => {
+    // The default website line ends "...website ([website])". With no donations address configured, a
+    // bare "()" on a printed sheet reads as a fault.
+    const out = await render();
+    expect(out).toContain('On the madrasah’s website</b>. Go to the tuition section');
+    expect(out).not.toContain('website</b> ()');
+
+    settingsMod.setSchoolContact({ website: 'madani.test', donatePath: '/donate' });
+    expect(await render()).toContain('website</b> (madani.test/donate). Go to the tuition section');
+  });
+
+  it('renders the office’s text as TEXT, and only the stars as markup', async () => {
+    settingsMod.setSheetTextOverrides({ check: '<img src=x onerror=alert(1)> *really* bold' });
+    const out = await render();
+    expect(out).not.toContain('<img src=x');
+    expect(out).toContain('&lt;img src=x onerror=alert(1)&gt; <b>really</b> bold');
+  });
+
+  it('cannot re-open a payment route this install does not have', async () => {
+    // The office re-words the kiosk line — on an install with external payments off, it still must not
+    // appear. Which lines print is the renderer's decision; only their phrasing is the office's.
+    settingsMod.setSheetTextOverrides({ payKiosk: 'Tap your card at our kiosk any time.' });
+    const out = await render({ ...ALL_ON, external: false });
+    expect(out).not.toContain('Tap your card at our kiosk');
+    expect(await render(ALL_ON)).toContain('Tap your card at our kiosk');
+  });
+
+  it('leaves a tag nobody defined exactly as the office typed it', () => {
+    // Same rule as the invoice-label tags: printing "[nickname]" is a visible mistake an office can fix;
+    // silently deleting it is not.
+    expect(text.renderSheetText('Hello [nickname] and [names]', { names: 'Yusuf' })).toBe('Hello [nickname] and Yusuf');
+  });
+
+  it('donationUrl joins the two fields, and knows a whole address when it sees one', () => {
+    const at = (website: string, donatePath: string) =>
+      settingsMod.donationUrl({ address: '', phone: '', email: '', website, donatePath });
+    expect(at('https://madani.test', '/donate')).toBe('madani.test/donate');
+    expect(at('madani.test/', 'donate')).toBe('madani.test/donate'); // a missing slash is not an error
+    expect(at('madani.test', '')).toBe('madani.test');
+    // Somewhere else entirely — not glued onto the school's homepage. Recognised by the dot before the
+    // first slash, so the scheme is optional.
+    expect(at('madani.test', 'https://donate.other.test/tuition')).toBe('donate.other.test/tuition');
+    expect(at('madani.test', 'donate.other.test/tuition')).toBe('donate.other.test/tuition');
+    // A path with no site is not an address. Print nothing rather than "/donate".
+    expect(at('', '/donate')).toBe('');
   });
 });
 

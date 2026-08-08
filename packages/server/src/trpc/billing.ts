@@ -27,6 +27,8 @@ import {
   getCurrency,
   getYearViewColumns,
   setYearViewColumns,
+  getYearViewFeeNote,
+  setYearViewFeeNote,
   YEAR_VIEW_COLUMNS,
   getAutoInvoice,
   setAutoInvoice,
@@ -616,6 +618,10 @@ export const billingRouter = router({
 
       const months = schoolYearMonths(year.startYear, year.startMonth, year.endMonth);
       const columns = getYearViewColumns();
+      // Off means NOT SENT, not hidden in the browser (0.48.0) — the same rule the optional columns
+      // follow. The note is the office's own words about a bursary, and a page that gets printed and left
+      // on a desk should carry only what an admin asked for (§14).
+      const wantsFeeNote = getYearViewFeeNote();
       const periodKeys = months.map((m) => m.periodKey);
       // The pre-go-live marking and the invoice states both come from billing/yearCells.ts, shared with
       // the parent portal so a family and the office are never looking at different squares (0.48.0).
@@ -710,7 +716,7 @@ export const billingRouter = router({
           courseId: s.courseId,
           courseName: s.courseName,
           monthlyAmountCents: m?.amountCents ?? 0,
-          feeNote: m?.note ?? null,
+          feeNote: wantsFeeNote ? m?.note ?? null : null,
           cells,
           // Only enabled columns are populated — a disabled one is absent from the payload entirely.
           extra: {
@@ -741,13 +747,22 @@ export const billingRouter = router({
 
   /** The optional year-view columns and which are on. Admin-only to change — the guardian-contact
    *  columns put phone numbers and email addresses on a whole-school page (§5: finance reads). */
-  yearViewColumnsGet: adminOrFinanceProcedure.query(() => ({ available: [...YEAR_VIEW_COLUMNS], enabled: getYearViewColumns() })),
+  yearViewColumnsGet: adminOrFinanceProcedure.query(() => ({
+    available: [...YEAR_VIEW_COLUMNS],
+    enabled: getYearViewColumns(),
+    /** Not a column — the fee-override note is a chip inside the "Paying" cell (0.48.0). Same panel, same
+     *  decision ("what does this grid show"), so it is carried on the same pair of procedures. */
+    feeNote: getYearViewFeeNote(),
+  })),
 
-  yearViewColumnsSet: adminProcedure.input(z.object({ columns: z.array(z.enum(YEAR_VIEW_COLUMNS)).max(YEAR_VIEW_COLUMNS.length) })).mutation(({ ctx, input }) => {
-    setYearViewColumns(input.columns);
-    audit(auditActor(ctx), 'settings.yearViewColumns', { entity: 'settings', detail: { columns: input.columns } });
-    return { ok: true as const };
-  }),
+  yearViewColumnsSet: adminProcedure
+    .input(z.object({ columns: z.array(z.enum(YEAR_VIEW_COLUMNS)).max(YEAR_VIEW_COLUMNS.length).optional(), feeNote: z.boolean().optional() }))
+    .mutation(({ ctx, input }) => {
+      if (input.columns !== undefined) setYearViewColumns(input.columns);
+      if (input.feeNote !== undefined) setYearViewFeeNote(input.feeNote);
+      audit(auditActor(ctx), 'settings.yearViewColumns', { entity: 'settings', detail: { columns: input.columns, feeNote: input.feeNote } });
+      return { ok: true as const };
+    }),
 
   /**
    * CSV export for the office's own records — the one thing the app had no way to produce.

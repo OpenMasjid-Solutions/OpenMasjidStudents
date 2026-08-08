@@ -73,12 +73,27 @@ describe('buildFamilyStatementHtml', () => {
     expect(html).toContain('$30.00'); // remaining invoice balance
     expect(html).toContain('$30.00'); // owed balance too
     expect(html).toContain('Cash'); // the recorded payment channel
-    expect(html).toContain("child's Student ID"); // the how-to-pay hint
+    expect(html).toContain('child&rsquo;s Student ID'); // the how-to-pay hint
     // No PIN concept survives anywhere on the printed page (§11.2).
     expect(html).not.toMatch(/PIN/i);
     // The portal-signup QR is embedded as a data URI, and the link is the base + /family/register.
     expect(html).toContain('data:image/png;base64,');
     expect(html).toContain('https://school.example.org/family/register');
+  });
+
+  /** Telling a parent to pay "on the website" without saying which page is half an instruction — and
+   *  only the masjid knows the path, since the Donations app is on their own domain (0.48.0). */
+  it('names the donations page in the pay hint, and leaves the brackets off when it is not configured', async () => {
+    const { familyId } = await seed();
+    const settingsMod = await import('../src/settings');
+    settingsMod.setSchoolContact({ website: '', donatePath: '' });
+    const bare = (await statements.buildFamilyStatementHtml(familyId, 'https://school.example.org/'))!;
+    expect(bare).toContain('madrasah&rsquo;s donation site,');
+    expect(bare).not.toContain('donation site ()');
+
+    settingsMod.setSchoolContact({ website: 'https://madani.test', donatePath: '/donate' });
+    const named = (await statements.buildFamilyStatementHtml(familyId, 'https://school.example.org/'))!;
+    expect(named).toContain('madrasah&rsquo;s donation site (madani.test/donate),');
   });
 
   it('lists open invoices oldest-due-first, undated last (matches the ledger order)', async () => {

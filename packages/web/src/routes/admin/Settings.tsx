@@ -14,6 +14,8 @@ import { trpc, type RouterOutputs } from '../../lib/trpc';
  *  event list — adding an event there makes a new checkbox appear here with no change on this side. */
 type AlertEvent = RouterOutputs['settings']['alertsGet']['events'][number];
 type AlertRecipient = RouterOutputs['settings']['alertsGet']['recipients'][number];
+/** Same idea for the family sheet's wording: people/sheetText.ts owns the list of boxes. */
+type SheetTextKey = RouterOutputs['settings']['sheetTextGet']['keys'][number];
 
 export function Settings() {
   const { t } = useTranslation();
@@ -39,10 +41,10 @@ export function Settings() {
   // Contact details, the date format, and the colour printed artifacts are ruled in. Held as one
   // draft object with one Save, because they are edited together and a per-field autosave on a colour
   // picker would fire on every drag.
-  type Contact = { address: string; phone: string; email: string; website: string };
+  type Contact = { address: string; phone: string; email: string; website: string; donatePath: string };
   const [look, setLook] = useState<{ contact: Contact; dateFormat: string; accentColor: string } | null>(null);
   const lookEff = look ?? {
-    contact: appSettings.data?.contact ?? { address: '', phone: '', email: '', website: '' },
+    contact: appSettings.data?.contact ?? { address: '', phone: '', email: '', website: '', donatePath: '' },
     dateFormat: appSettings.data?.dateFormat ?? 'iso',
     accentColor: appSettings.data?.accentColor ?? '#0f766e',
   };
@@ -121,6 +123,33 @@ export function Settings() {
     } catch (e) {
       setMailMsg((e as Error).message);
     }
+  }
+
+  // ── The wording on the printed family sheet (0.48.0) ────────────────────────
+  // The registry (which boxes exist, the shipped sentence for each, the tags) comes from the server, so
+  // nothing here hard-codes a sentence: people/sheetText.ts is the one place the copy lives.
+  //
+  // Each box is pre-filled with the wording IN FORCE rather than left empty behind a placeholder — an
+  // office edits real prose, and clearing a box is how they put our sentence back (the server treats an
+  // empty string as "use the default").
+  const sheetText = trpc.settings.sheetTextGet.useQuery();
+  const saveSheetText = trpc.settings.sheetTextSet.useMutation();
+  const [wording, setWording] = useState<Record<string, string>>({});
+  const [wordingOpen, setWordingOpen] = useState(false);
+  const wordingDirty = Object.keys(wording).length > 0;
+  const boxValue = (key: SheetTextKey) => wording[key] ?? sheetText.data?.overrides[key] ?? sheetText.data?.defaults[key] ?? '';
+
+  async function saveWording() {
+    const boxes = Object.entries(wording).map(([key, text]) => ({ key: key as SheetTextKey, text }));
+    await saveSheetText.mutateAsync({ boxes });
+    await utils.settings.sheetTextGet.invalidate();
+    setWording({});
+  }
+
+  async function resetWording() {
+    await saveSheetText.mutateAsync({ reset: true });
+    await utils.settings.sheetTextGet.invalidate();
+    setWording({});
   }
 
   // Email alerts — who hears what, and which emails parents get.
@@ -357,6 +386,24 @@ export function Settings() {
               <input className="input glass-inset" value={lookEff.contact.website} onChange={(e) => setContact({ website: e.target.value })} maxLength={200} />
             </div>
           </div>
+          {/* Where tuition is paid online. The sheet and the statement both tell a parent to pay "on the
+              madrasah's website" — only the masjid knows which page that is, since the Donations app sits
+              on their own domain under a path they chose. */}
+          <div className="inline-form glass-inset">
+            <div className="field" style={{ flex: '1 1 14rem' }}>
+              <label className="label">{t('settings.donatePath')}</label>
+              <input className="input glass-inset" value={lookEff.contact.donatePath} onChange={(e) => setContact({ donatePath: e.target.value })} maxLength={200} placeholder="/donate" />
+              <span className="hint">{t('settings.donatePathHint')}</span>
+            </div>
+            {/* What the two fields actually resolve to, so nobody has to assemble it in their head. Read
+                from the saved settings, so it updates on Save rather than mid-typing. */}
+            <div className="field" style={{ flex: '1 1 14rem' }}>
+              <label className="label">{t('settings.donateUrlPreview')}</label>
+              <p className="muted" style={{ margin: '0.2rem 0 0', fontSize: '0.9rem', wordBreak: 'break-all' }}>
+                {appSettings.data?.donateUrl ? `(${appSettings.data.donateUrl})` : t('settings.donateUrlNone')}
+              </p>
+            </div>
+          </div>
 
           <div className="inline-form glass-inset" style={{ alignItems: 'flex-end' }}>
             <div className="field" style={{ flex: '1 1 12rem' }}>
@@ -383,6 +430,65 @@ export function Settings() {
           </div>
         </section>
       )}
+
+      {/* ── The wording on the printed family sheet (0.48.0) ─────────────────────
+          How a school asks a family to pay is the school's own voice, and the details differ per
+          install in ways no default can guess — "madrasah" or "school", whether a receipt is emailed
+          or handed over, what their donations page is called. Collapsed by default: eleven boxes of
+          prose is a lot of page for a setting most offices will visit once. */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head">
+          <h2>{t('settings.sheetText')}</h2>
+          <span className="spacer" />
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setWordingOpen((v) => !v)}>
+            {wordingOpen ? t('common.close') : t('settings.sheetTextEdit')}
+          </button>
+        </div>
+        <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: wordingOpen ? '0.75rem' : 0 }}>{t('settings.sheetTextHint')}</p>
+
+        {wordingOpen && sheetText.data && (
+          <>
+            {/* The two pieces of syntax, said once. Tags come from the server so this list cannot drift
+                away from what the renderer actually substitutes. */}
+            <p className="hint" style={{ marginBlockEnd: '0.75rem' }}>
+              {t('settings.sheetTextTags', { tags: sheetText.data.tags.map((g) => `[${g}]`).join(' ') })}
+            </p>
+
+            {sheetText.data.keys.map((key) => {
+              const custom = sheetText.data!.overrides[key] !== undefined;
+              return (
+                <div className="field" key={key}>
+                  <label className="label" htmlFor={`sheet-${key}`}>
+                    {t(`settings.sheetText_${key}`)}
+                    {custom && <span className="chip is-muted" style={{ marginInlineStart: '0.4rem' }}>{t('settings.sheetTextCustom')}</span>}
+                  </label>
+                  <textarea
+                    id={`sheet-${key}`}
+                    className="textarea glass-inset"
+                    style={{ minHeight: '4.5rem', fontFamily: 'inherit', fontSize: '0.9rem' }}
+                    value={boxValue(key)}
+                    maxLength={sheetText.data!.maxLength}
+                    onChange={(e) => setWording({ ...wording, [key]: e.target.value })}
+                  />
+                </div>
+              );
+            })}
+
+            <div className="inline-form glass-inset" style={{ alignItems: 'center' }}>
+              <button type="button" className="btn btn--primary" onClick={saveWording} disabled={!wordingDirty || saveSheetText.isPending}>
+                {t('common.save')}
+              </button>
+              {wordingDirty && <button type="button" className="btn btn--ghost" onClick={() => setWording({})}>{t('common.cancel')}</button>}
+              <span className="spacer" />
+              {/* Puts every box back to the shipped sentence — the way out of a half-rewritten sheet. */}
+              <button type="button" className="btn btn--ghost" onClick={resetWording} disabled={saveSheetText.isPending}>
+                {t('settings.sheetTextReset')}
+              </button>
+            </div>
+            <p className="hint">{t('settings.sheetTextClearHint')}</p>
+          </>
+        )}
+      </section>
 
       {/* No mail PROVIDER settings here on purpose — OpenMasjidOS owns the provider and the From
           address, so there is nothing for a masjid to configure twice. What is ours to decide is who

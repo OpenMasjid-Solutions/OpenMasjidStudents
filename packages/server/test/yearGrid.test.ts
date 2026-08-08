@@ -95,6 +95,32 @@ describe('yearGrid', () => {
     expect(sara.feeNote).toBe('ACH');
   });
 
+  /** The note says WHY a child pays less, in the office's own words. Some offices want it in front of
+   *  them all year; others don't want a bursary reason on a page that gets printed and left on a desk. */
+  it('the fee note can be switched off, and then is not sent at all', async () => {
+    const { admin } = await seed();
+    const noteFor = async () => (await admin.billing.yearGrid()).rows.find((r) => r.fullName === 'Sara Ismail')!.feeNote;
+
+    expect((await admin.billing.yearViewColumnsGet()).feeNote).toBe(true); // default on — as it always was
+    await admin.billing.yearViewColumnsSet({ feeNote: false });
+    expect((await admin.billing.yearViewColumnsGet()).feeNote).toBe(false);
+    // Not merely hidden in the browser: the text never leaves the server (§14, same rule as the
+    // optional contact columns).
+    expect(await noteFor()).toBeNull();
+
+    await admin.billing.yearViewColumnsSet({ feeNote: true });
+    expect(await noteFor()).toBe('ACH');
+  });
+
+  it('setting the fee note does not clear the chosen columns, or the other way round', async () => {
+    const { admin } = await seed();
+    await admin.billing.yearViewColumnsSet({ columns: ['studentId', 'dob'] });
+    await admin.billing.yearViewColumnsSet({ feeNote: false });
+    const cfg = await admin.billing.yearViewColumnsGet();
+    expect(cfg.enabled).toEqual(['studentId', 'dob']);
+    expect(cfg.feeNote).toBe(false);
+  });
+
   /** Each cell is now THAT CHILD's own invoice, so siblings move independently. This is the visible
    *  payoff of per-student billing: "Yusuf paid April, Sara hasn't" is finally expressible. */
   it('cells track each child’s OWN invoice through open → partial → paid, siblings independently', async () => {

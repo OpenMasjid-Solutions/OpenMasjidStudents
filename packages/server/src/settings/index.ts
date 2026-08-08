@@ -23,6 +23,9 @@ export const SETTING_KEYS = {
   // Empty → fall back to the STRIPE_ACCOUNT manifest default (resolved in payments/stripe.ts).
   selfRegistration: 'self_registration', // parent self-registration door on/off (§12, default ON).
   yearViewColumns: 'year_view_columns', // JSON string[] — optional columns on the year grid.
+  // '0' → keep the fee-override note off the year grid (0.48.0). The note is the office's own words about
+  // why a child pays less; see `getYearViewFeeNote`.
+  yearViewFeeNote: 'year_view_fee_note',
   autoInvoice: 'auto_invoice', // '1' → generate each month's invoices on a schedule (default OFF).
   autoInvoiceDay: 'auto_invoice_day', // day of month (1-28+) to generate on; clamped to the month.
   autoInvoiceDueDay: 'auto_invoice_due_day', // optional day of month to set as the invoice due date.
@@ -46,8 +49,12 @@ export const SETTING_KEYS = {
   // settings/dates.ts for why only the two edges move.
   dateFormat: 'date_format',
   // JSON — the masjid's own address/phone/email/website, printed on the sheet and the statement and
-  // put at the foot of every parent email (0.47.0).
+  // put at the foot of every parent email (0.47.0). Carries `donatePath` too (0.48.0) — see
+  // `donationUrl`, which is what a parent is told to type to pay online.
   schoolContact: 'school_contact',
+  // JSON — the madrasah's own wording for the printed family sheet (0.48.0). A partial map of
+  // people/sheetText.ts keys; anything absent uses the shipped sentence.
+  sheetText: 'sheet_text',
   // The colour the printed artifacts are ruled in (0.47.0). One hex value; see `getAccentColor`.
   accentColor: 'accent_color',
 } as const;
@@ -189,6 +196,22 @@ export function getYearViewColumns(): YearViewColumn[] {
 
 export function setYearViewColumns(cols: YearViewColumn[]): void {
   setSetting(SETTING_KEYS.yearViewColumns, JSON.stringify([...new Set(cols)]));
+}
+
+/**
+ * Whether the year grid shows the fee-override note beside what a child pays (0.48.0).
+ *
+ * Not a column, which is why it is a switch of its own: the note is a chip inside the "Paying" cell, the
+ * office's own words about why this child pays less than the plan — "sibling rate", "hardship, agreed with
+ * the imam". That is exactly the kind of sentence some offices want in front of them while they work
+ * through a year, and exactly the kind others do not want on a page that gets printed and left on a desk
+ * (§14). Default ON, because that is how the grid behaved before the switch existed.
+ */
+export function getYearViewFeeNote(): boolean {
+  return getSetting(SETTING_KEYS.yearViewFeeNote) !== '0';
+}
+export function setYearViewFeeNote(on: boolean): void {
+  setSetting(SETTING_KEYS.yearViewFeeNote, on ? '1' : '0');
 }
 
 export function getSetting(key: string): string | null {
@@ -334,9 +357,20 @@ export interface SchoolContact {
   phone: string;
   email: string;
   website: string;
+  /**
+   * Where tuition is paid online, relative to `website` — `/donate`, `/donations`, `/tuition`, whatever
+   * this madrasah's donations page is called (0.48.0). A value that does NOT start with `/` is treated as
+   * a complete address instead, because a madrasah whose donations page lives on another domain
+   * (`donate.example.org`) still has to be able to print the right thing.
+   *
+   * It exists because the sheet tells a parent to pay "on the madrasah's website" and then never said
+   * which page — and only the masjid knows, since the Donations app is on their own domain under a path
+   * they chose. See `donationUrl`.
+   */
+  donatePath: string;
 }
 
-const EMPTY_CONTACT: SchoolContact = { address: '', phone: '', email: '', website: '' };
+const EMPTY_CONTACT: SchoolContact = { address: '', phone: '', email: '', website: '', donatePath: '' };
 
 export function getSchoolContact(): SchoolContact {
   const raw = getSetting(SETTING_KEYS.schoolContact);
@@ -350,15 +384,86 @@ export function getSchoolContact(): SchoolContact {
       phone: typeof p.phone === 'string' ? p.phone : '',
       email: typeof p.email === 'string' ? p.email : '',
       website: typeof p.website === 'string' ? p.website : '',
+      donatePath: typeof p.donatePath === 'string' ? p.donatePath : '',
     };
   } catch {
     return { ...EMPTY_CONTACT };
   }
 }
 
+/**
+ * The address a parent types to pay tuition online, or '' when this install has not said (0.48.0).
+ *
+ * Printed in parentheses after "on the madrasah's website" — on the family sheet and the statement — so a
+ * parent reading it at home has somewhere to go. Two deliberate details:
+ *
+ *  • A `donatePath` that does not begin with `/` is used AS the whole address, so a donations page on
+ *    another domain still prints correctly and does not get glued onto the school's homepage.
+ *  • The `https://` is dropped. This is print copy, not a link: a parent types it into a phone, and the
+ *    scheme is noise there. The contact line at the foot of the page still shows the website exactly as
+ *    the office typed it — that block is their letterhead, and not ours to tidy.
+ */
+export function donationUrl(c: SchoolContact = getSchoolContact()): string {
+  const bare = (v: string) => v.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  const path = bare(c.donatePath);
+  // Is this a whole address or a path? Decided by whether its first segment looks like a HOST — a dot
+  // before any slash. `donate.example.org/tuition` is somewhere else; `donate` and `/donate` are both a
+  // page on this madrasah's own site. Leaning that way on purpose: an office that types "donate" without
+  // the slash means the page, and gluing it to nothing would print the single word "donate".
+  if (path && path.split('/')[0].includes('.')) return path;
+  const site = bare(c.website);
+  if (!site) return ''; // a path with no site is not an address; print nothing rather than "/donate"
+  return path ? `${site}/${path.replace(/^\/+/, '')}` : site;
+}
+
 export function setSchoolContact(patch: Partial<SchoolContact>): void {
   const next = { ...getSchoolContact(), ...patch };
   setSetting(SETTING_KEYS.schoolContact, JSON.stringify(next));
+}
+
+/**
+ * The madrasah's own wording for the printed family sheet — a partial map of people/sheetText.ts keys
+ * (0.48.0).
+ *
+ * Stored OPAQUELY here on purpose: this module knows nothing about which keys exist, so the registry stays
+ * in one place next to the sheet itself and adding a sentence there needs no change in settings. Unknown
+ * keys are simply never read back, and the tRPC boundary validates against the real list.
+ *
+ * Values are trimmed and capped on the way out as well as in. A settings row can be edited by hand, and
+ * this text is interpolated into a printed page (§14 — it is escaped at render, but there is no reason to
+ * let a hand-edited row put a hundred kilobytes on a parent's sheet either).
+ */
+const SHEET_TEXT_CAP = 1000;
+
+export function getSheetTextOverrides(): Record<string, string> {
+  const raw = getSetting(SETTING_KEYS.sheetText);
+  if (!raw) return {};
+  try {
+    const p = JSON.parse(raw) as unknown;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+      if (typeof v !== 'string') continue;
+      const text = v.trim().slice(0, SHEET_TEXT_CAP);
+      if (text) out[k] = text;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Merge in changed boxes. A key set to `''` or `null` is REMOVED rather than stored blank — clearing the
+ *  field in Settings means "use the shipped sentence again", and an empty string stored as wording would
+ *  print a blank line on a family's sheet. */
+export function setSheetTextOverrides(patch: Record<string, string | null | undefined>): void {
+  const next = getSheetTextOverrides();
+  for (const [k, v] of Object.entries(patch)) {
+    const text = (v ?? '').trim().slice(0, SHEET_TEXT_CAP);
+    if (text) next[k] = text;
+    else delete next[k];
+  }
+  setSetting(SETTING_KEYS.sheetText, Object.keys(next).length ? JSON.stringify(next) : '');
 }
 
 /** Is there anything to print? Used so a contact block is omitted entirely rather than left as an

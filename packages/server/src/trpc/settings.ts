@@ -9,7 +9,8 @@ import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './t
 import { db } from '../db';
 import { families, paymentMethods, autopayEnrollments, alertRecipients } from '../db/schema';
 import { rid } from '../db/ids';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor } from '../settings';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor, getSheetTextOverrides, setSheetTextOverrides, donationUrl } from '../settings';
+import { SHEET_TEXT_DEFAULTS, SHEET_TEXT_KEYS, SHEET_TEXT_MAX, SHEET_TEXT_TAGS } from '../people/sheetText';
 import { DATE_FORMATS, DATE_FORMAT_SAMPLES, getDateFormat, setDateFormat } from '../settings/dates';
 import { ALERT_EVENTS, defaultEvents, listRecipients, sendAlertTest, type AlertEvent } from '../alerts';
 import { audit } from '../audit';
@@ -28,6 +29,9 @@ export const settingsRouter = router({
     externalPayments: getExternalPaymentsEnabled(),
     logo: getSchoolLogo(),
     contact: getSchoolContact(),
+    /** What the website + donations path actually resolve to, so Settings shows the line a parent will
+     *  read rather than making an admin assemble it in their head. */
+    donateUrl: donationUrl(),
     dateFormat: getDateFormat(),
     accentColor: getAccentColor(),
     /** Rendered samples, so the settings screen shows each option rather than naming it. */
@@ -80,6 +84,8 @@ export const settingsRouter = router({
             phone: z.string().trim().max(60).optional(),
             email: z.string().trim().max(200).optional(),
             website: z.string().trim().max(200).optional(),
+            /** `/donate`, or a whole address when the donations page is on another domain (§ settings). */
+            donatePath: z.string().trim().max(200).optional(),
           })
           .optional(),
         /** `''` clears it back to the default teal. */
@@ -97,6 +103,52 @@ export const settingsRouter = router({
       // Key names only — an address and a phone number are the masjid's, but there is no reason to
       // copy them into the audit trail to record that they changed (§14).
       audit(auditActor(ctx), 'settings.update', { entity: 'settings', detail: { keys: Object.keys(input) } });
+      return { ok: true as const };
+    }),
+
+  /**
+   * The wording on the printed family sheet (0.48.0) — the catalogue, the shipped sentences, and this
+   * madrasah's own versions of them.
+   *
+   * The whole registry comes from the server (people/sheetText.ts owns it), so the UI hard-codes no
+   * sentence and no tag list: adding a box there makes a new field appear in Settings with no change on
+   * the browser side, exactly like the alert catalogue above.
+   */
+  sheetTextGet: adminProcedure.query(() => ({
+    keys: [...SHEET_TEXT_KEYS],
+    defaults: SHEET_TEXT_DEFAULTS,
+    /** Only the boxes this madrasah actually changed; everything else falls through to `defaults`. */
+    overrides: getSheetTextOverrides(),
+    tags: [...SHEET_TEXT_TAGS],
+    maxLength: SHEET_TEXT_MAX,
+  })),
+
+  /**
+   * Save changed boxes. A box sent as `''` goes back to the shipped sentence — that is what clearing the
+   * field means, and storing blank wording would print an empty line on a family's sheet.
+   *
+   * Sent as a LIST of key/text pairs rather than a free-form object so every key is validated against the
+   * registry: an unknown key is refused at the boundary instead of being stored and silently ignored.
+   */
+  sheetTextSet: adminProcedure
+    .input(
+      z.object({
+        boxes: z
+          .array(z.object({ key: z.enum(SHEET_TEXT_KEYS), text: z.string().max(SHEET_TEXT_MAX) }))
+          .max(SHEET_TEXT_KEYS.length)
+          .optional(),
+        /** Put every sentence back to the shipped wording. */
+        reset: z.boolean().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      const patch: Record<string, string> = {};
+      if (input.reset) for (const k of SHEET_TEXT_KEYS) patch[k] = '';
+      for (const b of input.boxes ?? []) patch[b.key] = b.text;
+      setSheetTextOverrides(patch);
+      // Key names only. The text itself is the school's own prose rather than anybody's personal data, but
+      // there is no reason to copy paragraphs of it into the audit trail to record that it changed (§14).
+      audit(auditActor(ctx), 'settings.sheetText', { entity: 'settings', detail: { keys: Object.keys(patch), reset: !!input.reset } });
       return { ok: true as const };
     }),
 

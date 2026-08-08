@@ -20,7 +20,7 @@ import { db } from '../db';
 import { families, students, invoices, payments } from '../db/schema';
 import { formatMoney } from '../db/money';
 import { familyBalance, studentBalance, invoiceTotal, invoicePaid } from './ledger';
-import { accentWash, getAccentColor, getSchoolContact, getSchoolName, getCurrency, getSchoolLogo } from '../settings';
+import { accentWash, donationUrl, getAccentColor, getSchoolContact, getSchoolName, getCurrency, getSchoolLogo } from '../settings';
 import { formatDate } from '../settings/dates';
 
 /** Only admin (LAN) and finance (LAN + tunnel) may print statements (§5 permission matrix). */
@@ -111,6 +111,10 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   const wash = accentWash(accent);
   const contact = getSchoolContact();
   const contactFooter = [contact.address, contact.phone, contact.email, contact.website].map((v) => v.trim()).filter(Boolean).join(' · ');
+  /** The madrasah's donations page, named in the pay hint below (0.48.0). Telling a parent to pay "on the
+   *  website" without saying which page is half an instruction — and only the masjid knows the path. '' when
+   *  unconfigured, in which case the parenthetical is left off entirely rather than printed empty. */
+  const payUrl = donationUrl(contact);
   /** Dates the way this masjid writes them; storage stays ISO (settings/dates.ts). */
   const day = (iso: string | null | undefined) => formatDate(iso);
 
@@ -255,7 +259,7 @@ ${SHEET_PHONE_CSS}
   <section>
     <h2>Your children &amp; what each owes</h2>
     <table><thead><tr><th>Student</th><th>Student ID</th><th class="num">Owes</th></tr></thead><tbody>${kidsRows}</tbody></table>
-    <p class="payhint">To pay at the kiosk or on the masjid's donation site, enter your child's Student ID and check the name it shows — then you can pay for any of your children on the same screen.</p>
+    <p class="payhint">To pay at the kiosk or on the madrasah&rsquo;s donation site${payUrl ? ` (${esc(payUrl)})` : ''}, enter your child&rsquo;s Student ID and check the name it shows &mdash; then you can pay for any of your children on the same screen.</p>
   </section>
 
   <section>
