@@ -15,6 +15,7 @@ import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
 import { formatDate, type DateFormat } from '../lib/dates';
 import { withBase } from '../lib/base';
 import { useWindows } from './Windows';
+import { InvoiceGenFields, useInvoiceGen } from './InvoiceGenFields';
 import { FamilyDetail } from '../routes/admin/FamilyDetail';
 
 /** The channels the office can record by hand. Kept in step with the server's
@@ -43,7 +44,9 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
   const pay = trpc.billing.recordManualPayment.useMutation();
   const reverse = trpc.billing.reversePayment.useMutation();
 
-  const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
+  // The month and the label template, seeded from the server's saved wording — shared with the Billing
+  // tab's whole-school form so the two cannot drift apart (components/InvoiceGenFields).
+  const { gen, setGen, ready: genReady } = useInvoiceGen();
   // Start on the child the window was opened for. Nothing re-syncs this afterwards on purpose: once
   // the office has picked a different sibling, moving it back under them would be the bug.
   const [payment, setPayment] = useState<{ studentId: string; amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({ studentId: focusStudentId ?? '', amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
@@ -71,9 +74,18 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
 
   async function doGenerate(e: FormEvent) {
     e.preventDefault();
-    if (!gen.periodKey.trim() || !gen.label.trim()) return;
-    await generate.mutateAsync({ familyId, periodKey: gen.periodKey.trim(), label: gen.label.trim(), dueDate: gen.dueDate || undefined });
-    setGen({ periodKey: '', label: '', dueDate: '' });
+    if (!genReady) return;
+    // The TEMPLATE goes to the server, which resolves the tags from the period key it files under — so
+    // the label and the month cannot disagree, and the wording is remembered for next month and for the
+    // nightly job (billing/period.ts resolveInvoiceLabel).
+    await generate.mutateAsync({ familyId, periodKey: gen.periodKey, labelTemplate: gen.label.trim(), dueDate: gen.dueDate || undefined });
+    // The month and the wording stay put: generating for one household is usually followed by another,
+    // and re-picking the same month every time is the annoying part. Only the due date clears.
+    //
+    // A label typed here is NOT saved as the madrasah's default (the server only remembers the
+    // whole-school run's) — this form is usually a catch-up for one family, and their wording should not
+    // become everybody's.
+    setGen((g) => ({ ...g, dueDate: '' }));
     await refresh();
   }
   async function doPay(e: FormEvent) {
@@ -370,11 +382,11 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             </table>
           </div>
         )}
+        {/* The same month picker and tagged label as the whole-school run (components/InvoiceGenFields).
+            This form used to be two free-text boxes that had to agree with each other. */}
         <form className="inline-form glass-inset" onSubmit={doGenerate}>
-          <div className="field"><label className="label">{t('billing.periodKey')}</label><input className="input glass-inset" value={gen.periodKey} onChange={(e) => setGen({ ...gen, periodKey: e.target.value })} placeholder="2026-07" /></div>
-          <div className="field"><label className="label">{t('billing.label')}</label><input className="input glass-inset" value={gen.label} onChange={(e) => setGen({ ...gen, label: e.target.value })} placeholder={t('billing.labelHint')} /></div>
-          <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.due')}</label><input type="date" className="input glass-inset" value={gen.dueDate} onChange={(e) => setGen({ ...gen, dueDate: e.target.value })} /></div>
-          <button type="submit" className="btn btn--primary" disabled={generate.isPending}>{t('billing.generate')}</button>
+          <InvoiceGenFields gen={gen} setGen={setGen} idPrefix={`fam-${familyId}`} />
+          <button type="submit" className="btn btn--primary" disabled={generate.isPending || !genReady}>{t('billing.generate')}</button>
         </form>
       </section>
 

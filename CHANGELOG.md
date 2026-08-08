@@ -171,6 +171,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   and the statement print it beside "on the madrasah's website", so a parent reading at the kitchen table
   knows where to go. Nothing configured, no empty brackets.
 
+- **Generating for one family uses the same month picker as the whole school.** The Generate box inside a
+  family's record still had the old pair of typed boxes — a period key like `2026-07` and a label typed out
+  by hand, with nothing checking they agreed. It is now the same form as the Billing tab: pick the month,
+  write the label once with `[month]` / `[year]` tags in it, see how it will read before you commit it.
+  - One difference on purpose: a label typed **here** is not saved as your madrasah's wording. This form is
+    usually a catch-up for one household, and their label should not quietly rename everybody else's bills
+    or the nightly run. The whole-school Generate is what sets the wording.
+
 - **The fee note on the year view can be turned off.** The note you wrote when you changed a child's fee —
   "sibling rate", "hardship" — is useful in front of you all year and less welcome on a page that gets
   printed and left on a desk. **Year view → Configure** now has a switch for it; off means it isn't sent

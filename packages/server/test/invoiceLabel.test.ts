@@ -107,6 +107,26 @@ describe('generating with a template', () => {
     expect(settingsMod.getInvoiceLabelTemplate()).toBe('Tuition — [month] [year]');
   });
 
+  /** The family window's Generate form is the same fields (components/InvoiceGenFields), so it must
+   *  derive the label the same way — with one deliberate difference about what it remembers. */
+  it('one household gets the same derived label as a whole-school run', async () => {
+    const admin = await base();
+    const fam = app.dbmod.db.select().from(families).all()[0];
+    await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', labelTemplate: 'Tuition — [month] [year]' });
+    expect(app.dbmod.db.select().from(invoices).all()[0]).toMatchObject({ periodKey: '2026-07', label: 'Tuition — July 2026' });
+  });
+
+  it('a label typed for ONE household does not become everybody’s', async () => {
+    const admin = await base();
+    const fam = app.dbmod.db.select().from(families).all()[0];
+    await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', labelTemplate: 'Catch-up for [month]' });
+    // That household's bill says what was typed…
+    expect(app.dbmod.db.select().from(invoices).all()[0].label).toBe('Catch-up for July');
+    // …and the madrasah's own wording is untouched, so the nightly job and next month's whole-school run
+    // are not quietly renamed by a one-family correction.
+    expect(settingsMod.getInvoiceLabelTemplate()).toBe('Tuition — [month] [year]');
+  });
+
   it('offers the school year’s months rather than a free-typed key', async () => {
     const admin = await base();
     await admin.structure.schoolYearCreate({ label: '2026–27', startYear: 2026, startMonth: 9, endMonth: 6, makeCurrent: true });

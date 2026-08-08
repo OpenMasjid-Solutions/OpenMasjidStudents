@@ -127,10 +127,14 @@ function assertBillablePeriod(periodKey: string, periodKind: 'month' | 'term' = 
  * An explicit `label` still wins when given: it is what every existing caller and test sends, and a
  * caller that has already decided on an exact string should get exactly that.
  */
-function invoiceLabelFor(input: { periodKey: string; label?: string; labelTemplate?: string }): string {
+function invoiceLabelFor(input: { periodKey: string; label?: string; labelTemplate?: string }, opts: { remember?: boolean } = {}): string {
   if (input.label?.trim()) return input.label.trim();
   const template = input.labelTemplate?.trim() || getInvoiceLabelTemplate();
-  if (input.labelTemplate?.trim()) setInvoiceLabelTemplate(input.labelTemplate.trim());
+  // `remember` is what separates the two Generate forms (0.48.0). A WHOLE-SCHOOL run defines how this
+  // madrasah names its invoices, so its wording is saved and the nightly job inherits it. A ONE-HOUSEHOLD
+  // run is usually a catch-up or a correction, and a label typed for that one family must not quietly
+  // become the default for everybody else's bills.
+  if (opts.remember && input.labelTemplate?.trim()) setInvoiceLabelTemplate(input.labelTemplate.trim());
   return resolveInvoiceLabel(template, input.periodKey);
 }
 
@@ -540,7 +544,7 @@ export const billingRouter = router({
     .input(z.object({ periodKey: PERIOD, label: NAME.optional(), labelTemplate: NAME.optional(), dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
     .mutation(({ ctx, input }) => {
       assertBillablePeriod(input.periodKey, input.periodKind ?? 'month');
-      const r = generateForPeriod({ periodKey: input.periodKey, label: invoiceLabelFor(input), dueDate: input.dueDate || null, periodKind: input.periodKind });
+      const r = generateForPeriod({ periodKey: input.periodKey, label: invoiceLabelFor(input, { remember: true }), dueDate: input.dueDate || null, periodKind: input.periodKind });
       audit(auditActor(ctx), 'invoice.generatePeriod', { entity: 'billing', detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
     }),
