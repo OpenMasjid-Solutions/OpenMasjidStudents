@@ -159,6 +159,45 @@ export function receiptEmail(schoolName: string, amountFormatted: string, portal
   return { subject, text, html };
 }
 
+/**
+ * A balance whose due date has passed (0.48.0).
+ *
+ * A REMINDER, not a demand, and the wording is the whole point of the template (§15: plain and warm for
+ * parents). A family is usually behind because a bill was missed, not because they are refusing to pay,
+ * and a madrasah has to be able to send this without it reading as a collections letter. So: what is
+ * owed, since when, where to pay, and an explicit line inviting them to talk to the office — which is
+ * also the honest route for a family who genuinely cannot pay right now.
+ *
+ * No child's name and no Student ID: one adult pays for the household, the amount is the household's,
+ * and an ID in an email is a payment credential (§14).
+ */
+export function pastDueEmail(schoolName: string, amountFormatted: string, sinceFormatted: string, portalUrl: string): Email {
+  const subject = `A reminder about your ${schoolName} balance`;
+  const since = sinceFormatted ? ` It has been outstanding since ${sinceFormatted}.` : '';
+  const text = [
+    'Assalāmu ʿalaykum,',
+    '',
+    `This is a friendly reminder that ${amountFormatted} of your tuition balance is now past its due date.${since}`,
+    '',
+    portalUrl ? `You can see the details and pay in the parent portal:\n${portalUrl}` : 'You can see the details and pay in the parent portal.',
+    '',
+    'If you have already paid, thank you — please ignore this. And if now is a difficult time, please speak to the office; we would rather hear from you than not.',
+    '',
+    `— ${schoolName}`,
+    ...textContact(),
+  ].join('\n');
+  const html = shell(
+    'A reminder about your balance',
+    [
+      `This is a friendly reminder that <strong>${esc(amountFormatted)}</strong> of your tuition balance is now past its due date.${esc(since)}`,
+      'If you have already paid, thank you — please ignore this. And if now is a difficult time, please speak to the office; we would rather hear from you than not.',
+    ],
+    portalUrl ? { label: 'See the details & pay', url: portalUrl } : undefined,
+    `— ${schoolName}`,
+  );
+  return { subject, text, html };
+}
+
 /** Autopay charge failed (§13.3). `final` = the third strike, after which autopay is turned off. */
 export function autopayFailureEmail(schoolName: string, portalUrl: string, final: boolean): Email {
   if (final) {

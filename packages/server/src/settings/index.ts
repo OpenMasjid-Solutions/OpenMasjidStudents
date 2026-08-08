@@ -42,6 +42,11 @@ export const SETTING_KEYS = {
   // '1' → send NOTHING to any parent, including invites and resets (0.48.0). The switch you throw
   // before working through a real roster; see `getParentMailPaused`.
   parentMailPaused: 'parent_mail_paused',
+  // JSON — chasing overdue balances (0.48.0): whether parents are reminded, how long after the due date,
+  // and how often. See `getPastDue`.
+  pastDue: 'past_due',
+  // ISO date of the last past-due digest sent to the office, so a daily job does not become a daily email.
+  pastDueStaffLast: 'past_due_staff_last',
   // The masjid's own logo, stored as a `data:` URI so it travels with the DB and needs no file
   // handling or attachment plumbing. Bounded and magic-byte checked on the way in (§14).
   schoolLogo: 'school_logo',
@@ -342,6 +347,71 @@ export function getParentMailPaused(): boolean {
 }
 export function setParentMailPaused(on: boolean): void {
   setSetting(SETTING_KEYS.parentMailPaused, on ? '1' : '0');
+}
+
+/**
+ * Chasing an overdue balance (0.48.0).
+ *
+ * `parentEmails` DEFAULTS OFF, and that is deliberate in a way the other parent switches are not. Every
+ * other one describes a message the app was already sending; this is a NEW message. Turning it on by
+ * default would mean a madrasah that updated on a Tuesday started emailing two hundred families about
+ * money on the Wednesday, without anyone deciding to — the worst surprise this app could produce. The
+ * office switches it on, and Settings shows them how many families it would write to first.
+ *
+ * `graceDays` is why a reminder is not simply "due date passed": a bill due on the 1st, chased on the
+ * 2nd, tells a family who paid on the 3rd every month that the school is not paying attention.
+ *
+ * `everyDays` is the cadence, per household, and it is the load-bearing one. A daily job that emails
+ * every overdue family every day is not a reminder — it is what gets a school's mail marked as spam,
+ * and it takes the invites and the receipts down with it (see `past_due_reminders`).
+ */
+export interface PastDueConfig {
+  /** Email the parents of an overdue household. Off until an office turns it on. */
+  parentEmails: boolean;
+  /** Days after the due date before anything is said. */
+  graceDays: number;
+  /** Minimum days between reminders to the same household — and between office digests. */
+  everyDays: number;
+  /** Ignore anything smaller than this, in cents. A 40¢ rounding tail is not worth an email. */
+  minAmountCents: number;
+}
+
+const PAST_DUE_DEFAULTS: PastDueConfig = { parentEmails: false, graceDays: 3, everyDays: 7, minAmountCents: 100 };
+
+/** Bounds, not preferences: a 0-day cadence would email daily, and both extremes are a support call. */
+const clampDays = (v: unknown, fallback: number, max: number): number => {
+  const n = Math.trunc(Number(v));
+  return Number.isFinite(n) && n >= 0 && n <= max ? n : fallback;
+};
+
+export function getPastDue(): PastDueConfig {
+  const raw = getSetting(SETTING_KEYS.pastDue);
+  if (!raw) return { ...PAST_DUE_DEFAULTS };
+  try {
+    const p = JSON.parse(raw) as Partial<PastDueConfig>;
+    return {
+      parentEmails: p.parentEmails === true,
+      graceDays: clampDays(p.graceDays, PAST_DUE_DEFAULTS.graceDays, 90),
+      // Never 0: that is a daily email to a family about money, which nobody means to ask for.
+      everyDays: Math.max(1, clampDays(p.everyDays, PAST_DUE_DEFAULTS.everyDays, 90)),
+      minAmountCents: clampDays(p.minAmountCents, PAST_DUE_DEFAULTS.minAmountCents, 1_000_000),
+    };
+  } catch {
+    return { ...PAST_DUE_DEFAULTS };
+  }
+}
+
+export function setPastDue(patch: Partial<PastDueConfig>): void {
+  setSetting(SETTING_KEYS.pastDue, JSON.stringify({ ...getPastDue(), ...patch }));
+}
+
+/** The last day the office's own past-due digest went out, or null. */
+export function getPastDueStaffLast(): string | null {
+  const v = getSetting(SETTING_KEYS.pastDueStaffLast);
+  return v && v.trim() ? v.trim() : null;
+}
+export function setPastDueStaffLast(iso: string): void {
+  setSetting(SETTING_KEYS.pastDueStaffLast, iso);
 }
 
 /**

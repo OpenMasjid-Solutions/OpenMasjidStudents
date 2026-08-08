@@ -7,7 +7,8 @@ import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Trash2, Send } from 'lucide-react';
 import { fadeRise } from '../../lib/motion';
-import { formatUsPhone } from '../../lib/phone';
+import { formatUsPhone, telHref } from '../../lib/phone';
+import { formatMoney } from '../../lib/money';
 import { trpc, type RouterOutputs } from '../../lib/trpc';
 
 /** The alert catalogue comes from the server (alerts/index.ts owns it), so the UI never hard-codes the
@@ -199,6 +200,37 @@ export function Settings() {
   async function togglePause() {
     await pauseParentMail.mutateAsync({ paused: !alerts.data?.parentMailPaused });
     await utils.settings.alertsGet.invalidate();
+  }
+
+  // ── Past due (0.48.0) ───────────────────────────────────────────────────────
+  // Chasing an overdue balance: whether parents hear about it, after how long, and how often. Kept
+  // beside the alert settings because it is the same question — who gets told what — but with numbers.
+  const pastDue = trpc.settings.pastDueGet.useQuery();
+  const setPastDueCfg = trpc.settings.pastDueSet.useMutation();
+  const runPastDue = trpc.settings.pastDueRunNow.useMutation();
+  const [pastDueMsg, setPastDueMsg] = useState<string | null>(null);
+  /** Students nobody can email — every message above depends on an address existing. */
+  const noEmail = trpc.settings.noEmailStudents.useQuery();
+
+  async function savePastDue(patch: { parentEmails?: boolean; graceDays?: number; everyDays?: number }) {
+    setPastDueMsg(null);
+    // The number inputs fire on every keystroke, and an empty box reads as NaN — the server would refuse
+    // it, so drop it here rather than showing a validation error for a field mid-edit.
+    const clean = Object.fromEntries(Object.entries(patch).filter(([, v]) => typeof v !== 'number' || Number.isFinite(v)));
+    if (!Object.keys(clean).length) return;
+    await setPastDueCfg.mutateAsync(clean);
+    await utils.settings.pastDueGet.invalidate();
+  }
+
+  async function runPastDueNow() {
+    setPastDueMsg(null);
+    try {
+      const r = await runPastDue.mutateAsync();
+      setPastDueMsg(t('settings.pastDueRan', { emailed: r.emailed, overdue: r.overdue, unreachable: r.unreachable }));
+      await utils.settings.pastDueGet.invalidate();
+    } catch (e) {
+      setPastDueMsg((e as Error).message);
+    }
   }
 
   async function toggleParentEmail(key: 'receipt' | 'autopayFailure') {
@@ -533,6 +565,114 @@ export function Settings() {
               <span>{t('settings.parentAutopay')}<br /><span className="hint">{t('settings.parentAutopayHint')}</span></span>
             </label>
             <p className="hint" style={{ marginBlockStart: '0.5rem' }}>{t('settings.parentAlwaysHint')}</p>
+          </>
+        )}
+
+        {/* ── Past due (0.48.0) ────────────────────────────────────────────────
+            Its own block rather than a third checkbox above, because it is not just on/off: the grace
+            period and the cadence are the difference between a reminder and a nuisance. The preview is
+            deliberately shown BEFORE the switch — an admin about to start emailing real families about
+            money should see how many of them, and for how much, first. */}
+        {pastDue.data && (
+          <>
+            <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.pastDue')}</h3>
+            <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>{t('settings.pastDueHint')}</p>
+            <p className="muted" style={{ fontSize: '0.9rem', marginBlock: '0 0.6rem' }}>
+              {pastDue.data.overdueFamilies === 0
+                ? t('settings.pastDueNone')
+                : t('settings.pastDueNow', {
+                    count: pastDue.data.overdueFamilies,
+                    amount: formatMoney(pastDue.data.overdueCents, pastDue.data.currency),
+                  })}
+            </p>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                style={{ marginBlockStart: '0.2rem' }}
+                checked={pastDue.data.parentEmails}
+                onChange={() => void savePastDue({ parentEmails: !pastDue.data!.parentEmails })}
+                disabled={setPastDueCfg.isPending}
+              />
+              <span>{t('settings.pastDueParents')}<br /><span className="hint">{t('settings.pastDueParentsHint')}</span></span>
+            </label>
+            <div className="inline-form glass-inset" style={{ alignItems: 'flex-end' }}>
+              <div className="field" style={{ flex: '0 1 9rem' }}>
+                <label className="label" htmlFor="pd-grace">{t('settings.pastDueGrace')}</label>
+                <input
+                  id="pd-grace"
+                  className="input glass-inset"
+                  type="number"
+                  min={0}
+                  max={90}
+                  value={pastDue.data.graceDays}
+                  onChange={(e) => void savePastDue({ graceDays: Number(e.target.value) })}
+                />
+                <span className="hint">{t('settings.pastDueGraceHint')}</span>
+              </div>
+              <div className="field" style={{ flex: '0 1 9rem' }}>
+                <label className="label" htmlFor="pd-every">{t('settings.pastDueEvery')}</label>
+                <input
+                  id="pd-every"
+                  className="input glass-inset"
+                  type="number"
+                  min={1}
+                  max={90}
+                  value={pastDue.data.everyDays}
+                  onChange={(e) => void savePastDue({ everyDays: Number(e.target.value) })}
+                />
+                <span className="hint">{t('settings.pastDueEveryHint')}</span>
+              </div>
+              {/* Runs the same job the scheduler runs, ignoring only the cadence — a person pressed it. */}
+              <button type="button" className="btn btn--ghost" onClick={() => void runPastDueNow()} disabled={runPastDue.isPending}>
+                {runPastDue.isPending ? t('settings.pastDueRunning') : t('settings.pastDueRunNow')}
+              </button>
+            </div>
+            {pastDueMsg && <div className="notice" style={{ marginBlockEnd: '0.6rem' }}>{pastDueMsg}</div>}
+          </>
+        )}
+
+        {/* ── Families with no email address (0.48.0) ──────────────────────────
+            Everything above this point is an email, so a household with no address on file receives
+            none of it — silently, until a parent says they never heard anything. This is that list. */}
+        <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.noEmail')}</h3>
+        {noEmail.data && noEmail.data.total === 0 && <p className="muted" style={{ fontSize: '0.9rem' }}>{t('settings.noEmailNone')}</p>}
+        {noEmail.data && noEmail.data.total > 0 && (
+          <>
+            <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>
+              {t('settings.noEmailHint', { students: noEmail.data.total, households: noEmail.data.households })}
+            </p>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table stack-phone">
+                <thead>
+                  <tr>
+                    <th>{t('students.name')}</th>
+                    <th>{t('settings.noEmailFamily')}</th>
+                    <th>{t('settings.noEmailWhoToCall')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {noEmail.data.students.map((s) => (
+                    <tr key={s.id}>
+                      <td data-label={t('students.name')}>{s.fullName}</td>
+                      <td data-label={t('settings.noEmailFamily')}>{s.familyLabel}</td>
+                      {/* A name and a number, because the only way to fix this is to ring them and ask. */}
+                      <td data-label={t('settings.noEmailWhoToCall')}>
+                        {s.guardians.length === 0 ? (
+                          <span className="muted">{t('settings.noEmailNoGuardian')}</span>
+                        ) : (
+                          s.guardians.map((g, i) => (
+                            <span key={`${s.id}-${i}`} style={{ display: 'block' }}>
+                              {g.name}
+                              {g.phone ? <> — <a href={telHref(g.phone)}>{formatUsPhone(g.phone)}</a></> : <span className="muted"> — {t('settings.noEmailNoPhone')}</span>}
+                            </span>
+                          ))
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
 

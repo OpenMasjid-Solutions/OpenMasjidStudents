@@ -76,3 +76,29 @@
 .shell-status.is-off .dot {
   background: var(--color-danger, #f87171);
 }
+
+/*
+ * The account menu is a MENU, not a glass panel (0.48.0).
+ *
+ * ProfileMenu carries `glass-raised`, whose whole point is translucency — right for a pane sitting on
+ * the wallpaper, wrong for something that sits on top of the page's own content. In the parent portal
+ * the tab strip read straight through "Light mode" and "Sign out".
+ *
+ * Translucency was not the only half of it. `.family-topbar` sets its own `backdrop-filter`, and an
+ * ancestor with one becomes the BACKDROP ROOT for its descendants: the menu's blur then had only the
+ * topbar's own content to work on, never the page behind it — so the glass never frosted, it only
+ * tinted. (glass.css's nested-glass cap removes the blur outright in the staff shells, for the same
+ * visible result by a different route.) Blurring harder could not have fixed either case.
+ *
+ * So: an opaque surface, the token that exists for exactly this, opaque in both themes. Selected as
+ * `div.menu` — an element plus a class — so it out-specifies `.glass-raised` whatever order the
+ * stylesheets are imported in. Same fix, and the same reasoning, as `ul.picker-list` in v0.43.1.
+ */
+div.menu {
+  background-color: var(--color-surface-overlay);
+  background-image: none; /* drop glass's glint + tint: they belong on a panel, not a menu */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none; /* nothing to blur through an opaque surface — and it costs a repaint */
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow-raised);
+}

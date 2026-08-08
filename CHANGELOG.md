@@ -171,6 +171,28 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   and the statement print it beside "on the madrasah's website", so a parent reading at the kitchen table
   knows where to go. Nothing configured, no empty brackets.
 
+- **Past-due reminders — to you, and to parents.** A bill whose due date has passed now gets chased.
+  **Settings → Email alerts → Chasing an overdue balance** shows who is behind right now, and lets you
+  set how long after the due date to wait and how often to follow up. Your own summary lists each
+  household and what they owe; there's a **Run now** button when you don't want to wait for tomorrow.
+  - **Emails to parents start switched off.** This is a message the app has never sent before, and
+    turning it on by itself would mean a madrasah that updated on Tuesday emailed two hundred families
+    about money on Wednesday. You switch it on, after seeing how many families that is.
+  - It's a reminder, not a demand: what's owed, since when, where to pay, and an invitation to speak to
+    the office. **At most one every few days per family** — a daily email about money is how a school's
+    mail ends up in spam folders, taking the invites and receipts with it.
+  - It counts only what's left on bills that are actually overdue — not the whole balance, so next
+    month's invoice never makes a family look behind when they aren't. A bill with no due date is never
+    chased, because nobody was ever told a date.
+
+- **A list of the families you can't email.** Under **Settings → Email alerts**: every student whose
+  household has nobody with an email address on file, with the parent's name and phone number so you can
+  ring and ask for one. Receipts, invites, password resets and reminders all need an address — until now
+  those simply didn't send, and there was no way to find out.
+
+- **The account menu in the parent portal is opaque.** The tab strip behind it was reading straight
+  through "Light mode" and "Sign out".
+
 - **Generating for one family uses the same month picker as the whole school.** The Generate box inside a
   family's record still had the old pair of typed boxes — a period key like `2026-07` and a label typed out
   by hand, with nothing checking they agreed. It is now the same form as the Billing tab: pick the month,

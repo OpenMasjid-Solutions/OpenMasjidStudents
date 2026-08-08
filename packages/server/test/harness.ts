@@ -10,13 +10,35 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 export async function freshApp(opts: { fabric?: boolean; publicUrl?: string } = {}) {
-  process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), 'omos-students-test-'));
+  const dataDir = mkdtempSync(path.join(tmpdir(), 'omos-students-test-'));
+  process.env.DATA_DIR = dataDir;
   process.env.OPENMASJID_BASE_URL = opts.fabric ? 'http://platform.test' : '';
   process.env.OPENMASJID_APP_SECRET = opts.fabric ? 'test-secret' : '';
   // The install-time mirror of the tunnel URL. Set it when a test needs invite/reset links to have an
   // absolute base without standing up a fake /api/fabric/site.
   process.env.OPENMASJID_PUBLIC_URL = opts.publicUrl ?? '';
   const dbmod = await import('../src/db');
+
+  /**
+   * Are we actually on the throwaway database?
+   *
+   * `config.ts` reads the environment ONCE, at import, and `db/index.ts` opens the file at import too —
+   * so a test file with a STATIC import that reaches either of them (most of `src/` does, two or three
+   * hops down) has already frozen `dataDir` to the default `./data` before this function runs. Every
+   * query then goes to the developer's own local database, and a `beforeEach` that clears tables clears
+   * THAT one. It fails silently and looks like a passing test.
+   *
+   * It happened while writing the 0.48.0 settings tests, via `people/sheetText → billing/statements →
+   * db`. This turns it into a loud failure naming the fix, which is to import the module under test
+   * dynamically inside `beforeAll`, as every other test file here does.
+   */
+  const { config } = await import('../src/config');
+  if (path.resolve(config.dataDir) !== path.resolve(dataDir)) {
+    throw new Error(
+      `freshApp: the app is bound to ${config.dataDir}, not this test's temp directory. ` +
+        'Something imported src/ before freshApp() ran — move that import inside beforeAll() and use await import().',
+    );
+  }
   dbmod.runMigrations(path.resolve(process.cwd(), 'drizzle'));
   const { appRouter } = await import('../src/trpc/router');
   const trpc = await import('../src/trpc/trpc');

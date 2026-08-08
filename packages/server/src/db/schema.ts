@@ -471,6 +471,33 @@ export const carryIns = sqliteTable('carry_ins', {
 });
 export type CarryIn = typeof carryIns.$inferSelect;
 
+/**
+ * When a household was last reminded that its balance is past due (0.48.0).
+ *
+ * The ONLY state the past-due reminder needs, and it exists for one reason: a daily job that emails
+ * every overdue family every day is not a reminder, it is harassment — and it is how a madrasah's mail
+ * ends up in spam folders, taking the invites and receipts with it. One row per household says when it
+ * was last written to, so the cadence the office chose ("at most once a week") is honest.
+ *
+ * NOT a balance and not a debt record. Nothing bills from this; the money is entirely in the invoices
+ * and the payments, as always (§9). Deleting every row would only mean the next run reminds everybody
+ * once. ON DELETE CASCADE for the same reason `carry_ins` uses it: it is a note about a household, and
+ * it has nothing to say once the household is gone.
+ */
+export const pastDueReminders = sqliteTable('past_due_reminders', {
+  familyId: text('family_id')
+    .primaryKey()
+    .references(() => families.id, { onDelete: 'cascade' }),
+  /** ISO date of the last reminder actually SENT — not attempted. A run that reached nobody (no address
+   *  on file, mail down, parents paused) must not start a quiet cooldown on a family nobody wrote to. */
+  lastSentOn: text('last_sent_on').notNull(),
+  /** What they were overdue for at the time, for the office to see how it has moved. */
+  amountCents: integer('amount_cents').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+export type PastDueReminder = typeof pastDueReminders.$inferSelect;
+
 export const alertRecipients = sqliteTable('alert_recipients', {
   id: text('id').primaryKey(),
   email: text('email').notNull().unique(),

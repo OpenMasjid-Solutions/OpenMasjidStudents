@@ -15,25 +15,37 @@
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { freshApp, makeCtx } from './harness';
-import { settings, auditLog, users } from '../src/db/schema';
+import { settings, auditLog, users, studentFees, feePlans, guardianFamilies, guardians, students, families } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
-import { SHEET_TEXT_DEFAULTS, SHEET_TEXT_KEYS } from '../src/people/sheetText';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
+/**
+ * The registry is imported DYNAMICALLY, after `freshApp`, and that is not a style choice.
+ * `people/sheetText` reaches `db/index.ts` two hops down (for `esc`), and `config.ts` freezes `dataDir`
+ * at import — so a static import here binds the whole app to the developer's own `./data` database
+ * before the harness can point it at a temp directory. `freshApp` now refuses to continue when that has
+ * happened, but the fix is here: import inside `beforeAll`, like every other test file.
+ */
+let text: typeof import('../src/people/sheetText');
+
 const caller = (role: Role) =>
   app.appRouter.createCaller(makeCtx({ origin: 'lan', session: { role, source: 'local', username: role, userId: `usr_${role}` } }).ctx);
 
-beforeAll(async () => { app = await freshApp(); });
+beforeAll(async () => {
+  app = await freshApp();
+  text = await import('../src/people/sheetText');
+});
 beforeEach(() => {
   const { db } = app.dbmod;
-  for (const t of [settings, auditLog, users]) db.delete(t).run();
+  // People too, since the no-email list below reads the roster and would otherwise accumulate one.
+  for (const t of [studentFees, feePlans, guardianFamilies, guardians, students, families, settings, auditLog, users]) db.delete(t).run();
 });
 
 describe('settings.sheetText', () => {
   it('serves the whole registry, with nothing overridden on a fresh install', async () => {
     const r = await caller('admin').settings.sheetTextGet();
-    expect(r.keys).toEqual([...SHEET_TEXT_KEYS]);
-    expect(r.defaults).toEqual(SHEET_TEXT_DEFAULTS);
+    expect(r.keys).toEqual([...text.SHEET_TEXT_KEYS]);
+    expect(r.defaults).toEqual(text.SHEET_TEXT_DEFAULTS);
     expect(r.overrides).toEqual({});
     expect(r.tags).toContain('website');
     expect(r.maxLength).toBeGreaterThan(300); // room for the longest shipped sentence
@@ -57,8 +69,8 @@ describe('settings.sheetText', () => {
 
   it('reset puts every box back', async () => {
     const admin = caller('admin');
-    await admin.settings.sheetTextSet({ boxes: SHEET_TEXT_KEYS.map((key) => ({ key, text: 'mine' })) });
-    expect(Object.keys((await admin.settings.sheetTextGet()).overrides)).toHaveLength(SHEET_TEXT_KEYS.length);
+    await admin.settings.sheetTextSet({ boxes: text.SHEET_TEXT_KEYS.map((key) => ({ key, text: 'mine' })) });
+    expect(Object.keys((await admin.settings.sheetTextGet()).overrides)).toHaveLength(text.SHEET_TEXT_KEYS.length);
     await admin.settings.sheetTextSet({ reset: true });
     expect((await admin.settings.sheetTextGet()).overrides).toEqual({});
   });
@@ -82,6 +94,40 @@ describe('settings.sheetText', () => {
     expect(row).toBeTruthy();
     expect(JSON.stringify(row.detail)).toContain('payOffice');
     expect(JSON.stringify(row.detail)).not.toContain('Hand it to the office');
+  });
+
+  /**
+   * Every message this app sends a family is an email, so a household with no address on file receives
+   * none of it — silently, which is how an office finds out months later. This is the list that says so.
+   */
+  it('lists the students nobody can email, with somebody to ring about it', async () => {
+    const admin = caller('admin');
+    const plan = await admin.billing.feePlanCreate({ name: 'Monthly', amountCents: 10000, cadence: 'monthly' });
+    const reachable = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: plan.id });
+    await admin.people.guardianCreate({ familyId: reachable.familyId, name: 'Abu Yusuf', email: 'abu@example.org', phone: '(555) 010-2030' });
+    const unreachable = await admin.people.studentAdd({ fullName: 'Bilal Farooqi', feePlanId: plan.id });
+    await admin.people.guardianCreate({ familyId: unreachable.familyId, name: 'Abu Bilal', phone: '(555) 010-4040' });
+
+    const r = await admin.settings.noEmailStudents();
+    expect(r.total).toBe(1);
+    expect(r.households).toBe(1);
+    expect(r.students[0].fullName).toBe('Bilal Farooqi');
+    // The point of the list is being able to ring them, so the number comes with it.
+    expect(r.students[0].guardians).toEqual([{ name: 'Abu Bilal', phone: '(555) 010-4040' }]);
+
+    // One address anywhere on the household is enough — guardians attach to the household (§9), so the
+    // question is whether the FAMILY is reachable, not whether every adult on it has an address.
+    await admin.people.guardianCreate({ familyId: unreachable.familyId, name: 'Umm Bilal', email: 'umm@example.org' });
+    expect((await admin.settings.noEmailStudents()).total).toBe(0);
+  });
+
+  it('leaves withdrawn students off the list — nobody chases an address for a family that left', async () => {
+    const admin = caller('admin');
+    const plan = await admin.billing.feePlanCreate({ name: 'Monthly', amountCents: 10000, cadence: 'monthly' });
+    const gone = await admin.people.studentAdd({ fullName: 'Gone Away', feePlanId: plan.id });
+    expect((await admin.settings.noEmailStudents()).total).toBe(1);
+    await admin.people.studentUpdate({ id: gone.id, status: 'withdrawn' });
+    expect((await admin.settings.noEmailStudents()).total).toBe(0);
   });
 
   it('exposes what the donations address resolves to, so Settings can show the printed line', async () => {

@@ -6,9 +6,9 @@
  * SMTP is unconfigured (returns false / 0) — callers degrade gracefully. Nothing here throws or logs
  * PII. The parent-portal link uses OPENMASJID_PUBLIC_URL when set (empty → no button, still valid).
  */
-import { getSchoolName, getSchoolLogo, getParentEmails, getParentMailPaused, getSchoolContact } from '../settings';
+import { getSchoolName, getSchoolLogo, getParentEmails, getParentMailPaused, getPastDue, getSchoolContact } from '../settings';
 import { guardianEmailsForFamily } from './recipients';
-import { inviteEmail, receiptEmail, autopayFailureEmail, resetEmail, testEmail, alertEmail, setEmailLogoUrl, setEmailContactLine } from './templates';
+import { inviteEmail, receiptEmail, autopayFailureEmail, pastDueEmail, resetEmail, testEmail, alertEmail, setEmailLogoUrl, setEmailContactLine } from './templates';
 import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
 import { fabricConfigured } from '../config';
@@ -152,6 +152,27 @@ export async function sendAutopayFailure(familyId: string, final: boolean): Prom
   if (!emails.length) return 0;
   refreshEmailLogo();
   const m = autopayFailureEmail(getSchoolName(), portalHome(), final);
+  let n = 0;
+  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
+  return n;
+}
+
+/**
+ * Email a past-due reminder to a family's guardians (0.48.0). Returns how many were sent.
+ *
+ * The gate here is `getPastDue().parentEmails`, NOT one of the `ParentEmailPrefs` — it belongs with the
+ * grace period and the cadence, which are the other half of the same decision, and it defaults OFF
+ * because this is a message the app never used to send (§ settings/getPastDue).
+ *
+ * Returning a COUNT rather than a boolean is what lets the caller tell "we reminded them" from "there is
+ * nobody to remind": a household with no address on file must not start a quiet cooldown (billing/pastDue.ts).
+ */
+export async function sendPastDue(familyId: string, amountFormatted: string, sinceFormatted: string): Promise<number> {
+  if (getParentMailPaused() || !mailAvailable() || !getPastDue().parentEmails) return 0;
+  const emails = guardianEmailsForFamily(familyId);
+  if (!emails.length) return 0;
+  refreshEmailLogo();
+  const m = pastDueEmail(getSchoolName(), amountFormatted, sinceFormatted, portalHome());
   let n = 0;
   for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
   return n;

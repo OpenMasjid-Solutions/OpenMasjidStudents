@@ -40,6 +40,7 @@ export const ALERT_EVENTS = [
   'payment-recovered',
   'payment-short',
   'invoices-generated',
+  'past-due',
 ] as const;
 export type AlertEvent = (typeof ALERT_EVENTS)[number];
 
@@ -69,6 +70,10 @@ const SPEC: Record<AlertEvent, EventSpec> = {
   'payment-recovered': { platform: 'reconcile-recovered', webhook: false, level: 'info', defaultOn: true },
   'payment-short': { platform: 'payment-short', webhook: false, level: 'error', defaultOn: true },
   'invoices-generated': { platform: null, webhook: false, level: 'info', defaultOn: false },
+  // Who is behind (0.48.0). `defaultOn`, because an unpaid bill nobody chases is the thing this whole
+  // app exists to stop — and it is a DIGEST on the office's own cadence, not one email per family, so it
+  // cannot flood an inbox the way `payment-received` would.
+  'past-due': { platform: 'past-due', webhook: false, level: 'warning', defaultOn: true },
 };
 
 /** The events a newly-added recipient starts with. */
