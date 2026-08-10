@@ -102,3 +102,20 @@ div.menu {
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow-raised);
 }
+
+/*
+ * The app's own brand mark in the topbar (0.48.0).
+ *
+ * The artwork is a near-black silhouette with white detail inside it, drawn for a light background — so on
+ * the dark topbar the crescent would all but disappear. Inverting a monochrome design gives the same
+ * shapes with the contrast the other way up.
+ *
+ * Keyed on `data-theme`, NOT on `prefers-color-scheme`, because this app has its own light/dark toggle and
+ * a viewer's OS preference says nothing about which one they picked. Dark is the default and the attribute
+ * may be absent entirely, so the invert is the DEFAULT and light theme is what turns it off — the opposite
+ * way round from a media query, and the only version that is correct when there is no attribute at all.
+ * (`students-mark.svg` carries no invert of its own for exactly this reason; the favicon does, because a
+ * browser tab has no `data-theme` to read.)
+ */
+.students-mark { filter: invert(1); }
+:root[data-theme="light"] .students-mark { filter: none; }

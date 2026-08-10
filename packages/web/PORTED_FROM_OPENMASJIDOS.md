@@ -34,7 +34,13 @@ explaining why.
 | `src/components/Windows.tsx` (window manager context) | `src/components/Windows.tsx` |
 | `src/components/WindowManager.tsx` (mac-style window frames) | `src/components/WindowManager.tsx` |
 | `src/assets/logo-mark.png` | `src/assets/logo-mark.png` |
-| `public/favicon.svg` | `public/favicon.svg` |
+
+**No longer ported: `public/favicon.svg`.** It held the OpenMasjidOS mark until 0.48.0 and is now this
+app's own icon, generated from `assets/brand/student-manager-icon.svg` by
+`scripts/build-brand-icons.cjs`. **Do not re-sync it from upstream** — that would put the platform's
+logo back in the browser tab. `src/components/Glyphs.tsx` and `src/assets/logo-mark.png` above are
+still the platform's and still ported; `MasjidMark` remains on the sign-in screens, which are
+OpenMasjid's front door. The app's own mark is `src/components/StudentsMark.tsx`.
 
 ## Adapted from upstream (structure mirrored, logic simplified)
 
