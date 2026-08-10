@@ -7,28 +7,32 @@
  * stay structurally identical so theme fixes can be re-synced (§15). Its `MasjidMark` is the platform's
  * logo and still belongs on the sign-in screens, which are OpenMasjid's front door. This is the app's.
  *
- * AN IMAGE, NOT A CSS MASK. `MasjidMark` paints its artwork as a mask filled with `currentColor`, which
- * works because it is a flat silhouette. This mark is not: the wordmark is white ON the dark crescent and
- * the ledger badge sits on a white disc, so flattening it to one colour would fuse the whole thing into an
- * unreadable blob. It is rendered as the artwork it is.
+ * A CSS MASK FILLED WITH `currentColor`, the same treatment `MasjidMark` gets — and the reason this works
+ * is that `students-mark.svg` is a STENCIL: everything the artwork draws dark is solid, and everything it
+ * draws white is a HOLE (see scripts/build-brand-icons.cjs). The white parts are counters, not decoration
+ * — the wordmark sits on the dark crescent, the ledger badge on a white disc — so on a dark topbar they
+ * read as black lettering and a black blob. As holes they let the topbar through, which is what the design
+ * means by white.
  *
- * THE INVERT IS OURS TO DO, in shell.css keyed on `data-theme` — see `students-mark.svg`, which
- * deliberately does not carry the `prefers-color-scheme` rule the favicon has. The mark is drawn dark for a
- * light background; the app's default theme is dark, and its theme toggle is independent of the OS.
+ * A mask uses only the alpha, so the mark takes the theme's own ink at any size and needs no inverting,
+ * no second asset, and no rule keyed to `data-theme`.
  */
 import markUrl from '../assets/students-mark.svg';
 
 export function StudentsMark({ size = 28, className }: { size?: number; className?: string }) {
+  const mask = `url(${markUrl}) center / contain no-repeat`;
   return (
-    <img
-      src={markUrl}
-      className={className ? `students-mark ${className}` : 'students-mark'}
-      width={size}
-      height={size}
-      alt=""
+    <span
+      className={className}
       aria-hidden="true"
-      /* The topbar is a flex row; without this the intrinsic 2000px box briefly wins on first paint. */
-      style={{ width: size, height: size, display: 'block' }}
+      style={{
+        display: 'inline-block',
+        width: size,
+        height: size,
+        backgroundColor: 'currentColor',
+        WebkitMask: mask,
+        mask,
+      }}
     />
   );
 }

@@ -108,9 +108,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   resets and reminders all need an address.
 
 - **The app has its own icon** — the crescent, dome and ledger mark — in the browser tab, at the top left
-  of the dashboard, and as the icon the App Store shows. It inverts on a dark background so it stays
-  visible either way. (The App Store icon appears once this version is released; the catalog pins it to a
-  released commit.)
+  of the dashboard, and as the icon the App Store shows. In the tab and the topbar the lettering and the
+  badge are cut out of the mark rather than filled in, so it reads on a light or a dark background and
+  takes on the theme's own colour. (The App Store icon appears once this version is released; the catalog
+  pins it to a released commit.)
 
 - **The account menu in the parent portal is opaque.** The tabs behind it were reading through it.
 
