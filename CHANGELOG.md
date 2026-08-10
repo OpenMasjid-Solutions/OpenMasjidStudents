@@ -18,6 +18,11 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **Import an Excel workbook (.xlsx)**, not just a CSV — no "save it as a CSV first" step, and birthdays
   come out as the dates they are. An older `.xls` is refused with a note on what to do instead.
 
+- **The template has example rows in it.** All eleven columns, and four rows showing what a header can't:
+  a nameless row is another adult for the student above, the Amount column overrides the plan for one
+  child, and an "Aunt" is the sort of relationship the importer asks you about. Replace them with your own
+  students — an example row left in is refused rather than imported.
+
 - **A student can span several lines.** Exports give each extra parent or relative a row of their own,
   with the name column blank. Those lines are now added to the student above them, and the review step
   shows which lines became which student. A nameless line that carries a class, a birthday or an amount

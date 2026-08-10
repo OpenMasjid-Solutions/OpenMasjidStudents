@@ -71,7 +71,7 @@ describe('parseAmountCents', () => {
 describe('importTemplate', () => {
   it('exposes the canonical columns with required flags and match aliases', async () => {
     const { admin } = await base();
-    const t = await admin.people.importTemplate();
+    const t = (await admin.people.importTemplate()).fields;
     expect(t.find((f) => f.key === 'fullName')).toMatchObject({ required: true });
     expect(t.find((f) => f.key === 'amount')!.aliases).toContain('paying');
     expect(t.map((f) => f.key)).toContain('guardianPhone');
@@ -84,7 +84,7 @@ describe('importTemplate', () => {
    */
   it('recognises the headers an export actually has, not the ones we would have picked', async () => {
     const { admin } = await base();
-    const byKey = new Map((await admin.people.importTemplate()).map((f) => [f.key, f.aliases]));
+    const byKey = new Map((await admin.people.importTemplate()).fields.map((f) => [f.key, f.aliases]));
     expect(byKey.get('dob')).toContain('birthday');
     expect(byKey.get('className')).toContain('homeroom');
     expect(byKey.get('guardianRelation')).toContain('relationship');
@@ -105,10 +105,10 @@ describe('preview catches problems before anything is written', () => {
 
   it('offers no family column at all — grouping is not something a spreadsheet decides', async () => {
     const { admin } = await base();
-    const keys = (await admin.people.importTemplate()).map((f) => f.key);
+    const keys = (await admin.people.importTemplate()).fields.map((f) => f.key);
     expect(keys).not.toContain('familyName');
     // Nor is a surname column quietly repurposed as one.
-    for (const f of await admin.people.importTemplate()) {
+    for (const f of (await admin.people.importTemplate()).fields) {
       if (f.key !== 'fullName') expect(f.aliases).not.toContain('surname');
     }
   });
@@ -636,5 +636,103 @@ describe('walls', () => {
     expect(merged.balance.owedCents).toBe(35000);
     // …and the emptied one is gone rather than left behind as a stray record.
     expect((await admin.people.directory()).some((f) => f.id === a.familyId)).toBe(false);
+  });
+});
+
+/**
+ * The downloaded template (0.48.0).
+ *
+ * It used to be a header row and nothing else, which named the columns and said nothing about what goes
+ * in them — and the two things nobody guesses are the two a header cannot show: a nameless row is
+ * another adult for the student above, and the Amount column overrides the plan for one child.
+ *
+ * Putting data in the file introduces a way to import children who do not exist, so the examples are
+ * tested from BOTH ends: that they demonstrate what they claim to when run through the real importer,
+ * and that they are refused if an office leaves them in.
+ */
+describe('the template’s example rows', () => {
+  let EXAMPLES: readonly string[][];
+  let FIELDS: readonly { key: string }[];
+
+  beforeAll(async () => {
+    const mod = await import('../src/people/import');
+    EXAMPLES = mod.IMPORT_EXAMPLE_ROWS;
+    FIELDS = mod.IMPORT_FIELDS;
+  });
+
+  /** The rows as the dialog would send them after a round trip through the file. */
+  const asRows = () =>
+    EXAMPLES.map((cells) => {
+      const o: Record<string, string> = {};
+      FIELDS.forEach((f, i) => { if (cells[i]) o[f.key] = cells[i]; });
+      return o;
+    });
+
+  /** The classes and plan the examples name, so a row that is otherwise fine actually resolves. */
+  async function withExampleStructure() {
+    const admin = caller('admin');
+    await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
+    const course = await admin.structure.courseCreate({ name: 'Hifz' });
+    await admin.structure.classCreate({ courseId: course.id, name: 'Group A' });
+    await admin.structure.classCreate({ courseId: course.id, name: 'Group B' });
+    return admin;
+  }
+
+  it('is one cell per column, every row', () => {
+    // A short row would silently shift every value after the gap into the wrong column.
+    for (const r of EXAMPLES) expect(r).toHaveLength(FIELDS.length);
+  });
+
+  it('demonstrates the whole shape of the file', async () => {
+    const admin = await withExampleStructure();
+    // Renamed so they are no longer the shipped examples — this test is about what the rows TEACH.
+    const rows = asRows().map((r) => (r.fullName ? { ...r, fullName: `${r.fullName} X` } : r));
+    const r = await admin.people.importPreview({ rows });
+
+    // Five lines, three children: the two nameless rows folded upward.
+    expect(r.rows.filter((x) => x.resolved)).toHaveLength(3);
+    expect(r.mergedCount).toBe(2);
+    expect(r.errorCount).toBe(0);
+
+    const byName = new Map(r.rows.filter((x) => x.resolved).map((x) => [x.resolved!.fullName, x]));
+    // A second parent arrived from a row with no name of its own.
+    expect(byName.get('Yusuf Ismail X')!.contacts.map((c) => c.name)).toEqual(['Ibrahim Ismail', 'Khadija Ismail']);
+    // The Amount column overrides the plan for one child; a blank one follows the plan.
+    expect(byName.get('Maryam Ismail X')!.resolved!.amountCents).toBe(15000);
+    expect(byName.get('Bilal Farooqi X')!.resolved!.amountCents).toBeNull();
+    // And the Aunt is the reason the importer stops to ask — asked once, for one person.
+    expect(r.askRelations).toEqual([{ key: 'aunt', label: 'Aunt', count: 1 }]);
+  });
+
+  it('is refused, row by row, if an office leaves it in the file', async () => {
+    const admin = await withExampleStructure();
+    const r = await admin.people.importPreview({ rows: asRows() });
+    expect(r.okCount).toBe(0);
+    // One complaint per example student, and it says what to do rather than listing every other
+    // problem with a row nobody meant to import.
+    const errors = r.rows.flatMap((x) => x.errors);
+    expect(errors).toHaveLength(3);
+    for (const e of errors) expect(e).toMatch(/still the example row from the template/);
+    expect(errors.some((e) => /Monthly tuition/.test(e))).toBe(false);
+  });
+
+  it('validates a row the office edited as their own data', async () => {
+    const admin = await withExampleStructure();
+    // One cell changed — the child's name — and it is theirs, not ours.
+    const rows = asRows();
+    rows[0] = { ...rows[0], fullName: 'Ismail Yusufov' };
+    const r = await admin.people.importPreview({ rows });
+    const mine = r.rows.find((x) => x.resolved?.fullName === 'Ismail Yusufov')!;
+    expect(mine.ok).toBe(true);
+    expect(mine.errors).toEqual([]);
+    // The examples still in the file are still refused.
+    expect(r.rows.filter((x) => x.errors.some((e) => /example row/.test(e)))).toHaveLength(2);
+  });
+
+  it('a real student who happens to be blank in every column is not an example row', async () => {
+    const { admin, planId } = await base();
+    // The fingerprint is every field; an empty row is a stray with no name, which has its own message.
+    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ fullName: 'Only A Name' }] });
+    expect(r.rows[0].ok).toBe(true);
   });
 });

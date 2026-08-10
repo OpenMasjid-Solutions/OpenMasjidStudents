@@ -65,6 +65,66 @@ export const IMPORT_FIELDS = [
 
 export type ImportFieldKey = (typeof IMPORT_FIELDS)[number]['key'];
 
+/**
+ * The example rows in the downloaded template (0.48.0).
+ *
+ * A blank header row told an office what the columns were CALLED and nothing about what belongs in
+ * them — and the two things this file can do that nobody guesses are exactly the two things a header
+ * cannot show: a row with no name is another adult for the student above it, and the amount column
+ * overrides the plan for that one child. So the template carries four rows that demonstrate the whole
+ * shape of the file:
+ *
+ *   1. a child with their father — the ordinary case;
+ *   2. a NAMELESS row, which is that child's mother (the QuickSchools export shape, §import merging);
+ *   3. their sister, at a reduced amount with the reason in the Note column;
+ *   4. another child whose second adult is an "Aunt" — the relation the importer stops and asks about,
+ *      since it could be a guardian or an emergency contact.
+ *
+ * Dates are written ISO. `parseDateInput` accepts ISO whatever the install's date format is set to
+ * (0.47.0), so the example works everywhere rather than only on a madrasah that writes dates our way.
+ *
+ * Values are the row a spreadsheet holds — strings, in `IMPORT_FIELDS` order — so one array serves the
+ * download AND `isExampleRow` below. A second copy in the browser is how the guard would rot.
+ */
+export const IMPORT_EXAMPLE_ROWS: readonly string[][] = [
+  ['Yusuf Ismail', '2016-03-04', 'Group B', 'Hifz', 'Monthly tuition', '200.00', 'Ibrahim Ismail', 'Father', '(555) 010-2030', 'ibrahim@example.org', ''],
+  // No name: another adult for the child above. This is the shape a QuickSchools export comes out in.
+  ['', '', '', '', '', '', 'Khadija Ismail', 'Mother', '(555) 010-2031', 'khadija@example.org', ''],
+  // Amount below the plan's own price, with the reason in the Note — how a sibling rate is written.
+  ['Maryam Ismail', '2018-07-20', 'Group A', 'Hifz', 'Monthly tuition', '150.00', 'Ibrahim Ismail', 'Father', '(555) 010-2030', 'ibrahim@example.org', 'Sibling discount'],
+  // A blank Amount means "charge the plan's price".
+  ['Bilal Farooqi', '2015-11-02', 'Group B', 'Hifz', 'Monthly tuition', '', 'Kamal Farooqi', 'Father', '(555) 010-4040', 'kamal@example.org', ''],
+  // An "Aunt" ALONGSIDE a parent is what makes the importer stop and ask where relatives are filed. She
+  // has to be a second adult for a child who already has a parent: a relative who is the only adult on a
+  // household is kept as a guardian without asking, or that family would have nobody to contact.
+  ['', '', '', '', '', '', 'Amina Farooqi', 'Aunt', '(555) 010-4041', '', ''],
+] as const;
+
+/** Joins the cells of a row into one comparable string. A UNIT SEPARATOR rather than a space, because a
+ *  space appears inside cells and would let two different rows collide on one fingerprint. */
+const FINGERPRINT_SEP = '\u001f';
+
+/** The example rows as submitted rows, for comparison. */
+function exampleRowSet(): Set<string> {
+  return new Set(
+    IMPORT_EXAMPLE_ROWS.map((cells) => IMPORT_FIELDS.map((f, i) => key(cells[i] ?? '')).join(FINGERPRINT_SEP)),
+  );
+}
+
+/**
+ * Is this row still the example we shipped, untouched?
+ *
+ * The template is now a file with data in it, which introduces a way to import three children who do
+ * not exist — an office that fills in their own rows underneath and forgets to delete ours. Every field
+ * has to match for a row to count, so a row they edited is their own data and is validated normally.
+ *
+ * Compared against the SAME constant the download is built from, so the two cannot drift.
+ */
+export function isExampleRow(r: ImportRow): boolean {
+  const fingerprint = IMPORT_FIELDS.map((f) => key(r[f.key])).join(FINGERPRINT_SEP);
+  return exampleRowSet().has(fingerprint);
+}
+
 export interface ImportRow {
   fullName?: string;
   dob?: string;
@@ -410,6 +470,22 @@ export function validateRows(rows: ImportRow[], opts: ImportOpts): ValidateResul
     const r = m.fields;
     const errors: string[] = [];
     const fullName = norm(r.fullName);
+
+    // The template ships with example rows (0.48.0). An office that filled in their own students
+    // underneath and forgot to delete ours would otherwise create three children who do not exist —
+    // and the preview would look entirely successful. Reported ON ITS OWN: telling them the fee plan
+    // "Monthly tuition" does not exist as well would bury the one sentence that matters.
+    if (isExampleRow(r)) {
+      out.push({
+        row: m.row,
+        sourceRows: m.sourceRows,
+        ok: false,
+        errors: [`Row ${fileLine(m.row)} is still the example row from the template — replace it with a real student, or delete it.`],
+        contacts: [],
+        resolved: null,
+      });
+      continue;
+    }
 
     const dob = importDob(r.dob, fmt);
     if (dob.bad) errors.push(`Date of birth "${norm(r.dob)}" isn’t a date we can read — use ${DATE_FORMAT_SAMPLES[fmt]} or 2026-03-04.`);

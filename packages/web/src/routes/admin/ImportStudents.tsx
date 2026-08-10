@@ -274,7 +274,10 @@ export function ImportStudents() {
   // that checked class names against one school while the commit wrote them into another would report
   // a clean file and then import it wrong.
   const { schoolId, arg: schoolArg } = useSchool();
-  const fields = trpc.people.importTemplate.useQuery();
+  // The columns the importer understands AND the example rows the template is filled with — both from
+  // the server, so the validator's 'this is still the example row' check compares against one constant.
+  const template = trpc.people.importTemplate.useQuery();
+  const cols = template.data?.fields;
   const plans = trpc.billing.feePlanList.useQuery();
   const preview = trpc.people.importPreview.useMutation();
   const commit = trpc.people.importCommit.useMutation();
@@ -291,21 +294,24 @@ export function ImportStudents() {
 
   /** Turn the parsed grid into the row objects the server validates. */
   const rows = useMemo(() => {
-    if (!fields.data) return [];
+    if (!cols) return [];
     return cells.map((r) => {
       const o: Record<string, string> = {};
-      for (const f of fields.data) {
+      for (const f of cols) {
         const i = mapping[f.key];
         if (i !== undefined && i >= 0) o[f.key] = r[i] ?? '';
       }
       return o;
     });
-  }, [cells, mapping, fields.data]);
+  }, [cells, mapping, cols]);
 
   function downloadTemplate() {
-    if (!fields.data) return;
-    // Header-only file: the labels are exactly what the auto-matcher recognises.
-    downloadCsv('students-template.csv', toCsv(fields.data.map((f) => f.label), []));
+    if (!cols) return;
+    // Every column, and four example rows (0.48.0). The labels are exactly what the auto-matcher
+    // recognises; the rows show the two things a header row cannot — that a line with no name is
+    // another adult for the student above it, and that the Amount column overrides the plan for one
+    // child. The examples come from the server, which is also what refuses them if they are left in.
+    downloadCsv('students-template.csv', toCsv(cols.map((f) => f.label), template.data?.example ?? []));
   }
 
   async function onFile(file: File) {
@@ -325,7 +331,7 @@ export function ImportStudents() {
       setFileName(file.name);
       setHeaders(parsed.headers);
       setCells(parsed.rows);
-      setMapping(autoMatchColumns(parsed.headers, (fields.data ?? []).map((f) => ({ key: f.key, label: f.label, aliases: f.aliases }))));
+      setMapping(autoMatchColumns(parsed.headers, (cols ?? []).map((f) => ({ key: f.key, label: f.label, aliases: f.aliases }))));
       setStep('map');
     } catch (e) {
       // One friendly sentence about the file itself; anything unexpected falls back to "no rows".
@@ -333,7 +339,7 @@ export function ImportStudents() {
     }
   }
 
-  const requiredUnmapped = (fields.data ?? []).filter((f) => f.required && (mapping[f.key] ?? -1) < 0);
+  const requiredUnmapped = (cols ?? []).filter((f) => f.required && (mapping[f.key] ?? -1) < 0);
   const matchedCount = Object.values(mapping).filter((i) => i >= 0).length;
   // Columns in the file that no field claims — most often an "ID" column, which this app always
   // generates itself. Say so instead of dropping them silently.
@@ -395,25 +401,26 @@ export function ImportStudents() {
             <p className="hint">{t('import.pickFileHint')}</p>
           </div>
           {parseError && <p className="form-error">{parseError}</p>}
-          <button type="button" className="btn btn--ghost btn--sm" onClick={downloadTemplate} disabled={!fields.data}>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={downloadTemplate} disabled={!cols}>
             {t('import.downloadTemplate')}
           </button>
+          <p className="hint">{t('import.templateHint')}</p>
         </section>
       )}
 
       {/* ── Step 2: confirm the column mapping ──────────────────────────── */}
-      {step === 'map' && fields.data && (
+      {step === 'map' && cols && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head">
             <h2>{t('import.matchColumns')}</h2>
-            <span className="chip is-muted">{t('import.matched', { count: matchedCount, total: fields.data.length })}</span>
+            <span className="chip is-muted">{t('import.matched', { count: matchedCount, total: cols.length })}</span>
           </div>
           <p className="hint">{t('import.matchHint', { file: fileName, rows: cells.length })}</p>
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
               <thead><tr><th>{t('import.field')}</th><th>{t('import.column')}</th><th>{t('import.sample')}</th></tr></thead>
               <tbody>
-                {fields.data.map((f) => {
+                {cols.map((f) => {
                   const idx = mapping[f.key] ?? -1;
                   return (
                     <tr key={f.key}>

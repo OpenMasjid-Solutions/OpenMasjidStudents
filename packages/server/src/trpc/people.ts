@@ -39,7 +39,7 @@ import { familyLabel, mergeDuplicateGuardians, mergeDuplicateContacts } from '..
 import { suggestSiblingGroups } from '../people/siblingSuggest';
 import type { Tx } from '../billing/ledger';
 import { audit } from '../audit';
-import { IMPORT_FIELDS, validateRows, commitRows, type ImportRow } from '../people/import';
+import { IMPORT_FIELDS, IMPORT_EXAMPLE_ROWS, validateRows, commitRows, type ImportRow } from '../people/import';
 import { defaultSchoolId, resolveSchoolScope, schoolIdForClass } from '../schools';
 
 // ── input helpers ────────────────────────────────────────────────────────────
@@ -611,9 +611,18 @@ export const peopleRouter = router({
   // ── CSV import ───────────────────────────────────────────────────────────────
   /** The canonical column set. The dialog uses this both to build the blank template and to
    *  auto-match the uploaded file's headers, so there is one source of truth. */
-  importTemplate: adminProcedure.query(() =>
-    IMPORT_FIELDS.map((f) => ({ key: f.key, label: f.label, required: f.required, aliases: [...f.aliases] })),
-  ),
+  /**
+   * The columns the importer understands, and the example rows the template is filled with.
+   *
+   * The examples come from the SERVER, beside the field registry (people/import.ts), for one reason: the
+   * validator refuses a row that is still an untouched example, and it compares against the same
+   * constant. A copy in the browser is how that guard would quietly stop matching.
+   */
+  importTemplate: adminProcedure.query(() => ({
+    fields: IMPORT_FIELDS.map((f) => ({ key: f.key, label: f.label, required: f.required, aliases: [...f.aliases] })),
+    /** Rows of cells in `fields` order. */
+    example: IMPORT_EXAMPLE_ROWS.map((r) => [...r]),
+  })),
 
   /** Dry run. Resolves families / classes / fee plans and reports per-row problems so the dialog
    *  can show them before anything is written. A mutation, not a query, because the rows go in the
