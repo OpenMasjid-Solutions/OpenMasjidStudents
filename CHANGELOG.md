@@ -75,6 +75,11 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **"Hasn't paid at all" is now an option in the mid-year setup**, after "Not said". It carries in every
   month of the year before you went live, and it's on the "set the whole column" list too.
 
+- **The year view uses the whole window.** It's a table a full year wide, and with the optional columns on
+  it was scrolling sideways while a few hundred pixels of screen sat empty either side. It now stretches to
+  fit the window, and only scrolls when it genuinely runs out of room. Every other screen keeps its normal
+  reading width.
+
 - **"Not paid" is a bold ● instead of a faint dot** on the year view — the one state you're scanning for
   was the hardest to see.
 

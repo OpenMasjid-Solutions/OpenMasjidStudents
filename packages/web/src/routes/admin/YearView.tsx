@@ -117,7 +117,10 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
   );
 
   return (
-    <div className="page">
+    // `page--wide` lifts the shell's reading-width cap for this one screen (0.48.0): a whole year of
+    // months plus the optional columns is wider than 1040px, and it was scrolling sideways with the
+    // edges of the screen left empty. See admin.css.
+    <div className="page page--wide">
       <div className="admin-header no-print">
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('year.title')}</h1>
         {years.data && years.data.length > 0 && (

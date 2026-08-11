@@ -302,6 +302,22 @@
   padding-block-end: 6rem; /* clear the floating dock */
 }
 
+/*
+ * A page that is allowed the whole window (0.48.0) — the year view, and only it.
+ *
+ * 1040px is a good measure for reading and for forms, and it is wrong for a table that is a WHOLE YEAR
+ * wide: twelve months, plus up to ten optional columns, scrolling sideways while several hundred pixels
+ * of screen sat empty either side of it. The cap belongs to the content, not to the shell, so it is
+ * lifted per page rather than raised for everything.
+ *
+ * `.app-main`'s own 1140px cap has to go with it, and that rule lives in the PORTED app.css — which must
+ * stay structurally identical to upstream for re-syncing (§15). So it is overridden from here, in this
+ * app's own stylesheet, using `:has()` — the same approach the student-picker stacking fix uses. The
+ * shell keeps its padding, so a full-width table still does not touch the window edge.
+ */
+.app-main:has(.page--wide) { max-width: none; }
+.page--wide { max-width: none; }
+
 /* Window body content — the .win-body already pads; sections stack with a gap. */
 .win-content {
   display: flex;
@@ -418,7 +434,16 @@
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
-.year-grid { min-width: max-content; }
+/*
+ * The grid takes whatever width it is given, and overflows only when it genuinely has to.
+ *
+ * `min-width: max-content` is what makes the horizontal scroll work: a nowrap grid of twelve months plus
+ * the optional columns can be wider than any screen, and squeezing it is worse than scrolling it.
+ * `width: 100%` is the other half — with few columns on a wide monitor the table used to sit at its
+ * natural width with the rest of the row empty, which read as a narrow table on a wide page rather than
+ * a year. Together: fill the space when there is space, scroll when there is not.
+ */
+.year-grid { min-width: max-content; width: 100%; }
 .year-grid th,
 .year-grid td { white-space: nowrap; }
 
