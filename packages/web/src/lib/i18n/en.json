@@ -197,7 +197,8 @@
     "billedNone_before_floor": "Added, but nothing was billed — that month is before the month you started billing from, and those arrears are already in the balance carried forward.",
     "billedNone_no_school_year": "Added, but nothing was billed — there is no current school year set up, so there are no months to bill.",
     "billedNone_future": "Added, but nothing was billed — that month has not happened yet. They will be billed when you generate it.",
-    "billedNone_not_a_month": "Added, but nothing was billed — that was not a month this app can bill."
+    "billedNone_not_a_month": "Added, but nothing was billed — that was not a month this app can bill.",
+    "billFromEmpty": "No earlier months to catch up on — your school year hasn’t started, or you bill from a later month. They’ll be billed from the next time you generate."
   },
   "import": {
     "title": "Import students",

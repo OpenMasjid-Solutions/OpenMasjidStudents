@@ -49,11 +49,18 @@ export function currentPeriod(now = new Date()): string {
  *  more than any madrasah needs mid-year, and the billing floor usually cuts it shorter anyway. */
 const FALLBACK_MONTHS_BACK = 12;
 
-/** The last `n` months ending with the current one, oldest first. */
-function recentMonths(n: number, now: Date): string[] {
+/**
+ * `n` months ending at `endKey`, oldest first.
+ *
+ * Ends at the HORIZON rather than at today, because the horizon can be a month ahead: an install whose
+ * go-live is September, asked in August, must still be offered September. Walking back from the end is what
+ * makes that fall out of one calculation instead of two.
+ */
+function monthsEndingAt(endKey: string, n: number): string[] {
+  const [y, m] = endKey.split('-').map(Number);
   const out: string[] = [];
   for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
     out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
   }
   return out;
@@ -67,11 +74,27 @@ function recentMonths(n: number, now: Date): string[] {
  * and the normal monthly run will bill this child when it arrives — so offering "April" would look like a
  * promise to start then, which nothing here enforces. "Not yet" already means exactly that.
  *
- * WITH NO SCHOOL YEAR SET UP, this falls back to a window of recent calendar months rather than returning
- * nothing. That is not a nicety: it returned an empty list, the add form hid the field entirely, and the
- * one install guaranteed to have no school year yet is a NEW one — which is exactly when an office is
- * adding students and most likely to need a catch-up. `invoiceMonthOptions` in trpc/billing.ts has always
- * had the same fallback for the same reason; this one was missing it.
+ * THE LIST FALLS BACK TO RECENT CALENDAR MONTHS whenever the school year yields none, and that covers two
+ * real installs, both of which hid the field completely:
+ *
+ *   • NO SCHOOL YEAR AT ALL — a brand-new install, which is exactly when an office is entering a roster
+ *     and most likely to need a catch-up.
+ *   • A CURRENT YEAR THAT HAS NOT STARTED YET. In August, a 2026-27 year running September to June has
+ *     every one of its months in the future, so filtering to "no later than this month" left nothing. An
+ *     install that had been set up properly therefore showed FEWER options than one that had not, which is
+ *     how this was found: the field appeared on a fresh install and not on the real one.
+ *
+ * `invoiceMonthOptions` in trpc/billing.ts has always had the same fallback; this one was missing it.
+ *
+ * THE GO-LIVE MONTH IS ALWAYS OFFERED, even when it is still in the future. A madrasah that ran the
+ * mid-year step in August and said "we bill from September" had NOTHING offered at all: no month can be
+ * both no-later-than-August and no-earlier-than-September. But September is the first month that install
+ * will ever bill, so it is precisely the month an office wants to name for a child enrolling now. Choosing
+ * it creates no invoice yet — September has not happened — and the form says exactly that rather than
+ * implying otherwise; the September run then bills them with everybody else.
+ *
+ * It can still come back empty (a floor further out than the month after next, say). The form handles that
+ * by saying so rather than by hiding the field, which is the other half of the fix.
  */
 export function billFromMonths(schoolId: string | null, now = new Date()): { periodKey: string; label: string }[] {
   const year = db
@@ -81,13 +104,14 @@ export function billFromMonths(schoolId: string | null, now = new Date()): { per
     .get();
   const floor = getBillingStartPeriod();
   const today = currentPeriod(now);
-  const keys =
-    year && year.startYear != null
-      ? schoolYearMonths(year.startYear, year.startMonth, year.endMonth).map((m) => m.periodKey)
-      : recentMonths(FALLBACK_MONTHS_BACK, now);
-  return keys
-    .filter((k) => k <= today && (!floor || k >= floor))
-    .map((k) => ({ periodKey: k, label: resolveInvoiceLabel('[month] [year]', k) }));
+  // How far forward to look: this month, or the go-live month when that is still ahead of us.
+  const horizon = floor && floor > today ? floor : today;
+  const eligible = (keys: string[]) => keys.filter((k) => k <= horizon && (!floor || k >= floor));
+
+  const fromYear =
+    year && year.startYear != null ? eligible(schoolYearMonths(year.startYear, year.startMonth, year.endMonth).map((m) => m.periodKey)) : [];
+  const keys = fromYear.length ? fromYear : eligible(monthsEndingAt(horizon, FALLBACK_MONTHS_BACK));
+  return keys.map((k) => ({ periodKey: k, label: resolveInvoiceLabel('[month] [year]', k) }));
 }
 
 export interface JoinResult {

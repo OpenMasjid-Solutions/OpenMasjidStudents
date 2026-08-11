@@ -86,6 +86,51 @@ describe('billFromMonths — what the dropdown offers', () => {
     expect(months[0]).toBe('2026-03');
   });
 
+  /**
+   * The case that hid the field on a REAL install while showing it on a fresh one.
+   *
+   * In August, a 2026-27 year running September to June has every month in the future, so filtering to
+   * "no later than this month" left nothing — and an install that had been set up properly therefore
+   * offered FEWER options than one that had not. The fallback now covers an unstarted year as well as a
+   * missing one.
+   */
+  it('falls back when the current school year has not started yet', async () => {
+    const admin = caller('admin');
+    await admin.structure.schoolYearCreate({ label: '2026–27', startYear: 2026, startMonth: 9, endMonth: 6, makeCurrent: true });
+    const AUG = new Date('2026-08-11T00:00:00Z');
+    const months = join.billFromMonths(null, AUG).map((m) => m.periodKey);
+    expect(months.length).toBeGreaterThan(0);
+    expect(months[months.length - 1]).toBe('2026-08');
+    // …and once the year IS under way, its own months are what is offered, not the calendar window.
+    const inNovember = join.billFromMonths(null, new Date('2026-11-05T00:00:00Z')).map((m) => m.periodKey);
+    expect(inNovember).toEqual(['2026-09', '2026-10', '2026-11']);
+  });
+
+  /**
+   * The exact install that reported this: mid-year setup run in August, go-live set to September. No month
+   * can be both no-later-than-August and no-earlier-than-September, so NOTHING was offered — on the one
+   * install that had been configured deliberately.
+   */
+  it('offers the go-live month even when it is still ahead of us', async () => {
+    const AUG = new Date('2026-08-11T00:00:00Z');
+    settingsMod.setBillingStartPeriod('2026-09');
+
+    // With no school year at all: exactly the go-live month, nothing before it.
+    expect(join.billFromMonths(null, AUG).map((m) => m.periodKey)).toEqual(['2026-09']);
+
+    // And with the matching school year configured, the same answer rather than its whole span.
+    const admin = caller('admin');
+    await admin.structure.schoolYearCreate({ label: '2026–27', startYear: 2026, startMonth: 9, endMonth: 6, makeCurrent: true });
+    expect(join.billFromMonths(null, AUG).map((m) => m.periodKey)).toEqual(['2026-09']);
+
+    // Choosing it bills nothing yet — September has not happened — and says so, rather than pretending.
+    const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
+    const r = await admin.people.studentAdd({ fullName: 'Starts In September', feePlanId: plan.id, billFromPeriod: '2026-09' });
+    expect(r.id).toBeTruthy();
+    expect(r.billed).toMatchObject({ created: 0, reason: 'future' });
+    settingsMod.setBillingStartPeriod(null);
+  });
+
   it('honours the billing floor in the fallback too', () => {
     settingsMod.setBillingStartPeriod('2027-01');
     expect(join.billFromMonths(null, FEB).map((m) => m.periodKey)).toEqual(['2027-01', '2027-02']);

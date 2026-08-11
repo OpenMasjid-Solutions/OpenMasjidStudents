@@ -94,6 +94,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   done — and no invoices are created; they're billed from the next time you generate. Pick a month and they
   get **one invoice per month from then until now**, so a child who has really been attending since October
   is caught up in one go.
+  - **Your go-live month is always offered, even before it arrives.** If you ran the mid-year setup and said
+    you bill from September, then in August there is no month that is both before today and on or after
+    September — so the dropdown had nothing in it and hid itself. September is now offered: picking it bills
+    nothing yet, says so, and that child is billed with everybody else when you generate September.
   - Every catch-up month is **due today**, not in its own month. You're telling the family about all of it
     now, so they shouldn't be five months overdue the moment their child is added — and the past-due
     reminder shouldn't chase them for a bill they've only just been given. The amount owed is the same.

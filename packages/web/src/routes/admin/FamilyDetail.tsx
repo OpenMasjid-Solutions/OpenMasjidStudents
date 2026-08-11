@@ -348,21 +348,33 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               <p className="hint">{feePlans.data && feePlans.data.length === 0 ? t('directory.noFeePlans') : t('directory.feePlanHint')}</p>
             </div>
             {/* Joining part-way through the year (0.48.0) — the same choice the Students tab offers, so a
-                child added into an existing household is treated no differently from one starting a new. */}
-            {(billFrom.data?.months ?? []).length > 0 && (
-              <div className="field" style={{ flex: '1 1 12rem' }}>
-                <label className="label" htmlFor="fd-billfrom">{t('students.billFrom')}</label>
-                <select id="fd-billfrom" className="input glass-inset" value={stu.billFromPeriod} onChange={(e) => setStu({ ...stu, billFromPeriod: e.target.value })}>
-                  <option value="">{t('students.billFromNone')}</option>
-                  {(billFrom.data?.months ?? []).map((m) => (
-                    <option key={m.periodKey} value={m.periodKey}>
-                      {m.periodKey === billFrom.data?.current ? t('students.billFromThisMonth', { month: m.label }) : m.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="hint">{stu.billFromPeriod ? t('students.billFromHint') : t('students.billFromNoneHint')}</p>
-              </div>
-            )}
+                child added into an existing household is treated no differently from one starting a new.
+                Always rendered, for the reason set out on the Students tab: an empty month list is an
+                ordinary state, and hiding the field for it made the feature impossible to find. */}
+            <div className="field" style={{ flex: '1 1 12rem' }}>
+              <label className="label" htmlFor="fd-billfrom">{t('students.billFrom')}</label>
+              <select
+                id="fd-billfrom"
+                className="input glass-inset"
+                value={stu.billFromPeriod}
+                disabled={(billFrom.data?.months ?? []).length === 0}
+                onChange={(e) => setStu({ ...stu, billFromPeriod: e.target.value })}
+              >
+                <option value="">{t('students.billFromNone')}</option>
+                {(billFrom.data?.months ?? []).map((m) => (
+                  <option key={m.periodKey} value={m.periodKey}>
+                    {m.periodKey === billFrom.data?.current ? t('students.billFromThisMonth', { month: m.label }) : m.label}
+                  </option>
+                ))}
+              </select>
+              <p className="hint">
+                {(billFrom.data?.months ?? []).length === 0
+                  ? t('students.billFromEmpty')
+                  : stu.billFromPeriod
+                    ? t('students.billFromHint')
+                    : t('students.billFromNoneHint')}
+              </p>
+            </div>
             <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>
           </form>
         )}

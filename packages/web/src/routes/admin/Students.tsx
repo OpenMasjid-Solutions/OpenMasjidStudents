@@ -259,21 +259,36 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
               adding a student has always done — the months are for a child who has really been attending
               since October, and picking one creates their invoice for every month from then to now. Past
               months only: there is nothing to create for a month that has not happened, and the normal
-              monthly run bills them when it arrives. */}
-          {(billFrom.data?.months ?? []).length > 0 && (
-            <div className="field" style={{ flex: '1 1 12rem' }}>
-              <label className="label" htmlFor="stu-billfrom">{t('students.billFrom')}</label>
-              <select id="stu-billfrom" className="input glass-inset" value={stu.billFromPeriod} onChange={(e) => setStu({ ...stu, billFromPeriod: e.target.value })}>
-                <option value="">{t('students.billFromNone')}</option>
-                {(billFrom.data?.months ?? []).map((m) => (
-                  <option key={m.periodKey} value={m.periodKey}>
-                    {m.periodKey === billFrom.data?.current ? t('students.billFromThisMonth', { month: m.label }) : m.label}
-                  </option>
-                ))}
-              </select>
-              <span className="hint">{stu.billFromPeriod ? t('students.billFromHint') : t('students.billFromNoneHint')}</span>
-            </div>
-          )}
+              monthly run bills them when it arrives.
+              ALWAYS RENDERED. It used to be hidden when the month list came back empty, which happens on a
+              perfectly ordinary install — a school year that has not started yet, or a go-live month later
+              than today — so the field was there on a fresh install and missing on a real one. An empty
+              list is now a disabled box that says why, because a control you cannot find is worse than one
+              that tells you it has nothing to offer. */}
+          <div className="field" style={{ flex: '1 1 12rem' }}>
+            <label className="label" htmlFor="stu-billfrom">{t('students.billFrom')}</label>
+            <select
+              id="stu-billfrom"
+              className="input glass-inset"
+              value={stu.billFromPeriod}
+              disabled={(billFrom.data?.months ?? []).length === 0}
+              onChange={(e) => setStu({ ...stu, billFromPeriod: e.target.value })}
+            >
+              <option value="">{t('students.billFromNone')}</option>
+              {(billFrom.data?.months ?? []).map((m) => (
+                <option key={m.periodKey} value={m.periodKey}>
+                  {m.periodKey === billFrom.data?.current ? t('students.billFromThisMonth', { month: m.label }) : m.label}
+                </option>
+              ))}
+            </select>
+            <span className="hint">
+              {(billFrom.data?.months ?? []).length === 0
+                ? t('students.billFromEmpty')
+                : stu.billFromPeriod
+                  ? t('students.billFromHint')
+                  : t('students.billFromNoneHint')}
+            </span>
+          </div>
           {/* The sibling link. This is the ONLY way households are formed — nobody names a family.
               Type-to-search, because by the time a school has three hundred children a dropdown of
               every one of them is not a way to find a brother. */}
