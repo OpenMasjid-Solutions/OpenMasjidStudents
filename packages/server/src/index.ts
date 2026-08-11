@@ -168,8 +168,24 @@ async function main(): Promise<void> {
     const rawIndex = fs
       .readFileSync(path.join(config.publicDir, 'index.html'), 'utf8')
       .replace('<head>', `<head>\n    <base href="${BASE}/">\n    <script>window.__OMOS_BASE__=${JSON.stringify(BASE)}</script>`);
+    /**
+     * The SPA shell, and it MUST NOT be cached (0.48.0).
+     *
+     * It was sent with no `cache-control`, no `etag` and no `last-modified` — nothing at all. A response
+     * with neither a directive nor a validator is one a browser may hold in its cache and reuse without
+     * ever asking again (heuristic freshness), and that is what turns an update into a no-op: Vite gives
+     * every asset a content-hashed name, so a stale `index.html` keeps pointing at the OLD bundle, which
+     * the browser also still has. The result is the previous UI running against the new server — and
+     * because the version in the account menu comes from the SERVER, it reports the new one, so the app
+     * looks updated while none of the new screens exist. It cost a whole debugging session to find.
+     *
+     * `no-store` rather than `no-cache`: this document is 1 KB, it is fetched once per page load, and it
+     * is the one file that decides which build the browser runs. There is nothing to gain by caching it
+     * and an entire release to lose. The hashed assets it points at stay cacheable, which is the whole
+     * point of hashing them.
+     */
     const sendIndex = (_req: unknown, reply: import('fastify').FastifyReply) =>
-      reply.type('text/html').send(rawIndex);
+      reply.type('text/html').header('cache-control', 'no-store, must-revalidate').send(rawIndex);
     // Serve the SPA index at the root explicitly — @fastify/static with index:false
     // returns 403 for a bare directory request, so it never reaches the fallback below.
     app.get('/', sendIndex);
@@ -178,7 +194,9 @@ async function main(): Promise<void> {
       const isAsset = path.extname(url) !== '';
       const isApi = NON_SPA_PREFIXES.some((p) => url === p || url.startsWith(p + '/'));
       if (req.method === 'GET' && !isAsset && !isApi) {
-        reply.type('text/html').send(rawIndex);
+        // Through the same helper as `/`, so the no-store header above cannot apply to one entry point
+        // and not the other — a deep link like /family or /billing is how most people arrive.
+        sendIndex(req, reply);
         return;
       }
       reply.code(404).send({ error: 'Not found.' });

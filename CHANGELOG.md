@@ -75,6 +75,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **"Hasn't paid at all" is now an option in the mid-year setup**, after "Not said". It carries in every
   month of the year before you went live, and it's on the "set the whole column" list too.
 
+- **An update now actually takes effect when you reload.** The app's shell page was sent with no caching
+  instructions at all, which lets a browser keep serving the old one — and because every script file is
+  named after its contents, the old shell keeps loading the old app. The version in the account menu comes
+  from the server, so it would read the new version while every screen was still the previous build: "I
+  updated and the new feature isn't there", with the version number seeming to prove otherwise. The shell
+  is now never cached. **If you're on an older version, one hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a
+  Mac) gets you the current build.**
+
 - **Fields in a row line up properly.** A row of fields was aligned along its bottom edge, which only looks
   right while every field is the same height — so any field with a hint under it floated a line above its
   neighbours. It was visible on the add-student row, the invoice row and the past-due settings. Rows are
