@@ -281,12 +281,17 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
                 </option>
               ))}
             </select>
+            {/* The hint has to distinguish a CATCH-UP from a month that has not happened. On an install
+                whose go-live is next month, the only month offered IS in the future, and telling them it
+                "creates one invoice per month from then until now" would be plainly untrue. */}
             <span className="hint">
               {(billFrom.data?.months ?? []).length === 0
                 ? t('students.billFromEmpty')
-                : stu.billFromPeriod
-                  ? t('students.billFromHint')
-                  : t('students.billFromNoneHint')}
+                : !stu.billFromPeriod
+                  ? t('students.billFromNoneHint')
+                  : stu.billFromPeriod > (billFrom.data?.current ?? '')
+                    ? t('students.billFromFutureHint')
+                    : t('students.billFromHint')}
             </span>
           </div>
           {/* The sibling link. This is the ONLY way households are formed — nobody names a family.

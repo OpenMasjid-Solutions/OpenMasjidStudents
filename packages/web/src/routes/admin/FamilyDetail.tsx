@@ -370,9 +370,11 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               <p className="hint">
                 {(billFrom.data?.months ?? []).length === 0
                   ? t('students.billFromEmpty')
-                  : stu.billFromPeriod
-                    ? t('students.billFromHint')
-                    : t('students.billFromNoneHint')}
+                  : !stu.billFromPeriod
+                    ? t('students.billFromNoneHint')
+                    : stu.billFromPeriod > (billFrom.data?.current ?? '')
+                      ? t('students.billFromFutureHint')
+                      : t('students.billFromHint')}
               </p>
             </div>
             <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>
