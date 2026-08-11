@@ -16,16 +16,20 @@
  * money and roster history stay intact. Archiving a class unplaces its students first (the server
  * does that in one transaction) and tells you how many moved.
  */
-import { useState, type FormEvent } from 'react';
+import { lazy, Suspense, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { CalendarRange, Layers, Pencil, Plus, School, UserPlus } from 'lucide-react';
+import { ArrowRightLeft, CalendarRange, Layers, Pencil, Plus, School, UserPlus } from 'lucide-react';
 import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { MONTH_NAMES, schoolYearSpan } from '../../lib/months';
 import { useWindows } from '../../components/Windows';
 import { SchoolTabs, useRequiredSchool } from '../../components/SchoolTabs';
 import { ClassEnrol } from '../../components/ClassEnrol';
+
+/** A once-a-year screen — no reason for it to ride in the main bundle (same treatment as the go-live
+ *  wizard and What's new). */
+const YearRollover = lazy(() => import('../../components/YearRollover').then((m) => ({ default: m.YearRollover })));
 
 /** The in-progress edit of one school year, or null when nothing is being edited. */
 interface YearEdit {
@@ -40,6 +44,20 @@ export function Structure() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
   const { open } = useWindows();
+
+  /** Starting a new year, in a window of its own — it is a five-step review, not a button. */
+  const openRollover = () =>
+    open({
+      title: t('rollover.title'),
+      wide: true,
+      dedupeKey: 'year-rollover',
+      icon: <ArrowRightLeft size={15} />,
+      node: (
+        <Suspense fallback={<p className="empty">{t('common.loading')}</p>}>
+          <YearRollover schoolId={schoolId} />
+        </Suspense>
+      ),
+    });
 
   /** Mass enrolment opens as its own window: it is a list of the whole school, which does not belong
    *  inline under a class chip. */
@@ -360,6 +378,13 @@ export function Structure() {
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head">
           <h2><CalendarRange size={16} />{t('structure.years')}</h2>
+          <span className="spacer" />
+          {/* The real way into a new year (0.48.0). "Make current" below still exists and still does
+              exactly one thing — flip which year the app is looking at — which is right for correcting a
+              mistake and wrong as the way to start September. */}
+          <button type="button" className="btn btn--primary" onClick={openRollover}>
+            <ArrowRightLeft size={15} /> {t('rollover.start')}
+          </button>
         </div>
         <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('structure.yearsHint')}</p>
 

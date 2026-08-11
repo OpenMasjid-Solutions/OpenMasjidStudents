@@ -107,6 +107,22 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     from — those arrears are already in the balance carried forward. It tells you what it billed, and if
     it billed nothing, why.
 
+- **Starting a new school year is a proper handover now.** **Structure → Start a new year** walks through
+  the four things a rollover actually is, and saves nothing until the last step:
+  - **Where each class goes** — stays as it is, moves its children up into another class, or **graduated**.
+    It guesses from the order you put your classes in (Hifz 1 → Hifz 2, the top one graduates) so an
+    ordinary year is a matter of reading. Expand any class to send **one child** somewhere different, which
+    is what a student repeating the year needs.
+  - **Who is leaving** — the children whose class graduated are listed to tick. Ticking marks them
+    withdrawn, which stops future billing and keeps their record. Nobody is withdrawn who wasn't ticked.
+  - **Fees** — every plan with its current amount and a box for the new one. **Individual amounts you've
+    agreed with a family — a sibling rate, a hardship — are kept exactly as they are.**
+  - **What's still owed** — who owes what, before you move on. It changes nothing; those are real unpaid
+    bills and they carry over as they are.
+  - Your terms are copied into the new year with their dates a year on, and the whole thing is applied in
+    one go — so it either all happens or none of it does. Before this, "Activate" flipped which year the
+    app was looking at and nothing else: same classes, same prices, no explanation.
+
 - **First time setup.** With nobody on the roster yet, the dashboard now offers a **First time setup**
   button instead of an empty page: your madrasah's name, your logo and colour, the Stripe account tuition
   is paid into, importing your students (with the template to download), and then a plain list of what each
