@@ -242,7 +242,9 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
               how a child silently stops being billed. */}
           <div className="field" style={{ flex: '1 1 12rem' }}><label className="label" htmlFor="stu-plan">{t('directory.feePlan')}</label>
             <select id="stu-plan" className="input glass-inset" value={stu.feePlanId} onChange={(e) => setStu({ ...stu, feePlanId: e.target.value })} required>
-              <option value="">{(plans.data ?? []).length ? t('directory.feePlan') : t('directory.noFeePlans')}</option>
+              {/* "Choose a plan…", not the field's own label again — repeating "Fee plan" inside the box
+                  read as though a plan called "Fee plan" were already selected. */}
+              <option value="">{(plans.data ?? []).length ? t('directory.choosePlan') : t('directory.noFeePlans')}</option>
               {(plans.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <span className="hint">{t('directory.feePlanHint')}</span>

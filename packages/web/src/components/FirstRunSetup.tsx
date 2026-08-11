@@ -179,7 +179,7 @@ export function FirstRunSetup() {
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head"><h2><Palette size={16} /> {t('firstRun.lookTitle')}</h2></div>
           <p className="hint" style={{ marginBlockEnd: '0.75rem' }}>{t('firstRun.lookHint')}</p>
-          <div className="inline-form glass-inset" style={{ marginBlockStart: 0, alignItems: 'flex-end' }}>
+          <div className="inline-form glass-inset" style={{ marginBlockStart: 0 }}>
             <div className="field" style={{ flex: '1 1 14rem' }}>
               <label className="label" htmlFor="fr-logo">{t('firstRun.logo')}</label>
               <input id="fr-logo" className="input glass-inset" type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => void pickLogo(e.target.files?.[0] ?? null)} />
@@ -187,7 +187,7 @@ export function FirstRunSetup() {
             </div>
             {settings.data?.logo && <img src={settings.data.logo} alt="" style={{ maxHeight: '3rem', maxWidth: '9rem', borderRadius: '0.4rem' }} />}
           </div>
-          <div className="inline-form glass-inset" style={{ alignItems: 'flex-end' }}>
+          <div className="inline-form glass-inset">
             <div className="field" style={{ flex: '0 1 12rem' }}>
               <label className="label" htmlFor="fr-colour">{t('settings.accent')}</label>
               <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>

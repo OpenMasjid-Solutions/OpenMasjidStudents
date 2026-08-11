@@ -161,7 +161,8 @@
     "noContacts": "No emergency contacts",
     "inviteToPortal": "Invite to portal",
     "inviteHint": "Creates a one-time sign-up link (valid 7 days) — copy it to the guardian. They need an email on file.",
-    "mailPaused": "Not sent — email to parents is paused in Settings. Use the link below."
+    "mailPaused": "Not sent — email to parents is paused in Settings. Use the link below.",
+    "choosePlan": "Choose a plan…"
   },
   "students": {
     "title": "Students",

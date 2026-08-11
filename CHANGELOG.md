@@ -75,6 +75,12 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **"Hasn't paid at all" is now an option in the mid-year setup**, after "Not said". It carries in every
   month of the year before you went live, and it's on the "set the whole column" list too.
 
+- **Fields in a row line up properly.** A row of fields was aligned along its bottom edge, which only looks
+  right while every field is the same height — so any field with a hint under it floated a line above its
+  neighbours. It was visible on the add-student row, the invoice row and the past-due settings. Rows are
+  aligned along the top now, so labels and boxes agree, and a button in the row sits level with the boxes it
+  acts on. Also: the fee-plan dropdown says **Choose a plan…** rather than repeating its own label.
+
 - **Adding a student mid-year.** The add-student form has a **Bill them from** dropdown, on the Students tab
   and on a household's record. Leave it on **Not yet** — the default, and what adding a student has always
   done — and no invoices are created; they're billed from the next time you generate. Pick a month and they

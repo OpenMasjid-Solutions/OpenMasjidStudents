@@ -45,6 +45,20 @@ export function currentPeriod(now = new Date()): string {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+/** How far back to offer months when no school year says which months are taught. A year of catch-up is
+ *  more than any madrasah needs mid-year, and the billing floor usually cuts it shorter anyway. */
+const FALLBACK_MONTHS_BACK = 12;
+
+/** The last `n` months ending with the current one, oldest first. */
+function recentMonths(n: number, now: Date): string[] {
+  const out: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
 /**
  * The months an office may start a new student's billing from: this school year's own months, no earlier
  * than the install's billing floor, and no later than the month we are in.
@@ -52,6 +66,12 @@ export function currentPeriod(now = new Date()): string {
  * FUTURE MONTHS ARE DELIBERATELY ABSENT. There is nothing to create for a month that has not happened,
  * and the normal monthly run will bill this child when it arrives — so offering "April" would look like a
  * promise to start then, which nothing here enforces. "Not yet" already means exactly that.
+ *
+ * WITH NO SCHOOL YEAR SET UP, this falls back to a window of recent calendar months rather than returning
+ * nothing. That is not a nicety: it returned an empty list, the add form hid the field entirely, and the
+ * one install guaranteed to have no school year yet is a NEW one — which is exactly when an office is
+ * adding students and most likely to need a catch-up. `invoiceMonthOptions` in trpc/billing.ts has always
+ * had the same fallback for the same reason; this one was missing it.
  */
 export function billFromMonths(schoolId: string | null, now = new Date()): { periodKey: string; label: string }[] {
   const year = db
@@ -59,12 +79,15 @@ export function billFromMonths(schoolId: string | null, now = new Date()): { per
     .from(schoolYears)
     .where(schoolId ? and(eq(schoolYears.isCurrent, true), eq(schoolYears.schoolId, schoolId)) : eq(schoolYears.isCurrent, true))
     .get();
-  if (!year || year.startYear == null) return [];
   const floor = getBillingStartPeriod();
   const today = currentPeriod(now);
-  return schoolYearMonths(year.startYear, year.startMonth, year.endMonth)
-    .filter((m) => m.periodKey <= today && (!floor || m.periodKey >= floor))
-    .map((m) => ({ periodKey: m.periodKey, label: resolveInvoiceLabel('[month] [year]', m.periodKey) }));
+  const keys =
+    year && year.startYear != null
+      ? schoolYearMonths(year.startYear, year.startMonth, year.endMonth).map((m) => m.periodKey)
+      : recentMonths(FALLBACK_MONTHS_BACK, now);
+  return keys
+    .filter((k) => k <= today && (!floor || k >= floor))
+    .map((k) => ({ periodKey: k, label: resolveInvoiceLabel('[month] [year]', k) }));
 }
 
 export interface JoinResult {
@@ -93,6 +116,8 @@ export function billStudentFrom(studentId: string, fromPeriod: string, now = new
 
   const student = db.select({ schoolId: students.schoolId }).from(students).where(eq(students.id, studentId)).get();
   const months = billFromMonths(student?.schoolId ?? null, now).filter((m) => m.periodKey >= fromPeriod);
+  // Only reachable now if the chosen month is outside the offered window entirely — with no school year
+  // the fallback above always yields at least the current month.
   if (!months.length) return { created: 0, periods: [], reason: 'no_school_year' };
 
   // One date for the whole catch-up: they are being told about all of it today (decision 2 above).

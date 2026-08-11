@@ -437,7 +437,7 @@ export function Settings() {
             </div>
           </div>
 
-          <div className="inline-form glass-inset" style={{ alignItems: 'flex-end' }}>
+          <div className="inline-form glass-inset">
             <div className="field" style={{ flex: '1 1 12rem' }}>
               <label className="label">{t('settings.dateFormat')}</label>
               {/* The options SHOW their own output rather than naming a pattern — "DD/MM/YYYY" is
@@ -595,7 +595,7 @@ export function Settings() {
               />
               <span>{t('settings.pastDueParents')}<br /><span className="hint">{t('settings.pastDueParentsHint')}</span></span>
             </label>
-            <div className="inline-form glass-inset" style={{ alignItems: 'flex-end' }}>
+            <div className="inline-form glass-inset">
               <div className="field" style={{ flex: '0 1 9rem' }}>
                 <label className="label" htmlFor="pd-grace">{t('settings.pastDueGrace')}</label>
                 <input

@@ -71,8 +71,33 @@ describe('billFromMonths — what the dropdown offers', () => {
     expect(join.billFromMonths(null, FEB).map((m) => m.periodKey)).toEqual(['2026-11', '2026-12', '2027-01', '2027-02']);
   });
 
-  it('offers nothing at all when no school year is set up', () => {
-    expect(join.billFromMonths(null, FEB)).toEqual([]);
+  /**
+   * The field was HIDDEN on exactly the install most likely to need it. `billFromMonths` returned an empty
+   * list with no school year configured, the add form hides the dropdown on an empty list, and a brand-new
+   * install has no school year — so the one office adding a roster for the first time could not find the
+   * feature at all. It falls back to recent calendar months, as the Generate form always has.
+   */
+  it('falls back to recent months when no school year is set up, rather than vanishing', () => {
+    const months = join.billFromMonths(null, FEB).map((m) => m.periodKey);
+    expect(months.length).toBeGreaterThan(0);
+    expect(months[months.length - 1]).toBe('2027-02'); // ends with the current month
+    expect(months.some((m) => m > '2027-02')).toBe(false); // still never the future
+    // A year back, oldest first — enough for any mid-year catch-up.
+    expect(months[0]).toBe('2026-03');
+  });
+
+  it('honours the billing floor in the fallback too', () => {
+    settingsMod.setBillingStartPeriod('2027-01');
+    expect(join.billFromMonths(null, FEB).map((m) => m.periodKey)).toEqual(['2027-01', '2027-02']);
+    settingsMod.setBillingStartPeriod(null);
+  });
+
+  it('bills over calendar months when there is no school year to define them', async () => {
+    const admin = caller('admin');
+    const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
+    const stu = await admin.people.studentAdd({ fullName: 'No Year Yet', feePlanId: plan.id });
+    const r = join.billStudentFrom(stu.id, '2026-12', FEB);
+    expect(r.periods).toEqual(['2026-12', '2027-01', '2027-02']);
   });
 });
 
