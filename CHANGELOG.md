@@ -75,6 +75,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **"Hasn't paid at all" is now an option in the mid-year setup**, after "Not said". It carries in every
   month of the year before you went live, and it's on the "set the whole column" list too.
 
+- **First time setup.** With nobody on the roster yet, the dashboard now offers a **First time setup**
+  button instead of an empty page: your madrasah's name, your logo and colour, the Stripe account tuition
+  is paid into, importing your students (with the template to download), and then a plain list of what each
+  tab is for. Every step is skippable and writes exactly what Settings writes, so nothing is locked in and
+  there's nothing to undo. It disappears once you have a student.
+
+- **Rules between the columns on the year view**, and the ticks now sit properly under the month name —
+  the heading and the cells were centred on slightly different boxes, which got worse the further along
+  the row you read. Both show up on the printout, and hovering **Print** now says legal paper is
+  recommended.
+
 - **The year view uses the whole window.** It's a table a full year wide, and with the optional columns on
   it was scrolling sideways while a few hundred pixels of screen sat empty either side. It now stretches to
   fit the window, and only scrolls when it genuinely runs out of room. Every other screen keeps its normal

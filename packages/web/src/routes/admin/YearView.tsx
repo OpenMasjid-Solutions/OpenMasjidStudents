@@ -137,8 +137,10 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
           </select>
         )}
         <span className="spacer" />
+        {/* The paper hint sits on the button rather than in a notice nobody reads: a year of months is
+            wide even in landscape, and legal is what fits it without the columns closing up. */}
         {g && g.rows.length > 0 && (
-          <button type="button" className="btn btn--ghost" onClick={() => window.print()}>
+          <button type="button" className="btn btn--ghost" onClick={() => window.print()} title={t('year.printPaperHint')}>
             <Printer size={15} /> {t('year.print')}
           </button>
         )}

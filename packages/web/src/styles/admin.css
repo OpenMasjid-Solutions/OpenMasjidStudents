@@ -456,8 +456,30 @@
 }
 .year-grid thead .year-sticky { z-index: 3; }
 
-.year-month {
+/*
+ * A RULE BETWEEN EVERY COLUMN (0.48.0). The grid is twelve months plus up to ten optional columns of
+ * numbers and phone numbers; with only horizontal hairlines the eye loses which column a tick belongs to
+ * halfway across the year. Vertical rules are what make a wide grid readable — and they are the reason
+ * this reads as a calendar rather than a wall of symbols.
+ */
+.year-grid th,
+.year-grid td { border-inline-end: 1px solid var(--glass-border); }
+.year-grid th:last-child,
+.year-grid td:last-child { border-inline-end: 0; }
+
+/*
+ * The month heading and its cells MUST share one horizontal padding, or the tick does not sit under the
+ * month name. That was the bug: `.year-cell` overrode the table's `padding: 0.55rem 0.6rem` down to
+ * 0.15rem for the cells and the heading kept the wider one, so heading and cell centred on different
+ * boxes — subtly, and worse the further along the row you read. One padding for both, centred in both.
+ */
+.year-month,
+.year-cell {
+  padding-inline: 0.2rem;
   text-align: center;
+}
+
+.year-month {
   font-size: 0.78rem;
   color: var(--color-ink-muted);
 }
@@ -478,7 +500,9 @@
   background: color-mix(in srgb, var(--color-primary) 8%, transparent);
 }
 
-.year-cell { text-align: center; padding: 0.15rem; }
+/* Vertical padding only — the horizontal half is shared with `.year-month` above so the tick lands
+   under the month name. */
+.year-cell { padding-block: 0.15rem; }
 .year-cell-btn {
   min-width: 2.75rem;
   min-height: 2.75rem;
@@ -668,12 +692,19 @@
      most have a hardware unprintable edge near 5mm — so this is the usable maximum, not a guess. */
   @page { size: landscape; margin: 6mm; }
 
-  /* Table lines must be visible in black and white on a masjid photocopier (§15). */
+  /* Table lines must be visible in black and white on a masjid photocopier (§15) — BOTH ways (0.48.0).
+     The screen's `--glass-border` is a translucent white that prints as nothing, so the vertical rules
+     have to be restated here in ink or the printed grid loses exactly the guide that makes a year of
+     ticks readable across the page. Darker than the horizontals on purpose: a photocopy loses contrast,
+     and the column you are tracing is the one that matters. */
   .year-grid th,
   .year-grid td {
     border-bottom: 1px solid #bbb !important;
+    border-inline-end: 1px solid #999 !important;
     color: #000 !important;
   }
+  .year-grid th:last-child,
+  .year-grid td:last-child { border-inline-end: 0 !important; }
   /* The card wrapper around the grid shouldn't read as a box on paper. */
   .print-area {
     border: 0 !important;
@@ -1247,3 +1278,75 @@ ul.picker-list {
      and trap the cards in a tiny window inside an already-scrolling sheet. */
   .win-body div[style*='overflow'] { max-height: none !important; }
 }
+
+/* ── First-time setup (0.48.0) ──────────────────────────────────────────────
+   The dashboard's call to action while the roster is empty, and the wizard's own chrome. Big on purpose:
+   an office opening this app for the first time saw an empty dashboard and a row of icons, with nothing
+   saying that Settings was where to start or that a spreadsheet could be imported at all. */
+.setup-cta {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  padding: 1.4rem 1.5rem;
+  flex-wrap: wrap;
+}
+.setup-cta > div { flex: 1 1 18rem; }
+.setup-cta h2 { margin: 0 0 0.25rem; font-size: 1.15rem; }
+.setup-cta p { margin: 0; color: var(--color-ink-muted); font-size: 0.92rem; }
+.setup-cta-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 3.25rem;
+  block-size: 3.25rem;
+  border-radius: var(--radius-card);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  flex: 0 0 auto;
+}
+/* The whole point is that it is hard to miss, so it is bigger than an ordinary primary button and it
+   takes the full width once the row wraps on a narrow screen. */
+.setup-cta-btn {
+  font-size: 1rem;
+  padding: 0.8rem 1.4rem;
+  min-height: 3rem;
+  flex: 0 0 auto;
+}
+@media (max-width: 700px) {
+  .setup-cta-btn { flex: 1 1 100%; justify-content: center; }
+}
+
+/* The step rail. Numbers become ticks as you pass them, so "how much is left" is answerable at a glance. */
+.setup-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  font-size: 0.85rem;
+  color: var(--color-ink-faint);
+}
+.setup-steps li { display: inline-flex; align-items: center; gap: 0.4rem; }
+.setup-steps .n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.4rem;
+  block-size: 1.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+.setup-steps .is-now { color: var(--color-ink); font-weight: 600; }
+.setup-steps .is-now .n { border-color: var(--color-primary); color: var(--color-primary); }
+.setup-steps .is-done { color: var(--color-ink-muted); }
+.setup-steps .is-done .n { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 16%, transparent); color: var(--color-primary); }
+
+/* "What each tab is for" — a definition list, because that is what it is. */
+.tour-list { margin: 0; }
+.tour-list > div { padding-block: 0.5rem; border-block-end: 1px solid var(--glass-border); }
+.tour-list > div:last-child { border-block-end: 0; }
+.tour-list dt { font-weight: 600; font-size: 0.92rem; }
+.tour-list dd { margin: 0.15rem 0 0; color: var(--color-ink-muted); font-size: 0.88rem; }
