@@ -41,6 +41,7 @@ import type { Tx } from '../billing/ledger';
 import { audit } from '../audit';
 import { IMPORT_FIELDS, IMPORT_EXAMPLE_ROWS, validateRows, commitRows, type ImportRow } from '../people/import';
 import { defaultSchoolId, resolveSchoolScope, schoolIdForClass } from '../schools';
+import { billStudentFrom } from '../billing/joinMidYear';
 
 // ── input helpers ────────────────────────────────────────────────────────────
 const REQ_NAME = z.string().trim().min(1).max(120);
@@ -87,6 +88,35 @@ const IMPORT_ROW = z.object({
 const PLACEMENTS = z.record(z.string().max(60), z.enum(['guardian', 'emergency'])).refine((r) => Object.keys(r).length <= 200, 'Too many relationships to place.');
 
 const now = () => new Date();
+
+/** A month period key, for the "bill them from" dropdown. */
+const PERIOD_KEY = z.string().trim().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
+
+/**
+ * BILL_FROM — a student who joins part-way through the year (0.48.0).
+ *
+ * The office either just adds the child, which bills nothing until the next generation run, or names the
+ * month they have really been attending since, which creates one invoice per month from then to now
+ * (billing/joinMidYear.ts explains all three decisions behind that).
+ *
+ * Shared by both add paths — `studentAdd` and `studentCreate` — so a child added into an existing
+ * household gets the same treatment as one starting a new one. Returns the outcome for the form to
+ * report: silently creating five invoices, or silently creating none, are both bad answers.
+ */
+function billFrom(studentId: string, fromPeriod: string | undefined, actor: ReturnType<typeof auditActor>): { billed?: { created: number; periods: string[]; reason?: string } } {
+  if (!fromPeriod) return {};
+  const r = billStudentFrom(studentId, fromPeriod);
+  // Audited only when it actually billed something — a refused or empty catch-up is the form's business
+  // to report, not a money event to record.
+  if (r.created) {
+    audit(actor, 'invoice.backfillStudent', {
+      entity: 'student',
+      entityId: studentId,
+      detail: { from: fromPeriod, created: r.created, periods: r.periods },
+    });
+  }
+  return { billed: r };
+}
 
 interface NewStudent {
   familyId: string;
@@ -328,9 +358,14 @@ export const peopleRouter = router({
         overrideAmountCents: z.number().int().min(0).max(100_000_000).optional(),
         feeNote: z.string().trim().max(200).optional(),
         classId: ID.optional(),
+        /** A month to bill them from, for a child who has been attending a while (§ BILL_FROM). */
+        billFromPeriod: PERIOD_KEY.optional(),
       }),
     )
-    .mutation(({ ctx, input }) => createStudentRow(input, auditActor(ctx))),
+    .mutation(({ ctx, input }) => {
+      const r = createStudentRow(input, auditActor(ctx));
+      return { ...r, ...billFrom(r.id, input.billFromPeriod, auditActor(ctx)) };
+    }),
 
   /**
    * THE way people are added (0.39.0): start with the student, not a household.
@@ -357,6 +392,8 @@ export const peopleRouter = router({
         schoolId: ID.optional(),
         /** An existing sibling to share a household (and therefore guardians) with. */
         linkToStudentId: ID.optional(),
+        /** A month to bill them from, for a child who has been attending a while (§ BILL_FROM). */
+        billFromPeriod: PERIOD_KEY.optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
@@ -377,7 +414,10 @@ export const peopleRouter = router({
         return { familyId: fid, r: createStudentRow({ ...input, familyId: fid }, auditActor(ctx), tx) };
       });
       if (!linked) audit(auditActor(ctx), 'family.create', { entity: 'family', entityId: familyId, detail: { via: 'studentAdd' } });
-      return { ...r, familyId, familyLabel: familyLabel(familyId) };
+      // Outside the transaction above, deliberately: the child existing is not conditional on the
+      // catch-up succeeding, and a backfill that hit the billing floor should report that rather than
+      // roll back a student the office just added.
+      return { ...r, familyId, familyLabel: familyLabel(familyId), ...billFrom(r.id, input.billFromPeriod, auditActor(ctx)) };
     }),
 
   /**

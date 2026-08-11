@@ -75,6 +75,18 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **"Hasn't paid at all" is now an option in the mid-year setup**, after "Not said". It carries in every
   month of the year before you went live, and it's on the "set the whole column" list too.
 
+- **Adding a student mid-year.** The add-student form has a **Bill them from** dropdown, on the Students tab
+  and on a household's record. Leave it on **Not yet** — the default, and what adding a student has always
+  done — and no invoices are created; they're billed from the next time you generate. Pick a month and they
+  get **one invoice per month from then until now**, so a child who has really been attending since October
+  is caught up in one go.
+  - Every catch-up month is **due today**, not in its own month. You're telling the family about all of it
+    now, so they shouldn't be five months overdue the moment their child is added — and the past-due
+    reminder shouldn't chase them for a bill they've only just been given. The amount owed is the same.
+  - Only months your school year actually teaches, and never earlier than the month you started billing
+    from — those arrears are already in the balance carried forward. It tells you what it billed, and if
+    it billed nothing, why.
+
 - **First time setup.** With nobody on the roster yet, the dashboard now offers a **First time setup**
   button instead of an empty page: your madrasah's name, your logo and colour, the Stripe account tuition
   is paid into, importing your students (with the template to download), and then a plain list of what each

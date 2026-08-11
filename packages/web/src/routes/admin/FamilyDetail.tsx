@@ -105,7 +105,11 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   }
 
   const [showStudent, setShowStudent] = useState(false);
-  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '' });
+  /** `billFromPeriod` empty means "bill nothing yet", which is what adding a student has always done. */
+  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', billFromPeriod: '' });
+  /** The months a mid-year catch-up may start from, and what the last one actually billed (0.48.0). */
+  const billFrom = trpc.billing.billFromMonths.useQuery();
+  const [billedMsg, setBilledMsg] = useState<string | null>(null);
   const [showGuardian, setShowGuardian] = useState(false);
   const [grd, setGrd] = useState({ name: '', phone: '', email: '', relation: '' });
   const [showEC, setShowEC] = useState(false);
@@ -114,8 +118,16 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   async function submitStudent(e: FormEvent) {
     e.preventDefault();
     if (!stu.fullName.trim() || !stu.feePlanId) return;
-    await addStudent.mutateAsync({ familyId, fullName: stu.fullName.trim(), dob: stu.dob || undefined, feePlanId: stu.feePlanId });
-    setStu({ fullName: '', dob: '', feePlanId: '' });
+    const r = await addStudent.mutateAsync({ familyId, fullName: stu.fullName.trim(), dob: stu.dob || undefined, feePlanId: stu.feePlanId, billFromPeriod: stu.billFromPeriod || undefined });
+    // A catch-up is never silent — five new invoices on a household is news (0.48.0).
+    setBilledMsg(
+      !r.billed
+        ? null
+        : r.billed.created
+          ? t('students.billedFrom', { count: r.billed.created, from: r.billed.periods[0] })
+          : t(`students.billedNone_${r.billed.reason ?? 'nothing_to_bill'}`),
+    );
+    setStu({ fullName: '', dob: '', feePlanId: '', billFromPeriod: stu.billFromPeriod });
     setShowStudent(false);
     await refresh();
   }
@@ -335,8 +347,30 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               </select>
               <p className="hint">{feePlans.data && feePlans.data.length === 0 ? t('directory.noFeePlans') : t('directory.feePlanHint')}</p>
             </div>
+            {/* Joining part-way through the year (0.48.0) — the same choice the Students tab offers, so a
+                child added into an existing household is treated no differently from one starting a new. */}
+            {(billFrom.data?.months ?? []).length > 0 && (
+              <div className="field" style={{ flex: '1 1 12rem' }}>
+                <label className="label" htmlFor="fd-billfrom">{t('students.billFrom')}</label>
+                <select id="fd-billfrom" className="input glass-inset" value={stu.billFromPeriod} onChange={(e) => setStu({ ...stu, billFromPeriod: e.target.value })}>
+                  <option value="">{t('students.billFromNone')}</option>
+                  {(billFrom.data?.months ?? []).map((m) => (
+                    <option key={m.periodKey} value={m.periodKey}>
+                      {m.periodKey === billFrom.data?.current ? t('students.billFromThisMonth', { month: m.label }) : m.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="hint">{stu.billFromPeriod ? t('students.billFromHint') : t('students.billFromNoneHint')}</p>
+              </div>
+            )}
             <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>
           </form>
+        )}
+        {billedMsg && (
+          <div className="notice" style={{ marginBlockStart: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <span style={{ flex: 1 }}>{billedMsg}</span>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setBilledMsg(null)}>{t('common.close')}</button>
+          </div>
         )}
         {showStudent && <p className="hint">{t('directory.idHint')}</p>}
       </section>

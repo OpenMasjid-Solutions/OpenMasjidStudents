@@ -77,8 +77,14 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
 
   const [adding, setAdding] = useState(false);
   /** A student is added on its own terms; `linkToStudentId` is what makes them a sibling — guardians
-   *  hang off the household, so linking IS how the parent details come to apply to them. */
-  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', classId: '', linkToStudentId: '' });
+   *  hang off the household, so linking IS how the parent details come to apply to them.
+   *
+   *  `billFromPeriod` empty is the default and means "bill nothing yet" — see the field below. */
+  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', classId: '', linkToStudentId: '', billFromPeriod: '' });
+  /** The months a catch-up may start from: this school year's, back to the billing floor, up to now. */
+  const billFrom = trpc.billing.billFromMonths.useQuery({ schoolId });
+  /** What the catch-up did, so five new invoices are never created silently. */
+  const [addedMsg, setAddedMsg] = useState<string | null>(null);
 
   const openFamily = (id: string, label: string) =>
     open({ title: label, wide: true, dedupeKey: `family:${id}`, icon: <Users size={15} />, node: <FamilyDetail familyId={id} readOnly={readOnly} /> });
@@ -102,14 +108,28 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
       // different schools, which is the case the feature exists for.
       schoolId,
       linkToStudentId: stu.linkToStudentId || undefined,
+      billFromPeriod: stu.billFromPeriod || undefined,
     });
-    setStu({ fullName: '', dob: '', feePlanId: stu.feePlanId, classId: stu.classId, linkToStudentId: '' });
+    // Say what the catch-up did. Creating five invoices for a family is not something to do quietly, and
+    // neither is creating none because the month was before the billing floor.
+    setAddedMsg(
+      !r.billed
+        ? null
+        : r.billed.created
+          ? t('students.billedFrom', { count: r.billed.created, from: r.billed.periods[0] })
+          : t(`students.billedNone_${r.billed.reason ?? 'nothing_to_bill'}`),
+    );
+    // The month is kept, like the plan and the class: a madrasah entering a group of children who all
+    // started in October should not re-pick October for each of them.
+    setStu({ fullName: '', dob: '', feePlanId: stu.feePlanId, classId: stu.classId, linkToStudentId: '', billFromPeriod: stu.billFromPeriod });
     setAdding(false);
     await Promise.all([
       utils.people.directory.invalidate(),
       utils.people.studentOptions.invalidate(),
       utils.structure.studentsByClass.invalidate(),
       utils.structure.courseTree.invalidate(),
+      // A catch-up writes invoices, so the year grid and the billing screens are now stale.
+      utils.billing.yearGrid.invalidate(),
     ]);
     // Straight into their record — the next thing the office does is add the guardian details.
     openFamily(r.familyId, r.familyLabel);
@@ -200,6 +220,14 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
       {/* Which school's roster. Draws nothing when there is only one. */}
       <SchoolTabs />
 
+      {/* What the catch-up billed, if anything. Dismissible, because it is news rather than a problem. */}
+      {addedMsg && (
+        <div className="notice" style={{ marginBlockEnd: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          <span style={{ flex: 1 }}>{addedMsg}</span>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setAddedMsg(null)}>{t('common.close')}</button>
+        </div>
+      )}
+
       {adding && !readOnly && (
         <form className="inline-form glass-inset" onSubmit={submitStudent}>
           {/* ONE name field. Plenty of the names a madrasa enrols do not split into a western
@@ -225,6 +253,25 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
               {classOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
           </div>
+          {/* Joining part-way through the year (0.48.0). The default is "nothing yet", which is what
+              adding a student has always done — the months are for a child who has really been attending
+              since October, and picking one creates their invoice for every month from then to now. Past
+              months only: there is nothing to create for a month that has not happened, and the normal
+              monthly run bills them when it arrives. */}
+          {(billFrom.data?.months ?? []).length > 0 && (
+            <div className="field" style={{ flex: '1 1 12rem' }}>
+              <label className="label" htmlFor="stu-billfrom">{t('students.billFrom')}</label>
+              <select id="stu-billfrom" className="input glass-inset" value={stu.billFromPeriod} onChange={(e) => setStu({ ...stu, billFromPeriod: e.target.value })}>
+                <option value="">{t('students.billFromNone')}</option>
+                {(billFrom.data?.months ?? []).map((m) => (
+                  <option key={m.periodKey} value={m.periodKey}>
+                    {m.periodKey === billFrom.data?.current ? t('students.billFromThisMonth', { month: m.label }) : m.label}
+                  </option>
+                ))}
+              </select>
+              <span className="hint">{stu.billFromPeriod ? t('students.billFromHint') : t('students.billFromNoneHint')}</span>
+            </div>
+          )}
           {/* The sibling link. This is the ONLY way households are formed — nobody names a family.
               Type-to-search, because by the time a school has three hundred children a dropdown of
               every one of them is not a way to find a brother. */}

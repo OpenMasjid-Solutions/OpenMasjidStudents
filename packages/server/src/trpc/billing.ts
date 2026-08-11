@@ -16,6 +16,7 @@ import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
+import { billFromMonths, currentPeriod } from '../billing/joinMidYear';
 import { schoolYearMonths } from '../billing/schoolYear';
 import { yearCellsFor } from '../billing/yearCells';
 import { invoiceLines, payableLines } from '../billing/lines';
@@ -747,6 +748,21 @@ export const billingRouter = router({
       // startPeriod goes to the browser so the month HEADINGS can be marked too, not just the cells —
       // a whole column being pre-go-live is a property of the month, not of each child in it.
       return { year: { id: year.id, label: year.label }, needsStartYear: false, months, columns, rows, currency: getCurrency(), startPeriod };
+    }),
+
+  /**
+   * The months a NEW student's billing may start from (0.48.0) — this school year's months, no earlier
+   * than the billing floor and no later than the month we are in (billing/joinMidYear.ts).
+   *
+   * Admin | finance: it feeds a dropdown on the add-student form, and finance adds students too.
+   */
+  billFromMonths: adminOrFinanceProcedure
+    .input(z.object({ schoolId: ID.optional() }).optional())
+    .query(({ ctx, input }) => {
+      // Scoped like every other school-aware read (0.47.0): the months come from the school year of the
+      // school the child is being added to, since two schools can run different calendars.
+      const scope = resolveSchoolScope(ctx.session?.userId ?? null, input?.schoolId);
+      return { months: billFromMonths(input?.schoolId ?? scope.ids[0] ?? null), current: currentPeriod() };
     }),
 
   /** The optional year-view columns and which are on. Admin-only to change — the guardian-contact

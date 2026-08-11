@@ -184,7 +184,19 @@
     "filterByCourse": "Filter by course",
     "showingOf": "Showing {{shown}} of {{total}} students",
     "withdrawn": "Withdrawn",
-    "printIds": "Print IDs"
+    "printIds": "Print IDs",
+    "billFrom": "Bill them from",
+    "billFromNone": "Not yet",
+    "billFromThisMonth": "{{month}} (this month)",
+    "billFromNoneHint": "No invoices are created now. They will be billed from the next time you generate.",
+    "billFromHint": "Creates one invoice per month from then until now, all due today.",
+    "billedFrom_one": "Billed 1 month, starting {{from}}. It is due today and shows on their record.",
+    "billedFrom_other": "Billed {{count}} months, starting {{from}}. They are all due today and show on their record.",
+    "billedNone_nothing_to_bill": "Added, but nothing was billed — this student is on no monthly fee plan, so there was no monthly amount to charge.",
+    "billedNone_before_floor": "Added, but nothing was billed — that month is before the month you started billing from, and those arrears are already in the balance carried forward.",
+    "billedNone_no_school_year": "Added, but nothing was billed — there is no current school year set up, so there are no months to bill.",
+    "billedNone_future": "Added, but nothing was billed — that month has not happened yet. They will be billed when you generate it.",
+    "billedNone_not_a_month": "Added, but nothing was billed — that was not a month this app can bill."
   },
   "import": {
     "title": "Import students",
