@@ -1373,6 +1373,26 @@ ul.picker-list {
 .setup-steps .is-done { color: var(--color-ink-muted); }
 .setup-steps .is-done .n { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 16%, transparent); color: var(--color-primary); }
 
+/* The email step's two facts. Not a `.notice` each, because they are as often good news as bad — the
+   colour carries which, and the icon repeats it for anyone who cannot see the colour. */
+.setup-checks {
+  list-style: none;
+  margin: 0 0 0.8rem;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.88rem;
+}
+.setup-checks li {
+  display: flex;
+  align-items: start;
+  gap: 0.45rem;
+  color: var(--color-ink-muted);
+}
+.setup-checks li > svg { flex: 0 0 auto; margin-block-start: 0.15rem; }
+.setup-checks .is-ok > svg { color: var(--color-primary); }
+.setup-checks .is-off > svg { color: var(--color-gold); }
+
 /* "What each tab is for" — a definition list, because that is what it is. */
 .tour-list { margin: 0; }
 .tour-list > div { padding-block: 0.5rem; border-block-end: 1px solid var(--glass-border); }

@@ -124,10 +124,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
     app was looking at and nothing else: same classes, same prices, no explanation.
 
 - **First time setup.** With nobody on the roster yet, the dashboard now offers a **First time setup**
-  button instead of an empty page: your madrasah's name, your logo and colour, the Stripe account tuition
-  is paid into, importing your students (with the template to download), and then a plain list of what each
-  tab is for. Every step is skippable and writes exactly what Settings writes, so nothing is locked in and
-  there's nothing to undo. It disappears once you have a student.
+  button instead of an empty page, covering everything the app needs before it can bill anybody: your
+  madrasah's name and currency, your logo and colour, **your school year** (and terms, if you charge per
+  term), **your courses and classes**, **what tuition costs**, the Stripe account tuition is paid into, a
+  **test email** to prove invites and receipts will arrive, importing your students (with the template to
+  download), and then a plain list of what each tab is for.
+
+  The order matters: if your spreadsheet has a Class or Fee plan column, the importer matches those names
+  against what exists and refuses a file naming a class you haven't made — so the year, the classes and the
+  fees come first. Every step is skippable, each one lists what you've already got rather than inviting a
+  second copy, and every step writes exactly what its own tab writes, so nothing is locked in and there's
+  nothing to undo. It disappears once you have a student.
 
 - **Rules between the columns on the year view**, and the ticks now sit properly under the month name —
   the heading and the cells were centred on slightly different boxes, which got worse the further along
