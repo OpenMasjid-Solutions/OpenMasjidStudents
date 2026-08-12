@@ -127,8 +127,12 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   button instead of an empty page, covering everything the app needs before it can bill anybody: your
   madrasah's name and currency, your logo and colour, **your school year** (and terms, if you charge per
   term), **your courses and classes**, **what tuition costs**, the Stripe account tuition is paid into, a
-  **test email** to prove invites and receipts will arrive, importing your students (with the template to
-  download), and then a plain list of what each tab is for.
+  **test email** to prove invites and receipts will arrive, **an account for anyone else in the office**,
+  importing your students (with the template to download), and then a plain list of what each tab is for.
+
+  The staff step generates the temporary password rather than asking you to invent one, shows it once to
+  hand over, and says plainly that a finance manager can work from home while an admin can only sign in on
+  the masjid network — which is the thing to know before choosing between them.
 
   The order matters: if your spreadsheet has a Class or Fee plan column, the importer matches those names
   against what exists and refuses a file naming a class you haven't made — so the year, the classes and the

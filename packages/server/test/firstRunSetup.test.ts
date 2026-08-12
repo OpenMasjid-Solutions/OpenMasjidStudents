@@ -75,11 +75,38 @@ describe('the wizard, start to finish, naming no school', () => {
     await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 8000, cadence: 'monthly' });
     expect((await admin.billing.feePlanList()).map((p) => p.name)).toEqual(['Monthly tuition']);
 
-    // Step 8 — and now the spreadsheet imports, because everything it names exists.
+    // Step 8 — a colleague. The wizard generates the temporary password rather than asking for one, so
+    // what matters is that a generated-shaped one is accepted and the account comes out forced to change
+    // it: an account that did NOT would keep a password the office wrote on a sticky note forever.
+    await admin.staff.create({ username: 'aisha', displayName: 'Aisha', role: 'finance', tempPassword: 'kmpqr-Y3TWA-9dnFh' });
+    const roster = await admin.staff.list();
+    const aisha = roster.find((u) => u.username === 'aisha');
+    expect(aisha?.role).toBe('finance');
+    expect(aisha?.mustChangePassword).toBe(true);
+    expect(aisha?.status).toBe('active');
+    // No school limit, which means all of them — a first run has one school and an account restricted to
+    // none would see nothing (§9).
+    expect(aisha?.schoolIds).toEqual([]);
+
+    // Step 9 — and now the spreadsheet imports, because everything it names exists.
     const preview = await admin.people.importPreview({
       rows: [{ fullName: 'Yusuf Ismail', className: 'Hifz 1', feePlanName: 'Monthly tuition', guardianName: 'Ismail', guardianEmail: 'ismail@example.org' }],
     });
     expect(preview.rows[0].errors).toEqual([]);
+  });
+
+  it('never writes a staff temporary password into the audit trail', async () => {
+    // The wizard now GENERATES this and shows it once, which makes where it can end up worth a test:
+    // the audit row records the role and the username, and must not carry the credential itself (§14).
+    // The same applies to the hash — an audit trail is read by people who are not entitled to it.
+    const admin = caller('admin');
+    const secret = 'kmpqr-Y3TWA-9dnFh';
+    await admin.staff.create({ username: 'yasir', role: 'finance', tempPassword: secret });
+    const trail = JSON.stringify(app.dbmod.db.select().from(auditLog).all());
+    expect(trail).toContain('staff.create');
+    expect(trail).toContain('yasir');
+    expect(trail).not.toContain(secret);
+    expect(trail).not.toContain('argon2');
   });
 
   it('would have rejected that same spreadsheet had the roster come first', async () => {

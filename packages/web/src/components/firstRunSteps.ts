@@ -15,8 +15,14 @@
  * used to do by having no wizard at all.
  */
 
-/** In dependency order — see the rule above; `firstRunSteps.test.ts` holds it in place. */
-export const SETUP_STEPS = ['school', 'look', 'year', 'classes', 'fees', 'payments', 'email', 'students', 'tour'] as const;
+/**
+ * In dependency order — see the rule above; `firstRunSteps.test.ts` holds it in place.
+ *
+ * `staff` has no data dependency in either direction, so it sits where it reads best: last of the
+ * configuration steps, leaving the roster as the one step that creates records about children and the
+ * final thing done before the tour.
+ */
+export const SETUP_STEPS = ['school', 'look', 'year', 'classes', 'fees', 'payments', 'email', 'staff', 'students', 'tour'] as const;
 export type SetupStep = (typeof SETUP_STEPS)[number];
 
 /** Steps whose rows the importer resolves against, so they must precede `students`. */

@@ -47,8 +47,10 @@ import {
   GraduationCap,
   Mail,
   Palette,
+  RefreshCw,
   School,
   Upload,
+  UserCog,
   Wallet,
 } from 'lucide-react';
 import { fadeRise } from '../lib/motion';
@@ -56,6 +58,7 @@ import { trpc } from '../lib/trpc';
 import { toCsv, downloadCsv } from '../lib/csv';
 import { formatMoney, parseCents } from '../lib/money';
 import { MONTH_NAMES, schoolYearSpan } from '../lib/months';
+import { generateTempPassword } from '../lib/password';
 import { SETUP_STEPS, SETUP_TOUR, type SetupStep } from './firstRunSteps';
 import { useWindows } from './Windows';
 
@@ -112,6 +115,8 @@ export function FirstRunSetup() {
   const planCreate = trpc.billing.feePlanCreate.useMutation();
   const link = trpc.settings.linkStatus.useQuery();
   const mailTest = trpc.settings.mailTest.useMutation();
+  const staff = trpc.staff.list.useQuery();
+  const staffCreate = trpc.staff.create.useMutation();
 
   /** Terms belong to a year, so they hang off the current one — which is also the year just created,
    *  since the first year created for a school becomes current server-side. */
@@ -138,6 +143,13 @@ export function FirstRunSetup() {
   const [newClass, setNewClass] = useState<Record<string, string>>({});
   const [newPlan, setNewPlan] = useState({ name: '', amount: '', cadence: 'monthly' });
   const [testTo, setTestTo] = useState('');
+  /** A new colleague's account. The password starts generated rather than blank — see lib/password.ts
+   *  for why a typed one is the weak link on a `finance` account, which signs in over the internet. */
+  const [newStaff, setNewStaff] = useState(() => ({ username: '', displayName: '', role: 'finance' as 'admin' | 'finance', tempPassword: generateTempPassword() }));
+  /** The one moment the temporary password is readable. Nothing stores it — the server keeps only an
+   *  argon2 hash — so if this is dismissed without being written down, the way back is a reset on the
+   *  Staff tab, and the handover panel says exactly that. */
+  const [handover, setHandover] = useState<{ username: string; tempPassword: string } | null>(null);
 
   const money = (c: number) => formatMoney(c, settings.data?.currency ?? 'usd');
   const suggestedLabel = suggestYearLabel(newYear.startYear, newYear.startMonth, newYear.endMonth);
@@ -282,6 +294,29 @@ export function FirstRunSetup() {
         await utils.billing.feePlanList.invalidate();
       },
       () => setNewPlan({ name: '', amount: '', cadence: 'monthly' }),
+    );
+  }
+
+  async function addStaff(e: FormEvent) {
+    e.preventDefault();
+    const pw = newStaff.tempPassword;
+    if (!newStaff.username.trim() || pw.length < 12) return;
+    await run(
+      async () => {
+        await staffCreate.mutateAsync({
+          username: newStaff.username.trim(),
+          displayName: newStaff.displayName.trim() || undefined,
+          role: newStaff.role,
+          tempPassword: pw,
+        });
+        await utils.staff.list.invalidate();
+      },
+      () => {
+        // Shown once, then a fresh password for the next colleague — reusing one across two accounts
+        // would mean the first person could sign in as the second.
+        setHandover({ username: newStaff.username.trim(), tempPassword: pw });
+        setNewStaff({ username: '', displayName: '', role: 'finance', tempPassword: generateTempPassword() });
+      },
     );
   }
 
@@ -612,6 +647,74 @@ export function FirstRunSetup() {
               <button type="submit" className="btn btn--primary" disabled={mailTest.isPending || !testTo.trim()}>{t('firstRun.emailSend')}</button>
             </form>
           )}
+        </section>
+      )}
+
+      {step === 'staff' && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head"><h2><UserCog size={16} /> {t('firstRun.staffTitle')}</h2></div>
+          <p className="hint" style={{ marginBlockEnd: '0.75rem' }}>{t('firstRun.staffHint')}</p>
+
+          {/* Your own account is in this list, which is the point of showing it: the form below is for
+              colleagues, and without the list it reads like an instruction to create yourself again. */}
+          {(staff.data ?? []).length > 0 && (
+            <div className="chip-row" style={{ marginBlockEnd: '0.75rem' }}>
+              {staff.data?.map((u) => (
+                <span key={u.id} className={`chip ${u.status === 'active' ? '' : 'is-muted'}`}>
+                  {u.displayName || u.username} · {t(`role.${u.role}`)}
+                  {u.status !== 'active' && ` · ${t('staff.disabled')}`}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {handover ? (
+            /* The credentials to hand over, on their own, because this is the only time the password can
+               be read and the next screenful of form fields would bury it. */
+            <div className="notice notice--warn" style={{ marginBlockEnd: '0.75rem' }}>
+              <p style={{ margin: '0 0 0.5rem' }}><strong>{t('firstRun.staffMade', { username: handover.username })}</strong></p>
+              <p style={{ margin: '0 0 0.5rem', fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: '1.05rem', letterSpacing: '0.02em', userSelect: 'all' }}>
+                {handover.tempPassword}
+              </p>
+              <p className="hint" style={{ margin: '0 0 0.6rem' }}>{t('firstRun.staffHandover')}</p>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => void navigator.clipboard?.writeText(handover.tempPassword)}>{t('common.copy')}</button>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => setHandover(null)}>{t('firstRun.staffAddAnother')}</button>
+              </div>
+            </div>
+          ) : (
+            <form className="inline-form glass-inset" style={{ marginBlockStart: 0 }} onSubmit={addStaff}>
+              <div className="field" style={{ flex: '1 1 10rem' }}>
+                <label className="label" htmlFor="fr-staff-user">{t('staff.username')}</label>
+                <input id="fr-staff-user" className="input glass-inset" value={newStaff.username} onChange={(e) => setNewStaff({ ...newStaff, username: e.target.value })} autoComplete="off" maxLength={64} />
+              </div>
+              <div className="field" style={{ flex: '1 1 10rem' }}>
+                <label className="label" htmlFor="fr-staff-name">{t('staff.name')}</label>
+                <input id="fr-staff-name" className="input glass-inset" value={newStaff.displayName} onChange={(e) => setNewStaff({ ...newStaff, displayName: e.target.value })} maxLength={120} />
+              </div>
+              <div className="field" style={{ flex: '0 1 9rem' }}>
+                <label className="label" htmlFor="fr-staff-role">{t('staff.role')}</label>
+                <select id="fr-staff-role" className="input glass-inset" value={newStaff.role} onChange={(e) => setNewStaff({ ...newStaff, role: e.target.value as 'admin' | 'finance' })}>
+                  <option value="finance">{t('role.finance')}</option>
+                  <option value="admin">{t('role.admin')}</option>
+                </select>
+              </div>
+              <div className="field" style={{ flex: '1 1 12rem' }}>
+                <label className="label" htmlFor="fr-staff-pw">{t('staff.tempPassword')}</label>
+                <div style={{ display: 'flex', gap: '0.35rem' }}>
+                  <input id="fr-staff-pw" className="input glass-inset" type="text" value={newStaff.tempPassword} onChange={(e) => setNewStaff({ ...newStaff, tempPassword: e.target.value })} placeholder={t('staff.tempHint')} />
+                  <button type="button" className="btn btn--ghost" title={t('firstRun.staffRegenerate')} aria-label={t('firstRun.staffRegenerate')} onClick={() => setNewStaff({ ...newStaff, tempPassword: generateTempPassword() })}>
+                    <RefreshCw size={14} />
+                  </button>
+                </div>
+                <span className="hint">{t('firstRun.staffPwHint')}</span>
+              </div>
+              <button type="submit" className="btn btn--primary" disabled={staffCreate.isPending || !newStaff.username.trim() || newStaff.tempPassword.length < 12}>{t('staff.add')}</button>
+            </form>
+          )}
+          {/* The roles, and the fact that an admin account cannot sign in from home. Same sentence the
+              Staff tab shows, because it is the same surprise. */}
+          <p className="hint" style={{ marginBlockStart: '0.6rem' }}>{t('staff.roleHint')}</p>
         </section>
       )}
 
