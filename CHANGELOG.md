@@ -15,6 +15,13 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [0.48.0]
 
+- **A bank account can be added in the parent portal.** There was no option — the "add a payment method"
+  step only ever asked Stripe for cards, so whatever the madrasah had switched on, a parent could pay *from*
+  a bank account at the checkout but never save one. It now offers exactly what your Stripe account
+  accepts: a card, a bank account, whatever else you have enabled. A masjid taking cards only sees no
+  change. If a bank needs to confirm the account first, the portal says so instead of looking as though it
+  worked.
+
 - **Saved cards say what they are.** A saved payment method showed as `CARD ····` with an empty expiry
   whenever it wasn't a card — the app only ever read the card fields, so a **bank account** saved in the
   portal stored nothing at all. Now: the network and last four digits (**Visa ···· 4242**), the expiry, and
@@ -31,6 +38,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 - **The family sheet mentions paying by bank account** in the parent-portal section, and that wording is
   editable like the rest of it.
+
+- **The portal's third tab is just "Payment methods"** — the longer name wrapped onto two lines in a pill
+  sized for one. The tabs centre their text properly now whether it takes one line or two, so a longer name
+  can't make the bar look broken again.
 
 - **Recording a payment no longer lists the household under every name.** A payment lands on one child, so
   the household had no bearing on the choice and mostly repeated the surname already in the name. It still

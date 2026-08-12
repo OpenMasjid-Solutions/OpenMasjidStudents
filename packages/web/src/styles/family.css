@@ -59,6 +59,14 @@
 }
 .fam-tab {
   flex: 1 1 0;
+  /* Centred BY LAYOUT rather than by line-height (0.48.0): the tabs are equal widths, so the longest
+     label decides the height of the row, and a label that wrapped to two lines used to sit high in a pill
+     sized for one. Flex centring holds whether a label takes one line or two, which also means a longer
+     translation cannot break the bar. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 0;
   min-height: 2.5rem; /* a comfortable thumb target */
   border: 0;
   border-radius: 999px;
@@ -67,9 +75,17 @@
   font: inherit;
   font-size: 0.92rem;
   font-weight: 600;
+  line-height: 1.2;
+  /* If it does wrap, split the lines evenly instead of leaving one word stranded. */
+  text-wrap: balance;
   cursor: pointer;
   padding: 0.4rem 0.6rem;
   transition: background 0.18s, color 0.18s;
+}
+/* Three tabs of prose do not fit a small phone at full size; shrinking the type keeps them on one line
+   each rather than letting the bar grow into a two-row block. */
+@media (max-width: 380px) {
+  .fam-tab { font-size: 0.84rem; padding-inline: 0.4rem; }
 }
 .fam-tab.is-active {
   background: var(--color-surface-overlay, rgba(255, 255, 255, 0.1));

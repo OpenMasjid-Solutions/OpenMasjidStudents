@@ -349,11 +349,26 @@ export const portalRouter = router({
         customerId = c.id;
         db.update(families).set({ stripeCustomerId: customerId, updatedAt: new Date() }).where(eq(families.id, fam.id)).run();
       }
-      const si = await stripe.setupIntents.create({ customer: customerId, usage: 'off_session', metadata: { omos_app: 'students-portal', students_family_id: fam.id } });
+      const si = await stripe.setupIntents.create({
+        customer: customerId,
+        usage: 'off_session',
+        metadata: { omos_app: 'students-portal', students_family_id: fam.id },
+        // OFFER WHAT THE MASJID ACTUALLY TAKES (0.48.0). Stripe defaults a SetupIntent to
+        // `payment_method_types: ['card']` when neither field is given, so this step had ALWAYS been
+        // card-only however the masjid's Stripe account was configured — a household could pay from a
+        // bank account in pay-now (which has had automatic methods all along) but never save one.
+        //
+        // `automatic_payment_methods` rather than naming `us_bank_account` explicitly: naming a type the
+        // account has not enabled makes Stripe REJECT the whole call, which would break saving a card for
+        // every masjid that takes cards only. Letting Stripe filter means each masjid is offered exactly
+        // what it has switched on, and no masjid can be broken by a type it never wanted. Stripe also
+        // drops anything that cannot be reused off-session, which is what autopay needs.
+        automatic_payment_methods: { enabled: true },
+      });
       return { clientSecret: si.client_secret, publishableKey: publishableKey() };
     } catch (e) {
       payLog.error('createSetupIntent failed', { familyId: fam.id, error: (e as Error).message });
-      throw new TRPCError({ code: 'BAD_GATEWAY', message: 'We couldn’t set up your card just now. Please try again in a moment.' });
+      throw new TRPCError({ code: 'BAD_GATEWAY', message: 'We couldn’t start that just now. Please try again in a moment.' });
     }
   }),
 
