@@ -556,6 +556,9 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 students={studentOptions.data ?? []}
                 value={siblingId}
                 onChange={setSiblingId}
+                // The household is shown here because it is what is being chosen: this MERGES two
+                // households, so "which Ismail?" is the question, not a decoration.
+                showFamily
                 // Only children OUTSIDE this household: the ones already here have nothing to join.
                 exclude={students.map((own) => own.id)}
               />

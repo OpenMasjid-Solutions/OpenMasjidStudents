@@ -631,6 +631,32 @@
 
 /* Print: a clean week handout — hide the chrome, drop glass to plain boxes. */
 @media print {
+  /* ── Ink, at the SOURCE (0.48.0) ───────────────────────────────────────────
+     The shell's ink tokens are designed against a dark wallpaper, so in dark theme `--color-ink` is
+     near-white. Forcing `color: #000` on containers below does not reach anything that sets its own
+     colour from a token — a `.btn`, a `.chip`, a `.contact-link` — so printing from dark theme put
+     near-white text on white paper. That is the "names print in a very light shade" report, and the
+     names were only the most visible case of it.
+
+     Redefining the tokens themselves fixes every one of those at once, and keeps the intent: muted stays
+     lighter than ink, faint lighter still, so a printed page keeps its hierarchy. Values are chosen to
+     survive a masjid photocopier (§15) rather than to look like the screen.
+
+     `!important` on the custom properties, not source order: tokens.css declares these on
+     `:root, [data-theme="dark"]` and on `[data-theme="light"]`, all of which have the SAME specificity as
+     the `:root` here, so without it this block would only win by being imported later — true today and
+     not something a print bug should depend on. */
+  :root,
+  [data-theme='dark'],
+  [data-theme='light'] {
+    --color-ink: #000 !important;
+    --color-ink-muted: #333 !important;
+    --color-ink-faint: #666 !important;
+    --text-on-scene: #000 !important;
+    --text-on-scene-muted: #333 !important;
+    --text-on-scene-faint: #555 !important;
+  }
+
   /* The page itself must be WHITE. `.scene-bg` is hidden below, but the shell's wallpaper also lives
      on `body` as `--scene-base` — a soft gradient — and that kept printing as a grey vignette around
      the sheet. Reset every layer that can carry it, and force dark-on-white text since the shell's
@@ -739,6 +765,40 @@
     border: 0 !important;
     padding: 0 !important;
   }
+
+  /* ── The name column (0.48.0) ──────────────────────────────────────────────
+     A name is a BUTTON on screen (press it to open that child's billing), and a button is not a name on
+     paper: it carried the shell's ink token, `justify-content: center` from `.btn`, and a border. Hence
+     names that printed pale AND centred. Here it is text: black, aligned to the start of the column, no
+     chrome, and no minimum height inflating every row. `start`, not `left`, so an RTL install still
+     reads correctly. */
+  .year-grid td.year-sticky { text-align: start !important; }
+  .year-grid td.year-sticky > .btn {
+    display: block !important;
+    inline-size: 100%;
+    justify-content: flex-start !important;
+    text-align: start !important;
+    color: #000 !important;
+    background: none !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    font-weight: inherit;
+    font-size: inherit;
+  }
+
+  /* ── One class per page, unless two fit (0.48.0) ───────────────────────────
+     Each class is its own `<tbody class="year-block">` (YearView's `classBlocks`), so this single rule is
+     the whole feature: do not split a class, and the browser then fits as many WHOLE classes on a sheet as
+     the paper allows. Better than forcing a break before every class, which would leave most of every page
+     blank for a madrasah whose classes run eight children long. A class too big for one page still breaks
+     — the constraint is unsatisfiable then, and that is the browser's call to make.
+
+     `<thead>` repeats on every page for free, so a class carried onto sheet two still has its months. */
+  .year-grid tbody.year-block { break-inside: avoid; page-break-inside: avoid; }
+  /* A class heading must never be the last thing on a page with its roster overleaf. */
+  .year-grid tr.year-group { break-after: avoid; page-break-after: avoid; }
   /* Group rows stay legible without their tint. */
   .year-group td {
     background: #eee !important;

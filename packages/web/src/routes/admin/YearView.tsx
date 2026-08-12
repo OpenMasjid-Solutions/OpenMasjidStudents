@@ -37,6 +37,68 @@ const UNPLACED = '__unplaced';
  */
 const CONTACT_COLUMNS = ['fatherPhone', 'motherPhone', 'otherPhone', 'emergencyPhone', 'fatherEmail', 'motherEmail', 'otherEmail'] as const;
 
+/** The minimum a row needs for grouping — kept structural so `classBlocks` is testable on its own. */
+interface GroupableRow {
+  courseId: string | null;
+  courseName: string | null;
+  classId: string | null;
+  className: string | null;
+}
+
+/** One class, with the course heading when it is the first class of that course. */
+export interface ClassBlock<R> {
+  key: string;
+  /** True on the first class of a course, which is where the course heading is printed. A separate flag
+   *  from the name because a course can legitimately have NO name — the unplaced children — and testing
+   *  the name for null would silently drop that heading. */
+  startsCourse: boolean;
+  courseName: string | null;
+  className: string | null;
+  rows: R[];
+}
+
+/**
+ * Split the sorted roster into one block PER CLASS.
+ *
+ * WHY BLOCKS AND NOT A FLAT LIST (0.48.0). Each block becomes its own `<tbody>`, which is what lets the
+ * printed page keep a class together: `break-inside: avoid` on a `<tbody>` tells the browser not to split
+ * that group, so it fits as many WHOLE classes onto a sheet as the paper allows — two small classes share
+ * a page, a big one starts its own. That is the actual request ("its own page unless two fit"), and it is
+ * strictly better than forcing a page break before every class, which would leave half of every sheet
+ * blank for a madrasah whose classes run eight children long.
+ *
+ * A class with more students than fit on one page still breaks, because the constraint is then
+ * unsatisfiable — the right failure, and the browser's own.
+ *
+ * Rows arrive already sorted by course → class → name, so a change of value IS a new group; this reads
+ * the same transition the flat render used to compute inline.
+ */
+export function classBlocks<R extends GroupableRow>(rows: R[]): ClassBlock<R>[] {
+  const blocks: ClassBlock<R>[] = [];
+  let seq = 0;
+  for (const r of rows) {
+    const last = blocks[blocks.length - 1];
+    const prev = last?.rows[last.rows.length - 1];
+    const newCourse = !prev || (prev.courseId ?? UNPLACED) !== (r.courseId ?? UNPLACED);
+    const newClass = newCourse || prev.classId !== r.classId;
+    if (newClass) {
+      blocks.push({
+        // Course and class ids are not unique together when both are null (every unplaced child), and two
+        // courses can hold a same-named class — so the key carries a sequence number rather than trying to
+        // build uniqueness out of the data.
+        key: `${r.courseId ?? UNPLACED}:${r.classId ?? UNPLACED}:${seq++}`,
+        startsCourse: newCourse,
+        courseName: r.courseName,
+        className: r.className,
+        rows: [r],
+      });
+    } else {
+      last.rows.push(r);
+    }
+  }
+  return blocks;
+}
+
 export function YearView({ canConfigure }: { canConfigure: boolean }) {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
@@ -115,6 +177,9 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
     () => (g?.rows ?? []).filter((r) => !courseFilter || (r.courseId ?? UNPLACED) === courseFilter),
     [g?.rows, courseFilter],
   );
+  /** One group per class — each renders as its own `<tbody>` so a class is not split across printed
+   *  pages unless it genuinely cannot fit on one (0.48.0). */
+  const blocks = useMemo(() => classBlocks(rows), [rows]);
 
   return (
     // `page--wide` lifts the shell's reading-width cap for this one screen (0.48.0): a whole year of
@@ -254,27 +319,23 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                   ))}
                 </tr>
               </thead>
-              <tbody>
-                {rows.map((r, i) => {
-                  // Two levels of heading, in the order the office thinks: the course, then the
-                  // classes inside it. Rows arrive already sorted by course → class → name, so a
-                  // change of value IS a new group.
-                  const prev = rows[i - 1];
-                  const newCourse = !prev || (prev.courseId ?? UNPLACED) !== (r.courseId ?? UNPLACED);
-                  const newClass = newCourse || prev.classId !== r.classId;
-                  const span = 2 + g.months.length + enabled.length;
-                  return (
+              {/* One <tbody> PER CLASS, so a printed page can keep a class whole (see `classBlocks`).
+                  Two levels of heading, in the order the office thinks: the course, then the classes
+                  inside it. */}
+              {blocks.map((block) => {
+                const span = 2 + g.months.length + enabled.length;
+                return (
+                <tbody key={block.key} className="year-block">
+                  {block.startsCourse && (
+                    <tr className="year-group">
+                      <td className="year-sticky" colSpan={span}>{block.courseName ?? t('students.unplaced')}</td>
+                    </tr>
+                  )}
+                  <tr className="year-group year-group--class">
+                    <td className="year-sticky" colSpan={span}>{block.className ?? t('students.unplaced')}</td>
+                  </tr>
+                  {block.rows.map((r) => (
                     <Fragment key={r.studentId}>
-                      {newCourse && (
-                        <tr className="year-group">
-                          <td className="year-sticky" colSpan={span}>{r.courseName ?? t('students.unplaced')}</td>
-                        </tr>
-                      )}
-                      {newClass && (
-                        <tr className="year-group year-group--class">
-                          <td className="year-sticky" colSpan={span}>{r.className ?? t('students.unplaced')}</td>
-                        </tr>
-                      )}
                       <tr>
                         <td className="year-sticky">
                           <button type="button" className="btn btn--ghost btn--sm" onClick={() => openBilling(r)} title={t('year.openBilling')}>
@@ -345,9 +406,10 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                         ))}
                       </tr>
                     </Fragment>
-                  );
-                })}
-              </tbody>
+                  ))}
+                </tbody>
+                );
+              })}
             </table>
           </div>
 

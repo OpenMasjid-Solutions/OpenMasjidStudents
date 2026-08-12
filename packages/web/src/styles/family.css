@@ -173,6 +173,10 @@
 
 .list-row .row-main { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
 .list-row .row-title { font-weight: 550; }
+/* What a payment was for, continuing the title line (0.48.0). Lighter than the child's name so the row
+   still scans by name first, and allowed to wrap: "Tuition — Feb 2027 · Book fee" is longer than a
+   phone is wide, and truncating it would hide the very thing it was added to say. */
+.list-row .row-title .row-for { font-weight: 450; color: var(--color-ink-muted); }
 .list-row .row-sub { font-size: 0.82rem; color: var(--color-ink-muted); }
 .list-row .row-amt { margin-inline-start: auto; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .list-row .row-amt.neg { color: var(--color-danger, #e5645b); }

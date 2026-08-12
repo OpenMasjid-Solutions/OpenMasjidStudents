@@ -60,8 +60,11 @@ export const SHEET_TEXT_DEFAULTS: Record<SheetTextKey, string> = {
     '*Scan this to set up your account* You will need one of your children’s Student IDs (above) and an email address the office already has for you — that is how we know the account belongs to your family. One account covers all of your children.',
   portalInvite:
     '*Ask the office for a portal invite* Accounts here are set up by invitation. Give the office an email address and they will send you a link to choose your own password. One account covers all of your children.',
+  // "or bank account": the portal's payment step offers whatever the masjid's Stripe account has switched
+  // on, and paying a term's tuition from a bank account is what many families prefer. Editable like every
+  // box here, so an office that only takes cards can trim the phrase.
   payCard:
-    '*In the parent portal, by card.* Sign in and pay the whole balance or just part of it — for one child or all of them at once. You can save a card, and turn on *autopay* so tuition is paid automatically when it comes due; you can switch it off whenever you like.',
+    '*In the parent portal, by card or bank account.* Sign in and pay the whole balance or just part of it — for one child or all of them at once. You can save a card or bank account for next time, and turn on *autopay* so tuition is paid automatically when it comes due; you can switch it off whenever you like.',
   payWebsite:
     '*On the madrasah’s website* ([website]). Go to the tuition section, type any one of your children’s *Student IDs*, check the name it shows you, and pay. You can pay for all of your children from that one screen, and you don’t need an account for it.',
   payKiosk:

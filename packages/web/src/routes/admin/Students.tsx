@@ -305,6 +305,8 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
               students={siblings.data ?? []}
               value={stu.linkToStudentId}
               onChange={(id) => setStu({ ...stu, linkToStudentId: id })}
+              // Which household this child joins IS the choice here, so it is named on every row.
+              showFamily
             />
             <span className="hint">{t('students.linkSiblingHint')}</span>
           </div>

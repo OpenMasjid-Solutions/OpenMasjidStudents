@@ -9,8 +9,9 @@ import { useState, type FormEvent } from 'react';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { useTranslation } from 'react-i18next';
-import { CreditCard, Trash2 } from 'lucide-react';
+import { CreditCard, Landmark, Trash2, Wallet } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
+import { describeMethod, formatExpiry, methodTitle } from '../../lib/paymentMethod';
 
 /**
  * The Autopay & cards TAB (0.44.0): every household this parent is linked to, each with its own cards
@@ -71,16 +72,34 @@ export function PayMethods({ familyId }: { familyId: string }) {
       {cards.length === 0 ? (
         <div className="fam-empty">{t('family.noCards')}</div>
       ) : (
-        cards.map((c) => (
-          <div key={c.id} className="list-row glass">
-            <span style={{ display: 'inline-flex', color: 'var(--color-primary)' }}><CreditCard size={18} /></span>
-            <div className="row-main">
-              <span className="row-title">{(c.brand ?? 'card').toUpperCase()} ···· {c.last4}</span>
-              <span className="row-sub">{t('family.expires')} {c.expMonth}/{c.expYear}{c.isDefault ? ` · ${t('family.defaultCard')}` : ''}</span>
+        cards.map((c) => {
+          const d = describeMethod(c);
+          const expiry = formatExpiry(d);
+          // The second line, built from whatever this method actually has: a card's expiry, a bank
+          // account's checking/savings, and the "Default" mark on whichever one autopay would charge.
+          // Anything missing is simply left out rather than printed as an empty gap.
+          const sub = [
+            d.kind === 'bank' && d.accountType ? t(`family.acct_${d.accountType}`) : null,
+            expiry ? `${d.expired ? t('family.expired') : t('family.expires')} ${expiry}` : null,
+            c.isDefault ? t('family.defaultCard') : null,
+          ].filter(Boolean).join(' · ');
+          return (
+            <div key={c.id} className="list-row glass">
+              <span style={{ display: 'inline-flex', color: d.expired ? 'var(--color-gold)' : 'var(--color-primary)' }}>
+                {d.kind === 'bank' ? <Landmark size={18} /> : d.kind === 'other' ? <Wallet size={18} /> : <CreditCard size={18} />}
+              </span>
+              <div className="row-main">
+                <span className="row-title">{methodTitle(d, t('family.savedMethod'))}</span>
+                {sub && <span className="row-sub">{sub}</span>}
+              </div>
+              <button type="button" className="btn btn--ghost btn--sm" aria-label={t('common.remove')} onClick={async () => { if (!window.confirm(t('family.removeCardConfirm'))) return; await removeCard.mutateAsync({ familyId, paymentMethodId: c.id }); await refresh(); }}><Trash2 size={15} /></button>
             </div>
-            <button type="button" className="btn btn--ghost btn--sm" aria-label={t('common.remove')} onClick={async () => { if (!window.confirm(t('family.removeCardConfirm'))) return; await removeCard.mutateAsync({ familyId, paymentMethodId: c.id }); await refresh(); }}><Trash2 size={15} /></button>
-          </div>
-        ))
+          );
+        })
+      )}
+      {/* An expired card is the commonest reason autopay stops, and nothing used to say so. */}
+      {cards.some((c) => describeMethod(c).expired) && (
+        <p className="hint" style={{ marginBlockStart: '0.4rem' }}>{t('family.expiredHint')}</p>
       )}
 
       {adding ? (

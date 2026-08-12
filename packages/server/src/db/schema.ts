@@ -766,10 +766,21 @@ export const paymentMethods = sqliteTable(
     familyId: text('family_id')
       .notNull()
       .references(() => families.id, { onDelete: 'cascade' }),
+    /** Stripe's own `PaymentMethod.type` — `card`, `us_bank_account`, `link`, `cashapp`, … (0.48.0).
+     *  NULL on a row saved before this column existed whose kind was never captured; the portal
+     *  repairs those from Stripe on read. */
+    type: text('type'),
     brand: text('brand'),
     last4: text('last4'),
     expMonth: integer('exp_month'),
     expYear: integer('exp_year'),
+    /** `card.wallet.type` (`apple_pay`, `google_pay`, …) — a card added through a wallet, where the
+     *  network and last four alone would not match what the parent thinks they saved. */
+    wallet: text('wallet'),
+    /** `us_bank_account` only: the bank's name and `checking`/`savings`. No routing number and no
+     *  account-holder name — see migration 0035 for why (§14). */
+    bankName: text('bank_name'),
+    accountType: text('account_type'),
     isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },

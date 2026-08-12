@@ -15,6 +15,33 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [0.48.0]
 
+- **Saved cards say what they are.** A saved payment method showed as `CARD ····` with an empty expiry
+  whenever it wasn't a card — the app only ever read the card fields, so a **bank account** saved in the
+  portal stored nothing at all. Now: the network and last four digits (**Visa ···· 4242**), the expiry, and
+  **Apple Pay** or **Google Pay** where a card came through a wallet; for a bank account, the bank's name,
+  the last four and whether it's checking or savings. An expired card is flagged, since that's the usual
+  reason autopay stops. Anything already saved is put right the next time a parent opens the tab — nobody
+  has to re-add a card. Nothing extra is stored: no routing number, no account holder's name.
+
+- **The payment history says what each payment was for.** It gave the child, the amount and the date, which
+  on a monthly plan is a column of identical figures — so "which one was February, and did it cover the
+  books?" was unanswerable. Each row now names the bill it settled, and the line too when only part of a
+  bill was paid ("Tuition — Feb 2027 · Book fee"). Money paid before any bill exists says so, rather than
+  looking like a payment that went nowhere.
+
+- **The family sheet mentions paying by bank account** in the parent-portal section, and that wording is
+  editable like the rest of it.
+
+- **Recording a payment no longer lists the household under every name.** A payment lands on one child, so
+  the household had no bearing on the choice and mostly repeated the surname already in the name. It still
+  shows where it *is* the choice — linking a brother or sister, which merges two households.
+
+- **The year view prints properly.** Names came out in a very light grey — the app's text colours are built
+  for a dark screen and were going to paper unchanged — and centred, because a name is a button on screen.
+  They're black and left-aligned now, along with everything else that was printing pale. **Each class stays
+  on one page**, with two small classes sharing a sheet where they fit, so a class is no longer split down
+  the middle with no heading overleaf; the month headings repeat on every page.
+
 - **Import an Excel workbook (.xlsx)**, not just a CSV — no "save it as a CSV first" step, and birthdays
   come out as the dates they are. An older `.xls` is refused with a note on what to do instead.
 

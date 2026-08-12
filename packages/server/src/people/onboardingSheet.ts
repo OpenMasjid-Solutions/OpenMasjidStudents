@@ -453,7 +453,11 @@ export async function buildFamilySheetHtml(
     'Every bill, broken down line by line — so you can see tuition and, say, a book fee separately',
     historyPoint,
   ];
-  if (routes.card) portalPoints.push('Pay by card, save a card, and set up autopay');
+  // "or bank account" because the portal's payment step offers whatever the masjid's Stripe account has
+  // switched on, and a US bank account (ACH) is the one families most often prefer for a fee this size.
+  // The app cannot see that configuration from here, so this names both rather than promising only cards
+  // to a household that would rather use their bank — the parent sees the real choice on the screen.
+  if (routes.card) portalPoints.push('Pay by card or bank account, save it for next time, and set up autopay');
   // Gated on receipts, not on card (0.48.0). It was promising an email that an install with receipts
   // switched off — or with parent mail paused, or no mail at all — was never going to send.
   if (routes.receipts) portalPoints.push('A receipt by email each time a payment is recorded');

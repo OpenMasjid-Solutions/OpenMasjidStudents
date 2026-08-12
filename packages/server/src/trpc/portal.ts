@@ -15,6 +15,7 @@ import { db } from '../db';
 import { families, students, invoices, invoiceItems, payments, paymentMethods, autopayEnrollments, schoolYears } from '../db/schema';
 import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit, type SplitShare } from '../billing/ledger';
 import { invoiceLines, type LineKind } from '../billing/lines';
+import { paidForByPayment, type PaidFor } from '../billing/paidFor';
 import { schoolYearMonths } from '../billing/schoolYear';
 import { yearCellsFor, type YearCell } from '../billing/yearCells';
 import { listSchools } from '../schools';
@@ -22,6 +23,7 @@ import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getCurrency } from '../settings';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
 import { stripeClient, stripeReady, publishableKey } from '../payments/stripe';
+import { describePaymentMethod, repairPaymentMethods } from '../payments/methods';
 import { alertStaff, householdName } from '../alerts';
 import { sendReceipt } from '../mail/notify';
 import { makeLog } from '../logger';
@@ -176,7 +178,7 @@ export const portalRouter = router({
         }))
         .filter((i) => i.balanceCents > 0)
         .sort((a, b) => (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999'));
-      const pays = kidIds.length
+      const rawPays = kidIds.length
         ? db
             .select({ id: payments.id, studentId: payments.studentId, amountCents: payments.amountCents, channel: payments.channel, occurredAt: payments.occurredAt, memo: payments.memo, reversalOf: payments.reversalOf })
             .from(payments)
@@ -185,6 +187,10 @@ export const portalRouter = router({
             .limit(25)
             .all()
         : [];
+      // WHAT each payment was for (0.48.0) — derived from its allocations, so it says what the money is
+      // doing now rather than what it was described as on the day (billing/paidFor.ts).
+      const forWhat = paidForByPayment(db, rawPays.map((p) => p.id));
+      const pays = rawPays.map((p) => ({ ...p, paidFor: forWhat.get(p.id) ?? { labels: [], more: 0, advance: true } }));
       return {
         id: fid,
         name: fam?.name ?? '',
@@ -298,11 +304,34 @@ export const portalRouter = router({
     return { status: pi.status, recorded: succeeded };
   }),
 
-  /** Saved cards + autopay state for a family (§13.3). */
-  autopayStatus: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64) })).query(({ ctx, input }) => {
+  /**
+   * Saved payment methods + autopay state for a family (§13.3).
+   *
+   * Async since 0.48.0 only to repair rows that never recorded WHAT they were — the households already
+   * showing "CARD ···· " are put right the next time a parent opens the tab, with nobody re-saving
+   * anything. It is a no-op once every row has a `type`, and best-effort in any case: Stripe being
+   * unreachable leaves the wording vague and the page working (§13.5).
+   */
+  autopayStatus: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64) })).query(async ({ ctx, input }) => {
     assertFamilyAccess(ctx, input.familyId);
+    await repairPaymentMethods(input.familyId);
     const enr = db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, input.familyId)).get();
-    const cards = db.select({ id: paymentMethods.id, brand: paymentMethods.brand, last4: paymentMethods.last4, expMonth: paymentMethods.expMonth, expYear: paymentMethods.expYear, isDefault: paymentMethods.isDefault }).from(paymentMethods).where(eq(paymentMethods.familyId, input.familyId)).all();
+    const cards = db
+      .select({
+        id: paymentMethods.id,
+        type: paymentMethods.type,
+        brand: paymentMethods.brand,
+        last4: paymentMethods.last4,
+        expMonth: paymentMethods.expMonth,
+        expYear: paymentMethods.expYear,
+        wallet: paymentMethods.wallet,
+        bankName: paymentMethods.bankName,
+        accountType: paymentMethods.accountType,
+        isDefault: paymentMethods.isDefault,
+      })
+      .from(paymentMethods)
+      .where(eq(paymentMethods.familyId, input.familyId))
+      .all();
     return { ready: stripeReady(), enabled: !!enr?.enabled, defaultPmId: enr?.defaultPmId ?? null, cards };
   }),
 
@@ -328,8 +357,14 @@ export const portalRouter = router({
     }
   }),
 
-  /** After the browser confirms the SetupIntent, persist the card REFERENCE (brand/last4/exp — never a
-   *  PAN) and attach it to the family's Stripe Customer. The first saved card becomes the default. */
+  /**
+   * After the browser confirms the SetupIntent, persist the payment method's REFERENCE — never a PAN or an
+   * account number — and attach it to the family's Stripe Customer. The first one saved becomes the default.
+   *
+   * `describePaymentMethod` decides what to store (0.48.0). This used to read `pm.card` and nothing else,
+   * so a bank account saved through the Payment Element stored a row of NULLs and the portal called it a
+   * card with no digits. Anything the masjid's Stripe account offers is now recorded as what it is.
+   */
   saveCard: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64), paymentMethodId: z.string().min(1).max(64) })).mutation(async ({ ctx, input }) => {
     assertFamilyAccess(ctx, input.familyId);
     const stripe = stripeClient();
@@ -343,7 +378,10 @@ export const portalRouter = router({
       if (!pm.customer) await stripe.paymentMethods.attach(input.paymentMethodId, { customer: fam.stripeCustomerId });
       const isFirst = !db.select({ id: paymentMethods.id }).from(paymentMethods).where(eq(paymentMethods.familyId, input.familyId)).get();
       const ts = new Date();
-      db.insert(paymentMethods).values({ id: pm.id, familyId: input.familyId, brand: pm.card?.brand ?? null, last4: pm.card?.last4 ?? null, expMonth: pm.card?.exp_month ?? null, expYear: pm.card?.exp_year ?? null, isDefault: isFirst, createdAt: ts }).onConflictDoNothing().run();
+      db.insert(paymentMethods)
+        .values({ id: pm.id, familyId: input.familyId, ...describePaymentMethod(pm), isDefault: isFirst, createdAt: ts })
+        .onConflictDoNothing()
+        .run();
       return { ok: true as const };
     } catch (e) {
       payLog.error('saveCard failed', { familyId: input.familyId, error: (e as Error).message });
@@ -400,5 +438,7 @@ type FamilyView = {
     balanceCents: number;
     items: { id: string; label: string; kind: LineKind; amountCents: number; balanceCents: number }[];
   }[];
-  payments: { id: string; studentId: string; amountCents: number; channel: string; occurredAt: Date; memo: string | null; reversalOf: string | null }[];
+  /** `paidFor` is what the money settled, derived from its allocations (billing/paidFor.ts) — the
+   *  portal's history says what a payment was for, not only how much it was. */
+  payments: { id: string; studentId: string; amountCents: number; channel: string; occurredAt: Date; memo: string | null; reversalOf: string | null; paidFor: PaidFor }[];
 };
