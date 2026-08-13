@@ -5,12 +5,36 @@
 
 .shell-controls {
   position: fixed;
-  inset-block-start: 1rem;
-  inset-inline-end: 1rem;
+  inset-block-start: max(1rem, env(safe-area-inset-top, 0px));
+  inset-inline-end: max(1rem, env(safe-area-inset-right, 0px));
   display: flex;
   gap: 0.5rem;
   align-items: center;
   z-index: 20;
+}
+
+/* ── The phone's own status bar, and the staff shell (0.48.0) ─────────────────
+   `index.html` asks for `viewport-fit=cover` and, once installed, an iOS status bar that is TRANSLUCENT —
+   both deliberate, because they are what let the app's dark background run edge to edge instead of leaving
+   a pale band above it. The consequence is that the page starts at the very top of the screen, UNDERNEATH
+   the clock and the battery.
+
+   The parent portal already allowed for that (`.family-topbar` pads by `env(safe-area-inset-top)`); the
+   staff shell did not, so on an iPhone the brand and the app's own clock were printed over the system
+   clock. Fixed here rather than in `app.css` because that file is a verbatim port from OpenMasjidOS and
+   must stay re-syncable (§15) — and the OS dashboard is a desktop surface that never meets a notch.
+
+   `max()` rather than a plain `env()`: on every screen without an inset (a desktop, Android's browser
+   chrome) the inset is 0 and the original spacing has to survive. */
+.topbar {
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  padding-inline: max(1.25rem, env(safe-area-inset-left, 0px)) max(1.25rem, env(safe-area-inset-right, 0px));
+}
+
+/* The floating dock sits over the home-bar area on an iPhone, where a swipe belongs to the OS rather than
+   to us. `.app-main`'s bottom padding is widened to match (admin.css's phone block). */
+.dock {
+  inset-block-end: max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + 0.5rem));
 }
 
 

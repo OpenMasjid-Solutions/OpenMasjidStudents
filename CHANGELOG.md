@@ -61,6 +61,11 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   **Don't show again** for good; closing it counts as later, never as a refusal. It never appears once the
   app is installed, or on a computer.
 
+- **The staff screens fit an iPhone properly.** The title bar was printed underneath the phone's own clock
+  and battery, and on Billing the last card sat under the floating dock with no way to scroll past it. Both
+  were the same oversight: the parent portal allowed for the notch and the home bar, the admin and finance
+  shell didn't. They do now, and nothing changes on a desktop.
+
 - **Parents can put their saved payment methods in order** — 1st, 2nd, 3rd — with arrows on each row.
   Autopay charges the first; **if it's declined the next attempt tries the second**, rather than presenting
   the same declining card again two days later. A newly added card goes to the end rather than quietly

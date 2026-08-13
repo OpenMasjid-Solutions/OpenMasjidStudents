@@ -590,7 +590,12 @@
    Two problems to fix on a small screen: headers/forms that assume a wide row, and
    mouse-sized hit targets. Everything else already scrolls. */
 @media (max-width: 700px) {
-  .app-main { padding: 0.6rem !important; }
+  /* The bottom value is NOT 0.6rem, and that is the whole point of writing it out (0.48.0). The ported
+     `.app-main` reserves 7.5rem at the bottom to clear the floating dock; tightening the padding to 0.6rem
+     on all four sides took that clearance away with it, so the last card on Billing sat underneath the dock
+     with no way to scroll past it. The dock is 3rem tall inside 0.5rem of padding, sitting 1.25rem up — so
+     6rem clears it — plus the iOS home-bar inset, which is why `env()` is here and not only on the dock. */
+  .app-main { padding: 0.6rem 0.6rem calc(6rem + env(safe-area-inset-bottom, 0px)) !important; }
 
   /* Headers and inline forms stop being single rows and stack instead. */
   .admin-header,
