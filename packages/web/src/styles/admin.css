@@ -1273,11 +1273,50 @@ ul.picker-list {
     max-block-size: 100dvh;
     border-radius: 0;
   }
-  /* Dragging is meaningless when the sheet fills the screen — say so with the cursor
-     and give the traffic lights a thumb-sized row. */
+  /* ── A window's header, on a phone (0.48.0) ─────────────────────────────────
+     Three separate problems, all from a desktop header being shown on a phone:
+
+     1. It sat UNDER THE STATUS BAR. The sheet is pinned to `top: 0` and the page runs edge to edge
+        (`viewport-fit=cover` + a translucent iOS status bar), so the title and the controls were printed
+        over the clock — and the close button could not be tapped at all, because that strip belongs to the
+        OS. The padding below is the fix, and it is the reason this block exists.
+     2. The controls were 13px circles whose glyphs only appear ON HOVER. There is no hover on a phone, so
+        they were three unlabelled dots, all far under the 44px a thumb needs (WCAG 2.5.8).
+     3. Minimize and fullscreen mean nothing here. The sheet already fills the screen, so maximise is a
+        no-op, and minimising it leaves no visible way back — it just vanishes.
+
+     So on a phone the header becomes what a sheet's header should be: the title leading, ONE real close
+     button trailing, under the thumb rather than in the corner nearest the notch. Desktop is untouched —
+     this whole block is inside `max-width: 700px`, and `app.css` is a port that must stay re-syncable (§15). */
   .win-head {
     cursor: default;
     padding-block: 0.9rem;
+    /* Clears the notch/status bar. `max()` so a phone in landscape, or Android with browser chrome, keeps
+       the ordinary spacing. */
+    padding-top: max(0.9rem, calc(env(safe-area-inset-top, 0px) + 0.4rem));
+    gap: 0.5rem;
+  }
+  /* Title first, close last. `order` rather than re-arranging the markup, so the DOM (and the tab order,
+     which reaches the close button first) stays as the desktop wants it. */
+  .win-head .win-title { order: 1; min-width: 0; }
+  .win-head .traffic { order: 2; margin-inline-start: auto; gap: 0; }
+  .win-head .tl-min,
+  .win-head .tl-full { display: none; }
+  /* A proper button: 44px, always showing its glyph, in the shell's own ink rather than a loud red disc. */
+  .win-head .tl-close {
+    inline-size: 2.75rem;
+    block-size: 2.75rem;
+    border-radius: 999px;
+    background: var(--glass-bg-inset, rgba(255, 255, 255, 0.06));
+    box-shadow: inset 0 0 0 1px var(--glass-border, rgba(255, 255, 255, 0.1));
+  }
+  .win-head .tl-close svg {
+    /* The component renders a 9px icon for the desktop dot; scaled up here, and made visible, since the
+       `.traffic:hover` rule that reveals it can never fire on a touch screen. */
+    inline-size: 1.1rem;
+    block-size: 1.1rem;
+    opacity: 1;
+    color: var(--color-ink);
   }
   /* Clear the floating dock so the last button in a window is not trapped under it. */
   .win-body { padding: 0.9rem 0.95rem 6rem; }

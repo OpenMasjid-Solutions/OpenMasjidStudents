@@ -66,6 +66,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   were the same oversight: the parent portal allowed for the notch and the home bar, the admin and finance
   shell didn't. They do now, and nothing changes on a desktop.
 
+- **A record you open on a phone has a proper header.** The window's title and its three little dots sat
+  under the status bar — so the close button couldn't be tapped at all, that strip belonging to the phone.
+  On a phone it is now the title, and one real close button big enough for a thumb, below the clock.
+  Minimise and full-screen are gone there: the sheet already fills the screen, and minimising it left no
+  visible way back.
+
+- **Fewer columns saying the same thing.** The list of students with no email on file drops the household
+  column — it repeated the surname already in the child's name, and what the list is for is the phone number
+  beside it. And the go-live step no longer ends with a per-household table of balances: step 2 already
+  shows each child's, and a household's is only ever the sum of theirs. The confirm and the button stay.
+
 - **Parents can put their saved payment methods in order** — 1st, 2nd, 3rd — with arrows on each row.
   Autopay charges the first; **if it's declined the next attempt tries the second**, rather than presenting
   the same declining card again two days later. A newly added card goes to the end rather than quietly

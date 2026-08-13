@@ -644,9 +644,11 @@ export function Settings() {
             <div style={{ overflowX: 'auto' }}>
               <table className="data-table stack-phone">
                 <thead>
+                  {/* No household column (0.48.0): the child's own surname is almost always the household's
+                      label, so it repeated the name beside it — and what this table is FOR is ringing
+                      somebody, which is the last column. */}
                   <tr>
                     <th>{t('students.name')}</th>
-                    <th>{t('settings.noEmailFamily')}</th>
                     <th>{t('settings.noEmailWhoToCall')}</th>
                   </tr>
                 </thead>
@@ -654,7 +656,6 @@ export function Settings() {
                   {noEmail.data.students.map((s) => (
                     <tr key={s.id}>
                       <td data-label={t('students.name')}>{s.fullName}</td>
-                      <td data-label={t('settings.noEmailFamily')}>{s.familyLabel}</td>
                       {/* A name and a number, because the only way to fix this is to ring them and ask. */}
                       <td data-label={t('settings.noEmailWhoToCall')}>
                         {s.guardians.length === 0 ? (

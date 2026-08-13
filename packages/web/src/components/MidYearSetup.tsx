@@ -271,27 +271,18 @@ export function MidYearSetup({ currency }: { currency: string }) {
         )}
       </section>
 
-      {/* ── 3. What each parent will see ─────────────────────────────────────── */}
+      {/* ── 3. Apply it ───────────────────────────────────────────────────────
+          The per-HOUSEHOLD preview table that used to be here is gone (0.48.0). It listed the same figures
+          step 2 already shows per child, one row up the tree — and a household's balance is only ever the
+          sum of its children's (§9), so it added a second place to read the same number and a second thing
+          to keep in your head while filling the step above it in.
+
+          What is left is the confirm: the amount about to be written, and the button. */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head"><h2>{t('midyear.step3')}</h2></div>
         <p className="muted" style={{ fontSize: '0.9rem' }}>{t('midyear.step3Hint')}</p>
         {err && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}><CircleAlert size={15} /> {err}</div>}
-        <div style={{ overflowX: 'auto' }}>
-          <table className="data-table">
-            <thead><tr><th>{t('billing.family')}</th><th>{t('midyear.result')}</th></tr></thead>
-            <tbody>
-              {(preview.data?.families ?? []).map((f) => (
-                <tr key={f.familyId}>
-                  <td>{f.label}</td>
-                  <td className={f.owedCents > 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>
-                    {f.owedCents > 0 ? money(f.owedCents) : f.creditCents > 0 ? `${money(f.creditCents)} ${t('billing.credit')}` : money(0)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap', marginBlockStart: '0.8rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap' }}>
           <button type="button" className="btn btn--primary" disabled={commit.isPending || !goLivePeriod} onClick={doCommit}>
             {commit.isPending ? t('common.saving') : t('midyear.commit', { count: willWrite.length })}
           </button>
