@@ -7,13 +7,63 @@ All notable changes to **OpenMasjid Students** are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [Semantic Versioning](https://semver.org/). `1.0.0` is reserved for launch.
 
+<!-- TWO AUDIENCES, ONE FILE (0.49.0).
+
+     A masjid on the STABLE channel wants the few things that changed for them; a wall of text makes the
+     first line as easy to skip as the last. Whoever runs the DEVELOPMENT channel is testing the build and
+     wants all of it, including the fixes too small to announce.
+
+     So each release opens with its HEADLINES — the major changes, additions and fixes, and nothing else —
+     and everything after the `### Also in this release` heading is detail. The app's What's new shows the
+     headlines on a release build and the whole entry on a `-dev.N` one, deciding from the version it is
+     actually running (packages/web/src/lib/changelog.ts). On GitHub, where the full history belongs, both
+     halves always show.
+
+     Keep the headline list SHORT — six or so — and write it for someone who has never read a changelog. -->
+
 ## [Unreleased]
 
 <!-- Entries are filed under the RELEASE they are heading toward, not per dev build. The dev branch's
-     manifest reads `0.48.0-dev.N`, and the version test checks the CHANGELOG for the base `0.48.0`,
+     manifest reads `X.Y.Z-dev.N`, and the version test checks the CHANGELOG for the base `X.Y.Z`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
 
+## [0.49.0]
+
+- **What's new says less on a release, and everything on a development build.** A masjid updating to a
+  stable version now reads the handful of things that actually changed for them, instead of every fix and
+  refinement that went into it. Nothing is lost — the full entry is still in the changelog, and a
+  development build still shows all of it.
+
 ## [0.48.0]
+
+- **Refund any payment, from the bottom of Billing.** A card or bank payment goes back through Stripe; cash
+  or a check is put right on the ledger for you to hand over — and each row says which of the two it will be
+  before you press it.
+
+- **Every payment record says what the money was for**, not just how much and how it arrived. On a monthly
+  plan that is the difference between a column of identical figures and an answer.
+
+- **Setting up is one guided pass** — the school year and its terms, classes, fee plans, payments, email,
+  staff, then your students from a spreadsheet. **Excel workbooks (.xlsx)** import directly now, and a
+  student can span several rows for their guardians.
+
+- **Starting a new school year is a proper handover**: classes promote, children carry forward, and you
+  approve the plan before anything moves.
+
+- **Add it to your phone's home screen and it looks like an app** — your own logo, your madrasah's name,
+  and no address bar. It offers to do it on every account, once.
+
+- **Parents can add a bank account**, put their saved payment methods in the order they should be charged,
+  and see their whole year at a glance.
+
+- **Past-due reminders**: a digest to you saying who is behind, and — if you switch it on — one reminder per
+  household on a grace period and cadence you set.
+
+- **From a security review of the whole app**: repeated failed sign-ins on one account are now stopped and
+  you are told; two staff accounts can no longer differ only by capital letters; and dates on the money path
+  are checked, so an empty date box can no longer answer with a database error.
+
+### Also in this release
 
 - **Refund any payment, at the bottom of Billing.** Every transaction the madrasah has taken, newest first,
   each with one button. A card or bank payment is **sent back automatically** through Stripe; cash, a check

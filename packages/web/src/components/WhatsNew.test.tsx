@@ -56,6 +56,27 @@ describe('the Kiosk-style layout', () => {
     expect(html.indexOf('A new thing')).toBeLessThan(html.indexOf('A fixed thing'));
   });
 
+  it('shows the headlines on a release build and everything on a dev build (0.49.0)', () => {
+    const notes = parseChangelog(`## [1.0.0]
+
+- **The headline.**
+
+### Also in this release
+
+- **The small print.**
+`);
+    const stable = renderToStaticMarkup(<ReleaseNotes releases={notes} running="1.0.0" />);
+    expect(stable).toContain('The headline');
+    expect(stable).not.toContain('The small print');
+
+    const dev = renderToStaticMarkup(<ReleaseNotes releases={notes} running="1.0.0-dev.3" />);
+    expect(dev).toContain('The headline');
+    expect(dev).toContain('The small print');
+
+    // Version unknown (health hasn't answered): the short list, not the long one.
+    expect(renderToStaticMarkup(<ReleaseNotes releases={notes} />)).not.toContain('The small print');
+  });
+
   it('puts the green pill on the running version and nowhere else', () => {
     const html = render('0.46.0');
     expect(html.match(/pill pill--ok/g)).toHaveLength(1);

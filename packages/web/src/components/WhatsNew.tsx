@@ -29,7 +29,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import raw from '../../../../CHANGELOG.md?raw';
 import { trpc } from '../lib/trpc';
-import { flatItems, parseChangelog, type Release } from '../lib/changelog';
+import { isPrereleaseVersion, itemsFor, parseChangelog, type Release } from '../lib/changelog';
 
 /** `**bold**` and `` `code` `` → elements. Everything else is text, including any markdown this does
  *  not know about — a stray asterisk is a cosmetic wart; swallowing a sentence is a bug. */
@@ -58,6 +58,15 @@ function inline(text: string, keyBase: string): ReactNode[] {
  */
 export function ReleaseNotes({ releases, running }: { releases: Release[]; running?: string }) {
   const { t } = useTranslation();
+  /**
+   * How much to show (0.49.0). A masjid on the stable channel gets the headlines; a development build
+   * gets everything, because whoever is running one is testing it. The changelog marks the boundary with
+   * `### Also in this release` (lib/changelog.ts) — one file, both audiences.
+   *
+   * Decided from the RUNNING version rather than a build-time flag, so a dev image and a release image
+   * are the same code answering the same question about themselves.
+   */
+  const detail = isPrereleaseVersion(running);
   return (
     <div className="win-content whats-new">
       {/* The window's own title bar already says "What's new"; this is the line beneath it. */}
@@ -72,7 +81,7 @@ export function ReleaseNotes({ releases, running }: { releases: Release[]; runni
             {r.version === running && <span className="pill pill--ok">{t('whatsNew.thisOne')}</span>}
           </h3>
           <ul className="wn-list">
-            {flatItems(r).map((it, ii) => (
+            {itemsFor(r, detail).map((it, ii) => (
               <li key={`${r.version}-${ii}`}>
                 {inline(it.text, `${r.version}-${ii}`)}
                 {it.children.length > 0 && (

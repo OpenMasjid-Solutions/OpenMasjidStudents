@@ -31,6 +31,31 @@ export interface Release {
 }
 
 /**
+ * The heading that separates the headlines from the small print (0.49.0).
+ *
+ * A release note has two audiences and they want opposite things. A masjid on the STABLE channel wants
+ * the few things that changed for them — the rest is a wall of text that makes the first line as easy to
+ * skip as the last. Whoever is running the DEVELOPMENT channel is testing the build and wants all of it,
+ * including the fixes too small to announce.
+ *
+ * So one changelog, one file, with everything in it — and a marker in the middle. Bullets before
+ * `### Also in this release` are the headlines; everything from that heading onward is detail, shown only
+ * on a prerelease build. Written this way rather than as two files because a second file is one somebody
+ * forgets to update, and because the full history has to stay readable on GitHub, where both halves show.
+ */
+const DETAIL_HEADING = /^also in this release\b/i;
+
+/** Is this heading the marker above? Exported so the CHANGELOG's own convention is testable. */
+export function isDetailHeading(title: string): boolean {
+  return DETAIL_HEADING.test(title.trim());
+}
+
+/** Does a version string name a development build (`0.49.0-dev.1`) rather than a release? */
+export function isPrereleaseVersion(version: string | undefined | null): boolean {
+  return !!version && version.includes('-');
+}
+
+/**
  * Parse the changelog, newest first.
  *
  * `[Unreleased]` is skipped — it describes work the masjid running this build does not have yet, so
@@ -100,4 +125,24 @@ export function parseChangelog(md: string): Release[] {
  *  tier we no longer render — see WhatsNew.tsx). */
 export function flatItems(r: Release): ChangelogItem[] {
   return r.groups.flatMap((g) => g.items);
+}
+
+/**
+ * What THIS build should show: the headlines always, the detail only on a development build.
+ *
+ * `detail` defaults to false, and that default is the safe direction — a stable install whose version we
+ * could not read (the health call had not landed yet) gets the short list rather than the long one. The
+ * opposite default would leak the wall of text into exactly the place this exists to keep it out of.
+ */
+export function itemsFor(r: Release, detail = false): ChangelogItem[] {
+  if (detail) return flatItems(r);
+  const out: ChangelogItem[] = [];
+  for (const g of r.groups) {
+    // EVERYTHING from the marker onward, not just that one group. A release's detail half has its own
+    // sub-headings ("From a security review…"), and stopping at the first of those would put the small
+    // print back in front of a masjid — through the very heading meant to hide it.
+    if (isDetailHeading(g.title)) break;
+    out.push(...g.items);
+  }
+  return out;
 }
