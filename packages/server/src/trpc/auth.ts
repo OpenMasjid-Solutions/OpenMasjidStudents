@@ -188,7 +188,7 @@ export const authRouter = router({
             title: 'Too many failed sign-ins',
             // The account name may be said here — this goes to addresses an admin typed, and "one of your
             // accounts" is not something anybody can act on. Never in publicText (§14).
-            text: `Sign-in for “${user.username}” was blocked for an hour after repeated failed attempts. If that is not somebody in the office forgetting a password, someone is guessing it — change that password, and disable the account if you are unsure.`,
+            text: `Sign-in for “${user.username}” was blocked for a quarter of an hour after repeated failed attempts. If that is not somebody in the office forgetting a password, someone is guessing it — change that password, and disable the account if you are unsure.`,
             publicText: 'Sign-in for one account was blocked after repeated failed attempts.',
           });
         }
