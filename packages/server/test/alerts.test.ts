@@ -226,6 +226,27 @@ describe('every alert id we can raise is declared in the manifest', () => {
     const declared = [...manifest.matchAll(/^\s+-\s+id:\s*(\S+)\s*$/gm)].map((m) => m[1]);
     for (const id of alerts.platformAlertIds()) expect(declared).toContain(id);
   });
+
+  /**
+   * …and every EVENT an office can subscribe to has a label on the settings screen.
+   *
+   * The same shape of bug as the manifest one above, one layer out: `payment-refunded` was added to
+   * `ALERT_EVENTS` in 0.48.0-dev.32 and the column heading was never added, so Settings → Email alerts
+   * printed the raw key "settings.ev_payment-refunded" at a masjid. i18next has no missing-key error — it
+   * renders the key — so nothing failed, and the list of events is generated FROM this union, which means
+   * adding one always adds a column.
+   *
+   * Reaching across into the web package's `en.json` is deliberate: the union lives here, the label lives
+   * there, and the only place they can be held together is a test.
+   */
+  it('has a settings label for every subscribable event', () => {
+    const en = JSON.parse(readFileSync(path.resolve(__dirname, '..', '..', 'web', 'src', 'lib', 'i18n', 'en.json'), 'utf8')) as {
+      settings: Record<string, string>;
+    };
+    for (const event of alerts.ALERT_EVENTS) {
+      expect(en.settings[`ev_${event}`], `missing i18n key settings.ev_${event}`).toBeTruthy();
+    }
+  });
 });
 
 describe('what parents are emailed', () => {

@@ -416,7 +416,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 {/* Tappable: the office rings a parent from this screen, and on a phone that should be
                     one tap rather than a copy-paste. The href is built from the digits, never from the
                     formatted text (lib/phone.ts). */}
-                {g.phone && <a className="muted" href={`tel:${telHref(g.phone)}`}>· {formatUsPhone(g.phone)}</a>}
+                {g.phone && <a className="muted" href={telHref(g.phone)}>· {formatUsPhone(g.phone)}</a>}
                 {g.email && <a className="muted" href={`mailto:${g.email}`}>· {g.email}</a>}
                 {g.isEmergencyContact && <span className="chip is-accent">{t('directory.emergency')}</span>}
                 {/* Whether they took up a portal account decides which action is useful: an invite for
@@ -523,7 +523,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               <div key={c.id} className="glass-inset" style={{ padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-button)', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <strong>{c.name}</strong>
                 {c.relation && <span className="muted">· {relationLabel(t, c.relation)}</span>}
-                {c.phone && <a className="muted" href={`tel:${telHref(c.phone)}`}>· {formatUsPhone(c.phone)}</a>}
+                {c.phone && <a className="muted" href={telHref(c.phone)}>· {formatUsPhone(c.phone)}</a>}
                 <span className="spacer" style={{ marginInlineStart: 'auto' }} />
                 {!readOnly && (
                   <button type="button" className="btn btn--ghost btn--sm" onClick={() => void askRemoveContact(c.id, c.name)} disabled={removeContact.isPending}>

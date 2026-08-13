@@ -388,7 +388,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                         {enabled.includes('balance') && <td className="tnum">{formatMoney(r.extra.balanceCents ?? 0, g.currency)}</td>}
                         {enabled.includes('guardianNames') && <td>{(r.extra.guardianNames ?? []).join(', ')}</td>}
                         {/* Tappable numbers and addresses. Formatted for display (lib/phone.ts leaves
-                            non-US numbers alone) but the href is built from the digits — see telHref.
+                            non-US numbers alone) but the href comes from telHref, which returns the whole tel: URI.
                             On a phone this page becomes the office's call list, which is the point. */}
                         {CONTACT_COLUMNS.filter((c) => enabled.includes(c)).map((c) => (
                           <td key={c} className={c.endsWith('Phone') ? 'year-contact' : undefined}>
@@ -396,7 +396,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                               <Fragment key={v}>
                                 {n > 0 && <br />}
                                 {c.endsWith('Phone') ? (
-                                  <a href={`tel:${telHref(v)}`} className="contact-link">{formatUsPhone(v)}</a>
+                                  <a href={telHref(v)} className="contact-link">{formatUsPhone(v)}</a>
                                 ) : (
                                   <a href={`mailto:${v}`} className="contact-link">{v}</a>
                                 )}

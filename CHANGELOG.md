@@ -72,6 +72,13 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   Minimise and full-screen are gone there: the sheet already fills the screen, and minimising it left no
   visible way back.
 
+- **Tapping a phone number dials it again.** In the list of students with no email on file, the numbers were
+  linked to `/students/4453062685` — a dead page inside the app — because the link was built without the
+  `tel:` part. Fixed at the source, so no screen can get it wrong.
+
+- **The email-alerts table shows "Refund made"** instead of `settings.ev_payment-refunded`. The refund alert
+  arrived without its column heading; a test now fails the build if that happens to another one.
+
 - **Fewer columns saying the same thing.** The list of students with no email on file drops the household
   column — it repeated the surname already in the child's name, and what the list is for is the phone number
   beside it. And the go-live step no longer ends with a per-household table of balances: step 2 already
