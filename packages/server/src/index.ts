@@ -28,6 +28,7 @@ import { getSchoolLogo, getSchoolName, parseLogoDataUri } from './settings';
 import { loadStripeKeys } from './payments/stripe';
 import { startSchedulers } from './payments/scheduler';
 import { stripBasePath } from './http/basePath';
+import { buildManifest } from './http/manifest';
 
 const log = makeLog('main');
 
@@ -136,41 +137,71 @@ async function main(): Promise<void> {
    * "Madani Academy", not "OpenMasjid Students" — they are adding their madrasah, not a piece of software
    * — and only the server knows what the masjid called itself. Everything else here could have been a file.
    *
-   * The ICONS stay the app's own (public/icon-*.png), not the masjid's uploaded logo: a home-screen icon is
-   * square and gets cropped to the platform's shape, and a wordmark logo — which is what most masajid
-   * upload — would come out sliced. The bundled mark is drawn for this.
+   * THE ICON IS THE MASJID'S OWN LOGO when one is set, falling back to this app's logo — the full artwork
+   * with STUDENTS on it — when it is not. Which icons are declared decides whether a phone will offer to
+   * INSTALL the app at all, so that logic (and the measuring of the logo it depends on) lives in
+   * `http/manifest.ts` where it is tested.
    *
-   * Relative icon paths and a relative `start_url`, resolved against the manifest's own URL, so this works
-   * unchanged at the root and under the tunnel's path prefix (the same reason index.html uses `./`).
-   * Unauthenticated, like the logo above: it carries the madrasah's public name and nothing else, and a
-   * manifest that 401s is a manifest the phone ignores.
+   * Unauthenticated, like the logo route above: it carries the madrasah's public name and nothing else, and
+   * a manifest that 401s is a manifest the phone ignores.
    */
   app.get('/manifest.webmanifest', async (_req, reply) => {
-    const name = getSchoolName().trim() || 'OpenMasjid Students';
+    // Re-validated by magic bytes on the way out, exactly as /api/logo does — the manifest declares a
+    // `type`, and it must be one we have actually verified rather than what a settings row claims (§14).
+    const logo = getSchoolLogo();
     return reply
       .header('content-type', 'application/manifest+json; charset=utf-8')
       .header('cache-control', 'public, max-age=300')
-      .send(
-        JSON.stringify({
-          name,
-          // What fits under an icon. Phones truncate at roughly a dozen characters, so a long madrasah
-          // name is better cut here than silently ellipsised by the launcher.
-          short_name: name.length > 14 ? `${name.slice(0, 13).trimEnd()}…` : name,
-          description: 'Tuition and fees for the madrasah',
-          start_url: './',
-          scope: './',
-          display: 'standalone',
-          orientation: 'any',
-          // The shell's own background, so the splash screen does not flash white before a dark app.
-          background_color: '#020912',
-          theme_color: '#020912',
-          icons: [
-            { src: './icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-            { src: './icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-            { src: './icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-          ],
-        }),
-      );
+      .send(JSON.stringify(buildManifest({ schoolName: getSchoolName(), logo: logo ? parseLogoDataUri(logo) : null })));
+  });
+
+  /**
+   * The service worker.
+   *
+   * A route only to control the CACHING. Everything else about it is in `packages/web/public/sw.js`, which
+   * caches nothing of the app on purpose (see its header). `no-store` because the worker script is the one
+   * file that must never be held: a stale worker is the thing that outlives an update, and this app already
+   * shipped a shell-caching bug once (0.48.0-dev.24). Browsers revalidate it themselves, but saying so
+   * costs a line and removes the question.
+   */
+  app.get('/sw.js', async (_req, reply) => {
+    const file = path.join(config.publicDir || '', 'sw.js');
+    if (!config.publicDir || !fs.existsSync(file)) return reply.code(404).send({ error: 'no_sw' });
+    return reply
+      .header('content-type', 'text/javascript; charset=utf-8')
+      .header('cache-control', 'no-store, must-revalidate')
+      // Belt and braces: a worker served from here may only ever control this app's own paths. `${BASE}/`
+      // is "/" at the root and "/students/" behind the tunnel, which is the scope registerSW.ts asks for.
+      .header('service-worker-allowed', `${BASE}/`)
+      .send(fs.readFileSync(file, 'utf8'));
+  });
+
+  /**
+   * The iOS home-screen icon (0.48.0).
+   *
+   * A ROUTE rather than the static file, because iOS reads NONE of the manifest's icons — `apple-touch-icon`
+   * is the only one Safari looks at — so the masjid's logo can only reach an iPhone through this. It cannot
+   * be done by rewriting index.html either: that is read once at boot, and a logo uploaded afterwards would
+   * never appear.
+   *
+   * PNG and JPEG only. Safari has not reliably taken a WebP touch icon, and the bundled mark is a better
+   * outcome than a home screen showing a screenshot of the page. Registered before the static plugin, so it
+   * takes precedence over the file of the same name — which is exactly what it falls back to.
+   */
+  app.get('/apple-touch-icon.png', async (_req, reply) => {
+    const logo = getSchoolLogo();
+    const parsed = logo ? parseLogoDataUri(logo) : null;
+    if (parsed && parsed.mime !== 'image/webp') {
+      return reply
+        .header('content-type', parsed.mime)
+        .header('content-security-policy', "default-src 'none'; sandbox")
+        .header('x-content-type-options', 'nosniff')
+        .header('cache-control', 'public, max-age=300')
+        .send(parsed.bytes);
+    }
+    const bundled = path.join(config.publicDir, 'apple-touch-icon.png');
+    if (!config.publicDir || !fs.existsSync(bundled)) return reply.code(404).send({ error: 'no_icon' });
+    return reply.header('content-type', 'image/png').header('cache-control', 'public, max-age=300').send(fs.readFileSync(bundled));
   });
 
   // Same-origin appearance relay (CLAUDE.md §15). The parent portal + staff surfaces INHERIT the OS

@@ -9,7 +9,7 @@
  */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { and, eq, desc, inArray } from 'drizzle-orm';
+import { and, asc, eq, desc, inArray } from 'drizzle-orm';
 import { router, parentProcedure } from './trpc';
 import { db } from '../db';
 import { families, students, invoices, invoiceItems, payments, paymentMethods, autopayEnrollments, schoolYears } from '../db/schema';
@@ -23,7 +23,7 @@ import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getCurrency } from '../settings';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
 import { stripeClient, stripeReady, publishableKey } from '../payments/stripe';
-import { describePaymentMethod, repairPaymentMethods } from '../payments/methods';
+import { describePaymentMethod, repairPaymentMethods, resequenceMethods } from '../payments/methods';
 import { alertStaff, householdName } from '../alerts';
 import { sendReceipt } from '../mail/notify';
 import { makeLog } from '../logger';
@@ -331,9 +331,41 @@ export const portalRouter = router({
       })
       .from(paymentMethods)
       .where(eq(paymentMethods.familyId, input.familyId))
+      // The order they will be TRIED in (0.48.0) — position 0 is what autopay charges. The list is the
+      // feature, so it must arrive in that order rather than being sorted on the client.
+      .orderBy(asc(paymentMethods.sortOrder), asc(paymentMethods.createdAt))
       .all();
     return { ready: stripeReady(), enabled: !!enr?.enabled, defaultPmId: enr?.defaultPmId ?? null, cards };
   }),
+
+  /**
+   * Put the saved methods in the order they should be charged (0.48.0).
+   *
+   * The parent sends the whole list, not "move this one up": a full order is idempotent and cannot get out
+   * of step with what they were looking at, whereas a relative move applied to a list that changed in
+   * another tab silently reorders the wrong pair.
+   *
+   * Every id must be one of THIS household's, and all of them must be present — a partial list would leave
+   * the rest at arbitrary positions, and this decides what gets charged.
+   */
+  reorderMethods: parentProcedure
+    .input(z.object({ familyId: z.string().min(1).max(64), orderedIds: z.array(z.string().min(1).max(64)).max(20) }))
+    .mutation(({ ctx, input }) => {
+      assertFamilyAccess(ctx, input.familyId);
+      const mine = db.select({ id: paymentMethods.id }).from(paymentMethods).where(eq(paymentMethods.familyId, input.familyId)).all().map((r) => r.id);
+      const asked = [...new Set(input.orderedIds)];
+      if (asked.length !== mine.length || !asked.every((id) => mine.includes(id))) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'That list is out of date — reload the page and try again.' });
+      }
+      db.transaction((tx) => {
+        asked.forEach((id, i) => {
+          tx.update(paymentMethods).set({ sortOrder: i }).where(eq(paymentMethods.id, id)).run();
+        });
+      });
+      // One place keeps sort_order, is_default and the autopay enrolment agreeing (payments/methods.ts).
+      resequenceMethods(input.familyId);
+      return { ok: true as const };
+    }),
 
   /** Start saving a card: a SetupIntent (off-session capable) the browser confirms with Elements. */
   createSetupIntent: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64) })).mutation(async ({ ctx, input }) => {
@@ -391,12 +423,16 @@ export const portalRouter = router({
       // Guard: the PM must belong to THIS family's customer (never attach someone else's card).
       if (pm.customer && pm.customer !== fam.stripeCustomerId) throw new Error('pm_customer_mismatch');
       if (!pm.customer) await stripe.paymentMethods.attach(input.paymentMethodId, { customer: fam.stripeCustomerId });
-      const isFirst = !db.select({ id: paymentMethods.id }).from(paymentMethods).where(eq(paymentMethods.familyId, input.familyId)).get();
+      // A new method goes to the END of the order (0.48.0): the household already chose what to charge
+      // first, and quietly promoting the newest card over that choice is how autopay ends up on the wrong
+      // one. The first one saved is position 0 by arithmetic, not by a special case.
+      const existing = db.select({ id: paymentMethods.id }).from(paymentMethods).where(eq(paymentMethods.familyId, input.familyId)).all();
       const ts = new Date();
       db.insert(paymentMethods)
-        .values({ id: pm.id, familyId: input.familyId, ...describePaymentMethod(pm), isDefault: isFirst, createdAt: ts })
+        .values({ id: pm.id, familyId: input.familyId, ...describePaymentMethod(pm), sortOrder: existing.length, isDefault: existing.length === 0, createdAt: ts })
         .onConflictDoNothing()
         .run();
+      resequenceMethods(input.familyId);
       return { ok: true as const };
     } catch (e) {
       payLog.error('saveCard failed', { familyId: input.familyId, error: (e as Error).message });
@@ -404,17 +440,21 @@ export const portalRouter = router({
     }
   }),
 
-  /** Remove a saved card. If it was the autopay default, autopay is turned off (no card to charge). */
+  /**
+   * Remove a saved method.
+   *
+   * Removing the one autopay charges no longer switches autopay OFF when the household has another (0.48.0)
+   * — the next in their chosen order takes over, which is the point of being able to order them. It is only
+   * switched off when nothing is left, and `resequenceMethods` owns that decision so the enrolment can
+   * never end up pointing at a row that has gone.
+   */
   removeCard: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64), paymentMethodId: z.string().min(1).max(64) })).mutation(async ({ ctx, input }) => {
     assertFamilyAccess(ctx, input.familyId);
     if (!db.select({ id: paymentMethods.id }).from(paymentMethods).where(and(eq(paymentMethods.id, input.paymentMethodId), eq(paymentMethods.familyId, input.familyId))).get()) {
       throw new TRPCError({ code: 'NOT_FOUND', message: 'Card not found.' });
     }
     db.delete(paymentMethods).where(eq(paymentMethods.id, input.paymentMethodId)).run();
-    const enr = db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, input.familyId)).get();
-    if (enr?.defaultPmId === input.paymentMethodId) {
-      db.update(autopayEnrollments).set({ enabled: false, defaultPmId: null, updatedAt: new Date() }).where(eq(autopayEnrollments.familyId, input.familyId)).run();
-    }
+    resequenceMethods(input.familyId);
     const stripe = stripeClient();
     if (stripe) { try { await stripe.paymentMethods.detach(input.paymentMethodId); } catch { /* best-effort */ } }
     return { ok: true as const };

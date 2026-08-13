@@ -62,7 +62,8 @@
     "cancel": "Cancel",
     "clear": "Clear",
     "select": "Select…",
-    "saving": "Saving…"
+    "saving": "Saving…",
+    "dismiss": "Dismiss"
   },
   "picker": {
     "placeholder": "Type a name or Student ID…",
@@ -1079,6 +1080,14 @@
     "att_excused": "Excused",
     "schedule": "Weekly schedule",
     "noSchedule": "No sessions scheduled yet.",
+    "rank_1": "1st",
+    "rank_2": "2nd",
+    "rank_3": "3rd",
+    "rank_4": "{{n}}th",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "chargedFirst": "Charged first",
+    "orderHint": "Autopay charges the first one. If it's declined, we try the next — use the arrows to change the order.",
     "payNow": "Pay now",
     "payAhead": "Pay ahead",
     "payAheadHint": "Nothing is due right now. Anything you pay is held on your account and comes off your next invoice automatically.",
@@ -1217,6 +1226,15 @@
     "search": "Find a student",
     "searchHint": "Type a name",
     "searchCount": "Showing {{shown}} of {{total}} — everyone else keeps whatever you have already set for them."
+  },
+  "install": {
+    "title": "Add this to your phone",
+    "why": "It opens like an app, straight to your balance — no address to remember.",
+    "action": "Add to home screen",
+    "ios1": "Tap the Share button below",
+    "ios2": "Choose “Add to Home Screen”",
+    "android1": "Open your browser's menu (⋮)",
+    "android2": "Choose “Install app” or “Add to Home screen”"
   },
   "famYear": {
     "tab": "My year",

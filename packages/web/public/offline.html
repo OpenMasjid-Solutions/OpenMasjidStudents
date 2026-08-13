@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 OpenMasjid-Solutions -->
+<!--
+  Shown only when a navigation fails because the phone has no connection (see sw.js).
+
+  Deliberately self-contained and deliberately EMPTY OF THE APP: no bundle, no balance, no household. It is
+  the one thing the service worker caches, so anything of the app that leaked in here could be served stale
+  later — the exact failure the worker is written to avoid. Inline styles for the same reason: a cached page
+  that referenced the app's CSS would pin a version of it.
+
+  No i18n either. It has to work with no network and no JavaScript, and a wrong-language sentence is a
+  better outcome than a blank screen. The colours are the shell's own, hard-coded here because tokens.css
+  is not available offline.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#020912" />
+    <title>You're offline</title>
+    <style>
+      :root { color-scheme: dark light; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        background: #020912;
+        color: #f4f7fb;
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        text-align: center;
+      }
+      main { max-width: 22rem; }
+      h1 { font-size: 1.2rem; margin: 0 0 0.5rem; }
+      p { margin: 0; font-size: 0.95rem; line-height: 1.5; color: #9facc2; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>You're offline</h1>
+      <p>Reconnect and this page will load. Nothing you have paid is affected — payments are recorded on the madrasah's own system.</p>
+    </main>
+  </body>
+</html>

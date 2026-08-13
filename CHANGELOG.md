@@ -50,9 +50,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   student, re-enabling an account — still don't ask, because a dialog on a harmless action is how people
   learn to click through the ones that matter.
 
-- **Add it to your phone's home screen and it looks like an app** — the madrasah's own name under the icon,
-  the OpenMasjid Students mark on it, and it opens without the browser's address bar. Icons for Android and
-  iPhone both.
+- **Add it to your phone's home screen and it looks like an app** — **your madrasah's own logo** as the
+  icon, your name under it, and it opens without the browser's address bar. With no logo set it uses the
+  OpenMasjid Students logo instead. Icons for Android and iPhone both. On a phone, the portal now offers to
+  add itself: a one-tap install button where the browser allows one, and otherwise the two taps to do it by
+  hand (they differ on iPhone and Android). It hides once installed, and stays hidden if dismissed.
+
+- **Parents can put their saved payment methods in order** — 1st, 2nd, 3rd — with arrows on each row.
+  Autopay charges the first; **if it's declined the next attempt tries the second**, rather than presenting
+  the same declining card again two days later. A newly added card goes to the end rather than quietly
+  taking over, and removing the first one promotes the second instead of switching autopay off — it is only
+  switched off when nothing is left to charge.
 
 - **A bank account can be added in the parent portal.** There was no option — the "add a payment method"
   step only ever asked Stripe for cards, so whatever the madrasah had switched on, a parent could pay *from*

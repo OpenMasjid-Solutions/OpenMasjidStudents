@@ -253,6 +253,13 @@
       "when": 1785851031462,
       "tag": "0035_payment_method_details",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1785937431462,
+      "tag": "0036_payment_method_order",
+      "breakpoints": true
     }
   ]
 }

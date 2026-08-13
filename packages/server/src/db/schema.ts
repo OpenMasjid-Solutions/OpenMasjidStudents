@@ -781,6 +781,15 @@ export const paymentMethods = sqliteTable(
      *  account-holder name — see migration 0035 for why (§14). */
     bankName: text('bank_name'),
     accountType: text('account_type'),
+    /**
+     * Which one autopay tries FIRST, and what it falls back to (0.48.0). Position 0 is charged; the retry
+     * ladder walks down the list, so a household can say "the joint account, then my card".
+     *
+     * This is the authority; `isDefault` mirrors position 0 for the readers that already look at it.
+     * Every query orders by `(sortOrder, createdAt)` so equal values fall back to oldest-first rather
+     * than to whatever SQLite feels like.
+     */
+    sortOrder: integer('sort_order').notNull().default(0),
     isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },

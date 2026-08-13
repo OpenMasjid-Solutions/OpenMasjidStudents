@@ -19,9 +19,9 @@
  * (§14 data minimisation). The rule for this table has always been "brand/last4/exp only, never a PAN";
  * this keeps to the same spirit for the kinds of method it did not previously know about.
  */
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, asc, isNull } from 'drizzle-orm';
 import { db } from '../db';
-import { paymentMethods } from '../db/schema';
+import { autopayEnrollments, paymentMethods } from '../db/schema';
 import { stripeClient } from './stripe';
 import { makeLog } from '../logger';
 
@@ -76,6 +76,55 @@ export function describePaymentMethod(pm: StripePaymentMethodLike): PaymentMetho
     bankName: cap(bank?.bank_name, 80),
     accountType: cap(bank?.account_type, 20),
   };
+}
+
+/**
+ * A household's saved methods in the order they will be tried — position 0 first (0.48.0).
+ *
+ * `(sortOrder, createdAt)` on purpose: after migration 0036 every non-default row shares one sort value, so
+ * the second key is what makes the list stable and oldest-first rather than dependent on SQLite's mood.
+ */
+export function orderedMethods(familyId: string) {
+  return db
+    .select()
+    .from(paymentMethods)
+    .where(eq(paymentMethods.familyId, familyId))
+    .orderBy(asc(paymentMethods.sortOrder), asc(paymentMethods.createdAt))
+    .all();
+}
+
+/**
+ * Renumber a household's methods 0..n-1 and make everything that reads "which one is default" agree.
+ *
+ * THREE THINGS HAVE TO MOVE TOGETHER, which is the whole reason this is one function: `sort_order` (the
+ * authority), `is_default` (what the portal and the office screens read), and
+ * `autopay_enrollments.default_pm_id` (what a charge actually presents). Leaving any one behind produces
+ * the worst kind of bug here — a screen that says one card and a charge that uses another.
+ *
+ * Called after every change to the set: a reorder, a new method, a removal.
+ */
+export function resequenceMethods(familyId: string): void {
+  const rows = orderedMethods(familyId);
+  const ts = new Date();
+  db.transaction((tx) => {
+    rows.forEach((r, i) => {
+      tx.update(paymentMethods).set({ sortOrder: i, isDefault: i === 0 }).where(eq(paymentMethods.id, r.id)).run();
+    });
+    const first = rows[0]?.id ?? null;
+    const enr = tx.select({ familyId: autopayEnrollments.familyId, defaultPmId: autopayEnrollments.defaultPmId }).from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get();
+    // Only when it actually changed, so an untouched household's `updatedAt` is not churned.
+    if (enr && enr.defaultPmId !== first) {
+      if (first) {
+        // Autopay stays ON and simply follows the new first choice — that is what removing the top card, or
+        // promoting the second, is meant to do.
+        tx.update(autopayEnrollments).set({ defaultPmId: first, updatedAt: ts }).where(eq(autopayEnrollments.familyId, familyId)).run();
+      } else {
+        // Nothing left to charge, so autopay cannot run. Switched off rather than left enabled with nothing
+        // behind it, which would be a promise the scheduler silently skips every day.
+        tx.update(autopayEnrollments).set({ defaultPmId: null, enabled: false, updatedAt: ts }).where(eq(autopayEnrollments.familyId, familyId)).run();
+      }
+    }
+  });
 }
 
 /** How many unclassified rows one read will repair. A household has one or two payment methods; this is

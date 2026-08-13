@@ -19,6 +19,7 @@ import { makeLog } from '../logger';
 import { alertStaff, householdName } from '../alerts';
 import { sendReceipt, sendAutopayFailure } from '../mail/notify';
 import { stripeClient } from './stripe';
+import { orderedMethods } from './methods';
 
 const log = makeLog('autopay');
 
@@ -103,6 +104,22 @@ export async function chargeFamily(familyId: string, amountCents: number, today:
   const enr = db.select({ defaultPmId: autopayEnrollments.defaultPmId, failureCount: autopayEnrollments.failureCount }).from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get();
   const fam = db.select({ stripeCustomerId: families.stripeCustomerId }).from(families).where(eq(families.id, familyId)).get();
   if (!enr?.defaultPmId || !fam?.stripeCustomerId) return;
+
+  /**
+   * WHICH METHOD, on this attempt (0.48.0).
+   *
+   * A household can now put its saved methods in order — "the joint account, then my card" — and the ladder
+   * walks down it: attempt 1 takes their first choice, attempt 2 the second, attempt 3 the third. Before
+   * this, all three attempts presented the SAME declining card two days apart, which is not a retry so much
+   * as the same answer three times.
+   *
+   * It falls back to the first when the list is shorter than the ladder, so a household with one card
+   * behaves exactly as it did. `defaultPmId` remains the answer for attempt 1 — `resequenceMethods` keeps
+   * it equal to position 0 — so nothing depends on the ordering being present to work.
+   */
+  const ordered = orderedMethods(familyId);
+  const attemptIndex = enr.failureCount ?? 0;
+  const chosenPmId = ordered.length ? (ordered[Math.min(attemptIndex, ordered.length - 1)]?.id ?? enr.defaultPmId) : enr.defaultPmId;
   // Never fire a second charge while a prior one's outcome is still unknown. A run only stays 'pending'
   // when a charge fired but neither succeeded nor definitively failed (async processing, or an
   // indeterminate network error) — re-charging across days would double-bill (the webhook, or
@@ -120,7 +137,7 @@ export async function chargeFamily(familyId: string, amountCents: number, today:
         amount: amountCents,
         currency: getCurrency(),
         customer: fam.stripeCustomerId,
-        payment_method: enr.defaultPmId,
+        payment_method: chosenPmId,
         off_session: true,
         confirm: true,
         description: 'Autopay tuition',

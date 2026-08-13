@@ -97,6 +97,64 @@
   .fam-tab { transition: none; }
 }
 
+/* ── Payment methods in order (0.48.0) ───────────────────────────────────────
+   The rank leads the row, because "which one is charged first" is what the parent came to this list to
+   decide. Tabular numerals so 1st/2nd/3rd sit on the same left edge. */
+.pm-rank {
+  flex: 0 0 auto;
+  min-inline-size: 1.9rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+/* Stacked arrows: on a phone two 44px targets side by side would push the row past the screen, and
+   up/down reads naturally as a column anyway. */
+.pm-move { display: inline-flex; flex-direction: column; gap: 0.15rem; flex: 0 0 auto; }
+.pm-move .btn { padding: 0.15rem 0.35rem; min-height: 0; }
+
+/* ── "Add this to your phone" (0.48.0) ───────────────────────────────────────
+   Last on the home tab and quiet: a parent who came to pay should meet the balance first, and an offer
+   that shouts is an offer that gets dismissed. */
+.install-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius-card, 14px);
+  margin-block-start: 1rem;
+}
+.install-card p { margin: 0; font-size: 0.88rem; color: var(--color-ink-muted); }
+.install-card .btn { align-self: flex-start; margin-block-start: 0.2rem; }
+/* Room for the dismiss button, which is absolutely positioned in the corner. */
+.install-card > strong { padding-inline-end: 1.5rem; }
+.install-close {
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-end: 0.5rem;
+  display: inline-flex;
+  padding: 0.3rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-ink-faint);
+  cursor: pointer;
+}
+.install-close:hover { color: var(--color-ink); }
+.install-steps {
+  margin: 0.2rem 0 0;
+  padding-inline-start: 1.1rem;
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.88rem;
+  color: var(--color-ink-muted);
+}
+/* The icons name the buttons the parent is looking for, so they sit on the text baseline. */
+.install-steps li > svg { vertical-align: -2px; margin-inline-end: 0.3rem; }
+
 /* The autopay offer under the balance. One big tap target — the whole card is the button. */
 .autopay-cta {
   display: flex;

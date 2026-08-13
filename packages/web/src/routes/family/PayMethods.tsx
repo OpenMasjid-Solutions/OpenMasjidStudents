@@ -9,7 +9,7 @@ import { useState, type FormEvent } from 'react';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { useTranslation } from 'react-i18next';
-import { CreditCard, Landmark, Trash2, Wallet } from 'lucide-react';
+import { ChevronDown, ChevronUp, CreditCard, Landmark, Trash2, Wallet } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { describeMethod, formatExpiry, methodTitle } from '../../lib/paymentMethod';
 
@@ -54,6 +54,7 @@ export function PayMethods({ familyId }: { familyId: string }) {
   const saveCard = trpc.portal.saveCard.useMutation();
   const removeCard = trpc.portal.removeCard.useMutation();
   const setAutopay = trpc.portal.setAutopay.useMutation();
+  const reorder = trpc.portal.reorderMethods.useMutation();
   const [adding, setAdding] = useState<{ clientSecret: string; stripe: Promise<Stripe | null> } | null>(null);
   /** Set when the method just added still needs the parent to confirm it with their bank. */
   const [pendingNote, setPendingNote] = useState(false);
@@ -67,6 +68,22 @@ export function PayMethods({ familyId }: { familyId: string }) {
     if (r.clientSecret && r.publishableKey) setAdding({ clientSecret: r.clientSecret, stripe: loadStripe(r.publishableKey) });
   }
 
+  /**
+   * Move one method up or down.
+   *
+   * The WHOLE order is sent, not "move this one": a full list is idempotent and cannot be applied to a
+   * different list than the parent was looking at, which a relative move can if the set changed in another
+   * tab. The server refuses a list that no longer matches the household's methods.
+   */
+  async function move(index: number, delta: -1 | 1) {
+    const next = cards.map((c) => c.id);
+    const to = index + delta;
+    if (to < 0 || to >= next.length) return;
+    [next[index], next[to]] = [next[to], next[index]];
+    await reorder.mutateAsync({ familyId, orderedIds: next });
+    await refresh();
+  }
+
   return (
     <section className="fam-section">
       <h2>{t('family.savedCards')}</h2>
@@ -74,7 +91,7 @@ export function PayMethods({ familyId }: { familyId: string }) {
       {cards.length === 0 ? (
         <div className="fam-empty">{t('family.noCards')}</div>
       ) : (
-        cards.map((c) => {
+        cards.map((c, i) => {
           const d = describeMethod(c);
           const expiry = formatExpiry(d);
           // The second line, built from whatever this method actually has: a card's expiry, a bank
@@ -83,22 +100,38 @@ export function PayMethods({ familyId }: { familyId: string }) {
           const sub = [
             d.kind === 'bank' && d.accountType ? t(`family.acct_${d.accountType}`) : null,
             expiry ? `${d.expired ? t('family.expired') : t('family.expires')} ${expiry}` : null,
-            c.isDefault ? t('family.defaultCard') : null,
           ].filter(Boolean).join(' · ');
           return (
             <div key={c.id} className="list-row glass">
+              {/* The POSITION, when there is more than one — "1st" is what autopay charges, and the rank is
+                  the whole point of being able to reorder. With one method it would be noise. */}
+              {cards.length > 1 && <span className="pm-rank" aria-hidden="true">{t(`family.rank_${Math.min(i + 1, 4)}`, { n: i + 1 })}</span>}
               <span style={{ display: 'inline-flex', color: d.expired ? 'var(--color-gold)' : 'var(--color-primary)' }}>
                 {d.kind === 'bank' ? <Landmark size={18} /> : d.kind === 'other' ? <Wallet size={18} /> : <CreditCard size={18} />}
               </span>
               <div className="row-main">
                 <span className="row-title">{methodTitle(d, t('family.savedMethod'))}</span>
                 {sub && <span className="row-sub">{sub}</span>}
+                {/* Said on the first row only, in words: "1st" alone does not tell a parent what the order
+                    is FOR, and this is the sentence that makes the arrows worth using. */}
+                {i === 0 && cards.length > 1 && <span className="row-sub">{t('family.chargedFirst')}</span>}
               </div>
+              {cards.length > 1 && (
+                <span className="pm-move">
+                  <button type="button" className="btn btn--ghost btn--sm" disabled={i === 0 || reorder.isPending} aria-label={t('family.moveUp')} title={t('family.moveUp')} onClick={() => void move(i, -1)}>
+                    <ChevronUp size={15} />
+                  </button>
+                  <button type="button" className="btn btn--ghost btn--sm" disabled={i === cards.length - 1 || reorder.isPending} aria-label={t('family.moveDown')} title={t('family.moveDown')} onClick={() => void move(i, 1)}>
+                    <ChevronDown size={15} />
+                  </button>
+                </span>
+              )}
               <button type="button" className="btn btn--ghost btn--sm" aria-label={t('common.remove')} onClick={async () => { if (!window.confirm(t('family.removeCardConfirm'))) return; await removeCard.mutateAsync({ familyId, paymentMethodId: c.id }); await refresh(); }}><Trash2 size={15} /></button>
             </div>
           );
         })
       )}
+      {cards.length > 1 && <p className="hint" style={{ marginBlockStart: '0.4rem' }}>{t('family.orderHint')}</p>}
       {/* An expired card is the commonest reason autopay stops, and nothing used to say so. */}
       {cards.some((c) => describeMethod(c).expired) && (
         <p className="hint" style={{ marginBlockStart: '0.4rem' }}>{t('family.expiredHint')}</p>

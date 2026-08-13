@@ -154,10 +154,17 @@ function rewrite({ size, transparent, darkInvert, asStencil }) {
   return out;
 }
 
+const fullArtwork = rewrite({ size: 512, transparent: false, darkInvert: false });
+
 const targets = [
   // The catalog icon is the artwork as designed, at 512 px on its white tile. Nothing is stencilled: at
   // that size the wordmark is legible and the white counters are doing their job.
-  ['icon.svg', rewrite({ size: 512, transparent: false, darkInvert: false })],
+  ['icon.svg', fullArtwork],
+  // The same artwork, served to a phone's home screen when the masjid has set no logo of its own
+  // (0.48.0). The full design WITH the wordmark, because that is the app's actual logo — the mark-only
+  // PNGs from build-pwa-icons.cjs exist for the maskable/iOS slots, where lettering would not survive
+  // the crop. Chrome reads an SVG manifest icon; iOS does not, which is why both forms are shipped.
+  ['packages/web/public/icon-wordmark.svg', fullArtwork],
   // The tab: a stencil, filled dark and inverted on a dark tab bar. A favicon has to carry its own colour.
   ['packages/web/public/favicon.svg', rewrite({ size: 256, transparent: true, darkInvert: true, asStencil: true })],
   // The topbar mark: the same stencil, used as a CSS mask filled with `currentColor` (StudentsMark.tsx),
