@@ -27,6 +27,12 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
      manifest reads `X.Y.Z-dev.N`, and the version test checks the CHANGELOG for the base `X.Y.Z`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
 
+## [0.50.0]
+
+- **Nothing for the office in this build yet.** It carries one change to the project's own writing rules —
+  how these notes are split between a stable update and a development one — and nothing that changes the
+  app. Development builds show this section as it fills up.
+
 ## [0.49.0]
 
 - **What's new says less on a release, and everything on a development build.** A masjid updating to a

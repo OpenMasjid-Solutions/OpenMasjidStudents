@@ -96,6 +96,8 @@ to. Distinct versions and immutable per-build tags are the fix. Two consequences
   entry. That edit belongs to the catalog repo, not here.
 - The CHANGELOG is filed under the **release** (`## [0.48.0]`), not per dev build; `version.test.ts`
   checks the base version, so `0.48.0-dev.3` is satisfied by the `0.48.0` heading.
+- **The two channels read the SAME entry at different depths** — headlines on stable, everything on dev.
+  That is a writing rule, not a build one; see §19's "One changelog, two audiences".
 
 ---
 
@@ -1042,15 +1044,18 @@ absent (standalone) and present; payment features tested against Stripe test mod
 printed documents checked in a real print preview, in black and white; every new date/money boundary validated
 (§9); no raw error reaches the user; all strings in i18next — including generated keys; SPDX on every new
 file; audit entries for every sensitive write touched; and the CHANGELOG entry written in the voice a masjid
-reads, under the release heading.
+reads, under the release heading — a **headline** if a masjid would notice it, under `### Also in this
+release` if they would not (§19, "One changelog, two audiences").
 
 ---
 
 ## 19. Version control & release policy — how a version actually ships
 
 `VERSION` file at repo root, single source of truth, `MAJOR.MINOR.PATCH`; `1.0.0` reserved for launch.
-**Current series: `0.48.x`** (`dev` carries `0.48.0-dev.N`). Default branch: **`main`**; all work on **`dev`**
-(see Branching policy).
+**`main` is at the last release; `dev` carries `X.Y.Z-dev.N` for the NEXT one** — so once `v0.49.0` ships,
+`dev`'s next build is `0.50.0-dev.1`, not another `0.49.0-dev.N` (that release exists now; a prerelease of it
+would be a lie about which way round they are). Default branch: **`main`**; all work on **`dev`** (see
+Branching policy).
 
 **The key idea (two repos):** this repo builds and **digest-pins** the Docker image; the catalog repo
 (`OpenMasjidAPPS`) is what makes a version downloadable — bumping this app's entry in
@@ -1065,20 +1070,56 @@ what every OpenMasjidOS install fetches. **Nothing is "released" until the regis
 3. ~~APK signing keystore~~ — **N/A here.** This is a web-only app; the keystore secrets are Kiosk-specific.
    Do not add Android/APK steps to this repo.
 
+### One changelog, two audiences (0.49.0)
+
+**A stable release shows its HEADLINES. A dev build shows everything.** Same file, same entry, read at two
+depths — because the two channels want opposite things. A masjid updating on the stable channel wants the
+few things that changed for them; 0.48.0 ran to fifty bullets, which makes the first line as easy to skip
+as the last. Whoever is running the dev channel is testing the build and wants all of it, including the
+fixes too small to announce.
+
+How to write one, every time:
+
+- Open the release with its **headlines** — the major changes, additions and fixes, and nothing else.
+  **Six to eight**, in the voice a masjid reads (§15), each one a thing they will notice.
+- Then `### Also in this release`, and everything else under it: the refinements, the small fixes, the
+  detail behind the headlines. That heading is the marker; **everything from it onward is dev-only**,
+  including any further `###` sub-headings inside it.
+- `lib/changelog.ts` decides which half to show from **the version the app is running** — a `-dev.N` build
+  shows all of it, a release build shows the headlines, and an unknown version shows the headlines (the
+  safe direction). On GitHub, where the whole history belongs, both halves always show.
+- `changelog.test.ts` holds the newest entry to a short headline list, so a forgotten marker fails in CI
+  rather than in front of a madrasah.
+- **Never rewrite a shipped release's notes** to fit this. Entries written before the convention have no
+  marker and correctly still show in full; they are what those masajid already read.
+
 **The release runbook (every release, in order):**
 1. Bump the version **everywhere**: `VERSION`, `manifest.yaml`'s `version:`, root + both workspace
-   `package.json`s, `docker-compose.yml`'s image tag, and a `CHANGELOG.md` entry. **The server does NOT need
-   editing** — `config.version` reads `packages/server/package.json` at runtime (it was a hand-typed literal
-   until 0.42.1 and drifted two releases, telling every masjid they were on 0.40.0).
-   `packages/server/test/version.test.ts` asserts all of these agree, so a half-finished bump fails CI instead
-   of shipping; the CHANGELOG entry is checked there too, since **What's new** in the app is built from that
-   file.
+   `package.json`s, `docker-compose.yml`'s image tag, and a `CHANGELOG.md` entry (headlines + marker, above).
+   **The server does NOT need editing** — `config.version` reads `packages/server/package.json` at runtime
+   (it was a hand-typed literal until 0.42.1 and drifted two releases, telling every masjid they were on
+   0.40.0). `packages/server/test/version.test.ts` asserts all of these agree, so a half-finished bump fails
+   CI instead of shipping; the CHANGELOG entry is checked there too, since **What's new** in the app is built
+   from that file.
 2. Commit on `dev`; validate the build is green (CI on the branch).
-3. FF-merge to `main` and push → triggers **"Build image"** → pushes the **multi-arch** (amd64+arm64) image to
-   GHCR.
-4. Grab the **`@sha256` digest** from that build and pin it in `docker-compose.yml`'s `image:` line.
+3. **Merge `dev` into `main`, carrying the stable version bump in the merge commit**, and push → triggers
+   **"Build image"** → pushes the **multi-arch** (amd64+arm64) image to GHCR.
+
+   Concretely: `git checkout main && git merge --no-ff --no-commit dev`, resolve the version conflicts to the
+   plain `X.Y.Z` (they conflict every time, by design — `dev` says `X.Y.Z-dev.N` and `main` says the previous
+   release), **leave `docker-compose.yml` naming the PREVIOUS release's digest**, then commit as
+   `release: vX.Y.Z — <headline>`.
+
+   It is **not** a fast-forward and cannot be: `main` carries every release and pin commit, which `dev` never
+   receives, so the two have diverged permanently by design. (This step said "FF-merge" until 0.49.0, which
+   would fail on the first `git merge --ff-only`.) Keeping the previous digest for this one commit is also
+   deliberate and is what `version.test.ts` enforces: a stable version must name a digest-pinned image, and
+   the new digest does not exist until step 3 has run.
+4. Grab the **`@sha256` digest** from that build and pin it in `docker-compose.yml`'s `image:` line. Confirm
+   it with `docker buildx imagetools inspect …:<version>` before trusting the log line.
 5. Commit the pin, `git tag v<version>`, push `main` + the tag. (The tag lands on the **pin commit**, so the
-   catalog serves the pinned compose — that's the point.)
+   catalog serves the pinned compose — that's the point. `docker-compose.yml` is in the workflow's
+   `paths-ignore`, so neither the pin nor the tag rebuilds the image and the digest stays the one you pinned.)
 6. Bump `OpenMasjidAPPS/registry.yaml` for `students`: `ref: v<version>` **plus the immutable `commit:` SHA**
    of that tag, keeping `dev_ref: dev`. Via PR, or — house standard, since we own the org — a direct commit to
    its `main` with `gh api -X PUT …/registry.yaml`.
