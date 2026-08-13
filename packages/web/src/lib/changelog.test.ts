@@ -15,7 +15,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import raw from '../../../../CHANGELOG.md?raw';
-import { flatItems, parseChangelog } from './changelog';
+import { flatItems, isDetailHeading, isPrereleaseVersion, itemsFor, parseChangelog } from './changelog';
 
 describe('parseChangelog', () => {
   it('reads versions newest-first and skips [Unreleased]', () => {
@@ -119,8 +119,85 @@ All notable changes are recorded here.
   });
 });
 
+describe('headlines vs detail (0.49.0)', () => {
+  /**
+   * A stable install reads the headlines; a development build reads everything. The failure that matters
+   * is the quiet one — a release whose whole entry leaks onto a masjid's screen because the marker moved
+   * or a sub-heading came after it — so both directions are asserted, not just the happy one.
+   */
+  const md = `# Changelog
+
+## [1.0.0]
+
+- headline one
+- headline two
+
+### Also in this release
+
+- small print
+- more small print
+
+### From a security review
+
+- a fix too small to announce
+
+## [0.9.0]
+
+- an older release with no marker at all
+`;
+  const [newest, older] = parseChangelog(md);
+
+  it('shows only the headlines on a release build', () => {
+    expect(itemsFor(newest).map((i) => i.text)).toEqual(['headline one', 'headline two']);
+  });
+
+  it('shows everything on a development build', () => {
+    expect(itemsFor(newest, true).map((i) => i.text)).toEqual([
+      'headline one',
+      'headline two',
+      'small print',
+      'more small print',
+      'a fix too small to announce',
+    ]);
+  });
+
+  it('keeps hiding the detail past a SUB-heading inside it', () => {
+    // The detail half has its own headings. Stopping at the first would put the small print back in front
+    // of a masjid through the very heading meant to hide it.
+    expect(itemsFor(newest).map((i) => i.text)).not.toContain('a fix too small to announce');
+  });
+
+  it('leaves a release with no marker showing in full', () => {
+    // Every entry written before this convention existed — nothing retroactively disappears.
+    expect(itemsFor(older).map((i) => i.text)).toEqual(['an older release with no marker at all']);
+  });
+
+  it('defaults to the SHORT list when the running version is unknown', () => {
+    // The health call may not have landed. Showing the wall of text to a stable install because we could
+    // not read our own version is the wrong way to be wrong.
+    expect(isPrereleaseVersion(undefined)).toBe(false);
+    expect(isPrereleaseVersion('0.49.0')).toBe(false);
+    expect(isPrereleaseVersion('0.49.0-dev.1')).toBe(true);
+  });
+
+  it('recognises the marker however it is capitalised or continued', () => {
+    expect(isDetailHeading('Also in this release')).toBe(true);
+    expect(isDetailHeading('  also in this release, in detail  ')).toBe(true);
+    expect(isDetailHeading('Added')).toBe(false);
+    expect(isDetailHeading('')).toBe(false);
+  });
+});
+
 describe('the real CHANGELOG.md', () => {
   const releases = parseChangelog(raw);
+
+  it('the newest release has a short headline list', () => {
+    // The point of the convention. If a release ever ships with twenty headlines, this is the reminder
+    // that the marker was forgotten — before a masjid gets the wall of text rather than the news.
+    const head = itemsFor(releases[0]);
+    expect(head.length).toBeGreaterThan(0);
+    expect(head.length).toBeLessThanOrEqual(10);
+  });
 
   it('parses into many releases, newest first', () => {
     expect(releases.length).toBeGreaterThan(20);
