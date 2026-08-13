@@ -31,8 +31,8 @@ services:
     #
     # This line legitimately names the PREVIOUS release for exactly one commit: §19 bumps the version,
     # merges, waits for CI to build the new image, and only then pins the digest it printed. A release is
-    # not published until the tag, and the tag only lands on the pin commit.
-    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.47.0@sha256:5bb5e2a8e0254054ef543f0aa9dbe8c725eebaaf33a2f26bde9c9ade6688fdbf
+    # not published until the tag, and the tag only lands on this pin commit.
+    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.48.0@sha256:a7195c9401ee6e38af8ff58f2f16945226b027c93863d69313175578068650ef
     restart: unless-stopped
     environment:
       PORT: "8080"
