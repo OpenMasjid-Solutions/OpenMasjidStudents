@@ -11,6 +11,7 @@ import { motion } from 'motion/react';
 import { SceneBackground } from './components/SceneBackground';
 import { ShellControls } from './components/ShellControls';
 import { MasjidMark } from './components/Glyphs';
+import { InstallPrompt } from './components/InstallPrompt';
 import { fadeRise } from './lib/motion';
 import { Setup } from './routes/Setup';
 import { Login } from './routes/Login';
@@ -105,10 +106,16 @@ export function App() {
 
   // Admin + finance run as full-screen desktop apps (their own topbar + dock + windows);
   // parents get the phone-first portal.
+  //
+  // `InstallPrompt` rides along with all three (0.48.0): a finance manager recording cash on their phone at
+  // the desk wants this on their home screen as much as a parent does, so it is mounted here rather than
+  // inside one shell. It is a pop-up that decides for itself whether to appear — installed already, not a
+  // phone, or dismissed, and it renders nothing — so mounting it three times costs nothing. Signed-in only:
+  // offering to install before somebody has an account to sign into is premature.
   if (!session.isLoading && !session.isError && s?.authenticated) {
-    if (s.user?.role === 'admin') return <AdminApp />;
-    if (s.user?.role === 'finance') return <FinanceApp />;
-    if (s.user?.role === 'parent') return <FamilyApp />;
+    if (s.user?.role === 'admin') return <><AdminApp /><InstallPrompt /></>;
+    if (s.user?.role === 'finance') return <><FinanceApp /><InstallPrompt /></>;
+    if (s.user?.role === 'parent') return <><FamilyApp /><InstallPrompt /></>;
   }
 
   let screen: React.ReactNode;

@@ -52,9 +52,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 - **Add it to your phone's home screen and it looks like an app** — **your madrasah's own logo** as the
   icon, your name under it, and it opens without the browser's address bar. With no logo set it uses the
-  OpenMasjid Students logo instead. Icons for Android and iPhone both. On a phone, the portal now offers to
-  add itself: a one-tap install button where the browser allows one, and otherwise the two taps to do it by
-  hand (they differ on iPhone and Android). It hides once installed, and stays hidden if dismissed.
+  OpenMasjid Students logo instead. Icons for Android and iPhone both.
+
+  On a phone the app offers to add itself — **on every account, not just the parent portal**, since a finance
+  manager taking cash at the desk wants it on their home screen too. It comes up as a pop-up with a **one-tap
+  install button** on Android, and on iPhone the two taps to do it through the Share sheet (Safari has no
+  install button of any kind — nothing a page can call). **Remind me later** keeps it quiet for a week and
+  **Don't show again** for good; closing it counts as later, never as a refusal. It never appears once the
+  app is installed, or on a computer.
 
 - **Parents can put their saved payment methods in order** — 1st, 2nd, 3rd — with arrows on each row.
   Autopay charges the first; **if it's declined the next attempt tries the second**, rather than presenting

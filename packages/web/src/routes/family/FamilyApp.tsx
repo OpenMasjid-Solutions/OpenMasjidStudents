@@ -14,7 +14,6 @@ import { useTranslation } from 'react-i18next';
 import { SceneBackground } from '../../components/SceneBackground';
 import { ProfileMenu } from '../../components/ProfileMenu';
 import { MasjidMark } from '../../components/Glyphs';
-import { InstallPrompt } from '../../components/InstallPrompt';
 import { trpc } from '../../lib/trpc';
 import { FamilyHome } from './Home';
 import { FamilyPayMethods } from './PayMethods';
@@ -73,10 +72,6 @@ export function FamilyApp() {
             </div>
             {/* The home tab's autopay card sends the parent here rather than opening a dialog. */}
             <FamilyHome onManageAutopay={() => setTab('autopay')} />
-            {/* "Add this to your phone" — LAST on the page and only on the home tab, because a parent
-                arriving to pay should reach the balance first. It hides itself when already installed, on a
-                desktop, or once dismissed (components/InstallPrompt). */}
-            <InstallPrompt />
           </>
         ) : active === 'year' ? (
           <>

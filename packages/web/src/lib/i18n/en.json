@@ -1234,7 +1234,9 @@
     "ios1": "Tap the Share button below",
     "ios2": "Choose “Add to Home Screen”",
     "android1": "Open your browser's menu (⋮)",
-    "android2": "Choose “Install app” or “Add to Home screen”"
+    "android2": "Choose “Install app” or “Add to Home screen”",
+    "later": "Remind me later",
+    "never": "Don't show again"
   },
   "famYear": {
     "tab": "My year",
