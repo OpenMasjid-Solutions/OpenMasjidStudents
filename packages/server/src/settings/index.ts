@@ -536,12 +536,6 @@ export function setSheetTextOverrides(patch: Record<string, string | null | unde
   setSetting(SETTING_KEYS.sheetText, Object.keys(next).length ? JSON.stringify(next) : '');
 }
 
-/** Is there anything to print? Used so a contact block is omitted entirely rather than left as an
- *  empty box with a heading. */
-export function hasSchoolContact(c: SchoolContact = getSchoolContact()): boolean {
-  return !!(c.address.trim() || c.phone.trim() || c.email.trim() || c.website.trim());
-}
-
 /** The teal every printed artifact has been ruled in since the first statement. */
 export const DEFAULT_ACCENT = '#0f766e';
 

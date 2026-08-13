@@ -245,9 +245,10 @@ export const authRouter = router({
     }),
 
   // ── Parent portal: invites (CLAUDE.md §12) ──────────────────────────────────
-  /** finance/admin creates a one-time portal invite for a guardian. Returns the link to share —
-   *  emailed once SMTP lands; for now the office copies/prints it. The guardian needs an email
-   *  (it becomes their portal login) and must not already have an account. */
+  /** finance/admin creates a one-time portal invite for a guardian. It is emailed when the platform can
+   *  send mail, and the link is ALWAYS returned as well so the office can copy or print it — a failed
+   *  send must never block an invite. The guardian needs an email (it becomes their portal login) and
+   *  must not already have an account. */
   inviteCreate: adminOrFinanceProcedure.input(z.object({ guardianId: ID })).mutation(async ({ ctx, input }) => {
     const r = mintInvite(input.guardianId, ctx.session.userId ?? null);
     if (!r.ok) {
@@ -453,8 +454,8 @@ export const authRouter = router({
     }),
 
   /** Whether the self-registration door is open (for the /family/register page to show the form vs a
-   *  notice). Public. Requires the admin toggle ON, SMTP configured, and an absolute base (the verify
-   *  link is emailed). */
+   *  notice). Public. Requires the admin toggle ON, a working mail transport, and an absolute base URL
+   *  (the verify link is emailed, so all three have to be true). */
   registerConfig: publicProcedure.query(() => ({ available: getSelfRegistrationEnabled() && mailAvailable() && !!portalBase() })),
 
   /** Self-registration door 2 (§12): a parent proves they belong by a child's Student ID + a guardian

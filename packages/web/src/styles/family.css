@@ -334,20 +334,8 @@
 /* A one-line explainer under a list — how to actually use the Student IDs above it. */
 .fam-hint { color: var(--color-ink-muted); font-size: 0.85rem; line-height: 1.45; margin: 0.5rem 0.25rem 0; }
 
-/* Attendance tallies — four compact stat cards. */
-.att-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; margin-block-end: 0.7rem; }
-.att-stat { border-radius: 12px; padding: 0.6rem 0.35rem; text-align: center; }
-.att-stat .n { font-size: 1.35rem; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1; }
-.att-stat .k { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-ink-muted); margin-block-start: 0.2rem; }
-.att-present .n { color: var(--color-success, #46c99a); }
-.att-late .n { color: var(--color-gold, #d4af37); }
-.att-excused .n { color: var(--color-ink); }
-.att-absent .n { color: var(--color-danger, #e5645b); }
-
-.att-chip { margin-inline-start: auto; font-size: 0.72rem; }
-.att-chip.att-present { color: var(--color-success, #46c99a); }
-.att-chip.att-late { color: var(--color-gold, #d4af37); }
-.att-chip.att-absent { color: var(--color-danger, #e5645b); }
+/* (The parent portal's attendance tallies lived here until 0.48.0 — the four stat cards and their chips,
+   for a screen the v0.35.0 pivot removed.) */
 
 /* Autopay toggle switch. */
 .switch { position: relative; display: inline-flex; align-items: center; cursor: pointer; }

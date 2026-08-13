@@ -19,11 +19,6 @@
  */
 export const MIN_PAYMENT_CENTS = 100;
 
-/** Convert major units (e.g. dollars) to integer cents. */
-export function toCents(major: number): number {
-  return Math.round(major * 100);
-}
-
 /** Convert integer cents to major units. */
 export function fromCents(cents: number): number {
   return cents / 100;

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
-/** App settings (admin-only): school name, currency, the report-card merit toggle, email (SMTP), and
- *  the Stripe account (from the OS vault) that tuition charges go through. */
+/** App settings (admin-only): the school's name, currency, logo, colour and date format; how it appears
+ *  to parents; who hears about what by email; the past-due policy; and the Stripe account (from the OS
+ *  vault) that tuition charges go through. A few reads are admin OR finance where finance needs them. */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { asc, eq, isNotNull } from 'drizzle-orm';
@@ -169,8 +170,6 @@ export const settingsRouter = router({
       publicUrl: base,
       /** Where the URL came from — `platform` is authoritative, `env` is the install-time mirror. */
       publicUrlSource: live ? ('platform' as const) : config.omosPublicUrl ? ('env' as const) : ('none' as const),
-      /** Kept for shape stability; always false now that the app has no SMTP of its own. */
-      smtp: false as const,
       /** We declare `email: true`, so the platform can send for us whenever the Fabric is wired up. */
       platformMail: fabricConfigured(),
       mailAvailable: mailAvailable(),

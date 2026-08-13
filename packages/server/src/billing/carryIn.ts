@@ -165,12 +165,6 @@ export function noteCarryIn(rec: { studentId: string; goLivePeriod: string; paid
     .run();
 }
 
-/** What the office said about one child at go-live, or null if they were never asked. */
-export function carryInRecord(studentId: string): { paidThrough: string | null; goLivePeriod: string; kind: CarryInKind } | null {
-  const r = db.select().from(carryIns).where(eq(carryIns.studentId, studentId)).get();
-  return r ? { paidThrough: r.paidThrough, goLivePeriod: r.goLivePeriod, kind: r.kind } : null;
-}
-
 /** The roster the wizard works down: every active child with their rate, their current balance, and
  *  what the given rows would do to them. Pure — writes nothing. */
 export function midYearPlan(goLivePeriod: string, schoolYearId: string | null, rows: MidYearRow[]): { months: string[]; students: MidYearStudent[] } {

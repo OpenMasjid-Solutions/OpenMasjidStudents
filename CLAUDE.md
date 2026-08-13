@@ -500,8 +500,9 @@ The tables, as they actually exist: `settings`, `users`, `sessions`, `invites`, 
 `invoices`, `invoice_items`, `charge_items`, `charges`, `payments`, `payment_allocations`, `carry_ins`,
 `past_due_reminders`, `payment_methods`, `autopay_enrollments`, `autopay_runs`, `alert_recipients`,
 `audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
-printed on statements). `stripe_events` is **vestigial**: it deduped webhook deliveries, and there is no
-webhook any more (§13.4). Nothing reads it; do not build on it. The DB file holds minors' PII and every
+printed on statements). That list is the whole schema: `stripe_events` was dropped in 0.48.0 (migration
+0037) because it deduped webhook deliveries and there is no webhook (§13.4) — a money schema with a table
+nobody writes is an invitation to wire the next thing to it. The DB file holds minors' PII and every
 payment record, so the file itself is a secret regardless.
 
 Non-negotiable rules:

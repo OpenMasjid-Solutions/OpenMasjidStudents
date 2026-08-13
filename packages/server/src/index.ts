@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * Entry point: a Fastify server that serves the tRPC API and (in production) the
- * built web app. Plain routes for /fabric, /api/stripe/webhook and /apply are
- * registered before the SPA fallback in later slices — each excluded from session
- * middleware but gated by its own checks (CLAUDE.md §16). Slice 1 boots the DB
- * (migrate-on-boot), mounts tRPC, and serves a health check.
+ * Entry point: a Fastify server that serves the tRPC API and (in production) the built web app.
+ *
+ * The plain (non-tRPC) routes are registered BEFORE the SPA fallback, each excluded from the session
+ * middleware and gated by its own checks (CLAUDE.md §16): `/fabric/*` by the app secret, the printable
+ * documents by cookie + role + origin, and the branding/PWA files by nothing, because they carry the
+ * madrasah's public name and logo and nothing else. There is no Stripe webhook (§13.4).
  */
 import path from 'node:path';
 import fs from 'node:fs';
@@ -208,7 +209,8 @@ async function main(): Promise<void> {
   // dashboard's wallpaper + light/dark. The OS exposes GET /api/public/appearance (theme/wallpaper/
   // accent), but a browser can't fetch it directly: on the LAN it's a different origin + plain HTTP
   // (mixed content from our HTTPS page), and it isn't our origin over the tunnel. So the browser polls
-  // US (same origin) and we fetch the platform server-to-server. No secrets; open (no auth), like /apply.
+  // US (same origin) and we fetch the platform server-to-server. No secrets, and open like the logo route:
+  // it carries a theme, not data about anybody.
   // A tiny cache so many portal tabs polling every 45s don't each trigger an outbound hop, and a
   // slow OS response can't pile up. Only successful responses are cached; errors return {} and retry.
   let appearanceCache: { at: number; body: Record<string, unknown> } | null = null;

@@ -44,7 +44,7 @@ function readVersion(): string {
 export const config = {
   version: readVersion(),
   port: Number(env.PORT) || 8080,
-  /** SQLite DB, attachments, and generated report/transcript PDFs live here. */
+  /** The SQLite database and its 30-minute snapshot live here. */
   dataDir: str(env.DATA_DIR) || path.resolve(process.cwd(), 'data'),
   /** Built web UI directory. Set in production (Docker → /app/public); empty in dev
    *  where Vite serves the UI and proxies the API. */

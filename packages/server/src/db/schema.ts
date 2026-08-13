@@ -375,8 +375,8 @@ export const invites = sqliteTable('invites', {
 export type Invite = typeof invites.$inferSelect;
 
 /** Password-reset tokens (CLAUDE.md §12) — like invites but for an EXISTING user. Only the SHA-256
- *  hash of the CSPRNG token is stored; single-use, short expiry. Reset is offered when SMTP is on
- *  (email a link); otherwise the office re-invites / an admin sets a temp password. */
+ *  hash of the CSPRNG token is stored; single-use, short expiry. A link is emailed when the platform can
+ *  send mail; otherwise the office reads the link out or an admin sets a temporary password. */
 export const passwordResets = sqliteTable('password_resets', {
   id: text('id').primaryKey(),
   tokenHash: text('token_hash').notNull().unique(),
@@ -746,16 +746,11 @@ export const paymentAllocations = sqliteTable(
 );
 export type PaymentAllocation = typeof paymentAllocations.$inferSelect;
 
-// ── Payments: Stripe (webhook dedupe, saved cards, autopay) ──────────────────
-
-/** Processed Stripe webhook events (CLAUDE.md §9, §13.4). `eventId` is UNIQUE, so a replayed
- *  webhook is a no-op — the ledger stays idempotent even if Stripe re-delivers an event. */
-export const stripeEvents = sqliteTable('stripe_events', {
-  eventId: text('event_id').primaryKey(),
-  type: text('type').notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
-});
-export type StripeEvent = typeof stripeEvents.$inferSelect;
+// ── Payments: Stripe (saved methods, autopay) ────────────────────────────────
+//
+// `stripe_events` lived here until 0.48.0. It deduped WEBHOOK deliveries, and there is no webhook
+// (§13.4) — nothing had read or written it since that design went, so it was dropped by migration 0037
+// rather than left as an invitation to wire the next thing to it.
 
 /** Saved cards — Stripe PaymentMethod REFERENCES only (CLAUDE.md §9, §13.3): id/brand/last4/exp,
  *  NEVER a PAN. Off-session-capable, tied to the family's Stripe Customer. */

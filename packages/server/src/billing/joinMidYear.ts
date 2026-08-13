@@ -165,9 +165,3 @@ export function billStudentFrom(studentId: string, fromPeriod: string, now = new
   // correctly writes no empty invoices — worth saying out loud rather than reporting a silent success.
   return created ? { created, periods } : { created: 0, periods: [], reason: 'nothing_to_bill' };
 }
-
-/** Every student the given ids refer to that actually exists — used to keep the caller honest. */
-export function existingStudentIds(ids: string[]): string[] {
-  if (!ids.length) return [];
-  return db.select({ id: students.id }).from(students).where(inArray(students.id, ids)).all().map((r) => r.id);
-}

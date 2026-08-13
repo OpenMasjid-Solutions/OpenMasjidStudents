@@ -384,67 +384,8 @@
   font-size: 0.85rem;
 }
 
-/* ── Weekly timetable (WeekGrid) ─────────────────────────────────────────────
-   Day columns that auto-fit (collapse to one on a phone), each a stack of session
-   cards. Logical properties keep it RTL-correct; the print rules below produce a
-   clean black-on-white handout on a masjid photocopier. */
-.week-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
-  gap: 0.85rem;
-}
-.week-day {
-  padding: 0.85rem 0.95rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-.week-day-name {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--color-primary);
-}
-.week-day-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.week-session {
-  padding: 0.55rem 0.7rem;
-  border-radius: var(--radius-button);
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.week-session-time {
-  font-size: 0.9rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.week-session-class {
-  font-size: 0.9rem;
-}
-.week-session-type {
-  font-size: 0.72rem;
-  color: var(--color-ink-muted);
-}
-.week-session-room {
-  font-size: 0.78rem;
-  color: var(--color-ink-muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-.week-warn {
-  font-size: 0.78rem;
-  color: var(--color-gold);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-/* A soft inline notice (used for non-blocking schedule warnings). */
+/* A soft inline notice — something worth saying that is not an error (a refund route being
+   unavailable, an import that went through with warnings). */
 .notice {
   border-radius: var(--radius-button);
   padding: 0.6rem 0.8rem;
@@ -737,15 +678,14 @@
   .scene-bg,
   .win-pos { display: none !important; }
   .app-main { padding: 0 !important; }
-  .print-area, .week-grid { break-inside: avoid; }
-  .week-day, .week-session, .glass, .glass-inset {
+  .print-area { break-inside: avoid; }
+  .glass, .glass-inset {
     background: #fff !important;
     color: #000 !important;
     box-shadow: none !important;
     border: 1px solid #999 !important;
     backdrop-filter: none !important;
   }
-  .week-day-name { color: #000 !important; }
 
   /* The year grid is wide; landscape with narrow margins is what makes twelve months fit. 6mm is
      about as tight as consumer laser printers will honour before they start clipping on their own —
@@ -849,187 +789,8 @@
 .app-main > .page > .empty,
 .app-main .print-area > .empty { color: var(--text-on-scene-faint); }
 
-/* ── Attendance panel (shared teacher + admin) ───────────────────────────────
-   A per-student segmented control (present / late / absent / excused). Colour is
-   semantic (success / gold / danger / primary) and independent of the cyan accent.
-   Icon-only on phones (labels hide) to keep rows one-thumb wide; RTL-safe. */
-.att-toolbar {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  margin-block-end: 0.85rem;
-}
-.att-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-.att-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.4rem 0.65rem;
-  border-radius: var(--radius-button);
-  flex-wrap: wrap;
-}
-.att-row .name {
-  flex: 1 1 8rem;
-  font-size: 0.92rem;
-}
-.att-seg {
-  display: inline-flex;
-  gap: 0.3rem;
-  flex-wrap: wrap;
-}
-.att-seg-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.76rem;
-  padding: 0.28rem 0.55rem;
-  border-radius: 999px;
-  border: 1px solid var(--glass-border);
-  color: var(--color-ink-muted);
-  background: transparent;
-  transition: background var(--dur-micro) ease, color var(--dur-micro) ease, border-color var(--dur-micro) ease;
-}
-.att-seg-btn:hover { border-color: var(--color-primary); }
-.att-seg-btn.is-active.s-present { background: color-mix(in srgb, var(--color-success) 20%, transparent); color: var(--color-success); border-color: color-mix(in srgb, var(--color-success) 55%, transparent); }
-.att-seg-btn.is-active.s-late    { background: color-mix(in srgb, var(--color-gold) 20%, transparent);    color: var(--color-gold);    border-color: color-mix(in srgb, var(--color-gold) 55%, transparent); }
-.att-seg-btn.is-active.s-absent  { background: color-mix(in srgb, var(--color-danger) 20%, transparent);  color: var(--color-danger);  border-color: color-mix(in srgb, var(--color-danger) 55%, transparent); }
-.att-seg-btn.is-active.s-excused { background: color-mix(in srgb, var(--color-primary) 18%, transparent); color: var(--color-primary); border-color: color-mix(in srgb, var(--color-primary) 55%, transparent); }
-@media (max-width: 520px) {
-  .att-seg-label { display: none; }
-}
-
-/* ── Gradebook grid ──────────────────────────────────────────────────────────
-   Assignments as columns, students as rows; the table scrolls inside its own
-   overflow-x container so the window body never scrolls sideways. Compact score
-   inputs; a highlighted overall column. Logical properties keep it RTL-correct. */
-.gradebook-scale {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin-inline-end: 0.5rem;
-}
-.gradebook-table th,
-.gradebook-table td {
-  white-space: nowrap;
-}
-.gradebook-col-head {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-.gradebook-col-title {
-  display: inline-block;
-  max-width: 8rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.gradebook-col-sub {
-  display: block;
-  font-size: 0.68rem;
-  text-transform: none;
-  letter-spacing: 0;
-  font-weight: 400;
-}
-.gradebook-del {
-  color: var(--color-ink-faint);
-  display: inline-flex;
-}
-.gradebook-del:hover {
-  color: var(--color-danger);
-  text-decoration: none;
-}
-.grade-input {
-  width: 3.6rem;
-  padding: 0.3rem 0.4rem;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.gradebook-total {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-primary);
-}
-
-/* ── Merit points ────────────────────────────────────────────────────────────
-   A leaderboard row + recent-award row. Point totals are semantic (green +, red −),
-   independent of the cyan accent; logical properties keep it RTL-correct. */
-.merit-row {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  padding: 0.4rem 0.7rem;
-  border-radius: var(--radius-button);
-}
-.merit-rank {
-  inline-size: 1.4rem;
-  text-align: center;
-  color: var(--color-ink-faint);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.85rem;
-}
-.merit-name { flex: 1; }
-.merit-total {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: end;
-}
-.merit-total.is-pos { color: var(--color-success); }
-.merit-total.is-neg { color: var(--color-danger); }
-.merit-recent {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0.5rem;
-  font-size: 0.9rem;
-  flex-wrap: wrap;
-}
-
-/* ── Exams (score entry) ─────────────────────────────────────────────────────
-   A completion progress bar + the max-marks and term-remark rows. Reuses the
-   gradebook grid cell styles. RTL-safe via logical properties. */
-.exam-progress {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-.exam-progress-bar {
-  flex: 1;
-  block-size: 0.5rem;
-  border-radius: 999px;
-  background: var(--glass-bg-inset);
-  overflow: hidden;
-}
-.exam-progress-bar span {
-  display: block;
-  block-size: 100%;
-  background: var(--color-primary);
-  border-radius: 999px;
-  transition: inline-size var(--dur-settle) var(--ease-settle);
-}
-.exam-max {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-.exam-remark-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-}
-
-/* Billing — big balance figure. */
-.bal-big {
-  font-family: var(--font-display);
-  font-size: 1.8rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
+/* (The weekly timetable, attendance panel, gradebook grid, merit points and exam score-entry
+   styles lived here until 0.48.0 — 242 lines for screens the v0.35.0 pivot removed.) */
 
 /* ── Student picker (components/StudentPicker.tsx) ─────────────────────────────
    A text input with a dropdown list under it: type to narrow, click to browse.

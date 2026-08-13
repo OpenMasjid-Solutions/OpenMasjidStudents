@@ -173,10 +173,6 @@ export function payableLines(tx: Tx, studentIds: string[]): PayableLine[] {
   return out;
 }
 
-/** The lines of a set of invoices, keyed by invoice id — for callers that already have the invoices
- *  and want to nest their lines underneath (the Fabric `lookup`, the printed statement). */
-export function linesByInvoice(tx: Tx, invoiceIds: string[]): Map<string, PayableLine[]> {
-  const m = new Map<string, PayableLine[]>();
-  for (const id of invoiceIds) m.set(id, invoiceLines(tx, id));
-  return m;
-}
+// (`linesByInvoice` lived here until 0.48.0 — a keyed-by-invoice wrapper for callers nesting lines under
+// their invoices. Both of the callers it was written for ended up mapping `invoiceLines` themselves, which
+// reads better at the call site, and nothing referenced it.)
