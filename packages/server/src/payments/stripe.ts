@@ -75,10 +75,18 @@ export async function loadStripeKeys(): Promise<boolean> {
   }
 }
 
-/** For tests / offline: inject keys + a client directly (never used in production). */
-export function _setStripeForTest(k: { publishableKey?: string; secretKey?: string; accountId?: string }, c?: Stripe): void {
+/**
+ * For tests / offline: inject keys + a client directly (never used in production).
+ *
+ * `null` means NO CLIENT, and is distinct from omitting the argument (0.48.0). It used to be
+ * `c ?? new Stripe(...)`, so a test passing null to simulate "the payments connection is down" got a real
+ * Stripe SDK instance pointed at api.stripe.com instead — the test then failed on a live network error
+ * rather than on the branch it meant to exercise, which is a quietly misleading way for a test to pass or
+ * fail. Only an omitted argument builds a real client now.
+ */
+export function _setStripeForTest(k: { publishableKey?: string; secretKey?: string; accountId?: string }, c?: Stripe | null): void {
   keys = { accountId: k.accountId ?? 'acct_test', publishableKey: k.publishableKey ?? 'pk_test', secretKey: k.secretKey ?? 'sk_test' };
-  client = c ?? new Stripe(keys.secretKey);
+  client = c === undefined ? new Stripe(keys.secretKey) : c;
 }
 
 export function stripeClient(): Stripe | null {

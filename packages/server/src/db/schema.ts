@@ -375,8 +375,8 @@ export const invites = sqliteTable('invites', {
 export type Invite = typeof invites.$inferSelect;
 
 /** Password-reset tokens (CLAUDE.md §12) — like invites but for an EXISTING user. Only the SHA-256
- *  hash of the CSPRNG token is stored; single-use, short expiry. Reset is offered when SMTP is on
- *  (email a link); otherwise the office re-invites / an admin sets a temp password. */
+ *  hash of the CSPRNG token is stored; single-use, short expiry. A link is emailed when the platform can
+ *  send mail; otherwise the office reads the link out or an admin sets a temporary password. */
 export const passwordResets = sqliteTable('password_resets', {
   id: text('id').primaryKey(),
   tokenHash: text('token_hash').notNull().unique(),
@@ -440,6 +440,64 @@ export type AuditEntry = typeof auditLog.$inferSelect;
  * The email is UNIQUE and stored lowercased so "Office@…" and "office@…" cannot both subscribe and
  * double every message.
  */
+/**
+ * What the office told the mid-year wizard about one child (0.48.0).
+ *
+ * The wizard asks a single question per child — "paid through which month?" — derives a carried-forward
+ * bill or a dated prepayment from it, and used to discard the answer. That left the year view able to
+ * say the months before go-live were never billed here, but not WHICH of them a family had settled and
+ * which they were behind on. That distinction is the thing an office actually wants from the screen.
+ *
+ * A RECORD OF AN ANSWER, not a setting and not a balance. Nothing reads it to decide what to bill — the
+ * money is entirely in the carry-in invoice and the carry-in payment, exactly as §9 requires ("a
+ * mid-year start is a ledger artifact, never a setting"). It is written once, beside the artifact, so it
+ * cannot drift from it; `paidThrough` is null when the office told us nothing, which is different from
+ * being told "square" and must stay different (the year view says "we don't know" rather than "paid").
+ *
+ * ON DELETE CASCADE, unlike every money path: this is a note about a child, so it goes when they do.
+ */
+export const carryIns = sqliteTable('carry_ins', {
+  studentId: text('student_id')
+    .primaryKey()
+    .references(() => students.id, { onDelete: 'cascade' }),
+  /** The go-live month this answer was given for. */
+  goLivePeriod: text('go_live_period').notNull(),
+  /** The last month already settled when the app came in. Null = nothing was said. */
+  paidThrough: text('paid_through'),
+  kind: text('kind', { enum: ['owes', 'ahead', 'square'] }).notNull(),
+  /** The figure that was written (0 for a child who was square). */
+  amountCents: integer('amount_cents').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+});
+export type CarryIn = typeof carryIns.$inferSelect;
+
+/**
+ * When a household was last reminded that its balance is past due (0.48.0).
+ *
+ * The ONLY state the past-due reminder needs, and it exists for one reason: a daily job that emails
+ * every overdue family every day is not a reminder, it is harassment — and it is how a madrasah's mail
+ * ends up in spam folders, taking the invites and receipts with it. One row per household says when it
+ * was last written to, so the cadence the office chose ("at most once a week") is honest.
+ *
+ * NOT a balance and not a debt record. Nothing bills from this; the money is entirely in the invoices
+ * and the payments, as always (§9). Deleting every row would only mean the next run reminds everybody
+ * once. ON DELETE CASCADE for the same reason `carry_ins` uses it: it is a note about a household, and
+ * it has nothing to say once the household is gone.
+ */
+export const pastDueReminders = sqliteTable('past_due_reminders', {
+  familyId: text('family_id')
+    .primaryKey()
+    .references(() => families.id, { onDelete: 'cascade' }),
+  /** ISO date of the last reminder actually SENT — not attempted. A run that reached nobody (no address
+   *  on file, mail down, parents paused) must not start a quiet cooldown on a family nobody wrote to. */
+  lastSentOn: text('last_sent_on').notNull(),
+  /** What they were overdue for at the time, for the office to see how it has moved. */
+  amountCents: integer('amount_cents').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+export type PastDueReminder = typeof pastDueReminders.$inferSelect;
+
 export const alertRecipients = sqliteTable('alert_recipients', {
   id: text('id').primaryKey(),
   email: text('email').notNull().unique(),
@@ -688,16 +746,11 @@ export const paymentAllocations = sqliteTable(
 );
 export type PaymentAllocation = typeof paymentAllocations.$inferSelect;
 
-// ── Payments: Stripe (webhook dedupe, saved cards, autopay) ──────────────────
-
-/** Processed Stripe webhook events (CLAUDE.md §9, §13.4). `eventId` is UNIQUE, so a replayed
- *  webhook is a no-op — the ledger stays idempotent even if Stripe re-delivers an event. */
-export const stripeEvents = sqliteTable('stripe_events', {
-  eventId: text('event_id').primaryKey(),
-  type: text('type').notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
-});
-export type StripeEvent = typeof stripeEvents.$inferSelect;
+// ── Payments: Stripe (saved methods, autopay) ────────────────────────────────
+//
+// `stripe_events` lived here until 0.48.0. It deduped WEBHOOK deliveries, and there is no webhook
+// (§13.4) — nothing had read or written it since that design went, so it was dropped by migration 0037
+// rather than left as an invitation to wire the next thing to it.
 
 /** Saved cards — Stripe PaymentMethod REFERENCES only (CLAUDE.md §9, §13.3): id/brand/last4/exp,
  *  NEVER a PAN. Off-session-capable, tied to the family's Stripe Customer. */
@@ -708,10 +761,30 @@ export const paymentMethods = sqliteTable(
     familyId: text('family_id')
       .notNull()
       .references(() => families.id, { onDelete: 'cascade' }),
+    /** Stripe's own `PaymentMethod.type` — `card`, `us_bank_account`, `link`, `cashapp`, … (0.48.0).
+     *  NULL on a row saved before this column existed whose kind was never captured; the portal
+     *  repairs those from Stripe on read. */
+    type: text('type'),
     brand: text('brand'),
     last4: text('last4'),
     expMonth: integer('exp_month'),
     expYear: integer('exp_year'),
+    /** `card.wallet.type` (`apple_pay`, `google_pay`, …) — a card added through a wallet, where the
+     *  network and last four alone would not match what the parent thinks they saved. */
+    wallet: text('wallet'),
+    /** `us_bank_account` only: the bank's name and `checking`/`savings`. No routing number and no
+     *  account-holder name — see migration 0035 for why (§14). */
+    bankName: text('bank_name'),
+    accountType: text('account_type'),
+    /**
+     * Which one autopay tries FIRST, and what it falls back to (0.48.0). Position 0 is charged; the retry
+     * ladder walks down the list, so a household can say "the joint account, then my card".
+     *
+     * This is the authority; `isDefault` mirrors position 0 for the readers that already look at it.
+     * Every query orders by `(sortOrder, createdAt)` so equal values fall back to oldest-first rather
+     * than to whatever SQLite feels like.
+     */
+    sortOrder: integer('sort_order').notNull().default(0),
     isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },

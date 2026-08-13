@@ -18,6 +18,7 @@ import { prefsStore } from './lib/prefs';
 import { hydrateAppearance } from './lib/appearance';
 import { installCursorFx } from './lib/cursorFx';
 import { trpc, trpcClient, queryClient } from './lib/trpc';
+import { registerServiceWorker } from './lib/registerSW';
 import { App } from './App';
 
 // Apply saved theme/accent/wallpaper before first paint, then adopt any OpenMasjidOS appearance
@@ -30,6 +31,9 @@ prefsStore.patch({ language: 'en' });
 hydrateAppearance();
 // Pointer-reactive light on glass surfaces (off under reduced-motion / touch).
 installCursorFx();
+// The service worker, in production only. It caches NOTHING of the app — its whole job is to make the app
+// installable so the portal can offer a one-tap "add to home screen" (lib/registerSW.ts, public/sw.js).
+registerServiceWorker();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

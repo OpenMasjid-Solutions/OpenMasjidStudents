@@ -232,6 +232,41 @@
       "when": 1785591831462,
       "tag": "0032_schools",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1785678231462,
+      "tag": "0033_carry_ins",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1785764631462,
+      "tag": "0034_past_due_reminders",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1785851031462,
+      "tag": "0035_payment_method_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1785937431462,
+      "tag": "0036_payment_method_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1786023831462,
+      "tag": "0037_drop_stripe_events",
+      "breakpoints": true
     }
   ]
 }

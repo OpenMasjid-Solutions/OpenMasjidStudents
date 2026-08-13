@@ -31,7 +31,7 @@
  */
 import { and, asc, eq } from 'drizzle-orm';
 import { db } from '../db';
-import { families, feePlans, invoiceItems, invoices, payments, schoolYears, studentFees, students } from '../db/schema';
+import { carryIns, families, feePlans, invoiceItems, invoices, payments, schoolYears, studentFees, students } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { reallocateStudent, recordPayment, studentBalance, type Balance } from './ledger';
@@ -47,6 +47,16 @@ export interface MidYearRow {
   studentId: string;
   /** The last month already settled before go-live. Null = tell me nothing, treat as square. */
   paidThrough?: string | null;
+  /**
+   * "They have paid nothing at all this year" (0.48.0).
+   *
+   * A separate flag rather than a sentinel in `paidThrough`, because that field is compared as a period
+   * key in three places — the derivation here, the year grid, and the `carry_ins` row it is stored in —
+   * and a non-period string would sort in ways that quietly mean the opposite ('2026-04' <= 'none' is
+   * true, which would read every month as PAID). `midYearPlan` turns it into the real month it means:
+   * the one before the school year began, which is literally what "nothing paid this year" says.
+   */
+  paidNothing?: boolean;
   /** The office's own figure, when the notebook disagrees with the derived one. */
   amountOverrideCents?: number | null;
   /** Which direction an override means. Ignored unless `amountOverrideCents` is given. */
@@ -66,6 +76,8 @@ export interface MidYearStudent {
   /** Months of the configured year that fall before go-live, oldest first. */
   monthsBefore: string[];
   kind: CarryInKind;
+  /** The month the office said was already settled, echoed back — null when they said nothing. */
+  paidThrough: string | null;
   /** Always ≥ 0. The size of the artifact about to be written. */
   amountCents: number;
   /** How the figure was arrived at, so the preview can say so. */
@@ -124,6 +136,35 @@ export function carryInKey(studentId: string): string {
   return `carry-in:${studentId}`;
 }
 
+/**
+ * Keep the ANSWER the office gave, beside the artifact derived from it (0.48.0).
+ *
+ * "Paid through November" is the only thing anybody knows about the months before go-live, and it was
+ * thrown away the moment it became an amount — so the year view could say those months were never
+ * billed here, but not which of them a family had actually settled. That is the distinction an office
+ * wants, and this is the smallest honest way to keep it: a note, written once, next to the money.
+ *
+ * Nothing bills from it (see the module header — the ledger is still the only source of truth), and it
+ * is recorded for a SQUARE child too, who gets no artifact at all: "they were up to date" is exactly
+ * the answer the screen needs, and it is indistinguishable from silence unless it is written down.
+ *
+ * First answer wins, matching the artifact's own idempotency — a second run of the wizard must not
+ * rewrite a history the first one already recorded.
+ */
+export function noteCarryIn(rec: { studentId: string; goLivePeriod: string; paidThrough?: string | null; kind: CarryInKind; amountCents: number }): void {
+  if (db.select({ id: carryIns.studentId }).from(carryIns).where(eq(carryIns.studentId, rec.studentId)).get()) return;
+  db.insert(carryIns)
+    .values({
+      studentId: rec.studentId,
+      goLivePeriod: rec.goLivePeriod,
+      paidThrough: rec.paidThrough?.trim() || null,
+      kind: rec.kind,
+      amountCents: rec.amountCents,
+      createdAt: new Date(),
+    })
+    .run();
+}
+
 /** The roster the wizard works down: every active child with their rate, their current balance, and
  *  what the given rows would do to them. Pure — writes nothing. */
 export function midYearPlan(goLivePeriod: string, schoolYearId: string | null, rows: MidYearRow[]): { months: string[]; students: MidYearStudent[] } {
@@ -147,7 +188,10 @@ export function midYearPlan(goLivePeriod: string, schoolYearId: string | null, r
   const out = kids.map((k) => {
     const row = byId.get(k.id);
     const monthlyCents = monthlyRateCents(k.id);
-    const derived = deriveCarryIn(monthlyCents, months, goLivePeriod, row?.paidThrough);
+    // "Paid nothing at all" IS a paid-through month: the one before the year started. Resolved here, once,
+    // so the derivation, the stored record and the year grid all see a real period key (0.48.0).
+    const paidThrough = row?.paidNothing && months.length ? previousPeriod(months[0]) : row?.paidThrough;
+    const derived = deriveCarryIn(monthlyCents, months, goLivePeriod, paidThrough);
     const override = row?.amountOverrideCents;
     const useOverride = typeof override === 'number' && override > 0 && !!row?.kindOverride;
     const kind: CarryInKind = useOverride ? (row!.kindOverride as CarryInKind) : derived.kind;
@@ -166,6 +210,7 @@ export function midYearPlan(goLivePeriod: string, schoolYearId: string | null, r
       monthlyCents,
       monthsBefore: months.filter((m) => m < goLivePeriod),
       kind,
+      paidThrough: paidThrough?.trim() || null,
       amountCents,
       derivedFrom: useOverride ? ('override' as const) : derived.kind === 'square' ? ('none' as const) : ('months' as const),
       monthCount: useOverride ? 0 : derived.monthCount,

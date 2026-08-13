@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
-/** App settings (admin-only): school name, currency, the report-card merit toggle, email (SMTP), and
- *  the Stripe account (from the OS vault) that tuition charges go through. */
+/** App settings (admin-only): the school's name, currency, logo, colour and date format; how it appears
+ *  to parents; who hears about what by email; the past-due policy; and the Stripe account (from the OS
+ *  vault) that tuition charges go through. A few reads are admin OR finance where finance needs them. */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { eq, isNotNull } from 'drizzle-orm';
+import { asc, eq, isNotNull } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
-import { families, paymentMethods, autopayEnrollments, alertRecipients } from '../db/schema';
+import { families, guardians, guardianFamilies, paymentMethods, autopayEnrollments, alertRecipients, students } from '../db/schema';
 import { rid } from '../db/ids';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor } from '../settings';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor, getSheetTextOverrides, setSheetTextOverrides, donationUrl, getPastDue, setPastDue, getPastDueStaffLast } from '../settings';
+import { SHEET_TEXT_DEFAULTS, SHEET_TEXT_KEYS, SHEET_TEXT_MAX, SHEET_TEXT_TAGS } from '../people/sheetText';
+import { dueForChasing, pastDueFamilies, runPastDue } from '../billing/pastDue';
 import { DATE_FORMATS, DATE_FORMAT_SAMPLES, getDateFormat, setDateFormat } from '../settings/dates';
 import { ALERT_EVENTS, defaultEvents, listRecipients, sendAlertTest, type AlertEvent } from '../alerts';
 import { audit } from '../audit';
@@ -28,6 +31,9 @@ export const settingsRouter = router({
     externalPayments: getExternalPaymentsEnabled(),
     logo: getSchoolLogo(),
     contact: getSchoolContact(),
+    /** What the website + donations path actually resolve to, so Settings shows the line a parent will
+     *  read rather than making an admin assemble it in their head. */
+    donateUrl: donationUrl(),
     dateFormat: getDateFormat(),
     accentColor: getAccentColor(),
     /** Rendered samples, so the settings screen shows each option rather than naming it. */
@@ -80,6 +86,8 @@ export const settingsRouter = router({
             phone: z.string().trim().max(60).optional(),
             email: z.string().trim().max(200).optional(),
             website: z.string().trim().max(200).optional(),
+            /** `/donate`, or a whole address when the donations page is on another domain (§ settings). */
+            donatePath: z.string().trim().max(200).optional(),
           })
           .optional(),
         /** `''` clears it back to the default teal. */
@@ -101,6 +109,52 @@ export const settingsRouter = router({
     }),
 
   /**
+   * The wording on the printed family sheet (0.48.0) — the catalogue, the shipped sentences, and this
+   * madrasah's own versions of them.
+   *
+   * The whole registry comes from the server (people/sheetText.ts owns it), so the UI hard-codes no
+   * sentence and no tag list: adding a box there makes a new field appear in Settings with no change on
+   * the browser side, exactly like the alert catalogue above.
+   */
+  sheetTextGet: adminProcedure.query(() => ({
+    keys: [...SHEET_TEXT_KEYS],
+    defaults: SHEET_TEXT_DEFAULTS,
+    /** Only the boxes this madrasah actually changed; everything else falls through to `defaults`. */
+    overrides: getSheetTextOverrides(),
+    tags: [...SHEET_TEXT_TAGS],
+    maxLength: SHEET_TEXT_MAX,
+  })),
+
+  /**
+   * Save changed boxes. A box sent as `''` goes back to the shipped sentence — that is what clearing the
+   * field means, and storing blank wording would print an empty line on a family's sheet.
+   *
+   * Sent as a LIST of key/text pairs rather than a free-form object so every key is validated against the
+   * registry: an unknown key is refused at the boundary instead of being stored and silently ignored.
+   */
+  sheetTextSet: adminProcedure
+    .input(
+      z.object({
+        boxes: z
+          .array(z.object({ key: z.enum(SHEET_TEXT_KEYS), text: z.string().max(SHEET_TEXT_MAX) }))
+          .max(SHEET_TEXT_KEYS.length)
+          .optional(),
+        /** Put every sentence back to the shipped wording. */
+        reset: z.boolean().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      const patch: Record<string, string> = {};
+      if (input.reset) for (const k of SHEET_TEXT_KEYS) patch[k] = '';
+      for (const b of input.boxes ?? []) patch[b.key] = b.text;
+      setSheetTextOverrides(patch);
+      // Key names only. The text itself is the school's own prose rather than anybody's personal data, but
+      // there is no reason to copy paragraphs of it into the audit trail to record that it changed (§14).
+      audit(auditActor(ctx), 'settings.sheetText', { entity: 'settings', detail: { keys: Object.keys(patch), reset: !!input.reset } });
+      return { ok: true as const };
+    }),
+
+  /**
    * Can this install actually reach a parent? Every "invite/reset didn't arrive" report comes down to
    * one of these three, and until now all three failed SILENTLY:
    *   - no absolute public URL  → invite/reset links are un-emailable (Remote access is off)
@@ -116,8 +170,6 @@ export const settingsRouter = router({
       publicUrl: base,
       /** Where the URL came from — `platform` is authoritative, `env` is the install-time mirror. */
       publicUrlSource: live ? ('platform' as const) : config.omosPublicUrl ? ('env' as const) : ('none' as const),
-      /** Kept for shape stability; always false now that the app has no SMTP of its own. */
-      smtp: false as const,
       /** We declare `email: true`, so the platform can send for us whenever the Fabric is wired up. */
       platformMail: fabricConfigured(),
       mailAvailable: mailAvailable(),
@@ -169,6 +221,8 @@ export const settingsRouter = router({
     events: ALERT_EVENTS,
     recipients: listRecipients(),
     parentEmails: getParentEmails(),
+    /** The master stop — nothing at all goes to a parent while it is on (0.48.0). */
+    parentMailPaused: getParentMailPaused(),
     /** Nothing can be delivered without a transport; the UI says so rather than looking broken. */
     mailAvailable: mailAvailable(),
   })),
@@ -224,6 +278,135 @@ export const settingsRouter = router({
       });
     }
     return { ok: true as const };
+  }),
+
+  /**
+   * The master stop: hold ALL parent email, invites and resets included (0.48.0).
+   *
+   * Separate from `parentEmailsSet` because it is a different kind of decision — not "which
+   * notifications does this madrasah send" but "do not write to anybody while I am working on this".
+   * Audited both ways: turning it back ON is the change somebody will want a record of.
+   */
+  parentMailPauseSet: adminProcedure.input(z.object({ paused: z.boolean() })).mutation(({ ctx, input }) => {
+    setParentMailPaused(input.paused);
+    audit(auditActor(ctx), 'settings.parentMailPause', { entity: 'settings', detail: { paused: input.paused } });
+    return { ok: true as const };
+  }),
+
+  /**
+   * Students the madrasah cannot email (0.48.0).
+   *
+   * Email is how this app reaches a family — receipts, invites, resets, past-due reminders — and a
+   * household with no address on file silently receives none of it. Nothing surfaced that before: the
+   * sends just returned 0 and the office found out when a parent said they never heard anything.
+   *
+   * The list is per CHILD because that is who the office looks up, but the condition is per HOUSEHOLD:
+   * guardians attach to the household (§9), so a child is unreachable when NOBODY on their household has
+   * an address. Guardian names and phones come with it — the point of the list is to be able to ring
+   * them and ask, which needs a number.
+   *
+   * Active students only. A withdrawn child's bill is still owed, but nobody is chasing an address for a
+   * family that has left.
+   */
+  noEmailStudents: adminOrFinanceProcedure.query(() => {
+    const withEmail = new Set(
+      db
+        .select({ familyId: guardianFamilies.familyId, email: guardians.email })
+        .from(guardianFamilies)
+        .innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId))
+        .all()
+        .filter((g) => (g.email ?? '').includes('@'))
+        .map((g) => g.familyId),
+    );
+
+    const contacts = new Map<string, { name: string; phone: string | null }[]>();
+    for (const g of db
+      .select({ familyId: guardianFamilies.familyId, name: guardians.name, phone: guardians.phone })
+      .from(guardianFamilies)
+      .innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId))
+      .all()) {
+      if (withEmail.has(g.familyId)) continue;
+      if (!contacts.has(g.familyId)) contacts.set(g.familyId, []);
+      contacts.get(g.familyId)!.push({ name: g.name, phone: g.phone });
+    }
+
+    const rows = db
+      .select({ id: students.id, fullName: students.fullName, familyId: students.familyId, familyLabel: families.name })
+      .from(students)
+      .innerJoin(families, eq(families.id, students.familyId))
+      .where(eq(students.status, 'active'))
+      .orderBy(asc(families.name), asc(students.fullName))
+      .all()
+      .filter((s) => !withEmail.has(s.familyId));
+
+    return {
+      total: rows.length,
+      /** Households, not children — how many phone calls this actually is. */
+      households: new Set(rows.map((r) => r.familyId)).size,
+      students: rows.map((s) => ({
+        id: s.id,
+        fullName: s.fullName,
+        familyId: s.familyId,
+        familyLabel: s.familyLabel,
+        /** Empty means there is no adult on the record at all, which is a different problem again. */
+        guardians: contacts.get(s.familyId) ?? [],
+      })),
+    };
+  }),
+
+  /**
+   * Chasing overdue balances (0.48.0) — the settings, plus what they would do right now.
+   *
+   * The preview is not decoration: `parentEmails` starts OFF, and an admin about to switch on automatic
+   * money emails to real families deserves to see how many of them, for how much, before they do.
+   */
+  pastDueGet: adminProcedure.query(() => {
+    const cfg = getPastDue();
+    const today = new Date().toISOString().slice(0, 10);
+    const all = pastDueFamilies(today);
+    const chase = dueForChasing(today, cfg);
+    return {
+      ...cfg,
+      currency: getCurrency(),
+      /** Everybody with a due date behind them… */
+      overdueFamilies: all.length,
+      overdueCents: all.reduce((s, f) => s + f.amountCents, 0),
+      /** …and the subset this configuration would actually write to. */
+      chaseFamilies: chase.length,
+      chaseCents: chase.reduce((s, f) => s + f.amountCents, 0),
+      staffLastSent: getPastDueStaffLast(),
+      mailAvailable: mailAvailable(),
+      parentMailPaused: getParentMailPaused(),
+    };
+  }),
+
+  pastDueSet: adminProcedure
+    .input(
+      z.object({
+        parentEmails: z.boolean().optional(),
+        graceDays: z.number().int().min(0).max(90).optional(),
+        everyDays: z.number().int().min(1).max(90).optional(),
+        minAmountCents: z.number().int().min(0).max(1_000_000).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      setPastDue(input);
+      audit(auditActor(ctx), 'settings.pastDue', { entity: 'settings', detail: { ...input } });
+      return { ok: true as const };
+    }),
+
+  /**
+   * Run it now.
+   *
+   * `force` overrides the cadence — a person pressed the button, which is a different thing from a cron
+   * tick, and an office that has just fixed a due date wants today's reminders to go today. It cannot
+   * override the parent-mail pause, the parentEmails switch, or a missing address: those are decisions
+   * and facts, not timing.
+   */
+  pastDueRunNow: adminProcedure.mutation(async ({ ctx }) => {
+    const r = await runPastDue(new Date().toISOString().slice(0, 10), { force: true });
+    audit(auditActor(ctx), 'settings.pastDueRun', { entity: 'settings', detail: { overdue: r.overdue, emailed: r.emailed } });
+    return r;
   }),
 
   /** Which emails PARENTS get. Invites and password resets are not here — they always send (§ settings). */

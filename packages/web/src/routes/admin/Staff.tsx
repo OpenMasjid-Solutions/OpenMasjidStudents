@@ -59,8 +59,12 @@ export function Staff() {
       setErr((e2 as Error).message);
     }
   }
-  async function toggle(id: string, status: 'active' | 'disabled') {
+  async function toggle(id: string, status: 'active' | 'disabled', username: string) {
     setErr('');
+    // Only DISABLING asks. It takes effect on their very next click — the server re-reads the account on
+    // every request — so it is not a change that waits politely for them to sign out. Re-enabling takes
+    // nothing away, and a dialog on a harmless action teaches people to click through the ones that matter.
+    if (status === 'active' && !window.confirm(t('staff.confirmDisable', { username }))) return;
     try {
       await setStatus.mutateAsync({ userId: id, status: status === 'active' ? 'disabled' : 'active' });
       await utils.staff.list.invalidate();
@@ -140,7 +144,7 @@ export function Staff() {
                     )}
                     <td>{u.status === 'active' ? <span className="chip">{t('directory.active')}</span> : <span className="chip is-muted">{t('staff.disabled')}</span>}</td>
                     <td className="actions">
-                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggle(u.id, u.status)} disabled={setStatus.isPending}>{u.status === 'active' ? t('staff.disable') : t('staff.enable')}</button>
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggle(u.id, u.status, u.username)} disabled={setStatus.isPending}>{u.status === 'active' ? t('staff.disable') : t('staff.enable')}</button>
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPwFor({ id: u.id, username: u.username, tempPassword: '' })}>{t('staff.resetPw')}</button>
                     </td>
                   </tr>

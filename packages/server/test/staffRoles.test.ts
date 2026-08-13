@@ -103,8 +103,14 @@ describe('changing a role', () => {
     const asOther = asUser('admin', other.id);
     await caller.staff.setRole({ userId: other.id, role: 'admin' });
     await expect(asOther.staff.setRole({ userId: id, role: 'finance' })).resolves.toBeTruthy();
-    // Only `other` remains an admin; demoting them must now fail.
+    // Only `other` remains an admin; demoting them must now fail. This app has no Fabric configured
+    // (freshApp() without it), which is the whole reason the refusal is right here: there is no platform
+    // dashboard to come back in through, so the office would be locked out of its own settings. On an
+    // OpenMasjidOS install the same call is ALLOWED — see lastAdmin.test.ts, which needs its own file
+    // because `fabricConfigured()` is fixed per test file.
     await expect(asUser('admin', id).staff.setRole({ userId: other.id, role: 'finance' })).rejects.toThrow(/only admin/i);
+    // …and it says which of the two things to do about it, since "no" alone is not actionable.
+    await expect(asUser('admin', id).staff.setRole({ userId: other.id, role: 'finance' })).rejects.toThrow(/not connected to OpenMasjidOS/);
   });
 
   it('refuses changing your OWN role', async () => {

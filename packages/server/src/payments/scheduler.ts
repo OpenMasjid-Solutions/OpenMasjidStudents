@@ -14,6 +14,7 @@ import { reconcile } from './reconcile';
 import { refreshSiteInfo } from '../fabric/platform';
 import { writeSnapshot } from '../db/snapshot';
 import { runAutoInvoice } from '../billing/autoInvoice';
+import { runPastDue } from '../billing/pastDue';
 
 const log = makeLog('scheduler');
 let started = false;
@@ -52,11 +53,25 @@ export function startSchedulers(): void {
     }
   });
 
+  // Past due, daily at 08:00 — AFTER reconciliation (07:00), deliberately: a card payment whose webhook
+  // was lost is recovered at 07:00, and chasing that family an hour earlier would be this app's fault.
+  // The job itself decides whether anything is overdue, whether the grace period has passed, and whether
+  // each household is due another reminder, so a missed day costs nothing.
+  //
+  // Inside the fabric guard, unlike auto-invoicing: every output of this job is an email, and a
+  // standalone install has no transport to send one with (mail is OpenMasjidOS's, §12).
   if (!fabricConfigured()) {
     started = true;
     log.info('schedulers started (standalone — snapshot + auto invoicing only)');
     return;
   }
+  new Cron('0 8 * * *', async () => {
+    try {
+      await runPastDue(todayIso());
+    } catch (e) {
+      log.error('past due run failed', { error: (e as Error).message });
+    }
+  });
   started = true;
   // Daily at 06:00 — charge every autopay-ON family whatever is due, then let the webhooks settle.
   new Cron('0 6 * * *', async () => {

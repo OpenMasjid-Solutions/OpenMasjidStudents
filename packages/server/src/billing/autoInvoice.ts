@@ -25,14 +25,13 @@ import { db } from '../db';
 import { schoolYears } from '../db/schema';
 import { generateForPeriod } from './invoices';
 import { schoolYearMonths } from './schoolYear';
-import { getSetting, setSetting, SETTING_KEYS, getAutoInvoice, getBillingStartPeriod } from '../settings';
-import { periodBefore } from './period';
+import { getSetting, setSetting, SETTING_KEYS, getAutoInvoice, getBillingStartPeriod, getInvoiceLabelTemplate } from '../settings';
+import { periodBefore, resolveInvoiceLabel } from './period';
 import { alertStaff } from '../alerts';
 import { makeLog } from '../logger';
 
 const log = makeLog('autoInvoice');
 
-const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export interface AutoInvoiceResult {
   ran: boolean;
@@ -88,7 +87,10 @@ export function runAutoInvoice(today = new Date()): AutoInvoiceResult {
 
   if (getSetting(SETTING_KEYS.autoInvoiceLast) === periodKey) return { ran: false, reason: 'already_done', periodKey };
 
-  const label = `Tuition — ${MONTH_LABELS[month.month - 1]} ${month.year}`;
+  // The office's own wording, from the one template both this job and the manual form read (0.48.0).
+  // Hardcoded here until then, which meant an office that renamed their invoices by hand every month got
+  // a differently-worded one on any month the job ran.
+  const label = resolveInvoiceLabel(getInvoiceLabelTemplate(), periodKey);
   const dueDate = cfg.dueDay
     ? `${month.year}-${String(month.month).padStart(2, '0')}-${String(Math.min(cfg.dueDay, daysInMonth(today))).padStart(2, '0')}`
     : null;

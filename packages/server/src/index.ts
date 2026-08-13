@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * Entry point: a Fastify server that serves the tRPC API and (in production) the
- * built web app. Plain routes for /fabric, /api/stripe/webhook and /apply are
- * registered before the SPA fallback in later slices — each excluded from session
- * middleware but gated by its own checks (CLAUDE.md §16). Slice 1 boots the DB
- * (migrate-on-boot), mounts tRPC, and serves a health check.
+ * Entry point: a Fastify server that serves the tRPC API and (in production) the built web app.
+ *
+ * The plain (non-tRPC) routes are registered BEFORE the SPA fallback, each excluded from the session
+ * middleware and gated by its own checks (CLAUDE.md §16): `/fabric/*` by the app secret, the printable
+ * documents by cookie + role + origin, and the branding/PWA files by nothing, because they carry the
+ * madrasah's public name and logo and nothing else. There is no Stripe webhook (§13.4).
  */
 import path from 'node:path';
 import fs from 'node:fs';
@@ -24,10 +25,11 @@ import { registerFabricProvider } from './fabric/provider';
 import { refreshSiteInfo } from './fabric/platform';
 import { backfillStudentCodes } from './billing/studentCodes';
 import { ensureDefaultSchool } from './schools';
-import { getSchoolLogo, parseLogoDataUri } from './settings';
+import { getSchoolLogo, getSchoolName, parseLogoDataUri } from './settings';
 import { loadStripeKeys } from './payments/stripe';
 import { startSchedulers } from './payments/scheduler';
 import { stripBasePath } from './http/basePath';
+import { buildManifest } from './http/manifest';
 
 const log = makeLog('main');
 
@@ -129,11 +131,86 @@ async function main(): Promise<void> {
       .send(parsed.bytes);
   });
 
+  /**
+   * The web app manifest — what a phone reads when somebody adds this to their home screen (0.48.0).
+   *
+   * SERVED RATHER THAN STATIC, for one reason worth the route: the NAME. A parent's home screen should say
+   * "Madani Academy", not "OpenMasjid Students" — they are adding their madrasah, not a piece of software
+   * — and only the server knows what the masjid called itself. Everything else here could have been a file.
+   *
+   * THE ICON IS THE MASJID'S OWN LOGO when one is set, falling back to this app's logo — the full artwork
+   * with STUDENTS on it — when it is not. Which icons are declared decides whether a phone will offer to
+   * INSTALL the app at all, so that logic (and the measuring of the logo it depends on) lives in
+   * `http/manifest.ts` where it is tested.
+   *
+   * Unauthenticated, like the logo route above: it carries the madrasah's public name and nothing else, and
+   * a manifest that 401s is a manifest the phone ignores.
+   */
+  app.get('/manifest.webmanifest', async (_req, reply) => {
+    // Re-validated by magic bytes on the way out, exactly as /api/logo does — the manifest declares a
+    // `type`, and it must be one we have actually verified rather than what a settings row claims (§14).
+    const logo = getSchoolLogo();
+    return reply
+      .header('content-type', 'application/manifest+json; charset=utf-8')
+      .header('cache-control', 'public, max-age=300')
+      .send(JSON.stringify(buildManifest({ schoolName: getSchoolName(), logo: logo ? parseLogoDataUri(logo) : null })));
+  });
+
+  /**
+   * The service worker.
+   *
+   * A route only to control the CACHING. Everything else about it is in `packages/web/public/sw.js`, which
+   * caches nothing of the app on purpose (see its header). `no-store` because the worker script is the one
+   * file that must never be held: a stale worker is the thing that outlives an update, and this app already
+   * shipped a shell-caching bug once (0.48.0-dev.24). Browsers revalidate it themselves, but saying so
+   * costs a line and removes the question.
+   */
+  app.get('/sw.js', async (_req, reply) => {
+    const file = path.join(config.publicDir || '', 'sw.js');
+    if (!config.publicDir || !fs.existsSync(file)) return reply.code(404).send({ error: 'no_sw' });
+    return reply
+      .header('content-type', 'text/javascript; charset=utf-8')
+      .header('cache-control', 'no-store, must-revalidate')
+      // Belt and braces: a worker served from here may only ever control this app's own paths. `${BASE}/`
+      // is "/" at the root and "/students/" behind the tunnel, which is the scope registerSW.ts asks for.
+      .header('service-worker-allowed', `${BASE}/`)
+      .send(fs.readFileSync(file, 'utf8'));
+  });
+
+  /**
+   * The iOS home-screen icon (0.48.0).
+   *
+   * A ROUTE rather than the static file, because iOS reads NONE of the manifest's icons — `apple-touch-icon`
+   * is the only one Safari looks at — so the masjid's logo can only reach an iPhone through this. It cannot
+   * be done by rewriting index.html either: that is read once at boot, and a logo uploaded afterwards would
+   * never appear.
+   *
+   * PNG and JPEG only. Safari has not reliably taken a WebP touch icon, and the bundled mark is a better
+   * outcome than a home screen showing a screenshot of the page. Registered before the static plugin, so it
+   * takes precedence over the file of the same name — which is exactly what it falls back to.
+   */
+  app.get('/apple-touch-icon.png', async (_req, reply) => {
+    const logo = getSchoolLogo();
+    const parsed = logo ? parseLogoDataUri(logo) : null;
+    if (parsed && parsed.mime !== 'image/webp') {
+      return reply
+        .header('content-type', parsed.mime)
+        .header('content-security-policy', "default-src 'none'; sandbox")
+        .header('x-content-type-options', 'nosniff')
+        .header('cache-control', 'public, max-age=300')
+        .send(parsed.bytes);
+    }
+    const bundled = path.join(config.publicDir, 'apple-touch-icon.png');
+    if (!config.publicDir || !fs.existsSync(bundled)) return reply.code(404).send({ error: 'no_icon' });
+    return reply.header('content-type', 'image/png').header('cache-control', 'public, max-age=300').send(fs.readFileSync(bundled));
+  });
+
   // Same-origin appearance relay (CLAUDE.md §15). The parent portal + staff surfaces INHERIT the OS
   // dashboard's wallpaper + light/dark. The OS exposes GET /api/public/appearance (theme/wallpaper/
   // accent), but a browser can't fetch it directly: on the LAN it's a different origin + plain HTTP
   // (mixed content from our HTTPS page), and it isn't our origin over the tunnel. So the browser polls
-  // US (same origin) and we fetch the platform server-to-server. No secrets; open (no auth), like /apply.
+  // US (same origin) and we fetch the platform server-to-server. No secrets, and open like the logo route:
+  // it carries a theme, not data about anybody.
   // A tiny cache so many portal tabs polling every 45s don't each trigger an outbound hop, and a
   // slow OS response can't pile up. Only successful responses are cached; errors return {} and retry.
   let appearanceCache: { at: number; body: Record<string, unknown> } | null = null;
@@ -168,8 +245,44 @@ async function main(): Promise<void> {
     const rawIndex = fs
       .readFileSync(path.join(config.publicDir, 'index.html'), 'utf8')
       .replace('<head>', `<head>\n    <base href="${BASE}/">\n    <script>window.__OMOS_BASE__=${JSON.stringify(BASE)}</script>`);
+    /**
+     * The SPA shell, and it MUST NOT be cached (0.48.0).
+     *
+     * It was sent with no `cache-control`, no `etag` and no `last-modified` — nothing at all. A response
+     * with neither a directive nor a validator is one a browser may hold in its cache and reuse without
+     * ever asking again (heuristic freshness), and that is what turns an update into a no-op: Vite gives
+     * every asset a content-hashed name, so a stale `index.html` keeps pointing at the OLD bundle, which
+     * the browser also still has. The result is the previous UI running against the new server — and
+     * because the version in the account menu comes from the SERVER, it reports the new one, so the app
+     * looks updated while none of the new screens exist. It cost a whole debugging session to find.
+     *
+     * `no-store` rather than `no-cache`: this document is 1 KB, it is fetched once per page load, and it
+     * is the one file that decides which build the browser runs. There is nothing to gain by caching it
+     * and an entire release to lose. The hashed assets it points at stay cacheable, which is the whole
+     * point of hashing them.
+     */
+    /**
+     * `nosniff` and `no-referrer` alongside the cache directive (0.48.0).
+     *
+     * The shell had neither. `nosniff` costs nothing and removes a whole class of content-type confusion.
+     * `no-referrer` is the one that matters here: the invite, reset and register pages carry a
+     * single-use TOKEN in the query string, and the portal's pay page loads Stripe's script from another
+     * origin. Modern browsers default to `strict-origin-when-cross-origin`, which strips the path — but
+     * that is a default, not a promise, and older webviews (which is what a parent's phone may be) still
+     * send the full URL on a same-protocol cross-origin request. A token in someone else's logs cannot be
+     * un-leaked, so the header is stated rather than assumed.
+     *
+     * Deliberately NOT `X-Frame-Options`/`frame-ancestors` here: whether OpenMasjidOS embeds an app in
+     * its dashboard is the platform's business, and guessing wrong would break the whole UI rather than
+     * one page. The printed documents, which are ours alone, do set `frame-ancestors 'none'`.
+     */
     const sendIndex = (_req: unknown, reply: import('fastify').FastifyReply) =>
-      reply.type('text/html').send(rawIndex);
+      reply
+        .type('text/html')
+        .header('cache-control', 'no-store, must-revalidate')
+        .header('x-content-type-options', 'nosniff')
+        .header('referrer-policy', 'no-referrer')
+        .send(rawIndex);
     // Serve the SPA index at the root explicitly — @fastify/static with index:false
     // returns 403 for a bare directory request, so it never reaches the fallback below.
     app.get('/', sendIndex);
@@ -178,7 +291,9 @@ async function main(): Promise<void> {
       const isAsset = path.extname(url) !== '';
       const isApi = NON_SPA_PREFIXES.some((p) => url === p || url.startsWith(p + '/'));
       if (req.method === 'GET' && !isAsset && !isApi) {
-        reply.type('text/html').send(rawIndex);
+        // Through the same helper as `/`, so the no-store header above cannot apply to one entry point
+        // and not the other — a deep link like /family or /billing is how most people arrive.
+        sendIndex(req, reply);
         return;
       }
       reply.code(404).send({ error: 'Not found.' });

@@ -9,12 +9,14 @@
  *  window still shows the whole household, because one adult pays for all of them. */
 import { Fragment, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Printer, Pencil, Users } from 'lucide-react';
+import { Printer, Pencil, Repeat, Users } from 'lucide-react';
+import { describeMethod, methodTitle } from '../lib/paymentMethod';
 import { trpc } from '../lib/trpc';
 import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
 import { formatDate, type DateFormat } from '../lib/dates';
 import { withBase } from '../lib/base';
 import { useWindows } from './Windows';
+import { InvoiceGenFields, useInvoiceGen } from './InvoiceGenFields';
 import { FamilyDetail } from '../routes/admin/FamilyDetail';
 
 /** The channels the office can record by hand. Kept in step with the server's
@@ -43,7 +45,9 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
   const pay = trpc.billing.recordManualPayment.useMutation();
   const reverse = trpc.billing.reversePayment.useMutation();
 
-  const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
+  // The month and the label template, seeded from the server's saved wording — shared with the Billing
+  // tab's whole-school form so the two cannot drift apart (components/InvoiceGenFields).
+  const { gen, setGen, ready: genReady } = useInvoiceGen();
   // Start on the child the window was opened for. Nothing re-syncs this afterwards on purpose: once
   // the office has picked a different sibling, moving it back under them would be the bug.
   const [payment, setPayment] = useState<{ studentId: string; amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({ studentId: focusStudentId ?? '', amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
@@ -71,15 +75,26 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
 
   async function doGenerate(e: FormEvent) {
     e.preventDefault();
-    if (!gen.periodKey.trim() || !gen.label.trim()) return;
-    await generate.mutateAsync({ familyId, periodKey: gen.periodKey.trim(), label: gen.label.trim(), dueDate: gen.dueDate || undefined });
-    setGen({ periodKey: '', label: '', dueDate: '' });
+    if (!genReady) return;
+    // The TEMPLATE goes to the server, which resolves the tags from the period key it files under — so
+    // the label and the month cannot disagree, and the wording is remembered for next month and for the
+    // nightly job (billing/period.ts resolveInvoiceLabel).
+    await generate.mutateAsync({ familyId, periodKey: gen.periodKey, labelTemplate: gen.label.trim(), dueDate: gen.dueDate || undefined });
+    // The month and the wording stay put: generating for one household is usually followed by another,
+    // and re-picking the same month every time is the annoying part. Only the due date clears.
+    //
+    // A label typed here is NOT saved as the madrasah's default (the server only remembers the
+    // whole-school run's) — this form is usually a catch-up for one family, and their wording should not
+    // become everybody's.
+    setGen((g) => ({ ...g, dueDate: '' }));
     await refresh();
   }
   async function doPay(e: FormEvent) {
     e.preventDefault();
     const cents = parseCents(payment.amount);
-    if (!cents || cents < 1 || !payment.studentId) return;
+    // The date is required as well — a cleared date box used to reach the server and come back as a raw
+    // constraint error (0.48.0). Same guard as the Billing tab's own payment box.
+    if (!cents || cents < 1 || !payment.studentId || !payment.occurredAt) return;
     await pay.mutateAsync({ studentId: payment.studentId, amountCents: cents, channel: payment.channel, occurredAt: payment.occurredAt, memo: payment.memo.trim() || undefined });
     // The child stays selected: several siblings paying at once is several records in a row, and
     // re-picking the same name every time would be the annoying part.
@@ -123,6 +138,10 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
   }
 
   const bal = billing.data?.balance;
+  const autopay = billing.data?.autopay;
+  /** "Visa ···· 4242" / "Chase ···· 6789" — the same descriptor the parent's own screen renders, so the
+   *  office and the family cannot end up naming different things. */
+  const autopayMethod = autopay?.method ? methodTitle(describeMethod(autopay.method), t('family.savedMethod')) : null;
   const activePlans = plans.data ?? [];
   // Group the flat (student × assignment) rows by student: a student with no fee has one row with
   // a null feeId; a student with N plans has N rows. Grouping lets us show every assigned plan AND
@@ -171,6 +190,19 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             {bal.owedCents > 0 ? money(bal.owedCents) : bal.creditCents > 0 ? `${money(bal.creditCents)} ${t('billing.credit')}` : money(0)}
           </div>
         )}
+        {/* AUTOPAY, where the volunteer is standing (0.48.0). Nothing in the office ever showed this, so a
+            family whose card pays them on Friday looked exactly like one that had ignored two reminders.
+            Worded as the HOUSEHOLD's, because that is what the enrolment is (§13.3) — the parent's own
+            screen has one switch for the family, and implying it belongs to one child would be a lie the
+            office would repeat down the phone. */}
+        {autopay?.enabled ? (
+          <p className="chip is-accent" style={{ marginBlockStart: '0.6rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+            <Repeat size={13} />
+            {autopayMethod ? t('billing.autopayOnWith', { method: autopayMethod }) : t('billing.autopayOn')}
+          </p>
+        ) : (
+          <p className="hint" style={{ marginBlockStart: '0.6rem' }}>{t('billing.autopayOff')}</p>
+        )}
       </section>
 
       {/* Fees + discount */}
@@ -210,7 +242,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                         >
                           <Pencil size={12} />
                         </button>
-                        <button type="button" className="btn btn--ghost btn--sm" style={{ padding: '0 0.25rem' }} aria-label={t('billing.removeFee')} onClick={async () => { await unassign.mutateAsync({ id: f.feeId }); await refresh(); }}>×</button>
+                        <button type="button" className="btn btn--ghost btn--sm" style={{ padding: '0 0.25rem' }} aria-label={t('billing.removeFee')} onClick={async () => { if (!window.confirm(t('billing.confirmRemoveFee', { name: f.feePlanName, student: g.name }))) return; await unassign.mutateAsync({ id: f.feeId }); await refresh(); }}>×</button>
                       </span>
                     );
                   })}
@@ -268,6 +300,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                           disabled={chargeVoid.isPending}
                           onClick={async () => {
                             setChargeErr(null);
+                            if (!window.confirm(t('billing.confirmVoidCharge', { label: c.label, amount: money(c.amountCents) }))) return;
                             try {
                               await chargeVoid.mutateAsync({ id: c.id });
                               await refresh();
@@ -345,7 +378,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                         <a className="btn btn--ghost btn--sm" href={withBase(`/invoices/${i.id}`)} target="_blank" rel="noopener noreferrer" title={t('billing.printInvoiceHint')}>
                           <Printer size={14} /> {t('billing.printInvoice')}
                         </a>
-                        {i.status !== 'void' && i.paidCents === 0 && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { await voidInv.mutateAsync({ id: i.id }); await refresh(); }}>{t('billing.void')}</button>}
+                        {i.status !== 'void' && i.paidCents === 0 && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { if (!window.confirm(t('billing.confirmVoidInvoice', { label: i.label, amount: money(i.totalCents) }))) return; await voidInv.mutateAsync({ id: i.id }); await refresh(); }}>{t('billing.void')}</button>}
                       </td>
                     </tr>
                     {/* The lines of that bill. Shown for every invoice with more than one, because a
@@ -370,11 +403,11 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             </table>
           </div>
         )}
+        {/* The same month picker and tagged label as the whole-school run (components/InvoiceGenFields).
+            This form used to be two free-text boxes that had to agree with each other. */}
         <form className="inline-form glass-inset" onSubmit={doGenerate}>
-          <div className="field"><label className="label">{t('billing.periodKey')}</label><input className="input glass-inset" value={gen.periodKey} onChange={(e) => setGen({ ...gen, periodKey: e.target.value })} placeholder="2026-07" /></div>
-          <div className="field"><label className="label">{t('billing.label')}</label><input className="input glass-inset" value={gen.label} onChange={(e) => setGen({ ...gen, label: e.target.value })} placeholder={t('billing.labelHint')} /></div>
-          <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.due')}</label><input type="date" className="input glass-inset" value={gen.dueDate} onChange={(e) => setGen({ ...gen, dueDate: e.target.value })} /></div>
-          <button type="submit" className="btn btn--primary" disabled={generate.isPending}>{t('billing.generate')}</button>
+          <InvoiceGenFields gen={gen} setGen={setGen} idPrefix={`fam-${familyId}`} />
+          <button type="submit" className="btn btn--primary" disabled={generate.isPending || !genReady}>{t('billing.generate')}</button>
         </form>
       </section>
 
@@ -401,7 +434,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
           </div>
           <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.date')}</label><input type="date" className="input glass-inset" value={payment.occurredAt} onChange={(e) => setPayment({ ...payment, occurredAt: e.target.value })} /></div>
           <div className="field"><label className="label">{t('billing.memo')}</label><input className="input glass-inset" value={payment.memo} onChange={(e) => setPayment({ ...payment, memo: e.target.value })} /></div>
-          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount)}>{t('billing.record')}</button>
+          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount) || !payment.occurredAt}>{t('billing.record')}</button>
           <p className="hint">{t('billing.recordHint')}</p>
         </form>
 
@@ -412,6 +445,10 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                 <tr>
                   <th>{t('students.name')}</th>
                   <th>{t('billing.amount')}</th>
+                  {/* WHAT the money was for (0.48.0). The ledger said how it arrived and when, which on a
+                      monthly plan is a column of identical amounts — so "which bill did that clear?" was
+                      unanswerable from the one screen the office has open when it is asked. */}
+                  <th>{t('billing.paidFor')}</th>
                   <th>{t('billing.channel')}</th>
                   <th>{t('billing.date')}</th>
                   <th>{t('billing.memo')}</th>
@@ -427,6 +464,13 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                   <tr key={p.id}>
                     <td>{nameOf(p.studentId)}</td>
                     <td className={p.amountCents < 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>{money(p.amountCents)}</td>
+                    <td>
+                      {p.paidFor.labels.length > 0
+                        ? `${p.paidFor.labels.join(' · ')}${p.paidFor.more > 0 ? ` · ${t('refund.andMore', { count: p.paidFor.more })}` : ''}`
+                        : /* Allocated to nothing: paid before any bill existed, sitting as credit. A blank
+                             cell here reads as missing data rather than as money in hand. */
+                          <span className="muted">{p.reversalOf ? t('billing.paidForReversal') : p.amountCents < 0 ? '—' : t('refund.paidAhead')}</span>}
+                    </td>
                     <td>{t(`billing.ch_${p.channel}`, p.channel)}</td>
                     <td>{formatDate(new Date(p.occurredAt as unknown as number).toISOString().slice(0, 10), dateFormat)}</td>
                     <td className="muted">{p.memo ?? ''}</td>

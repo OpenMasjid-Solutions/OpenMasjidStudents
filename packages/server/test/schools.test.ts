@@ -133,6 +133,42 @@ describe('two schools', () => {
     expect(await admin.structure.studentsByClass({})).toHaveLength(2);
   });
 
+  /**
+   * Adding a school must never move the DEFAULT one (0.48.0).
+   *
+   * The first school in the order is where every unscoped student, year and course belongs, so whatever
+   * decides that order decides that. Every school used to be created at `sortOrder: 0`, and the ordering
+   * ends in a name tie-break — so a second school created in the same MILLISECOND as the first was
+   * sorted by name, and "Aa…" beats "Main school". Adding it silently re-pointed the default and the
+   * next child created without a class landed in the wrong school. CI found this on a fast runner; the
+   * name here makes it deterministic rather than a matter of timing.
+   */
+  it('does not hand the default to a new school with an alphabetically earlier name', async () => {
+    const admin = caller('admin');
+    const { db } = app.dbmod;
+    const first = theOneSchool();
+    const added = await admin.structure.schoolCreate({ name: 'Aa First Alphabetically' });
+    expect(added.id).not.toBe(first);
+
+    // A new school is APPENDED. This is the fix itself, asserted where it is decided — the two below
+    // are the consequences, and they are what actually broke.
+    const orders = new Map(db.select({ id: schools.id, sortOrder: schools.sortOrder }).from(schools).all().map((s) => [s.id, s.sortOrder ?? 0]));
+    expect(orders.get(added.id)!).toBeGreaterThan(orders.get(first)!);
+
+    // Force the millisecond tie the runner hit by chance, so this is deterministic rather than a matter
+    // of how fast the machine is: with equal timestamps the ordering falls to its last tie-break, and
+    // before the fix that was the NAME.
+    db.update(schools).set({ createdAt: new Date(1_700_000_000_000) }).run();
+    expect(schoolsMod.listSchools().map((s) => s.id)[0]).toBe(first);
+    expect(schoolsMod.defaultSchoolId()).toBe(first);
+
+    // …and the consequence that would have been felt in the office: a child added with no class stays
+    // in the school they were always in.
+    const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 35000, cadence: 'monthly' });
+    const kid = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: plan.id });
+    expect(db.select().from(students).where(eq(students.id, kid.id)).get()!.schoolId).toBe(first);
+  });
+
   it('moves a child to the school of the class they are placed in', async () => {
     const { admin, maktab, hifz } = await twoSchools();
     const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 35000, cadence: 'monthly' });

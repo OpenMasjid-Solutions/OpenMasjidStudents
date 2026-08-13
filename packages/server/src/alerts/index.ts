@@ -40,6 +40,9 @@ export const ALERT_EVENTS = [
   'payment-recovered',
   'payment-short',
   'invoices-generated',
+  'past-due',
+  'payment-refunded',
+  'login-blocked',
 ] as const;
 export type AlertEvent = (typeof ALERT_EVENTS)[number];
 
@@ -69,6 +72,25 @@ const SPEC: Record<AlertEvent, EventSpec> = {
   'payment-recovered': { platform: 'reconcile-recovered', webhook: false, level: 'info', defaultOn: true },
   'payment-short': { platform: 'payment-short', webhook: false, level: 'error', defaultOn: true },
   'invoices-generated': { platform: null, webhook: false, level: 'info', defaultOn: false },
+  // Who is behind (0.48.0). `defaultOn`, because an unpaid bill nobody chases is the thing this whole
+  // app exists to stop — and it is a DIGEST on the office's own cadence, not one email per family, so it
+  // cannot flood an inbox the way `payment-received` would.
+  'past-due': { platform: 'past-due', webhook: false, level: 'warning', defaultOn: true },
+  // Money leaving (0.48.0). `defaultOn` and `error`-level not because a refund is a fault — it is an
+  // ordinary, correct thing for an office to do — but because it is the one action here that sends money
+  // OUT, and whoever runs the madrasah's books should learn of it without having to go looking. Volume is
+  // no concern: a refund is rare, unlike `payment-received`.
+  'payment-refunded': { platform: 'payment-refunded', webhook: false, level: 'warning', defaultOn: true },
+  /**
+   * Somebody is grinding one account's password (0.48.0).
+   *
+   * `platform: null` — our own email ONLY, and deliberately so. A platform alert id is answered
+   * `400 Unknown alert` until the catalog entry a masjid installed from declares it, which is how
+   * `payment-short` vanished for a whole release; and this is the one event whose volume an attacker
+   * chooses, so keeping it on the channel we control (and that an admin can unsubscribe from in one place)
+   * is the right home for it. `defaultOn`, because a password being ground is exactly what nobody notices.
+   */
+  'login-blocked': { platform: null, webhook: false, level: 'warning', defaultOn: true },
 };
 
 /** The events a newly-added recipient starts with. */

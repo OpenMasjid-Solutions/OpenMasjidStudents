@@ -39,8 +39,9 @@ import { familyLabel, mergeDuplicateGuardians, mergeDuplicateContacts } from '..
 import { suggestSiblingGroups } from '../people/siblingSuggest';
 import type { Tx } from '../billing/ledger';
 import { audit } from '../audit';
-import { IMPORT_FIELDS, validateRows, commitRows, type ImportRow } from '../people/import';
+import { IMPORT_FIELDS, IMPORT_EXAMPLE_ROWS, validateRows, commitRows, type ImportRow } from '../people/import';
 import { defaultSchoolId, resolveSchoolScope, schoolIdForClass } from '../schools';
+import { billStudentFrom } from '../billing/joinMidYear';
 
 // ── input helpers ────────────────────────────────────────────────────────────
 const REQ_NAME = z.string().trim().min(1).max(120);
@@ -64,7 +65,7 @@ const DOB = z
 const ID = z.string().min(1).max(64);
 const blankToNull = (v: string | undefined): string | null => (v && v.trim() !== '' ? v.trim() : null);
 
-/** One CSV row as the dialog sends it: every cell optional and length-bounded. The real
+/** One spreadsheet row as the dialog sends it: every cell optional and length-bounded. The real
  *  validation lives in people/import.ts so problems can be reported per row, not as one
  *  opaque zod failure the admin can't act on. */
 const CELL = z.string().max(300).optional();
@@ -76,12 +77,46 @@ const IMPORT_ROW = z.object({
   feePlanName: CELL,
   amount: CELL,
   guardianName: CELL,
+  guardianRelation: CELL,
   guardianPhone: CELL,
   guardianEmail: CELL,
   note: CELL,
 });
 
+/** The office's answer to "is a Relative a guardian or an emergency contact?", once per distinct
+ *  relation label the file used (0.48.0). Bounded because it is keyed by text out of a file. */
+const PLACEMENTS = z.record(z.string().max(60), z.enum(['guardian', 'emergency'])).refine((r) => Object.keys(r).length <= 200, 'Too many relationships to place.');
+
 const now = () => new Date();
+
+/** A month period key, for the "bill them from" dropdown. */
+const PERIOD_KEY = z.string().trim().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
+
+/**
+ * BILL_FROM — a student who joins part-way through the year (0.48.0).
+ *
+ * The office either just adds the child, which bills nothing until the next generation run, or names the
+ * month they have really been attending since, which creates one invoice per month from then to now
+ * (billing/joinMidYear.ts explains all three decisions behind that).
+ *
+ * Shared by both add paths — `studentAdd` and `studentCreate` — so a child added into an existing
+ * household gets the same treatment as one starting a new one. Returns the outcome for the form to
+ * report: silently creating five invoices, or silently creating none, are both bad answers.
+ */
+function billFrom(studentId: string, fromPeriod: string | undefined, actor: ReturnType<typeof auditActor>): { billed?: { created: number; periods: string[]; reason?: string } } {
+  if (!fromPeriod) return {};
+  const r = billStudentFrom(studentId, fromPeriod);
+  // Audited only when it actually billed something — a refused or empty catch-up is the form's business
+  // to report, not a money event to record.
+  if (r.created) {
+    audit(actor, 'invoice.backfillStudent', {
+      entity: 'student',
+      entityId: studentId,
+      detail: { from: fromPeriod, created: r.created, periods: r.periods },
+    });
+  }
+  return { billed: r };
+}
 
 interface NewStudent {
   familyId: string;
@@ -323,9 +358,14 @@ export const peopleRouter = router({
         overrideAmountCents: z.number().int().min(0).max(100_000_000).optional(),
         feeNote: z.string().trim().max(200).optional(),
         classId: ID.optional(),
+        /** A month to bill them from, for a child who has been attending a while (§ BILL_FROM). */
+        billFromPeriod: PERIOD_KEY.optional(),
       }),
     )
-    .mutation(({ ctx, input }) => createStudentRow(input, auditActor(ctx))),
+    .mutation(({ ctx, input }) => {
+      const r = createStudentRow(input, auditActor(ctx));
+      return { ...r, ...billFrom(r.id, input.billFromPeriod, auditActor(ctx)) };
+    }),
 
   /**
    * THE way people are added (0.39.0): start with the student, not a household.
@@ -352,6 +392,8 @@ export const peopleRouter = router({
         schoolId: ID.optional(),
         /** An existing sibling to share a household (and therefore guardians) with. */
         linkToStudentId: ID.optional(),
+        /** A month to bill them from, for a child who has been attending a while (§ BILL_FROM). */
+        billFromPeriod: PERIOD_KEY.optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
@@ -372,7 +414,10 @@ export const peopleRouter = router({
         return { familyId: fid, r: createStudentRow({ ...input, familyId: fid }, auditActor(ctx), tx) };
       });
       if (!linked) audit(auditActor(ctx), 'family.create', { entity: 'family', entityId: familyId, detail: { via: 'studentAdd' } });
-      return { ...r, familyId, familyLabel: familyLabel(familyId) };
+      // Outside the transaction above, deliberately: the child existing is not conditional on the
+      // catch-up succeeding, and a backfill that hit the billing floor should report that rather than
+      // roll back a student the office just added.
+      return { ...r, familyId, familyLabel: familyLabel(familyId), ...billFrom(r.id, input.billFromPeriod, auditActor(ctx)) };
     }),
 
   /**
@@ -606,25 +651,40 @@ export const peopleRouter = router({
   // ── CSV import ───────────────────────────────────────────────────────────────
   /** The canonical column set. The dialog uses this both to build the blank template and to
    *  auto-match the uploaded file's headers, so there is one source of truth. */
-  importTemplate: adminProcedure.query(() =>
-    IMPORT_FIELDS.map((f) => ({ key: f.key, label: f.label, required: f.required, aliases: [...f.aliases] })),
-  ),
+  /**
+   * The columns the importer understands, and the example rows the template is filled with.
+   *
+   * The examples come from the SERVER, beside the field registry (people/import.ts), for one reason: the
+   * validator refuses a row that is still an untouched example, and it compares against the same
+   * constant. A copy in the browser is how that guard would quietly stop matching.
+   */
+  importTemplate: adminProcedure.query(() => ({
+    fields: IMPORT_FIELDS.map((f) => ({ key: f.key, label: f.label, required: f.required, aliases: [...f.aliases] })),
+    /** Rows of cells in `fields` order. */
+    example: IMPORT_EXAMPLE_ROWS.map((r) => [...r]),
+  })),
 
   /** Dry run. Resolves families / classes / fee plans and reports per-row problems so the dialog
    *  can show them before anything is written. A mutation, not a query, because the rows go in the
    *  request BODY — a few hundred rows would not survive a query string. */
   importPreview: adminProcedure
-    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional() }))
-    .mutation(({ ctx, input }) => validateRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null, schoolId: importSchool(ctx, input.schoolId) })),
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional(), placements: PLACEMENTS.optional() }))
+    .mutation(({ ctx, input }) =>
+      validateRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null, schoolId: importSchool(ctx, input.schoolId), placements: input.placements }),
+    ),
 
   /** Commit. Re-validates and writes everything in ONE transaction — all rows land or none do.
    *  Returns each new student's ID so the admin can print them (never logged, never audited). */
   importCommit: adminProcedure
-    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional() }))
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional(), placements: PLACEMENTS.optional() }))
     .mutation(({ ctx, input }) => {
       let res;
       try {
-        res = commitRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null, schoolId: importSchool(ctx, input.schoolId) });
+        res = commitRows(input.rows as ImportRow[], {
+          defaultFeePlanId: input.defaultFeePlanId ?? null,
+          schoolId: importSchool(ctx, input.schoolId),
+          placements: input.placements,
+        });
       } catch (e) {
         if ((e as Error).message === 'invalid_rows') {
           throw new TRPCError({ code: 'BAD_REQUEST', message: 'Some rows still have problems — fix them and try again.' });
@@ -632,7 +692,18 @@ export const peopleRouter = router({
         throw e;
       }
       // Counts only: never the names or the Student IDs (§14).
-      audit(auditActor(ctx), 'student.import', { entity: 'people', detail: { created: res.created, familiesCreated: res.familiesCreated, guardiansCreated: res.guardiansCreated } });
+      audit(auditActor(ctx), 'student.import', {
+        entity: 'people',
+        detail: {
+          created: res.created,
+          familiesCreated: res.familiesCreated,
+          guardiansCreated: res.guardiansCreated,
+          contactsCreated: res.contactsCreated,
+          // How many file rows were folded into the student above them — the one number that says
+          // whether the file was the multi-row shape, without recording any of its contents.
+          mergedRows: res.mergedCount,
+        },
+      });
       return res;
     }),
 

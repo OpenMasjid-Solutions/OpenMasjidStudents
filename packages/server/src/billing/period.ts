@@ -67,3 +67,45 @@ export function previousPeriod(periodKey: string): string {
   const [y, m] = periodKey.split('-').map(Number);
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
 }
+
+/** Month names, as every invoice label and month heading in the app writes them. THE one copy: this
+ *  file already owns what a period key means, so the words for its months belong here too. */
+export const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+export const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** What an invoice is called when nobody has said otherwise. */
+export const DEFAULT_INVOICE_LABEL = 'Tuition — [month] [year]';
+
+/**
+ * Turn a label TEMPLATE into the label an invoice actually carries (0.48.0).
+ *
+ * The office used to type both the period key (`2026-07`) and the label (`Tuition — Jul 2026`) by hand,
+ * every month, and the two had to agree — nothing checked that they did, so "Tuition — Jun 2026" filed
+ * under `2026-07` was a typo away and would then be the wrong month on a parent's bill forever (an
+ * invoice is money history and is not edited, §9).
+ *
+ * So the month is picked, not typed, and the label is written ONCE with tags in it. Both are derived from
+ * the same period key here, which is what makes disagreeing impossible rather than merely unlikely.
+ *
+ * Tags, case-insensitive: [month] July · [mon] Jul · [year] 2026 · [yy] 26 · [period] 2026-07.
+ * Anything else is left exactly as typed — an unknown tag is far more likely to be a madrasah's own
+ * wording than a mistake, and silently deleting part of a label nobody could see the source of would be
+ * the worse failure.
+ */
+export function resolveInvoiceLabel(template: string, periodKey: string): string {
+  const [y, m] = periodKey.split('-').map(Number);
+  const valid = Number.isInteger(y) && Number.isInteger(m) && m >= 1 && m <= 12;
+  const subs: Record<string, string> = valid
+    ? {
+        month: MONTH_NAMES[m - 1],
+        mon: MONTH_ABBR[m - 1],
+        year: String(y),
+        yy: String(y).slice(-2),
+        period: periodKey,
+      }
+    : {};
+  const out = template.replace(/\[(month|mon|year|yy|period)\]/gi, (whole, tag: string) => subs[tag.toLowerCase()] ?? whole);
+  // A template that is nothing but tags we could not resolve would leave an invoice with no name at all,
+  // which a parent then reads as a blank line on their bill. Fall back rather than ship that.
+  return out.trim() || (valid ? `${MONTH_NAMES[m - 1]} ${y}` : periodKey);
+}

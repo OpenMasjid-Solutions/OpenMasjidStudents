@@ -75,16 +75,31 @@ export class LoginLimiter {
   }
 }
 
-/** Shared instance used by the auth router. */
+/** Shared instance used by the auth router — keyed on the real client IP. */
 export const loginLimiter = new LoginLimiter();
+
+/**
+ * Login failures per ACCOUNT NAME, whatever they come from (§14: "per-IP and per-account", 0.48.0).
+ *
+ * The per-IP limiter above cannot see a distributed spray: finance and parent accounts are reachable
+ * over the Cloudflare tunnel, a parent's username is just their email address, and a few hundred hosts
+ * making eight attempts each never trips a per-IP counter. This bounds what the whole internet may try
+ * against ONE name.
+ *
+ * Looser than the per-IP limiter on purpose. The key is a value the caller supplies, so a tight limit
+ * would be a denial-of-service tool aimed at a named admin; 25 failures in 15 minutes is far past honest
+ * mistyping and far short of what guessing a password needs. Locked accounts can still be reset by email.
+ */
+export const loginAccountLimiter = new LoginLimiter({ maxFailures: 25, windowMs: 15 * 60_000, blockMs: 15 * 60_000 });
 
 /** Parent-portal invite acceptance — internet-facing, so per-IP throttled (§14). Tokens are
  *  256-bit and unguessable; this just caps abusive hammering of the accept endpoint. */
 export const inviteAcceptLimiter = new LoginLimiter({ maxFailures: 10, windowMs: 15 * 60_000, blockMs: 15 * 60_000 });
 
 /** A fixed-window per-key counter for PUBLIC submissions — counts EVERY call (not just failures),
- *  unlike LoginLimiter. Used to cap the anonymous /apply form per IP (§14). In-process; resets by
- *  window. `allow` returns false once the cap is hit for the current window. */
+ *  unlike LoginLimiter. Used where the endpoint itself must be capped rather than its failures: a
+ *  password-reset request and parent self-registration (§14). In-process; resets by window. `allow`
+ *  returns false once the cap is hit for the current window. */
 export class SubmitLimiter {
   private readonly hits = new Map<string, { count: number; resetAt: number }>();
   constructor(
@@ -108,9 +123,8 @@ export class SubmitLimiter {
   }
 }
 
-/** Public admissions form: a short-window burst cap and a daily cap, both per real client IP (§14). */
-export const applyBurstLimiter = new SubmitLimiter(5, 10 * 60_000); // 5 / 10 min
-export const applyDailyLimiter = new SubmitLimiter(20, 24 * 60 * 60_000); // 20 / day
+// (`applyBurstLimiter` / `applyDailyLimiter` lived here until 0.48.0 — the burst and daily caps for the
+// public admissions form, which went with the academics in v0.35.0. Nothing had referenced them since.)
 
 /**
  * Per-student-ID lockout — THE compensating control for the whole student-ID surface (§11.2, §14).

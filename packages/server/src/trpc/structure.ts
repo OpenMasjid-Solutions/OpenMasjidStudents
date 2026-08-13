@@ -25,7 +25,8 @@ import { db } from '../db';
 import { schoolYears, schools, terms, courses, classes, students, families } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
-import { canAccessSchool, defaultSchoolId, listSchools, newSchoolId, resolveSchoolScope, schoolCounts, schoolIdForClass, visibleSchoolIds } from '../schools';
+import { commitRollover, rolloverPlan } from '../structure/rollover';
+import { canAccessSchool, defaultSchoolId, listSchools, newSchoolId, nextSchoolSortOrder, resolveSchoolScope, schoolCounts, schoolIdForClass, visibleSchoolIds } from '../schools';
 
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
@@ -33,6 +34,12 @@ const MONTH = z.number().int().min(1).max(12);
 const YEAR = z.number().int().min(2000).max(2200);
 const ISO_DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const SORT = z.number().int().min(0).max(9999);
+/** Where a class's children go in a rollover (structure/rollover.ts). */
+const DESTINATION = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('stay') }),
+  z.object({ kind: z.literal('move'), toClassId: ID }),
+  z.object({ kind: z.literal('graduate') }),
+]);
 const now = () => new Date();
 
 /** The caller's own user id — SSO admins have none, which `schools/index.ts` reads as unrestricted. */
@@ -92,7 +99,10 @@ export const structureRouter = router({
     }
     const id = newSchoolId();
     const ts = now();
-    db.insert(schools).values({ id, name: input.name, sortOrder: input.sortOrder ?? 0, status: 'active', createdAt: ts, updatedAt: ts }).run();
+    // Appended, not dropped in at 0: the FIRST school in the order is the default one, so a new
+    // school sharing a sortOrder could reorder itself ahead of it on a name tie-break and silently steal
+    // that role (schools/index.ts).
+    db.insert(schools).values({ id, name: input.name, sortOrder: input.sortOrder ?? nextSchoolSortOrder(), status: 'active', createdAt: ts, updatedAt: ts }).run();
     audit(auditActor(ctx), 'school.create', { entity: 'school', entityId: id });
     return { id };
   }),
@@ -217,6 +227,57 @@ export const structureRouter = router({
   /** Exactly one year is current PER SCHOOL; setting one clears that school's others in the same
    *  transaction. Scoping the clear is the whole change from 0.47.0 — an unscoped one would switch
    *  the maktab's current year off every time somebody set the hifz programme's. */
+  /**
+   * Everything the year-rollover wizard shows (0.48.0) — the year closing, a suggested next one, each
+   * class with a guessed destination and its children, the fee plans, the closing year's term names, and
+   * what is still owed.
+   *
+   * Read-only and admin-only. It reports balances per household, which is finance's information but the
+   * rollover itself is an admin act (§5), and there is no reason for the read to be wider than the write.
+   */
+  yearRolloverPlan: adminProcedure.input(z.object({ schoolId: ID.optional() }).optional()).query(({ ctx, input }) => {
+    const scope = resolveSchoolScope(uid(ctx), input?.schoolId);
+    return rolloverPlan(input?.schoolId ?? scope.ids[0] ?? null);
+  }),
+
+  /**
+   * Apply it. ONE transaction inside `commitRollover` — a half-applied rollover has no undo.
+   *
+   * The input is bounded at every list because it comes from a form over a whole madrasah: a thousand
+   * students and a hundred classes is far past any real roster, and an unbounded record is a request body
+   * nobody sized.
+   */
+  yearRolloverCommit: adminProcedure
+    .input(
+      z.object({
+        year: z.union([
+          z.object({ id: ID }),
+          z.object({
+            label: NAME,
+            startYear: YEAR,
+            startMonth: MONTH,
+            endMonth: MONTH,
+            schoolId: ID.optional(),
+          }),
+        ]),
+        classMoves: z.record(z.string().max(64), DESTINATION).refine((r) => Object.keys(r).length <= 200, 'Too many classes.'),
+        studentMoves: z.record(z.string().max(64), DESTINATION).refine((r) => Object.keys(r).length <= 2000, 'Too many students.'),
+        withdraw: z.array(ID).max(2000),
+        planAmounts: z.record(z.string().max(64), z.number().int().min(0).max(100_000_000)).refine((r) => Object.keys(r).length <= 200, 'Too many plans.'),
+        termsToCreate: z
+          .array(z.object({ name: NAME, startDate: ISO_DATE.nullable(), endDate: ISO_DATE.nullable() }))
+          .max(20),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      const year = 'id' in input.year ? input.year : { ...input.year, schoolId: input.year.schoolId ?? fallbackSchool(ctx) };
+      const r = commitRollover({ ...input, year });
+      // A single audit entry for the whole act, with the counts — the individual student moves are not
+      // worth a row each, and the summary is what somebody asking "what happened in August" wants.
+      audit(auditActor(ctx), 'schoolYear.rollover', { entity: 'schoolYear', entityId: r.yearId, detail: { ...r } });
+      return r;
+    }),
+
   schoolYearSetCurrent: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
     const y = requireSchoolYear(input.id);
     if (y.schoolId) assertSchool(ctx, y.schoolId);

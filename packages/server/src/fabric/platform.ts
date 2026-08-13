@@ -140,16 +140,11 @@ export function cachedPublicUrl(): string {
   return siteCache.info.publicUrl;
 }
 
-/** True when the cache is old enough to be worth refreshing. */
-export function siteCacheStale(): boolean {
-  return !siteCache || Date.now() - siteCache.at > SITE_TTL_MS;
-}
-
 // ── Email via the platform (manifest `email: true`) ───────────────────────────
 /**
- * Send one transactional email through the masjid's OpenMasjidOS mail provider. This is what makes
- * SMTP OPTIONAL: with no local SMTP configured we can still get an invite or a reset to a parent, and
- * the OS owns the credentials and the From address (we never see them).
+ * Send one transactional email through the masjid's OpenMasjidOS mail provider. This is the ONLY way
+ * this app sends mail — it has no SMTP of its own and holds no mail credentials; the OS owns the
+ * provider and the From address, so a masjid configures email once, there.
  *
  * Fail-soft and never throws — the caller treats `false` as "not sent" and degrades to a copy/print
  * link. Bodies are never logged.
@@ -192,7 +187,7 @@ export async function sendPlatformEmail(to: string, subject: string, text: strin
 // ── Admin alerts (manifest `alerts:`) ────────────────────────────────────────
 /** The alert ids we declare in manifest.yaml. Declaring one IS the authorization — the platform
  *  refuses any id an app didn't declare — and the admin picks email/webhook/off per alert. */
-export type AlertId = 'autopay-disabled' | 'lookup-lockout' | 'reconcile-recovered' | 'payment-short' | 'test';
+export type AlertId = 'autopay-disabled' | 'lookup-lockout' | 'reconcile-recovered' | 'payment-short' | 'past-due' | 'payment-refunded' | 'test';
 
 /** The platform's alert severities. Note these are NOT `notifyPlatform`'s levels — that endpoint
  *  takes `warn`, this one takes `warning`, and sending the wrong word silently downgrades to the

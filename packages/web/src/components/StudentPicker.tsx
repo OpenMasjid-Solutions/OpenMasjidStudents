@@ -8,9 +8,18 @@
  * direction — it hides the roster from an office that wants to see who is there. So this is a combobox:
  * click it and the whole list drops down, type and it narrows.
  *
- * Each row shows the Student ID and the household as well as the name, because a madrasa genuinely
- * enrols two children with the same name and the moment of choosing is the one moment that matters.
- * Matching runs against all three, so the office can paste an ID straight in.
+ * Each row shows the Student ID as well as the name, because a madrasa genuinely enrols two children with
+ * the same name and the moment of choosing is the one moment that matters. Matching runs against
+ * everything shown, so the office can paste an ID straight in.
+ *
+ * THE HOUSEHOLD IS OPTIONAL, and off by default (0.48.0). It is essential where the household is what you
+ * are choosing — linking a sibling MERGES two of them, and "which Ismail household?" is the actual
+ * question — and it is noise everywhere else, where a third of every row repeated the surname already in
+ * the child's name. Recording a payment is the clearest case: money lands on ONE CHILD, so the household
+ * has no bearing on the choice being made.
+ *
+ * `showFamily` therefore governs the row AND the matching together, on purpose: a field you cannot see
+ * should not be able to explain why a row matched.
  *
  * Deliberately hand-rolled rather than another dependency: it is a text input, a filtered list and four
  * key handlers. It follows the ARIA combobox pattern (roles, `aria-expanded`, `aria-activedescendant`)
@@ -35,18 +44,21 @@ interface Props {
   onChange: (studentId: string) => void;
   /** Ids to leave out — the children already in this household have nothing to join. */
   exclude?: string[];
+  /** Show (and match on) the household under each name. Only where the household is part of the
+   *  decision — linking a sibling. See the header. */
+  showFamily?: boolean;
   label?: string;
   placeholder?: string;
   disabled?: boolean;
   id?: string;
 }
 
-/** Everything a row can be matched on, lowercased once. */
-function haystack(s: PickableStudent): string {
-  return `${s.fullName} ${s.studentCode ?? ''} ${s.familyName ?? ''}`.toLowerCase();
+/** Everything a row can be matched on, lowercased once — and only what the row actually shows. */
+function haystack(s: PickableStudent, withFamily: boolean): string {
+  return `${s.fullName} ${s.studentCode ?? ''} ${withFamily ? s.familyName ?? '' : ''}`.toLowerCase();
 }
 
-export function StudentPicker({ students, value, onChange, exclude = [], label, placeholder, disabled, id }: Props) {
+export function StudentPicker({ students, value, onChange, exclude = [], showFamily = false, label, placeholder, disabled, id }: Props) {
   const { t } = useTranslation();
   const autoId = useId();
   const inputId = id ?? `picker-${autoId}`;
@@ -66,10 +78,10 @@ export function StudentPicker({ students, value, onChange, exclude = [], label, 
     // Every word must appear somewhere, so "yusuf ismail" and "ismail yusuf" both find the same child.
     const words = needle.split(/\s+/);
     return pool.filter((s) => {
-      const hay = haystack(s);
+      const hay = haystack(s, showFamily);
       return words.every((w) => hay.includes(w));
     });
-  }, [students, exclude, query]);
+  }, [students, exclude, query, showFamily]);
 
   const chosen = students.find((s) => s.id === value) ?? null;
 
@@ -195,7 +207,7 @@ export function StudentPicker({ students, value, onChange, exclude = [], label, 
                 >
                   <span className="picker-name">{s.fullName}</span>
                   {s.studentCode && <span className="code">{s.studentCode}</span>}
-                  {s.familyName && <span className="muted picker-sub">{s.familyName}</span>}
+                  {showFamily && s.familyName && <span className="muted picker-sub">{s.familyName}</span>}
                 </button>
               </li>
             ))

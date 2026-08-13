@@ -4,7 +4,7 @@ id: students
 name: OpenMasjid Students
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
-version: 0.47.0
+version: 0.48.0
 author: OpenMasjid-Solutions
 license: AGPL-3.0-only
 icon: icon.svg
@@ -63,6 +63,14 @@ alerts:
   - id: payment-short
     label: A payment was only partly recorded
     description: A card payment covering several children was recorded for some of them but not all. The difference has to be entered by hand — check the family's record.
+  # Declared in the same release as the code that raises it (0.48.0) — see the payment-short note above
+  # for what happens when those two come apart.
+  - id: past-due
+    label: Families are past due
+    description: One or more households have a tuition bill whose due date has passed. Open the app to see who, and how much.
+  - id: payment-refunded
+    label: A payment was refunded
+    description: Somebody in the office gave a tuition payment back. Money leaving is worth knowing about even when it is entirely correct.
   - id: test
     label: Test message
     description: A test you trigger from Settings to confirm OpenMasjidOS is reaching you by email or webhook.

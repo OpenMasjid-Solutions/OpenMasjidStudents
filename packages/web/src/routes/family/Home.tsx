@@ -10,6 +10,7 @@ import { Repeat, ChevronRight } from 'lucide-react';
 import { staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { formatMoney } from '../../lib/money';
+import { describeMethod, methodTitle } from '../../lib/paymentMethod';
 import { PayNow, type ChosenLine } from './PayNow';
 
 /**
@@ -28,7 +29,9 @@ function AutopayCta({ familyId, onManage }: { familyId: string; onManage: () => 
   if (!statusQ.data?.ready) return null; // card payments not configured → nothing to offer
   const { enabled, cards, defaultPmId } = statusQ.data;
   const card = cards.find((c) => c.id === defaultPmId) ?? cards.find((c) => c.isDefault) ?? cards[0];
-  const cardText = card ? `${(card.brand ?? 'card').toUpperCase()} ···· ${card.last4}` : '';
+  // "Visa ···· 4242" or "Chase ···· 6789" — whichever it really is, so the line under "Autopay is on"
+  // names the thing that will actually be charged (lib/paymentMethod.ts).
+  const cardText = card ? methodTitle(describeMethod(card), t('family.savedMethod')) : '';
 
   return (
     <button type="button" className={`autopay-cta ${enabled ? 'is-on' : ''}`} onClick={onManage}>
@@ -205,11 +208,22 @@ export function FamilyHome({ onManageAutopay }: { onManageAutopay: () => void })
                 fam.payments.map((p) => (
                   <div key={p.id} className="list-row glass">
                     <div className="row-main">
-                      <span className="row-title">{kidName(fam, p.studentId)}</span>
+                      {/* WHAT it paid for, not just who and how much (0.48.0). A household on a monthly
+                          plan sees a column of identical amounts, and "which one was February, and did it
+                          cover the books?" is the question the office gets asked. Derived from the
+                          payment's allocations, so it says where the money sits now. */}
+                      <span className="row-title">
+                        {kidName(fam, p.studentId)}
+                        {p.paidFor.labels.length > 0 && <span className="row-for"> · {p.paidFor.labels.join(' · ')}{p.paidFor.more > 0 ? ` · ${t('family.paidForMore', { count: p.paidFor.more })}` : ''}</span>}
+                      </span>
                       {/* One card payment covering several children appears as one row per child.
                           That is the truth of it — each child's balance moved by their own share. */}
                       <span className="row-sub">
-                        {t(`billing.ch_${p.channel}`, p.channel)} · {fmtDate(p.occurredAt)}{p.reversalOf ? ` · ${t('family.reversed')}` : ''}
+                        {t(`billing.ch_${p.channel}`, p.channel)} · {fmtDate(p.occurredAt)}
+                        {/* Allocated to no bill at all: paid before anything was raised, so it is credit
+                            waiting on the next invoice. Saying nothing here reads as money gone missing. */}
+                        {p.paidFor.advance && !p.reversalOf && p.amountCents > 0 ? ` · ${t('family.paidAhead')}` : ''}
+                        {p.reversalOf ? ` · ${t('family.reversed')}` : ''}
                       </span>
                     </div>
                     <span className={`row-amt ${p.amountCents < 0 ? 'neg' : 'pos'}`}>{money(p.amountCents)}</span>

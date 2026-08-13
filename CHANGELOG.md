@@ -10,8 +10,325 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 ## [Unreleased]
 
 <!-- Entries are filed under the RELEASE they are heading toward, not per dev build. The dev branch's
-     manifest reads `0.47.0-dev.N`, and the version test checks the CHANGELOG for the base `0.47.0`,
+     manifest reads `0.48.0-dev.N`, and the version test checks the CHANGELOG for the base `0.48.0`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
+
+## [0.48.0]
+
+- **Refund any payment, at the bottom of Billing.** Every transaction the madrasah has taken, newest first,
+  each with one button. A card or bank payment is **sent back automatically** through Stripe; cash, a check
+  or a bank transfer is put right on the ledger for you to hand back — and each row says which of the two
+  it is *before* you press, because they are not the same act. One card payment covering three children is
+  one row, and refunding it reverses all three while asking Stripe once. Pressing twice refunds once.
+  Whatever it paid becomes owing again, and the office is emailed that money went out.
+
+  Reversing a payment used to only put the ledger right: press it on a card payment and the balance went
+  back up while the family's money stayed with Stripe, with nothing saying so. That is what this replaces.
+  To give back only part of a payment, add a credit on the household's record instead.
+
+  **A balance carried forward is not listed and cannot be refunded** — it is not money this app took, so
+  there is nothing to send back; reversing one would only re-open arrears the family doesn't owe. Correct it
+  by re-running the go-live step.
+
+- **Every payment record says what the money was for.** The office's ledger gave the amount, how it arrived
+  and the date — which on a monthly plan is a column of identical figures, so "which bill did that clear?"
+  couldn't be answered from the screen you have open when a parent asks. Each row now names the bill, and
+  the line too when only part of a bill was paid. Money paid before any bill exists says "paid ahead".
+
+- **The refund alert says how much, for whom, and what it covered** instead of just "a refund was
+  recorded". The names stay in the madrasah's own email; the copy that goes to a webhook or the
+  OpenMasjidOS alert channel carries the amount and nothing that identifies a family.
+
+- **The billing record says whether autopay is on**, and what it will charge — "Autopay is on for this
+  household — Visa ···· 4242". Nothing in the office showed this, so a family whose card pays on Friday
+  looked exactly like one ignoring reminders.
+
+- **Confirmations where things are hard to undo**, each saying what will actually happen rather than just
+  asking: withdrawing a student, voiding a bill or a charge, taking a fee off a child, archiving a course,
+  a class, a year or a charge item, deleting a term, and disabling a staff account. Archiving a class tells
+  you how many children it is about to leave unplaced. Actions that take nothing away — reinstating a
+  student, re-enabling an account — still don't ask, because a dialog on a harmless action is how people
+  learn to click through the ones that matter.
+
+- **Add it to your phone's home screen and it looks like an app** — **your madrasah's own logo** as the
+  icon, your name under it, and it opens without the browser's address bar. With no logo set it uses the
+  OpenMasjid Students logo instead. Icons for Android and iPhone both.
+
+  On a phone the app offers to add itself — **on every account, not just the parent portal**, since a finance
+  manager taking cash at the desk wants it on their home screen too. It comes up as a pop-up with a **one-tap
+  install button** on Android, and on iPhone the two taps to do it through the Share sheet (Safari has no
+  install button of any kind — nothing a page can call). **Remind me later** keeps it quiet for a week and
+  **Don't show again** for good; closing it counts as later, never as a refusal. It never appears once the
+  app is installed, or on a computer.
+
+- **The staff screens fit an iPhone properly.** The title bar was printed underneath the phone's own clock
+  and battery, and on Billing the last card sat under the floating dock with no way to scroll past it. Both
+  were the same oversight: the parent portal allowed for the notch and the home bar, the admin and finance
+  shell didn't. They do now, and nothing changes on a desktop.
+
+- **A record you open on a phone has a proper header.** The window's title and its three little dots sat
+  under the status bar — so the close button couldn't be tapped at all, that strip belonging to the phone.
+  On a phone it is now the title, and one real close button big enough for a thumb, below the clock.
+  Minimise and full-screen are gone there: the sheet already fills the screen, and minimising it left no
+  visible way back.
+
+- **Tapping a phone number dials it again.** In the list of students with no email on file, the numbers were
+  linked to `/students/4453062685` — a dead page inside the app — because the link was built without the
+  `tel:` part. Fixed at the source, so no screen can get it wrong.
+
+- **The email-alerts table shows "Refund made"** instead of `settings.ev_payment-refunded`. The refund alert
+  arrived without its column heading; a test now fails the build if that happens to another one.
+
+- **Fewer columns saying the same thing.** The list of students with no email on file drops the household
+  column — it repeated the surname already in the child's name, and what the list is for is the phone number
+  beside it. And the go-live step no longer ends with a per-household table of balances: step 2 already
+  shows each child's, and a household's is only ever the sum of theirs. The confirm and the button stay.
+
+- **Parents can put their saved payment methods in order** — 1st, 2nd, 3rd — with arrows on each row.
+  Autopay charges the first; **if it's declined the next attempt tries the second**, rather than presenting
+  the same declining card again two days later. A newly added card goes to the end rather than quietly
+  taking over, and removing the first one promotes the second instead of switching autopay off — it is only
+  switched off when nothing is left to charge.
+
+- **A bank account can be added in the parent portal.** There was no option — the "add a payment method"
+  step only ever asked Stripe for cards, so whatever the madrasah had switched on, a parent could pay *from*
+  a bank account at the checkout but never save one. It now offers exactly what your Stripe account
+  accepts: a card, a bank account, whatever else you have enabled. A masjid taking cards only sees no
+  change. If a bank needs to confirm the account first, the portal says so instead of looking as though it
+  worked.
+
+- **Saved cards say what they are.** A saved payment method showed as `CARD ····` with an empty expiry
+  whenever it wasn't a card — the app only ever read the card fields, so a **bank account** saved in the
+  portal stored nothing at all. Now: the network and last four digits (**Visa ···· 4242**), the expiry, and
+  **Apple Pay** or **Google Pay** where a card came through a wallet; for a bank account, the bank's name,
+  the last four and whether it's checking or savings. An expired card is flagged, since that's the usual
+  reason autopay stops. Anything already saved is put right the next time a parent opens the tab — nobody
+  has to re-add a card. Nothing extra is stored: no routing number, no account holder's name.
+
+- **The payment history says what each payment was for.** It gave the child, the amount and the date, which
+  on a monthly plan is a column of identical figures — so "which one was February, and did it cover the
+  books?" was unanswerable. Each row now names the bill it settled, and the line too when only part of a
+  bill was paid ("Tuition — Feb 2027 · Book fee"). Money paid before any bill exists says so, rather than
+  looking like a payment that went nowhere.
+
+- **The family sheet mentions paying by bank account** in the parent-portal section, and that wording is
+  editable like the rest of it.
+
+- **The portal's third tab is just "Payment methods"** — the longer name wrapped onto two lines in a pill
+  sized for one. The tabs centre their text properly now whether it takes one line or two, so a longer name
+  can't make the bar look broken again.
+
+- **Recording a payment no longer lists the household under every name.** A payment lands on one child, so
+  the household had no bearing on the choice and mostly repeated the surname already in the name. It still
+  shows where it *is* the choice — linking a brother or sister, which merges two households.
+
+- **The year view prints properly.** Names came out in a very light grey — the app's text colours are built
+  for a dark screen and were going to paper unchanged — and centred, because a name is a button on screen.
+  They're black and left-aligned now, along with everything else that was printing pale. **Each class stays
+  on one page**, with two small classes sharing a sheet where they fit, so a class is no longer split down
+  the middle with no heading overleaf; the month headings repeat on every page.
+
+- **Import an Excel workbook (.xlsx)**, not just a CSV — no "save it as a CSV first" step, and birthdays
+  come out as the dates they are. An older `.xls` is refused with a note on what to do instead.
+
+- **The template has example rows in it.** All eleven columns, and four rows showing what a header can't:
+  a nameless row is another adult for the student above, the Amount column overrides the plan for one
+  child, and an "Aunt" is the sort of relationship the importer asks you about. Replace them with your own
+  students — an example row left in is refused rather than imported.
+
+- **A student can span several lines.** Exports give each extra parent or relative a row of their own,
+  with the name column blank. Those lines are now added to the student above them, and the review step
+  shows which lines became which student. A nameless line that carries a class, a birthday or an amount
+  is treated as a child whose name was left out, and reported rather than folded in.
+
+- **Fathers and mothers are filed as parents; you decide about everyone else.** The **Relationship**
+  column is now read. For "Relative" — or anything else — the importer asks once whether people with
+  that relationship are parents/guardians or emergency contacts, and applies your answer to all of them.
+  A child whose only listed adult is a relative keeps them as a guardian either way, so no household is
+  left with nobody to contact.
+
+- **Set the right fee before you leave the import.** After the sibling step you get every student it
+  added, with their plan and amount, both editable — including a note for why ("sibling discount",
+  "hardship"), which prints beside the figure. Changing a plan replaces the old one rather than billing
+  twice. Skippable, and all of it stays editable later.
+
+- **Parents get a "My year" tab** — their own children, month by month, showing what's settled and what
+  isn't. Built for a phone: the months are chips that wrap, so nothing drags sideways. It uses the same
+  code as the office's year view, so a parent ringing up sees what the volunteer sees.
+
+- **Generating invoices no longer means typing the month twice.** Pick the month from your school year's
+  own months, and write the name once with tags in it — `Tuition — [month] [year]`. The tags fill in from
+  the month you picked, so the wording and the month can no longer disagree. Your wording is remembered,
+  and automatic generation uses it too. The Generate box inside a family's record works the same way now.
+
+- **The last admin account can be removed on an OpenMasjidOS install**, where an admin can always open
+  the app from the dashboard. It still refuses on a standalone install, and says which of the two things
+  to do about it.
+
+- **Find a student by name** in the import's fee step and the mid-year setup — type as you go. Searching
+  only narrows what's on screen; answers you've already made still count.
+
+- **The phone layout is fixed on the dialogs** — importing, the go-live wizard, a family record. Bigger
+  controls, one-column forms, and the editing tables become one card per student instead of a row you
+  drag sideways. Statements and the printed sheets read properly on a phone now too, and each tells you
+  that Print opens your phone's own preview, where the share button will email it or save it as a PDF.
+  Nothing about the desktop layout changed.
+
+- **Fixed: adding a second school could move which one is the "default"**, and file a student created
+  without a class into the wrong one. New schools are added to the end of the list.
+
+- **Pause all email to parents** — a switch in Settings → Email alerts that holds everything, including
+  invites and password resets. For setting the app up with your real families already in it. Nothing is
+  lost: an invite still gives you the link to copy or print, and staff email is unaffected.
+
+- **The year view shows how far each family had paid when you went live.** The go-live step already
+  asked; the grid now reads that answer back per child — a hollow ✓ for a month already paid, ○ for one
+  still in their carried-forward bill, which turns into a ✓ once that bill is settled.
+
+- **"Hasn't paid at all" is now an option in the mid-year setup**, after "Not said". It carries in every
+  month of the year before you went live, and it's on the "set the whole column" list too.
+
+- **An update now actually takes effect when you reload.** The app's shell page was sent with no caching
+  instructions at all, which lets a browser keep serving the old one — and because every script file is
+  named after its contents, the old shell keeps loading the old app. The version in the account menu comes
+  from the server, so it would read the new version while every screen was still the previous build: "I
+  updated and the new feature isn't there", with the version number seeming to prove otherwise. The shell
+  is now never cached. **If you're on an older version, one hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a
+  Mac) gets you the current build.**
+
+- **Fields in a row line up properly.** A row of fields was aligned along its bottom edge, which only looks
+  right while every field is the same height — so any field with a hint under it floated a line above its
+  neighbours. It was visible on the add-student row, the invoice row and the past-due settings. Rows are
+  aligned along the top now, so labels and boxes agree, and a button in the row sits level with the boxes it
+  acts on. Also: the fee-plan dropdown says **Choose a plan…** rather than repeating its own label.
+
+- **Adding a student mid-year.** The add-student form has a **Bill them from** dropdown, on the Students tab
+  and on a household's record. Leave it on **Not yet** — the default, and what adding a student has always
+  done — and no invoices are created; they're billed from the next time you generate. Pick a month and they
+  get **one invoice per month from then until now**, so a child who has really been attending since October
+  is caught up in one go.
+  - **Your go-live month is always offered, even before it arrives.** If you ran the mid-year setup and said
+    you bill from September, then in August there is no month that is both before today and on or after
+    September — so the dropdown had nothing in it and hid itself. September is now offered: picking it bills
+    nothing yet, says so, and that child is billed with everybody else when you generate September.
+  - The hint under the box now says which of the two things picking a month will do — catch up the months
+    since then, or nothing yet because that month hasn't started.
+  - Every catch-up month is **due today**, not in its own month. You're telling the family about all of it
+    now, so they shouldn't be five months overdue the moment their child is added — and the past-due
+    reminder shouldn't chase them for a bill they've only just been given. The amount owed is the same.
+  - Only months your school year actually teaches, and never earlier than the month you started billing
+    from — those arrears are already in the balance carried forward. It tells you what it billed, and if
+    it billed nothing, why.
+
+- **Starting a new school year is a proper handover now.** **Structure → Start a new year** walks through
+  the four things a rollover actually is, and saves nothing until the last step:
+  - **Where each class goes** — stays as it is, moves its children up into another class, or **graduated**.
+    It guesses from the order you put your classes in (Hifz 1 → Hifz 2, the top one graduates) so an
+    ordinary year is a matter of reading. Expand any class to send **one child** somewhere different, which
+    is what a student repeating the year needs.
+  - **Who is leaving** — the children whose class graduated are listed to tick. Ticking marks them
+    withdrawn, which stops future billing and keeps their record. Nobody is withdrawn who wasn't ticked.
+  - **Fees** — every plan with its current amount and a box for the new one. **Individual amounts you've
+    agreed with a family — a sibling rate, a hardship — are kept exactly as they are.**
+  - **What's still owed** — who owes what, before you move on. It changes nothing; those are real unpaid
+    bills and they carry over as they are.
+  - Your terms are copied into the new year with their dates a year on, and the whole thing is applied in
+    one go — so it either all happens or none of it does. Before this, "Activate" flipped which year the
+    app was looking at and nothing else: same classes, same prices, no explanation.
+
+- **First time setup.** With nobody on the roster yet, the dashboard now offers a **First time setup**
+  button instead of an empty page, covering everything the app needs before it can bill anybody: your
+  madrasah's name and currency, your logo and colour, **your school year** (and terms, if you charge per
+  term), **your courses and classes**, **what tuition costs**, the Stripe account tuition is paid into, a
+  **test email** to prove invites and receipts will arrive, **an account for anyone else in the office**,
+  importing your students (with the template to download), and then a plain list of what each tab is for.
+
+  The staff step generates the temporary password rather than asking you to invent one, shows it once to
+  hand over, and says plainly that a finance manager can work from home while an admin can only sign in on
+  the masjid network — which is the thing to know before choosing between them.
+
+  The order matters: if your spreadsheet has a Class or Fee plan column, the importer matches those names
+  against what exists and refuses a file naming a class you haven't made — so the year, the classes and the
+  fees come first. Every step is skippable, each one lists what you've already got rather than inviting a
+  second copy, and every step writes exactly what its own tab writes, so nothing is locked in and there's
+  nothing to undo. It disappears once you have a student.
+
+- **Rules between the columns on the year view**, and the ticks now sit properly under the month name —
+  the heading and the cells were centred on slightly different boxes, which got worse the further along
+  the row you read. Both show up on the printout, and hovering **Print** now says legal paper is
+  recommended.
+
+- **The year view uses the whole window.** It's a table a full year wide, and with the optional columns on
+  it was scrolling sideways while a few hundred pixels of screen sat empty either side. It now stretches to
+  fit the window, and only scrolls when it genuinely runs out of room. Every other screen keeps its normal
+  reading width.
+
+- **"Not paid" is a bold ● instead of a faint dot** on the year view — the one state you're scanning for
+  was the hardest to see.
+
+- **A printable Student ID sheet.** Students → Print IDs gives every active child's ID, grouped by class,
+  two to a row, on your letterhead. It replaces a button that printed whatever was on the screen — the
+  window frame, the dock and all. Admin and finance only.
+
+- **The family sheet says what you want it to say.** Every sentence on it is yours to write, under
+  Settings → Wording on the family sheet. Put `*stars*` around words for **bold**, and use `[names]`,
+  `[child]`, `[school]`, `[website]` or `[date]` to have it fill them in per family. Clear a box to put
+  our wording back. The figures and balances are still worked out for you, and re-wording a payment route
+  can't switch one on.
+
+- **New default wording.** The cash/check/Zelle/ACH line no longer says to "ask for confirmation" — it
+  says you'll get a receipt by email, and only when receipts are actually switched on. "Masjid's website"
+  now reads "madrasah's website", on the sheet and the statement.
+
+- **Your donations page, in brackets.** Add the page tuition is paid on (Settings → Page where tuition is
+  paid — `/donate`, or a whole address if it's elsewhere) and the family sheet and statement print it
+  beside "on the madrasah's website".
+
+- **Past-due reminders, to you and to parents.** Settings → Email alerts shows who is behind, and lets
+  you set how long to wait after the due date and how often to follow up. Your summary lists each
+  household and what they owe; there's a Run now button. **Emails to parents start switched off** — it's
+  a message the app has never sent before — and when on, it's one reminder per family per cadence, not a
+  daily email. Only bills that are actually overdue count, so next month's invoice never makes a family
+  look behind.
+
+- **A list of the families you can't email**, under Settings → Email alerts: every student whose
+  household has nobody with an email address, with a name and phone number to ring. Receipts, invites,
+  resets and reminders all need an address.
+
+- **The app has its own icon** — the crescent, dome and ledger mark — in the browser tab, at the top left
+  of the dashboard, and as the icon the App Store shows. In the tab and the topbar the lettering and the
+  badge are cut out of the mark rather than filled in, so it reads on a light or a dark background and
+  takes on the theme's own colour. (The App Store icon appears once this version is released; the catalog
+  pins it to a released commit.)
+
+- **The account menu in the parent portal is opaque.** The tabs behind it were reading through it.
+
+### From a security & correctness review of the whole app
+
+- **A refund never tells you to hand cash back for a card payment.** If the connection to your payments
+  account dropped for a moment, every card payment in the refund list was relabelled as one you had to
+  repay by hand — and an office that did what it said would have paid the family twice, because the card
+  gets refunded as soon as the connection returns. A row now says how the money actually arrived, which
+  never changes, and card refunds are simply switched off with a line explaining why until the connection
+  is back.
+
+- **Recording a payment with an empty date box said "NOT NULL constraint failed".** A database error, in
+  front of whoever was taking cash at the desk. The date is now required like the amount and the child, and
+  a date that isn't a real one is refused with a sentence instead. The same check now covers a bill's due
+  date, where a bad value was worse for being silent: the bill would have sat there for good — never chased,
+  never collected by autopay — because nothing could compare the date to today.
+
+- **Repeated failed sign-ins on one account are stopped, and you're told.** Attempts were only counted per
+  device, so somebody trying one of your logins from a hundred different places was never slowed down at
+  all. Now the account itself is capped — 25 tries in a quarter of an hour — and Settings → Email alerts
+  gains **Sign-in blocked**, which emails you the first time it happens so you can change that password.
+  It's generous enough that forgetting your own password a few times won't lock you out, and a parent can
+  always reset by email.
+
+- **Two staff accounts can no longer differ only by capital letters.** "Office" and "office" were accepted
+  as two accounts, and only the first could ever be signed into — so an admin account created that way
+  silently didn't work, with no error to say so. Signing in has always ignored capitals; creating an
+  account now does too, and an install that already has such a pair keeps working.
 
 ## [0.47.0]
 

@@ -27,6 +27,19 @@ import { formatMoney, parseCents } from '../lib/money';
 
 type Row = { paidThrough: string; amount: string; kind: 'owes' | 'ahead' };
 
+/**
+ * The dropdown's value for "they have paid nothing at all this year" (0.48.0).
+ *
+ * The list used to be "Not said" plus the months, which left no way to say the commonest awkward case: a
+ * family who has paid nothing since the year began. Picking the first month of the year is not the same
+ * answer — that says they paid THAT month — and "Not said" writes nothing at all.
+ *
+ * A sentinel only inside this component. It becomes the `paidNothing` FLAG on the wire, and the server
+ * turns that into the real month it means (the one before the year started), so no non-period string
+ * ever reaches a place that compares period keys. See MidYearRow in billing/carryIn.ts.
+ */
+const PAID_NOTHING = '__nothing__';
+
 /** A `YYYY-MM` key rendered the way an office reads it. */
 function monthLabel(periodKey: string): string {
   const [y, m] = periodKey.split('-').map(Number);
@@ -44,6 +57,7 @@ export function MidYearSetup({ currency }: { currency: string }) {
   const [goLive, setGoLive] = useState('');
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [memo, setMemo] = useState('');
+  const [query, setQuery] = useState('');
   const [done, setDone] = useState<{ owed: number; ahead: number; skipped: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -59,7 +73,9 @@ export function MidYearSetup({ currency }: { currency: string }) {
         .filter(([, r]) => r.paidThrough || r.amount)
         .map(([studentId, r]) => ({
           studentId,
-          paidThrough: r.paidThrough || undefined,
+          // The sentinel becomes a flag; a real month stays a month. Never both.
+          paidThrough: r.paidThrough && r.paidThrough !== PAID_NOTHING ? r.paidThrough : undefined,
+          ...(r.paidThrough === PAID_NOTHING ? { paidNothing: true } : {}),
           ...(parseCents(r.amount) ? { amountOverrideCents: parseCents(r.amount)!, kindOverride: r.kind } : {}),
         })),
       ...(memo.trim() ? { memo: memo.trim() } : {}),
@@ -81,7 +97,9 @@ export function MidYearSetup({ currency }: { currency: string }) {
   /** Set the whole column at once — most of a roster paid through the same month. */
   function setAllPaidThrough(periodKey: string) {
     const next: Record<string, Row> = {};
-    for (const s of preview.data?.students ?? []) next[s.studentId] = { ...BLANK, ...rows[s.studentId], paidThrough: periodKey };
+    // Every child, not the filtered ones: the control says "the whole column", and quietly meaning
+    // "the ones matching your search" would be the wrong kind of surprise on a screen about money.
+    for (const s of allStudents) next[s.studentId] = { ...BLANK, ...rows[s.studentId], paidThrough: periodKey };
     setRows(next);
   }
 
@@ -96,8 +114,13 @@ export function MidYearSetup({ currency }: { currency: string }) {
     }
   }
 
-  const students = preview.data?.students ?? [];
-  const willWrite = students.filter((s) => !s.already && s.kind !== 'square' && s.amountCents > 0);
+  const allStudents = preview.data?.students ?? [];
+  /** Type-as-you-go name filter. A whole-school roster is a long table and the office works down it
+   *  family by family. It narrows only what is SHOWN — every answer already given is still committed,
+   *  and the counts below are still of everybody, so searching cannot quietly change what gets written. */
+  const needle = query.trim().toLowerCase();
+  const students = needle ? allStudents.filter((s) => s.fullName.toLowerCase().includes(needle)) : allStudents;
+  const willWrite = allStudents.filter((s) => !s.already && s.kind !== 'square' && s.amountCents > 0);
 
   if (done) {
     return (
@@ -154,12 +177,29 @@ export function MidYearSetup({ currency }: { currency: string }) {
                 <label className="label">{t('midyear.setAll')}</label>
                 <select className="input glass-inset" value="" onChange={(e) => { if (e.target.value) setAllPaidThrough(e.target.value); }}>
                   <option value="">{t('midyear.setAllPick')}</option>
+                  {/* Offered here too: a madrasah that collected nothing all year and is adopting the
+                      app to fix exactly that sets the whole column in one go. */}
+                  <option value={PAID_NOTHING}>{t('midyear.paidNothing')}</option>
                   {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
                 </select>
               </div>
+              {/* Beside the bulk control, not above the table: set most of the roster in one go, then
+                  search out the handful that differ. */}
+              <div className="field" style={{ flex: '1 1 12rem' }}>
+                <label className="label" htmlFor="midyear-search">{t('midyear.search')}</label>
+                <input
+                  id="midyear-search"
+                  className="input glass-inset"
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('midyear.searchHint')}
+                />
+              </div>
             </div>
+            {needle && <p className="hint">{t('midyear.searchCount', { shown: students.length, total: allStudents.length })}</p>}
             <div style={{ overflowX: 'auto' }}>
-              <table className="data-table">
+              <table className="data-table stack-phone">
                 <thead>
                   <tr>
                     <th>{t('students.name')}</th>
@@ -174,21 +214,26 @@ export function MidYearSetup({ currency }: { currency: string }) {
                     const row = rows[s.studentId];
                     return (
                       <tr key={s.studentId}>
-                        <td>
+                        {/* data-label lets each cell name itself once the row stacks into a card on a
+                            phone (.stack-phone in admin.css). Desktop ignores it. */}
+                        <td className="row-title">
                           {s.fullName}
                           {/* A child who left before go-live can still owe money, so they are here — but
                               say so, or the office wonders why a withdrawn name is on the list. */}
                           {s.withdrawn && <span className="chip is-muted" style={{ marginInlineStart: '0.4rem' }}>{t('students.withdrawn')}</span>}
                           {s.already && <span className="chip is-muted" style={{ marginInlineStart: '0.4rem' }}>{t('midyear.alreadyDone')}</span>}
                         </td>
-                        <td className="tnum">{money(s.monthlyCents)}</td>
-                        <td>
+                        <td className="tnum" data-label={t('year.paying')}>{money(s.monthlyCents)}</td>
+                        <td data-label={t('midyear.paidThrough')}>
                           <select className="input glass-inset" style={{ minWidth: '9rem' }} value={row?.paidThrough ?? ''} disabled={s.already} onChange={(e) => setRow(s.studentId, { paidThrough: e.target.value })}>
                             <option value="">{t('midyear.notSaid')}</option>
+                            {/* Right after "Not said", because it is the other answer that is not a
+                                month — and the commonest awkward one. */}
+                            <option value={PAID_NOTHING}>{t('midyear.paidNothing')}</option>
                             {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
                           </select>
                         </td>
-                        <td>
+                        <td data-label={t('midyear.carried')}>
                           {/* The derived figure, editable. Typing a number is what an office does when
                               the notebook and the rate disagree — a child who missed two weeks, say. */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
@@ -213,7 +258,7 @@ export function MidYearSetup({ currency }: { currency: string }) {
                             )}
                           </div>
                         </td>
-                        <td className={s.afterOwedCents > 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>
+                        <td data-label={t('midyear.result')} className={s.afterOwedCents > 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>
                           {s.afterOwedCents > 0 ? money(s.afterOwedCents) : s.afterCreditCents > 0 ? `${money(s.afterCreditCents)} ${t('billing.credit')}` : money(0)}
                         </td>
                       </tr>
@@ -226,27 +271,18 @@ export function MidYearSetup({ currency }: { currency: string }) {
         )}
       </section>
 
-      {/* ── 3. What each parent will see ─────────────────────────────────────── */}
+      {/* ── 3. Apply it ───────────────────────────────────────────────────────
+          The per-HOUSEHOLD preview table that used to be here is gone (0.48.0). It listed the same figures
+          step 2 already shows per child, one row up the tree — and a household's balance is only ever the
+          sum of its children's (§9), so it added a second place to read the same number and a second thing
+          to keep in your head while filling the step above it in.
+
+          What is left is the confirm: the amount about to be written, and the button. */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head"><h2>{t('midyear.step3')}</h2></div>
         <p className="muted" style={{ fontSize: '0.9rem' }}>{t('midyear.step3Hint')}</p>
         {err && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}><CircleAlert size={15} /> {err}</div>}
-        <div style={{ overflowX: 'auto' }}>
-          <table className="data-table">
-            <thead><tr><th>{t('billing.family')}</th><th>{t('midyear.result')}</th></tr></thead>
-            <tbody>
-              {(preview.data?.families ?? []).map((f) => (
-                <tr key={f.familyId}>
-                  <td>{f.label}</td>
-                  <td className={f.owedCents > 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>
-                    {f.owedCents > 0 ? money(f.owedCents) : f.creditCents > 0 ? `${money(f.creditCents)} ${t('billing.credit')}` : money(0)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap', marginBlockStart: '0.8rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap' }}>
           <button type="button" className="btn btn--primary" disabled={commit.isPending || !goLivePeriod} onClick={doCommit}>
             {commit.isPending ? t('common.saving') : t('midyear.commit', { count: willWrite.length })}
           </button>

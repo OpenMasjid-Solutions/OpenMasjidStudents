@@ -37,6 +37,68 @@ const UNPLACED = '__unplaced';
  */
 const CONTACT_COLUMNS = ['fatherPhone', 'motherPhone', 'otherPhone', 'emergencyPhone', 'fatherEmail', 'motherEmail', 'otherEmail'] as const;
 
+/** The minimum a row needs for grouping — kept structural so `classBlocks` is testable on its own. */
+interface GroupableRow {
+  courseId: string | null;
+  courseName: string | null;
+  classId: string | null;
+  className: string | null;
+}
+
+/** One class, with the course heading when it is the first class of that course. */
+export interface ClassBlock<R> {
+  key: string;
+  /** True on the first class of a course, which is where the course heading is printed. A separate flag
+   *  from the name because a course can legitimately have NO name — the unplaced children — and testing
+   *  the name for null would silently drop that heading. */
+  startsCourse: boolean;
+  courseName: string | null;
+  className: string | null;
+  rows: R[];
+}
+
+/**
+ * Split the sorted roster into one block PER CLASS.
+ *
+ * WHY BLOCKS AND NOT A FLAT LIST (0.48.0). Each block becomes its own `<tbody>`, which is what lets the
+ * printed page keep a class together: `break-inside: avoid` on a `<tbody>` tells the browser not to split
+ * that group, so it fits as many WHOLE classes onto a sheet as the paper allows — two small classes share
+ * a page, a big one starts its own. That is the actual request ("its own page unless two fit"), and it is
+ * strictly better than forcing a page break before every class, which would leave half of every sheet
+ * blank for a madrasah whose classes run eight children long.
+ *
+ * A class with more students than fit on one page still breaks, because the constraint is then
+ * unsatisfiable — the right failure, and the browser's own.
+ *
+ * Rows arrive already sorted by course → class → name, so a change of value IS a new group; this reads
+ * the same transition the flat render used to compute inline.
+ */
+export function classBlocks<R extends GroupableRow>(rows: R[]): ClassBlock<R>[] {
+  const blocks: ClassBlock<R>[] = [];
+  let seq = 0;
+  for (const r of rows) {
+    const last = blocks[blocks.length - 1];
+    const prev = last?.rows[last.rows.length - 1];
+    const newCourse = !prev || (prev.courseId ?? UNPLACED) !== (r.courseId ?? UNPLACED);
+    const newClass = newCourse || prev.classId !== r.classId;
+    if (newClass) {
+      blocks.push({
+        // Course and class ids are not unique together when both are null (every unplaced child), and two
+        // courses can hold a same-named class — so the key carries a sequence number rather than trying to
+        // build uniqueness out of the data.
+        key: `${r.courseId ?? UNPLACED}:${r.classId ?? UNPLACED}:${seq++}`,
+        startsCourse: newCourse,
+        courseName: r.courseName,
+        className: r.className,
+        rows: [r],
+      });
+    } else {
+      last.rows.push(r);
+    }
+  }
+  return blocks;
+}
+
 export function YearView({ canConfigure }: { canConfigure: boolean }) {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
@@ -68,6 +130,13 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
     const next = on ? [...(cols.data?.enabled ?? []), key] : (cols.data?.enabled ?? []).filter((c) => c !== key);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the server re-validates against its own allow-list
     await setCols.mutateAsync({ columns: next as any });
+    await refresh();
+  }
+
+  /** The fee-override note beside "Paying" — the office's own words about why a child pays less. Not a
+   *  column, so it has its own switch; off means the server stops sending it at all. */
+  async function toggleFeeNote(on: boolean) {
+    await setCols.mutateAsync({ feeNote: on });
     await refresh();
   }
 
@@ -108,9 +177,15 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
     () => (g?.rows ?? []).filter((r) => !courseFilter || (r.courseId ?? UNPLACED) === courseFilter),
     [g?.rows, courseFilter],
   );
+  /** One group per class — each renders as its own `<tbody>` so a class is not split across printed
+   *  pages unless it genuinely cannot fit on one (0.48.0). */
+  const blocks = useMemo(() => classBlocks(rows), [rows]);
 
   return (
-    <div className="page">
+    // `page--wide` lifts the shell's reading-width cap for this one screen (0.48.0): a whole year of
+    // months plus the optional columns is wider than 1040px, and it was scrolling sideways with the
+    // edges of the screen left empty. See admin.css.
+    <div className="page page--wide">
       <div className="admin-header no-print">
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('year.title')}</h1>
         {years.data && years.data.length > 0 && (
@@ -127,8 +202,10 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
           </select>
         )}
         <span className="spacer" />
+        {/* The paper hint sits on the button rather than in a notice nobody reads: a year of months is
+            wide even in landscape, and legal is what fits it without the columns closing up. */}
         {g && g.rows.length > 0 && (
-          <button type="button" className="btn btn--ghost" onClick={() => window.print()}>
+          <button type="button" className="btn btn--ghost" onClick={() => window.print()} title={t('year.printPaperHint')}>
             <Printer size={15} /> {t('year.print')}
           </button>
         )}
@@ -161,6 +238,25 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
               })}
             </div>
             <p className="hint">{t('year.columnsWarning')}</p>
+          </div>
+
+          {/* Separate from the column chips because it is not a column: it is the note inside the
+              "Paying" cell. Some offices want it in front of them all year; others don't want a
+              bursary reason on a page that gets printed and left on a desk. */}
+          <div className="field">
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                style={{ marginBlockStart: '0.2rem' }}
+                checked={cols.data?.feeNote ?? true}
+                onChange={(e) => void toggleFeeNote(e.target.checked)}
+                disabled={setCols.isPending}
+              />
+              <span>
+                {t('year.showFeeNote')}
+                <span className="hint" style={{ display: 'block' }}>{t('year.showFeeNoteHint')}</span>
+              </span>
+            </label>
           </div>
         </section>
       )}
@@ -202,7 +298,17 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                 <tr>
                   <th className="year-sticky">{t('students.name')}</th>
                   <th>{t('year.paying')}</th>
-                  {g.months.map((m) => <th key={m.periodKey} className="year-month">{m.label}</th>)}
+                  {/* A month before the go-live is marked in the HEADING as well as in the cells: it is
+                      a property of the month, not of each child in it, and one dimmed column reads far
+                      faster than forty identical cells. */}
+                  {g.months.map((m) => {
+                    const before = !!g.startPeriod && m.periodKey < g.startPeriod;
+                    return (
+                      <th key={m.periodKey} className={cn('year-month', before && 'is-before')} title={before ? t('year.beforeStart') : undefined}>
+                        {m.label}
+                      </th>
+                    );
+                  })}
                   {enabled.includes('studentId') && <th>{t('year.col_studentId')}</th>}
                   {enabled.includes('dob') && <th>{t('year.col_dob')}</th>}
                   {enabled.includes('balance') && <th>{t('year.col_balance')}</th>}
@@ -213,27 +319,23 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                   ))}
                 </tr>
               </thead>
-              <tbody>
-                {rows.map((r, i) => {
-                  // Two levels of heading, in the order the office thinks: the course, then the
-                  // classes inside it. Rows arrive already sorted by course → class → name, so a
-                  // change of value IS a new group.
-                  const prev = rows[i - 1];
-                  const newCourse = !prev || (prev.courseId ?? UNPLACED) !== (r.courseId ?? UNPLACED);
-                  const newClass = newCourse || prev.classId !== r.classId;
-                  const span = 2 + g.months.length + enabled.length;
-                  return (
+              {/* One <tbody> PER CLASS, so a printed page can keep a class whole (see `classBlocks`).
+                  Two levels of heading, in the order the office thinks: the course, then the classes
+                  inside it. */}
+              {blocks.map((block) => {
+                const span = 2 + g.months.length + enabled.length;
+                return (
+                <tbody key={block.key} className="year-block">
+                  {block.startsCourse && (
+                    <tr className="year-group">
+                      <td className="year-sticky" colSpan={span}>{block.courseName ?? t('students.unplaced')}</td>
+                    </tr>
+                  )}
+                  <tr className="year-group year-group--class">
+                    <td className="year-sticky" colSpan={span}>{block.className ?? t('students.unplaced')}</td>
+                  </tr>
+                  {block.rows.map((r) => (
                     <Fragment key={r.studentId}>
-                      {newCourse && (
-                        <tr className="year-group">
-                          <td className="year-sticky" colSpan={span}>{r.courseName ?? t('students.unplaced')}</td>
-                        </tr>
-                      )}
-                      {newClass && (
-                        <tr className="year-group year-group--class">
-                          <td className="year-sticky" colSpan={span}>{r.className ?? t('students.unplaced')}</td>
-                        </tr>
-                      )}
                       <tr>
                         <td className="year-sticky">
                           <button type="button" className="btn btn--ghost btn--sm" onClick={() => openBilling(r)} title={t('year.openBilling')}>
@@ -246,8 +348,25 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                         </td>
                         {r.cells.map((c) => (
                           <td key={c.periodKey} className={`year-cell is-${c.status}`}>
+                            {/* Four unclickable states, because there is no invoice of this app's to open:
+                                  none     — nothing generated yet, and it COULD be. Blank, so a real gap
+                                             still stands out.
+                                  settled  — before go-live and the office said it was paid. A hollow ✓:
+                                             true, but not something this app collected.
+                                  carried  — before go-live and NOT paid. It is in the carried-forward
+                                             bill, and flips to `settled` server-side once that is
+                                             cleared, so the column stays true as the family pays.
+                                  before   — before go-live and nobody told us either way. */}
                             {c.status === 'none' ? (
                               ''
+                            ) : c.status === 'settled' || c.status === 'carried' || c.status === 'before' ? (
+                              <span
+                                className="year-cell-flat"
+                                title={t(`year.hint_${c.status}`)}
+                                aria-label={`${r.fullName} ${c.periodKey} ${t(`year.cell_${c.status}`)}`}
+                              >
+                                {c.status === 'settled' ? '✓' : c.status === 'carried' ? '○' : '·'}
+                              </span>
                             ) : (
                               <button
                                 type="button"
@@ -256,7 +375,10 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                                 title={`${c.periodKey} — ${t(`year.cell_${c.status}`)}`}
                                 aria-label={`${r.fullName} ${c.periodKey} ${t(`year.cell_${c.status}`)}`}
                               >
-                                {c.status === 'paid' ? '✓' : c.status === 'partial' ? '½' : c.status === 'void' ? '—' : '·'}
+                                {/* A filled ● for "billed, nothing paid". It was `·`, which at this size
+                                    was almost invisible against the paid ticks — the one state the office
+                                    is scanning FOR was the one hardest to see. */}
+                                {c.status === 'paid' ? '✓' : c.status === 'partial' ? '½' : c.status === 'void' ? '—' : '●'}
                               </button>
                             )}
                           </td>
@@ -266,7 +388,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                         {enabled.includes('balance') && <td className="tnum">{formatMoney(r.extra.balanceCents ?? 0, g.currency)}</td>}
                         {enabled.includes('guardianNames') && <td>{(r.extra.guardianNames ?? []).join(', ')}</td>}
                         {/* Tappable numbers and addresses. Formatted for display (lib/phone.ts leaves
-                            non-US numbers alone) but the href is built from the digits — see telHref.
+                            non-US numbers alone) but the href comes from telHref, which returns the whole tel: URI.
                             On a phone this page becomes the office's call list, which is the point. */}
                         {CONTACT_COLUMNS.filter((c) => enabled.includes(c)).map((c) => (
                           <td key={c} className={c.endsWith('Phone') ? 'year-contact' : undefined}>
@@ -274,7 +396,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                               <Fragment key={v}>
                                 {n > 0 && <br />}
                                 {c.endsWith('Phone') ? (
-                                  <a href={`tel:${telHref(v)}`} className="contact-link">{formatUsPhone(v)}</a>
+                                  <a href={telHref(v)} className="contact-link">{formatUsPhone(v)}</a>
                                 ) : (
                                   <a href={`mailto:${v}`} className="contact-link">{v}</a>
                                 )}
@@ -284,9 +406,10 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                         ))}
                       </tr>
                     </Fragment>
-                  );
-                })}
-              </tbody>
+                  ))}
+                </tbody>
+                );
+              })}
             </table>
           </div>
 

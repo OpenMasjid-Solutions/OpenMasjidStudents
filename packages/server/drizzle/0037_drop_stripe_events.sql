@@ -1,0 +1,14 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (C) 2026 OpenMasjid-Solutions
+--
+-- Drop `stripe_events` (0.48.0).
+--
+-- It existed to dedupe Stripe WEBHOOK deliveries, and there is no webhook: every payment reaches the
+-- ledger by a pull path (CLAUDE.md §13.4 — a Fabric record-payment call, the portal's confirm-on-return,
+-- autopay's synchronous confirm, or the daily reconciliation). Nothing in the app has read or written this
+-- table since the webhook was removed, so it is empty on every install and carried no meaning even where
+-- rows once existed: they were "we have seen event evt_x", about deliveries that no longer arrive.
+--
+-- Dropped rather than left behind because a money schema with a table nobody writes invites somebody to
+-- wire the next thing to it. Idempotent, so a re-run is a no-op.
+DROP TABLE IF EXISTS `stripe_events`;

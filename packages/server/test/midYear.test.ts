@@ -41,7 +41,7 @@ async function seedYear() {
   const yusuf = await admin.people.studentCreate({ familyId: ismail.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
   const maryam = await admin.people.studentCreate({ familyId: ismail.id, fullName: 'Maryam Ismail', feePlanId: plan.id });
   const bilal = await admin.people.studentCreate({ familyId: farooqi.id, fullName: 'Bilal Farooqi', feePlanId: plan.id });
-  return { admin, ismail: ismail.id, farooqi: farooqi.id, yusuf: yusuf.id, maryam: maryam.id, bilal: bilal.id };
+  return { admin, plan: plan.id, ismail: ismail.id, farooqi: farooqi.id, yusuf: yusuf.id, maryam: maryam.id, bilal: bilal.id };
 }
 
 const GO_LIVE = '2027-02';
@@ -85,6 +85,101 @@ describe('the go-live step derives what each child carries in', () => {
       ],
     });
     expect(plan.families.find((f) => f.familyId === ismail)).toMatchObject({ owedCents: 0, creditCents: 0 });
+  });
+});
+
+/**
+ * A child on their OWN agreed amount, and a child with nothing billable monthly (0.48.0).
+ *
+ * Both were suspected of being missing from the wizard. Neither is — every child on the roster is listed
+ * regardless of what they carry — and the derivation follows each child's OWN rate, which is the whole
+ * point of the per-student override since 0.39.0 (there is no family discount any more; the override IS
+ * the sibling rate and the hardship rate). Pinned so nobody has to wonder again.
+ */
+describe('a child on their own agreed amount', () => {
+  it('is listed, and carries in at THEIR rate rather than the plan’s', async () => {
+    const { admin, plan, yusuf, maryam } = await seedYear();
+    // Maryam pays an agreed 2000 instead of the plan's 5000.
+    await admin.billing.assignFee({ studentId: maryam, feePlanId: plan, overrideAmountCents: 2000 });
+
+    const p = await admin.billing.midYearPreview({
+      goLivePeriod: GO_LIVE,
+      rows: [{ studentId: yusuf, paidThrough: '2026-11' }, { studentId: maryam, paidThrough: '2026-11' }],
+    });
+    const byName = new Map(p.students.map((s) => [s.fullName, s]));
+    expect(byName.has('Maryam Ismail')).toBe(true);
+    // Dec + Jan, at each child's own figure.
+    expect(byName.get('Yusuf Ismail')).toMatchObject({ monthlyCents: 5000, monthCount: 2, amountCents: 10000 });
+    expect(byName.get('Maryam Ismail')).toMatchObject({ monthlyCents: 2000, monthCount: 2, amountCents: 4000 });
+
+    await admin.billing.midYearCommit({ goLivePeriod: GO_LIVE, rows: [{ studentId: maryam, paidThrough: '2026-11' }] });
+    expect((await admin.billing.studentBilling({ studentId: maryam })).balance.owedCents).toBe(4000);
+  });
+
+  /** A per-term or waived child has no monthly rate, so there is nothing to derive. They are still
+   *  listed — the office may type a figure for them — and the year view must not then show arrears that
+   *  were never billed. */
+  it('is listed with nothing to carry when their fees are not monthly', async () => {
+    const { admin, bilal } = await seedYear();
+    const perTerm = await admin.billing.feePlanCreate({ name: 'Per term', amountCents: 30000, cadence: 'per_term' });
+    await admin.billing.setStudentFee({ studentId: bilal, feePlanId: perTerm.id });
+
+    const p = await admin.billing.midYearPreview({ goLivePeriod: GO_LIVE, rows: [{ studentId: bilal, paidThrough: '2026-11' }] });
+    const b = p.students.find((s) => s.fullName === 'Bilal Farooqi')!;
+    expect(b).toMatchObject({ monthlyCents: 0, amountCents: 0 });
+
+    await admin.billing.midYearCommit({ goLivePeriod: GO_LIVE, rows: [{ studentId: bilal, paidThrough: '2026-11' }] });
+    // Nothing was billed, so nothing is owed…
+    expect((await admin.billing.studentBilling({ studentId: bilal })).balance.owedCents).toBe(0);
+    // …and the months he was "behind" on must not read as owed on the year view, because no such money
+    // ever existed. The grid follows the carry-in INVOICE, and he has none.
+    const g = await admin.billing.yearGrid();
+    const cells = g.rows.find((r) => r.fullName === 'Bilal Farooqi')!.cells;
+    expect(cells.find((c) => c.periodKey === '2026-12')!.status).toBe('settled');
+  });
+});
+
+/**
+ * "Hasn't paid at all" (0.48.0). The dropdown was "Not said" plus the months, which could not say the
+ * commonest awkward case — and the two nearest answers both mean something else: the year's first month
+ * says they paid THAT month, and "Not said" writes nothing at all.
+ */
+describe('a family who has paid nothing this year', () => {
+  it('carries in every month of the year before go-live', async () => {
+    const { admin, yusuf } = await seedYear();
+    const p = await admin.billing.midYearPreview({ goLivePeriod: GO_LIVE, rows: [{ studentId: yusuf, paidNothing: true }] });
+    const s = p.students.find((x) => x.studentId === yusuf)!;
+    // Sep, Oct, Nov, Dec, Jan — the five months of this year before February.
+    expect(s).toMatchObject({ kind: 'owes', monthCount: 5, amountCents: 25000 });
+    // Resolved to the month BEFORE the year began, which is literally what it means — and a real period
+    // key, so everything downstream that compares months keeps working.
+    expect(s.paidThrough).toBe('2026-08');
+  });
+
+  it('is not the same answer as the year’s first month, nor as saying nothing', async () => {
+    const { admin, yusuf } = await seedYear();
+    const nothing = await admin.billing.midYearPreview({ goLivePeriod: GO_LIVE, rows: [{ studentId: yusuf, paidNothing: true }] });
+    const firstMonth = await admin.billing.midYearPreview({ goLivePeriod: GO_LIVE, rows: [{ studentId: yusuf, paidThrough: '2026-09' }] });
+    const silent = await admin.billing.midYearPreview({ goLivePeriod: GO_LIVE, rows: [] });
+
+    expect(nothing.students.find((x) => x.studentId === yusuf)!.monthCount).toBe(5);
+    // "Paid through September" says September WAS paid, so only four months are owed.
+    expect(firstMonth.students.find((x) => x.studentId === yusuf)!.monthCount).toBe(4);
+    // Silence writes nothing.
+    expect(silent.students.find((x) => x.studentId === yusuf)!).toMatchObject({ kind: 'square', amountCents: 0, paidThrough: null });
+  });
+
+  it('shows every one of those months as owed on the year view, then settled once paid', async () => {
+    const { admin, yusuf } = await seedYear();
+    await admin.billing.midYearCommit({ goLivePeriod: GO_LIVE, asOf: '2027-02-01', rows: [{ studentId: yusuf, paidNothing: true }] });
+
+    const before = await admin.billing.yearGrid();
+    const cells = (g: typeof before) => g.rows.find((r) => r.fullName === 'Yusuf Ismail')!.cells;
+    expect(['2026-09', '2026-11', '2027-01'].map((p) => cells(before).find((c) => c.periodKey === p)!.status)).toEqual(['carried', 'carried', 'carried']);
+
+    await admin.billing.recordManualPayment({ studentId: yusuf, amountCents: 25000, channel: 'cash', occurredAt: '2027-02-10' });
+    const after = await admin.billing.yearGrid();
+    expect(['2026-09', '2026-11', '2027-01'].map((p) => cells(after).find((c) => c.periodKey === p)!.status)).toEqual(['settled', 'settled', 'settled']);
   });
 });
 

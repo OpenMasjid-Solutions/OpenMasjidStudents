@@ -113,6 +113,26 @@ export function parseDateInput(raw: string | null | undefined, fmt: DateFormat =
   return dayFirst ? validOrNull(year, b, a) : validOrNull(year, a, b);
 }
 
+/**
+ * Is this exactly what a date column stores — a real ISO calendar day (0.48.0)?
+ *
+ * THE TEST FOR A DATE ARRIVING AT A WRITE BOUNDARY, and it has to be this rather than a regex, because
+ * a regex is what lets `2026-13-45` through: it is ten characters of the right shape and not a day.
+ * Two separate things go wrong with one that gets past:
+ *   • written to a TEXT date column (`invoices.due_date`), it breaks every comparison silently — §9's
+ *     rule that dates are stored ISO exists precisely because those columns are compared as text, so a
+ *     bill dated `lol` is never chased, never autopaid, and sorts wherever it likes;
+ *   • turned into a `Date` for a timestamp column, it becomes `NaN`, which SQLite stores as NULL and a
+ *     NOT NULL column then refuses — reaching the office as a raw constraint message (§18).
+ *
+ * `parseDateInput` already knows what a real day is (it rejects 31 February by comparing back), so this
+ * asks it rather than repeating the arithmetic: ISO in, the same ISO out, or it was never a date.
+ */
+export function isIsoDay(value: string | null | undefined): boolean {
+  const s = (value ?? '').trim();
+  return ISO.test(s) && parseDateInput(s) === s;
+}
+
 /** A real calendar date, not just three plausible numbers. */
 function validOrNull(y: number, m: number, d: number): string | null {
   if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return null;

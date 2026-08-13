@@ -27,7 +27,11 @@
  * Strings are fixed English like the statement: this is a server-rendered artifact, not a screen, and
  * it has no i18next context.
  *
- * HONESTY — the sheet must never promise a payment route this install does not have. Three settings
+ * THE WORDING IS THE MADRASAH'S (0.48.0) — every sentence on the sheet comes from `people/sheetText.ts`,
+ * where the shipped defaults live and an office's own version overrides them from Settings. This file
+ * decides WHICH sentences appear and what the figures are; it no longer decides how they are phrased.
+ *
+ * HONESTY — the sheet must never promise a payment route this install does not have. Four settings
  * decide what it says, and each is read here rather than assumed:
  *   • `stripeReady()`                — is there a Stripe account behind card payments at all?
  *   • `getExternalPaymentsEnabled()` — may the kiosk and the donation site take tuition? (The same flag
@@ -36,6 +40,8 @@
  *   • `getSelfRegistrationEnabled()` — can a parent make their own portal account? With that door shut
  *                                     a QR to /family/register is a dead end, so the sheet asks them to
  *                                     request an invite instead of printing a useless code.
+ *   • receipts on + mail available + parents not paused — only then does the office line say a receipt
+ *                                     will arrive by email. It is a promise like any other here.
  * Cash, check, Zelle and ACH are always offered: they need no integration, only the office.
  *
  * SECURITY — every dynamic value goes through `esc()` (§14: stored data is inert and always rendered as
@@ -60,12 +66,15 @@ import {
 } from '../db/schema';
 import { formatMoney } from '../db/money';
 import { familyBalance, invoicePaid, invoiceTotal, studentBalance } from '../billing/ledger';
-import { esc } from '../billing/statements';
+import { esc, SHEET_PHONE_CSS } from '../billing/statements';
 import {
   accentWash,
+  donationUrl,
   getAccentColor,
   getCurrency,
   getExternalPaymentsEnabled,
+  getParentEmails,
+  getParentMailPaused,
   getSchoolContact,
   getSchoolLogo,
   getSchoolName,
@@ -73,6 +82,8 @@ import {
 } from '../settings';
 import { formatDate } from '../settings/dates';
 import { relationLabel } from './relations';
+import { sheetHtml, type SheetTags } from './sheetText';
+import { mailAvailable } from '../mail/notify';
 import { stripeReady } from '../payments/stripe';
 
 const asDate = (v: unknown): string => {
@@ -258,10 +269,26 @@ export function collectFamilySheet(familyId: string): FamilySheetData | null {
 }
 
 /** What this install can actually accept, so the sheet only promises routes that exist. */
-export type PayRoutes = { card: boolean; external: boolean; selfRegister: boolean };
+export type PayRoutes = {
+  card: boolean;
+  external: boolean;
+  selfRegister: boolean;
+  /**
+   * Will a parent actually be emailed a receipt? (0.48.0) All three parts have to hold: there is a mail
+   * transport, receipts are switched on, and parent mail is not paused. Same honesty rule as the routes
+   * above — "you will get a receipt by email" is a promise, and it is the office who gets asked about it
+   * when it does not arrive.
+   */
+  receipts: boolean;
+};
 
 export function payRoutes(): PayRoutes {
-  return { card: stripeReady(), external: getExternalPaymentsEnabled(), selfRegister: getSelfRegistrationEnabled() };
+  return {
+    card: stripeReady(),
+    external: getExternalPaymentsEnabled(),
+    selfRegister: getSelfRegistrationEnabled(),
+    receipts: mailAvailable() && getParentEmails().receipt && !getParentMailPaused(),
+  };
 }
 
 /**
@@ -295,6 +322,26 @@ export async function buildFamilySheetHtml(
     firstNames.length === 0 ? '' :
     firstNames.length === 1 ? firstNames[0] :
     `${firstNames.slice(0, -1).join(', ')} and ${firstNames[firstNames.length - 1]}`;
+
+  /**
+   * The values every configurable sentence can refer to (people/sheetText.ts).
+   *
+   * ONE set, passed to every box, so an office does not have to learn which line knows about which value.
+   * A household with no children yet reads "Your family is now on our system", which is the same sentence
+   * the renderer used to build by hand for that case.
+   */
+  const tags: SheetTags = {
+    names: namesSentence || 'Your family',
+    // "Your family IS", not "are" — with no children on the record yet the subject is the household.
+    is: firstNames.length > 1 ? 'are' : 'is',
+    child: firstNames.length === 1 ? 'child' : 'children',
+    school: schoolName,
+    // The madrasah's donations page, for the parenthetical in the website line. '' when unconfigured, and
+    // `renderSheetText` then removes the empty brackets along with it.
+    website: donationUrl(contact),
+    date: printedOn,
+  };
+  const copy = (key: Parameters<typeof sheetHtml>[0]) => sheetHtml(key, tags);
 
   const origin = baseUrl.replace(/\/+$/, '');
   // With self-registration off, /family/register refuses the parent — so point the QR at the portal
@@ -348,7 +395,7 @@ export async function buildFamilySheetHtml(
       <thead><tr><th>Child</th><th>Fee</th><th>How often</th><th class="num">Amount</th></tr></thead>
       <tbody>${feeRows}${d.monthlyCents > 0 ? `<tr class="foot"><td colspan="3">Every month, for the family</td><td class="num">${esc(money(d.monthlyCents))}</td></tr>` : ''}</tbody>
     </table>`
-    : '<p class="muted">No fees assigned yet — the office will confirm these with you.</p>';
+    : `<p class="muted">${copy('feesNone')}</p>`;
 
   const invoiceRows = kids
     .flatMap((k) => k.openInvoices.map((i) => `<tr><td>${esc(k.fullName)}</td><td>${esc(i.label)}</td><td>${esc(day(i.dueDate) || '—')}</td><td class="num">${esc(money(i.balanceCents))}</td></tr>`))
@@ -396,7 +443,7 @@ export async function buildFamilySheetHtml(
 
   const ways = ['cash'];
   if (routes.card) ways.push('card');
-  if (routes.external) ways.push('the kiosk', 'the masjid website');
+  if (routes.external) ways.push('the kiosk', 'the madrasah’s website');
   const historyPoint = ways.length > 1
     ? `Every payment you have made, however you made it — ${ways.slice(0, -1).join(', ')} or ${ways[ways.length - 1]} — all in one list`
     : 'Every payment the office has recorded for you, all in one list';
@@ -406,20 +453,28 @@ export async function buildFamilySheetHtml(
     'Every bill, broken down line by line — so you can see tuition and, say, a book fee separately',
     historyPoint,
   ];
-  if (routes.card) {
-    portalPoints.push('Pay by card, save a card, and set up autopay');
-    portalPoints.push('A receipt by email each time a payment is recorded');
-  }
+  // "or bank account" because the portal's payment step offers whatever the masjid's Stripe account has
+  // switched on, and a US bank account (ACH) is the one families most often prefer for a fee this size.
+  // The app cannot see that configuration from here, so this names both rather than promising only cards
+  // to a household that would rather use their bank — the parent sees the real choice on the screen.
+  if (routes.card) portalPoints.push('Pay by card or bank account, save it for next time, and set up autopay');
+  // Gated on receipts, not on card (0.48.0). It was promising an email that an install with receipts
+  // switched off — or with parent mail paused, or no mail at all — was never going to send.
+  if (routes.receipts) portalPoints.push('A receipt by email each time a payment is recorded');
 
+  // Every line is the madrasah's own wording now (people/sheetText.ts) — but WHICH lines appear is still
+  // decided here, by what the install actually has. An office may re-word the kiosk item; it cannot make
+  // one appear on an install with external payments switched off.
   const payItems: string[] = [];
-  if (routes.card) {
-    payItems.push(`<li><b>In the parent portal, by card.</b> Sign in and pay the whole balance or just part of it — for one child or all of them at once. You can save a card, and turn on <b>autopay</b> so tuition is paid automatically when it comes due; you can switch it off whenever you like.</li>`);
-  }
+  if (routes.card) payItems.push(`<li>${copy('payCard')}</li>`);
   if (routes.external) {
-    payItems.push(`<li><b>On the masjid website.</b> Go to the tuition section of the masjid's donations page, type any one of your children's <b>Student IDs</b>, check the name it shows you, and pay. You can pay for all of your children from that one screen, and you don't need an account for it.</li>`);
-    payItems.push(`<li><b>At the kiosk in the masjid.</b> Choose tuition, enter a Student ID, confirm the name, and tap your card — <b>Apple Pay and Google Pay</b> work too.</li>`);
+    payItems.push(`<li>${copy('payWebsite')}</li>`);
+    payItems.push(`<li>${copy('payKiosk')}</li>`);
   }
-  payItems.push(`<li><b>Cash, check, Zelle or bank transfer (ACH).</b> These go <b>through the office</b>. Please hand them to the office and make sure someone records it against the right child — a payment nobody enters is a payment nobody can see. Ask for confirmation before you leave, and keep it.</li>`);
+  // The receipt promise is a second sentence rather than part of the first, so it can be left off when
+  // nothing will actually be emailed (routes.receipts) without the office having to maintain two versions
+  // of the paragraph.
+  payItems.push(`<li>${copy('payOffice')}${routes.receipts ? ` ${copy('payOfficeReceipt')}` : ''}</li>`);
 
   // The big Student ID box, one per child. Carried over from the per-student sheet deliberately: the ID
   // is the one thing a parent has to type to pay anywhere, so it should be the most legible thing on the
@@ -432,7 +487,7 @@ export async function buildFamilySheetHtml(
   const oneId = withCodes.length === 1;
   const portalTail = routes.selfRegister ? ', and to set up your parent portal account' : '';
   const idCardCopy = routes.external
-    ? `This is how a payment finds ${oneId ? 'your child' : 'the right child'}. You will need ${oneId ? 'it' : 'one of these'} to pay at the kiosk or on the masjid website${portalTail}.`
+    ? `This is how a payment finds ${oneId ? 'your child' : 'the right child'}. You will need ${oneId ? 'it' : 'one of these'} to pay at the kiosk or on the madrasah’s website${portalTail}.`
     : `This is how a payment finds ${oneId ? 'your child' : 'the right child'} — it is what puts the money on the right record when the office enters it${portalTail}.`;
   const idCards = withCodes.length
     ? `<section>
@@ -444,15 +499,9 @@ export async function buildFamilySheetHtml(
   </section>`
     : '';
 
-  const signupCopy = routes.selfRegister
-    ? `<b>Scan this to set up your account</b>
-       You will need one of your children's Student IDs (above) and an email address the office already
-       has for you — that is how we know the account belongs to your family. One account covers all of
-       your children.
-       <br /><span class="muted">${esc(qrTarget)}</span>`
-    : `<b>Ask the office for a portal invite</b>
-       Accounts here are set up by invitation. Give the office an email address and they will send you a
-       link to choose your own password. One account covers all of your children.
+  // The URL under the QR stays structural — it is the target the code encodes, not wording, and the two
+  // must never be able to disagree about where a parent is being sent.
+  const signupCopy = `${copy(routes.selfRegister ? 'portalSignup' : 'portalInvite')}
        <br /><span class="muted">${esc(qrTarget)}</span>`;
 
   return `<!doctype html>
@@ -532,11 +581,13 @@ export async function buildFamilySheetHtml(
     /* Tinted panels print as white — a solid block of colour is what drains a masjid's toner. */
     .balance, .check, .idcard { background: #fff; }
   }
+${SHEET_PHONE_CSS}
 </style>
 </head>
 <body>
 <div class="sheet">
   <div class="toolbar"><button class="btn" onclick="window.print()">Print</button></div>
+  <p class="phone-tip">On a phone, Print opens your phone&rsquo;s own print preview &mdash; from there the share button will email it, send it, or save it as a PDF.</p>
   <header>
     <div class="brand">
       ${logo ? `<img class="logo" src="${esc(logo)}" alt="" />` : ''}
@@ -548,11 +599,7 @@ export async function buildFamilySheetHtml(
     </div>
   </header>
 
-  <p class="intro">${namesSentence
-    ? `<b>${esc(namesSentence)} ${firstNames.length === 1 ? 'is' : 'are'} now on our system.</b>`
-    : '<b>Your family is now on our system.</b>'} This sheet is your copy of what we hold for your
-  ${firstNames.length === 1 ? 'child' : 'children'}, what the fees are, and every way you can pay.
-  Please read it through and tell the office if anything is wrong or out of date.</p>
+  <p class="intro">${copy('intro')}</p>
 
   ${idCards}
 
@@ -596,12 +643,10 @@ export async function buildFamilySheetHtml(
     <ul class="pay">${payItems.join('')}</ul>
   </section>
 
-  <div class="check"><b>Please check this sheet.</b> If a name is spelled differently, a date of birth or
-  a phone number is wrong, a child is missing, a fee is not what you agreed, or a payment you have made
-  is not showing — tell the office. It is much easier to fix now than at the end of the year.</div>
+  <div class="check">${copy('check')}</div>
 
   <footer>
-    <div>${esc(schoolName)} · Correct as of ${esc(printedOn)} · Keep this for your records.</div>
+    <div>${copy('footer')}</div>
     ${contactFooter ? `<div class="contactline">${esc(contactFooter)}</div>` : ''}
   </footer>
 </div>

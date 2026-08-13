@@ -5,12 +5,36 @@
 
 .shell-controls {
   position: fixed;
-  inset-block-start: 1rem;
-  inset-inline-end: 1rem;
+  inset-block-start: max(1rem, env(safe-area-inset-top, 0px));
+  inset-inline-end: max(1rem, env(safe-area-inset-right, 0px));
   display: flex;
   gap: 0.5rem;
   align-items: center;
   z-index: 20;
+}
+
+/* ── The phone's own status bar, and the staff shell (0.48.0) ─────────────────
+   `index.html` asks for `viewport-fit=cover` and, once installed, an iOS status bar that is TRANSLUCENT —
+   both deliberate, because they are what let the app's dark background run edge to edge instead of leaving
+   a pale band above it. The consequence is that the page starts at the very top of the screen, UNDERNEATH
+   the clock and the battery.
+
+   The parent portal already allowed for that (`.family-topbar` pads by `env(safe-area-inset-top)`); the
+   staff shell did not, so on an iPhone the brand and the app's own clock were printed over the system
+   clock. Fixed here rather than in `app.css` because that file is a verbatim port from OpenMasjidOS and
+   must stay re-syncable (§15) — and the OS dashboard is a desktop surface that never meets a notch.
+
+   `max()` rather than a plain `env()`: on every screen without an inset (a desktop, Android's browser
+   chrome) the inset is 0 and the original spacing has to survive. */
+.topbar {
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  padding-inline: max(1.25rem, env(safe-area-inset-left, 0px)) max(1.25rem, env(safe-area-inset-right, 0px));
+}
+
+/* The floating dock sits over the home-bar area on an iPhone, where a swipe belongs to the OS rather than
+   to us. `.app-main`'s bottom padding is widened to match (admin.css's phone block). */
+.dock {
+  inset-block-end: max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + 0.5rem));
 }
 
 
@@ -75,4 +99,30 @@
 }
 .shell-status.is-off .dot {
   background: var(--color-danger, #f87171);
+}
+
+/*
+ * The account menu is a MENU, not a glass panel (0.48.0).
+ *
+ * ProfileMenu carries `glass-raised`, whose whole point is translucency — right for a pane sitting on
+ * the wallpaper, wrong for something that sits on top of the page's own content. In the parent portal
+ * the tab strip read straight through "Light mode" and "Sign out".
+ *
+ * Translucency was not the only half of it. `.family-topbar` sets its own `backdrop-filter`, and an
+ * ancestor with one becomes the BACKDROP ROOT for its descendants: the menu's blur then had only the
+ * topbar's own content to work on, never the page behind it — so the glass never frosted, it only
+ * tinted. (glass.css's nested-glass cap removes the blur outright in the staff shells, for the same
+ * visible result by a different route.) Blurring harder could not have fixed either case.
+ *
+ * So: an opaque surface, the token that exists for exactly this, opaque in both themes. Selected as
+ * `div.menu` — an element plus a class — so it out-specifies `.glass-raised` whatever order the
+ * stylesheets are imported in. Same fix, and the same reasoning, as `ul.picker-list` in v0.43.1.
+ */
+div.menu {
+  background-color: var(--color-surface-overlay);
+  background-image: none; /* drop glass's glint + tint: they belong on a panel, not a menu */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none; /* nothing to blur through an opaque surface — and it costs a repaint */
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow-raised);
 }

@@ -13,7 +13,7 @@ import { Clock } from './Clock';
 import { ProfileMenu } from './ProfileMenu';
 import { WindowManager } from './WindowManager';
 import { SceneBackground } from './SceneBackground';
-import { MasjidMark } from './Glyphs';
+import { StudentsMark } from './StudentsMark';
 import { Dock, type DockItem } from './Dock';
 import { useWindows } from './Windows';
 
@@ -60,7 +60,8 @@ export function AppShell({
       <SceneBackground />
       <div className="topbar">
         <span className="admin-brand">
-          <span className="mark"><MasjidMark size={24} /></span>
+          {/* The app's own mark, not the platform's — this is the Students dashboard (0.48.0). */}
+          <span className="mark"><StudentsMark size={24} /></span>
           {t('app.name')}
         </span>
         <div style={{ marginInlineStart: 'auto', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>

@@ -5,6 +5,19 @@
 
 From the 2026-08-04 audit. Everything here is outside what I can safely or legitimately do myself: it needs repo-admin rights, a decision that is yours, or a change in a sibling repo.
 
+> **Update, 2026-08-13** (see [`AUDIT-2026-08-13.md`](./AUDIT-2026-08-13.md)). Two items below are now
+> **closed**, both of which were waiting on a decision:
+>
+> - **§5.2 [OMS-010] login throttling** — done as **(b) + a bounded lockout**: a per-account cap of 25
+>   failures in 15 minutes *and* the per-account alert this document recommended. The denial-of-service
+>   objection is answered by the numbers rather than dismissed, and the reasoning is now in the code where the
+>   next person will find it. §14 no longer reads as unmet.
+> - **§5.4 [OMS-017] documentation drift** — `CLAUDE.md` §4/§5/§6/§7/§8/§9/§10/§13.4/§17/§18/§20 rewritten
+>   against the code, `docs/PAYMENTS.md` rewritten (it led with a webhook that does not exist),
+>   `CONTRIBUTING.md` brought up to date.
+>
+> Everything else here still stands, including §5.3 (timezone) and §5.5 (HTTP-layer coverage, nonce CSP).
+
 ---
 
 ## 0. First, the thing to do today
@@ -182,7 +195,7 @@ My recommendation: **(c) then (a)**. The startup check is small, breaks nothing,
 
 Bundle [OMS-009] (digest-pin `node:22-slim` to its **manifest-list** digest, or the arm64 build breaks) into whichever change ships.
 
-### 5.2 Login throttling: per-account or not? [OMS-010] — Low, genuinely ambiguous
+### 5.2 Login throttling: per-account or not? [OMS-010] — **CLOSED 2026-08-13** (was: Low, genuinely ambiguous)
 
 §14 asks for "per-IP and per-account". Only per-IP exists (8 failures / 15 min), so a distributed attacker can grind one known username unthrottled.
 
@@ -194,6 +207,14 @@ Pick one:
 - **(c) Per-account exponential delay, no hard lock.** Slows guessing without a lockable state.
 - **(d) Per-account lockout with a LAN-only bypass.** Strongest, most complexity.
 
+**Chosen (2026-08-13): (b) + a bounded version of (d), without the LAN bypass.** Both halves, because they
+answer different halves of the problem — the cap is what actually stops the spray, the alert is what makes it
+visible. The lockout is deliberately loose (25 failures / 15 min, blocked 15 min) precisely because of the DoS
+concern above, and the numbers are what answer it: a parent can still reset by email, an admin can reset a
+staff password, and admin login is LAN-only so locking an admin means already being on the Wi-Fi. The alert
+fires once per name per window and only for names that are real accounts, so it cannot be turned into a mail
+flood. No LAN bypass: it would mean the one origin an attacker on the masjid Wi-Fi already has.
+
 ### 5.3 Timezone: dates are UTC everywhere [OMS-021] — Low
 
 No `TZ` is set anywhere, so the container runs UTC and `toISOString().slice(0,10)` renders UTC dates. Internally consistent, so no money bug — but for a masjid west of UTC, **a payment recorded in the evening displays as the next day.** Cash entered at 21:00 on 4 Aug US Central prints `2026-08-05` on the statement handed to the parent and in the CSV the treasurer reconciles against.
@@ -202,7 +223,7 @@ Not fixed because a correct fix must apply one timezone consistently to renderin
 
 Decide: (a) accept UTC and document it; (b) add a `TZ` env var to `docker-compose.yml` — one line, but `periodOf()`'s local/UTC split must be reconciled first or bills could land in the wrong month; (c) a proper in-app timezone setting. **(b) is the pragmatic middle, but only after auditing every date path.**
 
-### 5.4 Documentation drift [OMS-017] — Info, but it misleads contributors
+### 5.4 Documentation drift [OMS-017] — **CLOSED 2026-08-13** (was: Info, but it misleads contributors)
 
 CLAUDE.md is declared "the single source of truth… read it fully before writing any code", and it currently describes a system that does not exist. Verified stale:
 
@@ -213,6 +234,11 @@ CLAUDE.md is declared "the single source of truth… read it fully before writin
 - **§19 and §9** claim CI enforces version and alert-id consistency. Now true as of this branch; it was not before.
 
 I fixed only the comments inside files I was already touching. The rest is authoring a specification, which is yours. Highest value: §5's matrix (it's the security contract people will read) and §13.4 (someone will look for a webhook handler that isn't there).
+
+**Done, 2026-08-13.** All five bullets above are now correct in the file: §5's matrix is the real three-role
+one, §13.4 says outright that there is no webhook and lists the four pull paths that replace it, the SMTP and
+`/apply` references are gone, and the CI claims are true. `docs/PAYMENTS.md` was rewritten for the same reason
+(it opened with webhook signature verification). Section numbers were kept, because code comments cite them.
 
 ### 5.5 Two follow-ups worth scheduling
 

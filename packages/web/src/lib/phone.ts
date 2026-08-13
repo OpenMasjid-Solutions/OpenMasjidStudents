@@ -21,16 +21,26 @@ function digits(raw: string): string {
 }
 
 /**
- * The same number as a `tel:` href — digits, and a leading `+` if the person wrote one.
+ * The number as a COMPLETE `tel:` href — scheme included, digits only, plus a leading `+` if the person
+ * wrote one.
  *
- * Formatting punctuation is stripped rather than passed through: parentheses and spaces are legal in
- * `tel:` but not every dialler on a staff phone handles them, and an office tapping a number wants the
- * call to start, not to debug it. Never build the href from the DISPLAY string for that reason.
+ * IT RETURNS THE WHOLE HREF, and that is a fix rather than a detail (0.48.0). It used to return the bare
+ * digits, so every caller had to write `href={`tel:${telHref(x)}`}` — and one of them (the no-email list in
+ * Settings) forgot, which made the href a RELATIVE PATH. Resolved against the app's `<base href>` it became
+ * `/students/4453062685`: tapping a number navigated to a dead in-app URL instead of dialling. A helper
+ * called `telHref` that does not return an href is a trap, so now it does, and a bare `href={telHref(x)}` is
+ * correct everywhere.
+ *
+ * Formatting punctuation is stripped rather than passed through: parentheses and spaces are legal in `tel:`
+ * but not every dialler on a staff phone handles them, and an office tapping a number wants the call to
+ * start, not to debug it. Never build the href from the DISPLAY string for that reason.
+ *
+ * Empty for nothing, so a caller can render text instead of a dead link.
  */
 export function telHref(raw: string | null | undefined): string {
   if (!raw) return '';
   const plus = raw.trimStart().startsWith('+') ? '+' : '';
-  return `${plus}${digits(raw)}`;
+  return `tel:${plus}${digits(raw)}`;
 }
 
 /**

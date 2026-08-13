@@ -20,7 +20,7 @@ import { db } from '../db';
 import { families, students, invoices, payments } from '../db/schema';
 import { formatMoney } from '../db/money';
 import { familyBalance, studentBalance, invoiceTotal, invoicePaid } from './ledger';
-import { accentWash, getAccentColor, getSchoolContact, getSchoolName, getCurrency, getSchoolLogo } from '../settings';
+import { accentWash, donationUrl, getAccentColor, getSchoolContact, getSchoolName, getCurrency, getSchoolLogo } from '../settings';
 import { formatDate } from '../settings/dates';
 
 /** Only admin (LAN) and finance (LAN + tunnel) may print statements (§5 permission matrix). */
@@ -28,6 +28,45 @@ export function canServeStatement(role: Role, origin: Origin): boolean {
   if (role !== 'admin' && role !== 'finance') return false;
   return roleAllowedFromOrigin(role, origin);
 }
+
+/**
+ * The phone rules every printable document shares (0.48.0).
+ *
+ * These pages are laid out for a sheet of letter paper — a 7.5in column, half-inch margins, 24px of
+ * screen padding around it — and that is right, because paper is what they are for. On a phone opening
+ * one to read or to hand to the office, the same layout is a wide page you pinch and drag.
+ *
+ * SCREEN ONLY. It lives in a `max-width` query, so `@media print` in each document is untouched and what
+ * comes out of a printer does not move. Interpolated into all four documents from here rather than
+ * copied into each, because four copies is how one of them quietly stops matching.
+ */
+export const SHEET_PHONE_CSS = `
+  /* A line that exists only on a phone — see .phone-tip in the markup. Hidden by default so a desktop
+     never shows it, and hidden again in print because a phone printing this page matches BOTH queries. */
+  .phone-tip { display: none; }
+  @media print { .phone-tip { display: none !important; } }
+  @media (max-width: 700px) {
+    .phone-tip {
+      display: block;
+      margin: 0 0 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    /* The paper column is the whole screen now; the padding was margin for a page that isn't there. */
+    body { padding: 12px; font-size: 13px; }
+    .sheet { max-width: none; }
+    /* A thumb, not a mouse pointer. Full width because there is nothing to sit beside. */
+    .toolbar { justify-content: stretch; }
+    .btn { width: 100%; min-height: 2.75rem; font-size: 1rem; }
+    /* Tables are the part that overflows: let long values break instead of setting an unbreakable
+       minimum width for their column, and lose a little of the padding rather than the content. */
+    table { table-layout: fixed; }
+    th, td { padding: 4px 4px; overflow-wrap: anywhere; }
+    /* Rows of boxes and the QR block are side-by-side arrangements that assume width. */
+    .signup { flex-direction: column; align-items: flex-start; }
+    .idrow { flex-direction: column; }
+    .idcard { width: 100%; }
+  }`;
 
 /** Escape the five HTML-significant characters. Applied to every dynamic value below. */
 export function esc(v: unknown): string {
@@ -72,6 +111,10 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   const wash = accentWash(accent);
   const contact = getSchoolContact();
   const contactFooter = [contact.address, contact.phone, contact.email, contact.website].map((v) => v.trim()).filter(Boolean).join(' · ');
+  /** The madrasah's donations page, named in the pay hint below (0.48.0). Telling a parent to pay "on the
+   *  website" without saying which page is half an instruction — and only the masjid knows the path. '' when
+   *  unconfigured, in which case the parenthetical is left off entirely rather than printed empty. */
+  const payUrl = donationUrl(contact);
   /** Dates the way this masjid writes them; storage stays ISO (settings/dates.ts). */
   const day = (iso: string | null | undefined) => formatDate(iso);
 
@@ -193,11 +236,13 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   .signup .cap b { display: block; font-size: 15px; margin-bottom: 4px; color: var(--ink); }
   footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
   @media print { body { padding: 0; } .toolbar { display: none; } .signup { border-color: #999; } }
+${SHEET_PHONE_CSS}
 </style>
 </head>
 <body>
 <div class="sheet">
   <div class="toolbar"><button class="btn" onclick="window.print()">Print</button></div>
+  <p class="phone-tip">On a phone, Print opens your phone&rsquo;s own print preview &mdash; from there the share button will email it, send it, or save it as a PDF.</p>
   <header>
     <div class="brand">
       ${logo ? `<img class="logo" src="${esc(logo)}" alt="" />` : ''}
@@ -214,7 +259,7 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
   <section>
     <h2>Your children &amp; what each owes</h2>
     <table><thead><tr><th>Student</th><th>Student ID</th><th class="num">Owes</th></tr></thead><tbody>${kidsRows}</tbody></table>
-    <p class="payhint">To pay at the kiosk or on the masjid's donation site, enter your child's Student ID and check the name it shows — then you can pay for any of your children on the same screen.</p>
+    <p class="payhint">To pay at the kiosk or on the madrasah&rsquo;s donation site${payUrl ? ` (${esc(payUrl)})` : ''}, enter your child&rsquo;s Student ID and check the name it shows &mdash; then you can pay for any of your children on the same screen.</p>
   </section>
 
   <section>

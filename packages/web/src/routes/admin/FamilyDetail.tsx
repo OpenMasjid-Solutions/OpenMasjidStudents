@@ -105,7 +105,11 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   }
 
   const [showStudent, setShowStudent] = useState(false);
-  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '' });
+  /** `billFromPeriod` empty means "bill nothing yet", which is what adding a student has always done. */
+  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', billFromPeriod: '' });
+  /** The months a mid-year catch-up may start from, and what the last one actually billed (0.48.0). */
+  const billFrom = trpc.billing.billFromMonths.useQuery();
+  const [billedMsg, setBilledMsg] = useState<string | null>(null);
   const [showGuardian, setShowGuardian] = useState(false);
   const [grd, setGrd] = useState({ name: '', phone: '', email: '', relation: '' });
   const [showEC, setShowEC] = useState(false);
@@ -114,8 +118,16 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   async function submitStudent(e: FormEvent) {
     e.preventDefault();
     if (!stu.fullName.trim() || !stu.feePlanId) return;
-    await addStudent.mutateAsync({ familyId, fullName: stu.fullName.trim(), dob: stu.dob || undefined, feePlanId: stu.feePlanId });
-    setStu({ fullName: '', dob: '', feePlanId: '' });
+    const r = await addStudent.mutateAsync({ familyId, fullName: stu.fullName.trim(), dob: stu.dob || undefined, feePlanId: stu.feePlanId, billFromPeriod: stu.billFromPeriod || undefined });
+    // A catch-up is never silent — five new invoices on a household is news (0.48.0).
+    setBilledMsg(
+      !r.billed
+        ? null
+        : r.billed.created
+          ? t('students.billedFrom', { count: r.billed.created, from: r.billed.periods[0] })
+          : t(`students.billedNone_${r.billed.reason ?? 'nothing_to_bill'}`),
+    );
+    setStu({ fullName: '', dob: '', feePlanId: '', billFromPeriod: stu.billFromPeriod });
     setShowStudent(false);
     await refresh();
   }
@@ -135,13 +147,25 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     setShowEC(false);
     await refresh();
   }
-  async function toggleWithdraw(id: string, status: 'active' | 'withdrawn') {
+  /**
+   * Withdraw a child, or bring them back.
+   *
+   * Only WITHDRAWING asks (0.48.0), and it says what withdrawing does: it stops future billing, which is
+   * not obvious from the word and is the whole reason the office presses it. Re-activating needs no
+   * confirmation — it takes nothing away, and a dialog on a harmless action is how people learn to click
+   * through the ones that matter.
+   */
+  async function toggleWithdraw(id: string, status: 'active' | 'withdrawn', name: string) {
+    if (status === 'active' && !window.confirm(t('directory.confirmWithdraw', { name }))) return;
     await updateStudent.mutateAsync({ id, status: status === 'active' ? 'withdrawn' : 'active' });
     await refresh();
   }
   /** Turn the server's reason for not emailing into something the office can act on. */
   function explainSkip(skipped: string | null | undefined, emailed: boolean): string {
     if (emailed) return t('directory.mailSent');
+    // The pause is a DELIBERATE choice somebody made in Settings, so it is named as such rather than
+    // reported as a failure — otherwise a paused install looks like broken email.
+    if (skipped === 'parents_paused') return t('directory.mailPaused');
     if (skipped === 'no_public_url') return t('directory.mailNoUrl');
     if (skipped === 'no_transport') return t('directory.mailNoTransport');
     return t('directory.mailNotSent');
@@ -294,7 +318,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     <td className="actions">
                       {!readOnly && (
                         <>
-                          <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
+                          <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status, s.fullName)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
                           {/* Delete is for a mistake — a duplicate or a child who never enrolled. A student
                               who has been billed is part of the invoice history and can only be withdrawn,
                               so ask the server first and say why rather than offering a button that fails. */}
@@ -332,8 +356,44 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               </select>
               <p className="hint">{feePlans.data && feePlans.data.length === 0 ? t('directory.noFeePlans') : t('directory.feePlanHint')}</p>
             </div>
+            {/* Joining part-way through the year (0.48.0) — the same choice the Students tab offers, so a
+                child added into an existing household is treated no differently from one starting a new.
+                Always rendered, for the reason set out on the Students tab: an empty month list is an
+                ordinary state, and hiding the field for it made the feature impossible to find. */}
+            <div className="field" style={{ flex: '1 1 12rem' }}>
+              <label className="label" htmlFor="fd-billfrom">{t('students.billFrom')}</label>
+              <select
+                id="fd-billfrom"
+                className="input glass-inset"
+                value={stu.billFromPeriod}
+                disabled={(billFrom.data?.months ?? []).length === 0}
+                onChange={(e) => setStu({ ...stu, billFromPeriod: e.target.value })}
+              >
+                <option value="">{t('students.billFromNone')}</option>
+                {(billFrom.data?.months ?? []).map((m) => (
+                  <option key={m.periodKey} value={m.periodKey}>
+                    {m.periodKey === billFrom.data?.current ? t('students.billFromThisMonth', { month: m.label }) : m.label}
+                  </option>
+                ))}
+              </select>
+              <p className="hint">
+                {(billFrom.data?.months ?? []).length === 0
+                  ? t('students.billFromEmpty')
+                  : !stu.billFromPeriod
+                    ? t('students.billFromNoneHint')
+                    : stu.billFromPeriod > (billFrom.data?.current ?? '')
+                      ? t('students.billFromFutureHint')
+                      : t('students.billFromHint')}
+              </p>
+            </div>
             <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>
           </form>
+        )}
+        {billedMsg && (
+          <div className="notice" style={{ marginBlockStart: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <span style={{ flex: 1 }}>{billedMsg}</span>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setBilledMsg(null)}>{t('common.close')}</button>
+          </div>
         )}
         {showStudent && <p className="hint">{t('directory.idHint')}</p>}
       </section>
@@ -356,7 +416,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 {/* Tappable: the office rings a parent from this screen, and on a phone that should be
                     one tap rather than a copy-paste. The href is built from the digits, never from the
                     formatted text (lib/phone.ts). */}
-                {g.phone && <a className="muted" href={`tel:${telHref(g.phone)}`}>· {formatUsPhone(g.phone)}</a>}
+                {g.phone && <a className="muted" href={telHref(g.phone)}>· {formatUsPhone(g.phone)}</a>}
                 {g.email && <a className="muted" href={`mailto:${g.email}`}>· {g.email}</a>}
                 {g.isEmergencyContact && <span className="chip is-accent">{t('directory.emergency')}</span>}
                 {/* Whether they took up a portal account decides which action is useful: an invite for
@@ -463,7 +523,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               <div key={c.id} className="glass-inset" style={{ padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-button)', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <strong>{c.name}</strong>
                 {c.relation && <span className="muted">· {relationLabel(t, c.relation)}</span>}
-                {c.phone && <a className="muted" href={`tel:${telHref(c.phone)}`}>· {formatUsPhone(c.phone)}</a>}
+                {c.phone && <a className="muted" href={telHref(c.phone)}>· {formatUsPhone(c.phone)}</a>}
                 <span className="spacer" style={{ marginInlineStart: 'auto' }} />
                 {!readOnly && (
                   <button type="button" className="btn btn--ghost btn--sm" onClick={() => void askRemoveContact(c.id, c.name)} disabled={removeContact.isPending}>
@@ -505,6 +565,9 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 students={studentOptions.data ?? []}
                 value={siblingId}
                 onChange={setSiblingId}
+                // The household is shown here because it is what is being chosen: this MERGES two
+                // households, so "which Ismail?" is the question, not a decoration.
+                showFamily
                 // Only children OUTSIDE this household: the ones already here have nothing to join.
                 exclude={students.map((own) => own.id)}
               />

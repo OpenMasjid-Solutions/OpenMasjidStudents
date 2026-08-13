@@ -24,15 +24,19 @@ import { useWindows } from '../../components/Windows';
 import { FamilyBilling } from '../../components/FamilyBilling';
 import { MassApply } from '../../components/MassApply';
 import { StudentPicker } from '../../components/StudentPicker';
+import { InvoiceGenFields, useInvoiceGen } from '../../components/InvoiceGenFields';
 import { formatMoney, parseCents, parseSignedCents } from '../../lib/money';
 
 /** The go-live wizard is a once-per-install screen — no reason for every parent's phone to download it
  *  with the rest of the app. (Same treatment as What's new.) */
 const MidYearSetup = lazy(() => import('../../components/MidYearSetup').then((m) => ({ default: m.MidYearSetup })));
+/** Giving money back is the rarest thing on this page — no reason for it to ride in the main bundle. */
+const Refunds = lazy(() => import('../../components/Refunds').then((m) => ({ default: m.Refunds })));
 
 /** The channels the office can record by hand — kept in step with the server by the mutation's own
  *  input type, so a drift here fails `tsc` rather than at runtime. */
 const MANUAL_CHANNELS = ['cash', 'check', 'ach', 'zelle', 'other'] as const;
+
 type ManualChannel = (typeof MANUAL_CHANNELS)[number];
 
 /** The code-defined export sheets (the server owns the columns — §14, no query built from input). */
@@ -83,7 +87,9 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   const midYear = trpc.billing.midYearStatus.useQuery();
 
   const [plan, setPlan] = useState({ name: '', amount: '', cadence: 'monthly' });
-  const [gen, setGen] = useState({ periodKey: '', label: '', dueDate: '' });
+  // The month + label template, and the fields that render them, are shared with the family window's
+  // own Generate form (components/InvoiceGenFields) — one form, two places, no drift.
+  const { gen, setGen, ready: genReady } = useInvoiceGen();
   const [genMsg, setGenMsg] = useState<string | null>(null);
   const [reconcileMsg, setReconcileMsg] = useState<string | null>(null);
   const [item, setItem] = useState({ name: '', amount: '' });
@@ -123,7 +129,10 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
     setPayErr(null);
     setPayMsg(null);
     const cents = parseCents(payment.amount);
-    if (!cents || cents < 1 || !payment.studentId) return;
+    // The DATE is required too (0.48.0). A date box can be cleared, and an empty one used to reach the
+    // server, fail its NOT NULL column and come back as a raw SQLite message — so it is treated like the
+    // amount and the child: nothing is sent until it is there, and the button says so.
+    if (!cents || cents < 1 || !payment.studentId || !payment.occurredAt) return;
     const name = roster.data?.find((s) => s.id === payment.studentId)?.fullName ?? '';
     // Only direct the money when the ticks actually describe the amount — a part-payment of a ticked
     // line, or extra on top, is ordinary money and belongs on the oldest bill.
@@ -192,11 +201,16 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   }
   async function runGenerate(e: FormEvent) {
     e.preventDefault();
-    if (!gen.periodKey.trim() || !gen.label.trim()) return;
-    const r = await genPeriod.mutateAsync({ periodKey: gen.periodKey.trim(), label: gen.label.trim(), dueDate: gen.dueDate || undefined });
+    if (!gen.periodKey || !gen.label.trim()) return;
+    // The TEMPLATE goes to the server, which resolves the tags from the period key it is filing the
+    // invoice under — so the label and the month cannot disagree, and the wording is remembered for next
+    // month and for the nightly job (billing/period.ts resolveInvoiceLabel).
+    const r = await genPeriod.mutateAsync({ periodKey: gen.periodKey, labelTemplate: gen.label.trim(), dueDate: gen.dueDate || undefined });
     setGenMsg(t('billing.generatedN', { n: r.created }));
-    setGen({ periodKey: '', label: '', dueDate: '' });
+    await utils.billing.invoiceLabelConfig.invalidate();
+    setGen({ ...gen, dueDate: '' });
   }
+
   function openFamily(id: string, name: string) {
     open({ title: name, wide: true, dedupeKey: `billing:${id}`, icon: <Wallet size={15} />, node: <FamilyBilling familyId={id} currency={currency} /> });
   }
@@ -250,8 +264,11 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
     URL.revokeObjectURL(url);
   }
 
-  async function doChargeVoid(id: string) {
+  async function doChargeVoid(id: string, label: string, amountCents: number) {
     setChargeErr(null);
+    // Cancelling a charge somebody deliberately raised. Named and priced in the question, because "void"
+    // beside a row is not enough to be sure you are on the right one.
+    if (!window.confirm(t('billing.confirmVoidCharge', { label, amount: money(amountCents) }))) return;
     try {
       await chargeVoid.mutateAsync({ id });
       await Promise.all([utils.billing.chargeList.invalidate()]);
@@ -324,7 +341,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
           <div className="field" style={{ flex: '1 1 8rem' }}><label className="label">{t('billing.memo')}</label>
             <input className="input glass-inset" value={payment.memo} onChange={(e) => setPayment({ ...payment, memo: e.target.value })} maxLength={200} />
           </div>
-          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount)}>{t('billing.record')}</button>
+          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount) || !payment.occurredAt}>{t('billing.record')}</button>
         </form>
 
         {/* What this child owes, line by line. Ticking lines fills in the amount AND records the money
@@ -410,7 +427,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
               <span key={i.id} className="chip">
                 {i.name} · {money(i.defaultAmountCents)}
                 <button type="button" className="link-btn" style={{ marginInlineStart: '0.4rem' }} aria-label={t('common.edit')} onClick={() => setItemEdit({ id: i.id, name: i.name, amount: (i.defaultAmountCents / 100).toFixed(2) })}><Pencil size={12} /></button>
-                <button type="button" className="link-btn" style={{ marginInlineStart: '0.3rem' }} aria-label={t('structure.archive')} onClick={async () => { await itemArchive.mutateAsync({ id: i.id }); await utils.billing.chargeItemList.invalidate(); }}>×</button>
+                <button type="button" className="link-btn" style={{ marginInlineStart: '0.3rem' }} aria-label={t('structure.archive')} onClick={async () => { if (!window.confirm(t('billing.confirmArchiveItem', { name: i.name }))) return; await itemArchive.mutateAsync({ id: i.id }); await utils.billing.chargeItemList.invalidate(); }}>×</button>
               </span>
             ))}
           </div>
@@ -460,7 +477,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
                     <td><span className={`chip ${c.status === 'invoiced' ? 'is-accent' : c.status === 'void' ? 'is-muted' : ''}`}>{t(`billing.cs_${c.status}`)}</span></td>
                     <td className="actions">
                       {c.status === 'pending' && (
-                        <button type="button" className="btn btn--ghost btn--sm" disabled={chargeVoid.isPending} onClick={() => doChargeVoid(c.id)}>{t('billing.void')}</button>
+                        <button type="button" className="btn btn--ghost btn--sm" disabled={chargeVoid.isPending} onClick={() => doChargeVoid(c.id, c.label, c.amountCents)}>{t('billing.void')}</button>
                       )}
                     </td>
                   </tr>
@@ -502,11 +519,12 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
           </div>
         )}
 
+        {/* The month is PICKED and the label is a template with tags — neither is typed out from scratch
+            every month. Two free-text boxes that had to agree with each other was one keystroke away from
+            "Tuition — Jun 2026" filed under 2026-07, on a record that is never edited afterwards. */}
         <form className="inline-form glass-inset" onSubmit={runGenerate} style={{ marginBlockStart: 0 }}>
-          <div className="field"><label className="label">{t('billing.periodKey')}</label><input className="input glass-inset" value={gen.periodKey} onChange={(e) => setGen({ ...gen, periodKey: e.target.value })} placeholder="2026-07" /></div>
-          <div className="field"><label className="label">{t('billing.label')}</label><input className="input glass-inset" value={gen.label} onChange={(e) => setGen({ ...gen, label: e.target.value })} placeholder={t('billing.labelHint')} /></div>
-          <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.due')}</label><input type="date" className="input glass-inset" value={gen.dueDate} onChange={(e) => setGen({ ...gen, dueDate: e.target.value })} /></div>
-          <button type="submit" className="btn btn--primary" disabled={genPeriod.isPending}>{t('billing.generateAll')}</button>
+          <InvoiceGenFields gen={gen} setGen={setGen} />
+          <button type="submit" className="btn btn--primary" disabled={genPeriod.isPending || !genReady}>{t('billing.generateAll')}</button>
         </form>
       </section>
 
@@ -524,6 +542,12 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
           )}
         </div>
       </section>
+
+      {/* Refunds, last on purpose: giving money back is the rarest thing on this page and the one nobody
+          should reach by accident. Its own component, and lazy — most days it is not opened at all. */}
+      <Suspense fallback={<p className="empty">{t('common.loading')}</p>}>
+        <Refunds />
+      </Suspense>
 
       {/* No households grid here any more. It was a wall of cards with one number on each, and the way
           into a family's record is now the year view — where the same name also tells you their course,

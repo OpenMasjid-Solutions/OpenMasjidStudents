@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * CSV student import (people/import.ts): the dry-run validator, the all-or-nothing commit, and
+ * Student import (people/import.ts): the dry-run validator, the all-or-nothing commit, and
  * the name resolution that makes siblings share a family.
  *
  * The important guarantees under test:
  *  - a file with ANY bad row commits NOTHING (a half-imported billing roster is worse than a
  *    rejected file)
  *  - classes and fee plans are never invented from a spreadsheet — an unknown name is a row error
- *  - EVERY ROW GETS ITS OWN HOUSEHOLD. The import does not work siblings out from the file and never
- *    joins an existing family; that is done afterwards with `familyAddSibling`, where the decision
- *    is visible on a record instead of buried in a 200-row spreadsheet.
+ *  - EVERY STUDENT GETS THEIR OWN HOUSEHOLD. The import does not work siblings out from the file and
+ *    never joins an existing family; that is done afterwards with `familyAddSibling`, where the
+ *    decision is visible on a record instead of buried in a 200-row spreadsheet.
+ *  - NOBODY IS LOST TO THE ROW MERGE (0.48.0). A nameless row folds into the student above it, which
+ *    is the one change there that could silently drop a child or an adult, so every way that could
+ *    happen is pinned below.
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { freshApp, makeCtx } from './harness';
-import { paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, students, classes, courses, families, terms, schoolYears, users, auditLog } from '../src/db/schema';
+import { paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, emergencyContacts, students, classes, courses, families, terms, schoolYears, users, auditLog } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
@@ -39,7 +42,7 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   const { db } = app.dbmod;
-  for (const t of [paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, students, classes, courses, families, terms, schoolYears, users, auditLog]) db.delete(t).run();
+  for (const t of [paymentAllocations, payments, charges, invoiceItems, invoices, chargeItems, studentFees, feePlans, guardianFamilies, guardians, emergencyContacts, students, classes, courses, families, terms, schoolYears, users, auditLog]) db.delete(t).run();
 });
 
 /** A plan and a Hifz 1 class to import against. */
@@ -68,10 +71,24 @@ describe('parseAmountCents', () => {
 describe('importTemplate', () => {
   it('exposes the canonical columns with required flags and match aliases', async () => {
     const { admin } = await base();
-    const t = await admin.people.importTemplate();
+    const t = (await admin.people.importTemplate()).fields;
     expect(t.find((f) => f.key === 'fullName')).toMatchObject({ required: true });
     expect(t.find((f) => f.key === 'amount')!.aliases).toContain('paying');
     expect(t.map((f) => f.key)).toContain('guardianPhone');
+  });
+
+  /**
+   * The headers a real QuickSchools export uses — none of which are words we would have chosen.
+   * packages/web mirrors these aliases in its matcher test (it cannot import this module, which opens
+   * the database on load), so this is what fails if the two drift apart.
+   */
+  it('recognises the headers an export actually has, not the ones we would have picked', async () => {
+    const { admin } = await base();
+    const byKey = new Map((await admin.people.importTemplate()).fields.map((f) => [f.key, f.aliases]));
+    expect(byKey.get('dob')).toContain('birthday');
+    expect(byKey.get('className')).toContain('homeroom');
+    expect(byKey.get('guardianRelation')).toContain('relationship');
+    expect(byKey.get('guardianName')).toContain('parent');
   });
 });
 
@@ -88,23 +105,25 @@ describe('preview catches problems before anything is written', () => {
 
   it('offers no family column at all — grouping is not something a spreadsheet decides', async () => {
     const { admin } = await base();
-    const keys = (await admin.people.importTemplate()).map((f) => f.key);
+    const keys = (await admin.people.importTemplate()).fields.map((f) => f.key);
     expect(keys).not.toContain('familyName');
     // Nor is a surname column quietly repurposed as one.
-    for (const f of await admin.people.importTemplate()) {
+    for (const f of (await admin.people.importTemplate()).fields) {
       if (f.key !== 'fullName') expect(f.aliases).not.toContain('surname');
     }
   });
 
-  it('requires a name — one field now, so blank or whitespace-only is the only way to miss it', async () => {
+  it('treats an empty row as an empty row, and takes a single-word name', async () => {
     const { admin, planId } = await base();
-    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ fullName: '' }, { fullName: '   ' }, { fullName: 'Bilal' }] });
-    expect(r.errorCount).toBe(2);
-    expect(r.rows[0].errors[0]).toMatch(/Name is required/);
-    expect(r.rows[1].errors[0]).toMatch(/Name is required/);
+    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ fullName: 'Bilal' }, { fullName: '' }, { fullName: '   ' }] });
     // A single-word name is NOT an error: plenty of children have one, and demanding a surname is
     // exactly the assumption this change removed.
-    expect(r.rows[2].ok).toBe(true);
+    expect(r.rows[0].ok).toBe(true);
+    // The blank rows carry nothing at all, so there is nothing to reject or to attach — a spreadsheet
+    // is full of them, and the readers drop the fully-blank ones before this anyway.
+    expect(r.rows).toHaveLength(1);
+    expect(r.errorCount).toBe(0);
+    expect(r.mergedCount).toBe(0);
   });
 
   it('refuses an unknown class or fee plan rather than inventing one from a typo', async () => {
@@ -149,7 +168,7 @@ describe('preview catches problems before anything is written', () => {
         { fullName: 'A B', amount: '350 ACH' },
         // Three plausible numbers that are not a calendar date — February has no 30th.
         { fullName: 'C D', dob: '2015-02-30' },
-        { fullName: 'E F', guardianEmail: 'not-an-email' },
+        { fullName: 'E F', guardianName: 'Umm E', guardianEmail: 'not-an-email' },
         { fullName: 'G H', dob: 'sometime in 2015' },
       ],
     });
@@ -183,6 +202,223 @@ describe('preview catches problems before anything is written', () => {
   });
 });
 
+/**
+ * The shape a QuickSchools export actually has, and the reason mergeRows exists: the child is named
+ * once, and every further adult gets a row of their own with the student columns empty. Read
+ * row-by-row that is three rejected rows and a child who lost three quarters of their contacts.
+ */
+const ABRAR = [
+  { fullName: 'Abrar Aadi', dob: '04/10/2010', guardianName: 'Shyd Chowdhury', guardianRelation: 'Relative', guardianPhone: '(718) 427-5235' },
+  { guardianName: 'Farhana Sharmin', guardianRelation: 'Mother', guardianPhone: '(718) 427-0178', guardianEmail: 'fasharmin6@example.org' },
+  { guardianName: 'Rashed Shahin', guardianRelation: 'Father', guardianPhone: '(917) 960-6464', guardianEmail: 'rashed@example.org' },
+  { guardianName: 'Md Ibn Sina', guardianRelation: 'Relative', guardianPhone: '(571) 275-7843' },
+];
+
+describe('a student can span several rows', () => {
+  it('folds every nameless row into the student above it', async () => {
+    const { admin, planId } = await base();
+    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: ABRAR });
+
+    // One student out of four lines, and all four adults kept.
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].ok).toBe(true);
+    expect(r.rows[0].resolved!.fullName).toBe('Abrar Aadi');
+    expect(r.mergedCount).toBe(3);
+    expect(r.rows[0].contacts.map((c) => c.name)).toEqual(['Shyd Chowdhury', 'Farhana Sharmin', 'Rashed Shahin', 'Md Ibn Sina']);
+    // The grouping is reported, so the dialog shows which lines became this child rather than
+    // asserting the merge happened.
+    expect(r.rows[0].sourceRows).toEqual([0, 1, 2, 3]);
+  });
+
+  it('asks about a Relative once, and never about a father or a mother', async () => {
+    const { admin, planId } = await base();
+    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: ABRAR });
+
+    // One question for two people — the office decides per relationship, not per row.
+    expect(r.askRelations).toEqual([{ key: 'relative', label: 'Relative', count: 2 }]);
+    const byName = new Map(r.rows[0].contacts.map((c) => [c.name, c]));
+    expect(byName.get('Farhana Sharmin')).toMatchObject({ placement: 'guardian', asked: false });
+    expect(byName.get('Rashed Shahin')).toMatchObject({ placement: 'guardian', asked: false });
+    expect(byName.get('Md Ibn Sina')).toMatchObject({ asked: true });
+  });
+
+  it('files the relatives as emergency contacts when that is the answer', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: ABRAR, placements: { relative: 'emergency' } });
+    expect(res).toMatchObject({ created: 1, familiesCreated: 1, guardiansCreated: 2, contactsCreated: 2, mergedCount: 3 });
+
+    const familyId = app.dbmod.db.select().from(students).all()[0].familyId;
+    const detail = await admin.people.familyGet({ id: familyId });
+    // The parents are guardians of the household, stored as the codes the guardian form itself uses.
+    expect(detail.guardians.map((g) => [g.name, g.relation]).sort()).toEqual([
+      ['Farhana Sharmin', 'mother'],
+      ['Rashed Shahin', 'father'],
+    ]);
+    // The relatives are contacts to ring, with what they are to the child kept as the file spelled it.
+    expect(detail.emergencyContacts.map((c) => [c.name, c.relation, c.phone]).sort()).toEqual([
+      ['Md Ibn Sina', 'Relative', '(571) 275-7843'],
+      ['Shyd Chowdhury', 'Relative', '(718) 427-5235'],
+    ]);
+  });
+
+  it('files them as guardians when that is the answer instead', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: ABRAR, placements: { relative: 'guardian' } });
+    expect(res).toMatchObject({ guardiansCreated: 4, contactsCreated: 0 });
+
+    const familyId = app.dbmod.db.select().from(students).all()[0].familyId;
+    const detail = await admin.people.familyGet({ id: familyId });
+    // "Relative" is one of the four the guardian form offers, so it is stored as that code and the
+    // record reads exactly like one typed in by hand.
+    expect(detail.guardians.filter((g) => g.relation === 'relative').map((g) => g.name).sort()).toEqual(['Md Ibn Sina', 'Shyd Chowdhury']);
+  });
+
+  /** An unanswered question must not cost anybody their phone number. */
+  it('keeps an unplaced relative as a guardian rather than dropping them', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: ABRAR });
+    expect(res).toMatchObject({ guardiansCreated: 4, contactsCreated: 0 });
+  });
+
+  /**
+   * The rule that keeps a household contactable. An aunt may be an emergency contact for a child whose
+   * parents are on file; for a child whose ONLY listed adult is the aunt, filing her as one would leave
+   * the household with no guardian at all — nobody to invite to the portal, nobody the office may ring
+   * about tuition, and a family sheet that prints "no parent or guardian details on file".
+   */
+  it('keeps the only adult a child has as a guardian, whatever the answer was', async () => {
+    const { admin, planId } = await base();
+    const rows = [
+      // Parents on file, so the relative genuinely could go either way.
+      { fullName: 'Abrar Aadi', guardianName: 'Rashed Shahin', guardianRelation: 'Father' },
+      { guardianName: 'Shyd Chowdhury', guardianRelation: 'Relative', guardianPhone: '(718) 427-5235' },
+      // No parent anywhere on this child's rows — the aunt is all there is.
+      { fullName: 'Anas Hasnat', guardianName: 'Halima Begum', guardianRelation: 'Relative', guardianPhone: '(347) 963-0213' },
+    ];
+
+    const p = await admin.people.importPreview({ defaultFeePlanId: planId, rows, placements: { relative: 'emergency' } });
+    const abrar = p.rows.find((r) => r.resolved?.fullName === 'Abrar Aadi')!;
+    const anas = p.rows.find((r) => r.resolved?.fullName === 'Anas Hasnat')!;
+    expect(abrar.contacts.find((c) => c.name === 'Shyd Chowdhury')).toMatchObject({ placement: 'emergency', asked: true });
+    // Same relationship, same answer, different outcome — because it is the last adult this child has.
+    expect(anas.contacts[0]).toMatchObject({ name: 'Halima Begum', placement: 'guardian', asked: false });
+
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows, placements: { relative: 'emergency' } });
+    expect(res).toMatchObject({ created: 2, guardiansCreated: 2, contactsCreated: 1 });
+
+    // Every household ends up with somebody the office can contact, which is the point.
+    for (const fam of await admin.people.directory()) {
+      const d = await admin.people.familyGet({ id: fam.id });
+      expect(d.guardians.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('does not ask at all when no child has a parent to place a relative alongside', async () => {
+    const { admin, planId } = await base();
+    const r = await admin.people.importPreview({
+      defaultFeePlanId: planId,
+      rows: [
+        { fullName: 'Anas Hasnat', guardianName: 'Halima Begum', guardianRelation: 'Relative' },
+        { fullName: 'Aryan Ahmed', guardianName: 'Uncle Nadir', guardianRelation: 'Uncle' },
+      ],
+    });
+    // A question whose answer could not change anything is worse than no question.
+    expect(r.askRelations).toEqual([]);
+    expect(r.rows.every((row) => row.contacts.every((c) => c.placement === 'guardian' && !c.asked))).toBe(true);
+  });
+
+  it('normalises the words an office types for a parent, and asks about the ones that only look like one', async () => {
+    const { admin, planId } = await base();
+    const r = await admin.people.importPreview({
+      defaultFeePlanId: planId,
+      rows: [
+        { fullName: 'Yusuf Ismail', guardianName: 'Abu Yusuf', guardianRelation: 'Dad' },
+        { guardianName: 'Nadia', guardianRelation: 'Ammi' },
+        // people/relations.ts would read this as the mother (it matches on the first word, which is
+        // the right call for deciding which column a number prints in). Recording somebody AS the
+        // mother is a different question, so this one is asked.
+        { guardianName: 'Halima', guardianRelation: 'Mother in law' },
+      ],
+    });
+    expect(r.askRelations.map((a) => a.label)).toEqual(['Mother in law']);
+
+    await admin.people.importCommit({
+      defaultFeePlanId: planId,
+      rows: [{ fullName: 'Yusuf Ismail', guardianName: 'Abu Yusuf', guardianRelation: 'Dad' }, { guardianName: 'Nadia', guardianRelation: 'Ammi' }],
+    });
+    const detail = await admin.people.familyGet({ id: app.dbmod.db.select().from(students).all()[0].familyId });
+    expect(detail.guardians.map((g) => [g.name, g.relation]).sort()).toEqual([
+      ['Abu Yusuf', 'father'],
+      ['Nadia', 'mother'],
+    ]);
+  });
+
+  it('records one guardian when the same adult is listed twice for a child', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({
+      defaultFeePlanId: planId,
+      rows: [
+        { fullName: 'Ahnaf Mahmood', guardianName: 'Kurshed Mahmood', guardianRelation: 'Father', guardianPhone: '(267) 340-4871' },
+        // The same parent again, this time with the email the first row left out.
+        { guardianName: 'kurshed mahmood', guardianEmail: 'mohdmahmood@example.org' },
+      ],
+    });
+    expect(res.guardiansCreated).toBe(1);
+    const detail = await admin.people.familyGet({ id: app.dbmod.db.select().from(students).all()[0].familyId });
+    // One record, holding what both rows contributed — the first spelling wins, since it is the one
+    // the office chose to write.
+    expect(detail.guardians).toHaveLength(1);
+    expect(detail.guardians[0]).toMatchObject({ name: 'Kurshed Mahmood', phone: '(267) 340-4871', email: 'mohdmahmood@example.org', relation: 'father' });
+  });
+
+  /** The two mistakes the merge must never absorb. Both would lose a person invisibly. */
+  it('refuses a nameless row that is really a student, and one with nobody above it', async () => {
+    const { admin, planId } = await base();
+    const r = await admin.people.importPreview({
+      defaultFeePlanId: planId,
+      // A guardian row before any child at all.
+      rows: [{ guardianName: 'Someone', guardianPhone: '555-0000' }, { fullName: 'Abyad Mahmood' }, { className: 'Hifz 1', amount: '350' }],
+    });
+    expect(r.errorCount).toBe(2);
+    expect(r.rows[0].errors[0]).toMatch(/no student above it/);
+    // A row with a class and an amount but no name is a child whose name was left out — folding it
+    // into the student above would bill one child twice and lose the other entirely.
+    expect(r.rows[2].errors[0]).toMatch(/If this is a student, add their name/);
+  });
+
+  it('refuses contact details with nobody attached to them', async () => {
+    const { admin, planId } = await base();
+    const r = await admin.people.importPreview({
+      defaultFeePlanId: planId,
+      rows: [{ fullName: 'Abidur Shazid' }, { guardianRelation: 'Father', guardianPhone: '(267) 407-2858' }],
+    });
+    expect(r.errorCount).toBe(1);
+    expect(r.rows[0].errors[0]).toMatch(/Row 3 has contact details but no name/);
+  });
+
+  /** The placement question is keyed by the label out of the file, so an absurd one has to be a row
+   *  problem here — left alone it would come back from the request boundary as one opaque failure
+   *  about the whole file, with nothing pointing at the column that caused it. */
+  it('reports an over-long relationship instead of asking a question about it', async () => {
+    const { admin, planId } = await base();
+    const r = await admin.people.importPreview({
+      defaultFeePlanId: planId,
+      rows: [{ fullName: 'Abrar Aadi', guardianName: 'Someone', guardianRelation: 'x'.repeat(61) }],
+    });
+    expect(r.rows[0].errors[0]).toMatch(/is too long — 60 characters at most/);
+    expect(r.askRelations).toEqual([]);
+  });
+
+  it('validates an email on a folded row too, not just the student’s own', async () => {
+    const { admin, planId } = await base();
+    const r = await admin.people.importPreview({
+      defaultFeePlanId: planId,
+      rows: [{ fullName: 'Abyad Mahmood' }, { guardianName: 'Kurshed', guardianRelation: 'Father', guardianEmail: 'not-an-email' }],
+    });
+    expect(r.rows[0].errors[0]).toMatch(/not an email address/);
+  });
+});
+
 describe('commit is all-or-nothing', () => {
   it('writes NOTHING when any row is invalid', async () => {
     const { admin, planId } = await base();
@@ -191,7 +427,7 @@ describe('commit is all-or-nothing', () => {
         defaultFeePlanId: planId,
         rows: [
           { fullName: 'Good Row' },
-          { fullName: '' }, // the whole file must be rejected because of this one
+          { fullName: 'Bad Row', className: 'No Such Class' }, // the whole file must be rejected because of this one
         ],
       }),
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
@@ -265,6 +501,100 @@ describe('commit is all-or-nothing', () => {
   });
 });
 
+/**
+ * Correcting the fees an import could not express (0.48.0).
+ *
+ * Every row gets the SAME plan, because a spreadsheet column cannot say "the second child pays less" —
+ * and since 0.39.0 that reduction IS the per-student override (the family discount went with per-child
+ * invoices). So the step after the import is where a roster becomes what the office actually charges.
+ *
+ * The dangerous half is the PLAN change: `assignFee` adds a plan and never removes the wrong one, so
+ * doing this through it left a child carrying both and billed twice. That is what these pin.
+ */
+describe('fixing up fees after an import', () => {
+  it('lists what each imported child is set to be billed', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }, { fullName: 'Sara Ismail', amount: '700' }] });
+    const rows = await admin.billing.studentFeeList({ studentIds: res.students.map((s) => s.studentId) });
+    expect(rows.map((r) => [r.fullName, r.feePlanName, r.effectiveAmountCents])).toEqual([
+      ['Sara Ismail', 'Monthly tuition', 70000], // the file's Amount column became her override
+      ['Yusuf Ismail', 'Monthly tuition', 35000], // no column, so the plan's own price
+    ]);
+  });
+
+  it('changes the amount without changing the plan', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }] });
+    const id = res.students[0].studentId;
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: 20000 });
+
+    const [row] = await admin.billing.studentFeeList({ studentIds: [id] });
+    expect(row).toMatchObject({ feePlanId: planId, overrideAmountCents: 20000, effectiveAmountCents: 20000 });
+    // …and it is what actually gets billed, which is the only thing that matters.
+    await admin.billing.generatePeriod({ periodKey: '2026-07', label: 'Jul' });
+    expect((await admin.billing.studentBilling({ studentId: id })).invoices[0].totalCents).toBe(20000);
+  });
+
+  /** The whole reason this procedure exists rather than reusing assignFee. */
+  it('replaces the plan instead of leaving the child carrying both', async () => {
+    const { admin, planId } = await base();
+    const weekend = await admin.billing.feePlanCreate({ name: 'Weekend rate', amountCents: 15000, cadence: 'monthly' });
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }] });
+    const id = res.students[0].studentId;
+
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: weekend.id, overrideAmountCents: null });
+
+    const rows = await admin.billing.studentFeeList({ studentIds: [id] });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ feePlanId: weekend.id, effectiveAmountCents: 15000 });
+    // Billed ONCE, at the new plan's price — not 35000 + 15000.
+    await admin.billing.generatePeriod({ periodKey: '2026-07', label: 'Jul' });
+    expect((await admin.billing.studentBilling({ studentId: id })).invoices[0].totalCents).toBe(15000);
+  });
+
+  /**
+   * The WHY of an override, the same field the billing tab has offered all along (0.48.0). "$45 instead
+   * of $100" is unreadable six months later; "sibling discount" is the whole story, and it is what the
+   * year view and the family sheet print beside the figure.
+   */
+  it('keeps the reason for an override, and drops it when the override goes', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }] });
+    const id = res.students[0].studentId;
+
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: 20000, note: 'Sibling discount' });
+    expect((await admin.billing.studentFeeList({ studentIds: [id] }))[0]).toMatchObject({ overrideAmountCents: 20000, note: 'Sibling discount' });
+
+    // Back to the plan's own price: there is no longer an agreed amount, so a note claiming there is
+    // one would be a statement about nothing.
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: null, note: 'Sibling discount' });
+    expect((await admin.billing.studentFeeList({ studentIds: [id] }))[0]).toMatchObject({ overrideAmountCents: null, note: null });
+  });
+
+  it('clearing the override puts the child back on the plan’s own price', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail', amount: '700' }] });
+    const id = res.students[0].studentId;
+    await admin.billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: null });
+    const [row] = await admin.billing.studentFeeList({ studentIds: [id] });
+    // Null, not 35000: an override equal to today's price would freeze this child at it, so a later
+    // change to the plan would silently skip them.
+    expect(row.overrideAmountCents).toBeNull();
+    expect(row.effectiveAmountCents).toBe(35000);
+  });
+
+  it('is admin+finance, and refuses a plan or a student that does not exist', async () => {
+    const { admin, planId } = await base();
+    const res = await admin.people.importCommit({ defaultFeePlanId: planId, rows: [{ fullName: 'Yusuf Ismail' }] });
+    const id = res.students[0].studentId;
+    // Finance runs billing, so finance may fix a fee (§5 — they assign fees already).
+    await caller('finance').billing.setStudentFee({ studentId: id, feePlanId: planId, overrideAmountCents: 1000 });
+    await expect(caller('parent').billing.setStudentFee({ studentId: id, feePlanId: planId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(admin.billing.setStudentFee({ studentId: id, feePlanId: 'fee_nope' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(admin.billing.setStudentFee({ studentId: 'stu_nope', feePlanId: planId })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
 describe('walls', () => {
   it('import is admin-only and LAN-only', async () => {
     const rows = [{ fullName: 'A B' }];
@@ -306,5 +636,103 @@ describe('walls', () => {
     expect(merged.balance.owedCents).toBe(35000);
     // …and the emptied one is gone rather than left behind as a stray record.
     expect((await admin.people.directory()).some((f) => f.id === a.familyId)).toBe(false);
+  });
+});
+
+/**
+ * The downloaded template (0.48.0).
+ *
+ * It used to be a header row and nothing else, which named the columns and said nothing about what goes
+ * in them — and the two things nobody guesses are the two a header cannot show: a nameless row is
+ * another adult for the student above, and the Amount column overrides the plan for one child.
+ *
+ * Putting data in the file introduces a way to import children who do not exist, so the examples are
+ * tested from BOTH ends: that they demonstrate what they claim to when run through the real importer,
+ * and that they are refused if an office leaves them in.
+ */
+describe('the template’s example rows', () => {
+  let EXAMPLES: readonly string[][];
+  let FIELDS: readonly { key: string }[];
+
+  beforeAll(async () => {
+    const mod = await import('../src/people/import');
+    EXAMPLES = mod.IMPORT_EXAMPLE_ROWS;
+    FIELDS = mod.IMPORT_FIELDS;
+  });
+
+  /** The rows as the dialog would send them after a round trip through the file. */
+  const asRows = () =>
+    EXAMPLES.map((cells) => {
+      const o: Record<string, string> = {};
+      FIELDS.forEach((f, i) => { if (cells[i]) o[f.key] = cells[i]; });
+      return o;
+    });
+
+  /** The classes and plan the examples name, so a row that is otherwise fine actually resolves. */
+  async function withExampleStructure() {
+    const admin = caller('admin');
+    await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
+    const course = await admin.structure.courseCreate({ name: 'Hifz' });
+    await admin.structure.classCreate({ courseId: course.id, name: 'Group A' });
+    await admin.structure.classCreate({ courseId: course.id, name: 'Group B' });
+    return admin;
+  }
+
+  it('is one cell per column, every row', () => {
+    // A short row would silently shift every value after the gap into the wrong column.
+    for (const r of EXAMPLES) expect(r).toHaveLength(FIELDS.length);
+  });
+
+  it('demonstrates the whole shape of the file', async () => {
+    const admin = await withExampleStructure();
+    // Renamed so they are no longer the shipped examples — this test is about what the rows TEACH.
+    const rows = asRows().map((r) => (r.fullName ? { ...r, fullName: `${r.fullName} X` } : r));
+    const r = await admin.people.importPreview({ rows });
+
+    // Five lines, three children: the two nameless rows folded upward.
+    expect(r.rows.filter((x) => x.resolved)).toHaveLength(3);
+    expect(r.mergedCount).toBe(2);
+    expect(r.errorCount).toBe(0);
+
+    const byName = new Map(r.rows.filter((x) => x.resolved).map((x) => [x.resolved!.fullName, x]));
+    // A second parent arrived from a row with no name of its own.
+    expect(byName.get('Yusuf Ismail X')!.contacts.map((c) => c.name)).toEqual(['Ibrahim Ismail', 'Khadija Ismail']);
+    // The Amount column overrides the plan for one child; a blank one follows the plan.
+    expect(byName.get('Maryam Ismail X')!.resolved!.amountCents).toBe(15000);
+    expect(byName.get('Bilal Farooqi X')!.resolved!.amountCents).toBeNull();
+    // And the Aunt is the reason the importer stops to ask — asked once, for one person.
+    expect(r.askRelations).toEqual([{ key: 'aunt', label: 'Aunt', count: 1 }]);
+  });
+
+  it('is refused, row by row, if an office leaves it in the file', async () => {
+    const admin = await withExampleStructure();
+    const r = await admin.people.importPreview({ rows: asRows() });
+    expect(r.okCount).toBe(0);
+    // One complaint per example student, and it says what to do rather than listing every other
+    // problem with a row nobody meant to import.
+    const errors = r.rows.flatMap((x) => x.errors);
+    expect(errors).toHaveLength(3);
+    for (const e of errors) expect(e).toMatch(/still the example row from the template/);
+    expect(errors.some((e) => /Monthly tuition/.test(e))).toBe(false);
+  });
+
+  it('validates a row the office edited as their own data', async () => {
+    const admin = await withExampleStructure();
+    // One cell changed — the child's name — and it is theirs, not ours.
+    const rows = asRows();
+    rows[0] = { ...rows[0], fullName: 'Ismail Yusufov' };
+    const r = await admin.people.importPreview({ rows });
+    const mine = r.rows.find((x) => x.resolved?.fullName === 'Ismail Yusufov')!;
+    expect(mine.ok).toBe(true);
+    expect(mine.errors).toEqual([]);
+    // The examples still in the file are still refused.
+    expect(r.rows.filter((x) => x.errors.some((e) => /example row/.test(e)))).toHaveLength(2);
+  });
+
+  it('a real student who happens to be blank in every column is not an example row', async () => {
+    const { admin, planId } = await base();
+    // The fingerprint is every field; an empty row is a stray with no name, which has its own message.
+    const r = await admin.people.importPreview({ defaultFeePlanId: planId, rows: [{ fullName: 'Only A Name' }] });
+    expect(r.rows[0].ok).toBe(true);
   });
 });

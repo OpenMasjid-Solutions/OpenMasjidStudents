@@ -16,16 +16,20 @@
  * money and roster history stay intact. Archiving a class unplaces its students first (the server
  * does that in one transaction) and tells you how many moved.
  */
-import { useState, type FormEvent } from 'react';
+import { lazy, Suspense, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { CalendarRange, Layers, Pencil, Plus, School, UserPlus } from 'lucide-react';
+import { ArrowRightLeft, CalendarRange, Layers, Pencil, Plus, School, UserPlus } from 'lucide-react';
 import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { MONTH_NAMES, schoolYearSpan } from '../../lib/months';
 import { useWindows } from '../../components/Windows';
 import { SchoolTabs, useRequiredSchool } from '../../components/SchoolTabs';
 import { ClassEnrol } from '../../components/ClassEnrol';
+
+/** A once-a-year screen — no reason for it to ride in the main bundle (same treatment as the go-live
+ *  wizard and What's new). */
+const YearRollover = lazy(() => import('../../components/YearRollover').then((m) => ({ default: m.YearRollover })));
 
 /** The in-progress edit of one school year, or null when nothing is being edited. */
 interface YearEdit {
@@ -40,6 +44,20 @@ export function Structure() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
   const { open } = useWindows();
+
+  /** Starting a new year, in a window of its own — it is a five-step review, not a button. */
+  const openRollover = () =>
+    open({
+      title: t('rollover.title'),
+      wide: true,
+      dedupeKey: 'year-rollover',
+      icon: <ArrowRightLeft size={15} />,
+      node: (
+        <Suspense fallback={<p className="empty">{t('common.loading')}</p>}>
+          <YearRollover schoolId={schoolId} />
+        </Suspense>
+      ),
+    });
 
   /** Mass enrolment opens as its own window: it is a list of the whole school, which does not belong
    *  inline under a class chip. */
@@ -253,12 +271,25 @@ export function Structure() {
     await refreshTree();
   }
 
+  /**
+   * Confirmations on this screen (0.48.0). It had none, and everything on it is a one-press change to the
+   * shape of the whole madrasah: archiving a course hides it and every class inside it, archiving a class
+   * leaves its children unplaced, deleting a school or a year moves what the Year view shows.
+   *
+   * Each message says WHAT HAPPENS rather than asking whether the office is sure — the useful half of a
+   * confirmation is the sentence, not the second click.
+   */
   async function doCourseArchive(id: string, name: string) {
+    const classCount = (tree.data ?? []).find((c) => c.id === id)?.classes.length ?? 0;
+    if (!window.confirm(t('structure.confirmCourseArchive', { name, count: classCount }))) return;
     await run(() => courseArchive.mutateAsync({ id }), () => setNote(t('structure.courseArchived', { name })));
     await refreshTree();
   }
 
-  async function doClassArchive(id: string, name: string) {
+  async function doClassArchive(id: string, name: string, studentCount: number) {
+    // The number of children about to be left without a class is the fact that decides it, so it is in
+    // the question rather than only in the note afterwards.
+    if (!window.confirm(t('structure.confirmClassArchive', { name, count: studentCount }))) return;
     await run(async () => {
       const r = await classArchive.mutateAsync({ id });
       setNote(r.unplaced > 0 ? t('structure.classArchivedUnplaced', { name, count: r.unplaced }) : t('structure.classArchived', { name }));
@@ -360,6 +391,13 @@ export function Structure() {
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head">
           <h2><CalendarRange size={16} />{t('structure.years')}</h2>
+          <span className="spacer" />
+          {/* The real way into a new year (0.48.0). "Make current" below still exists and still does
+              exactly one thing — flip which year the app is looking at — which is right for correcting a
+              mistake and wrong as the way to start September. */}
+          <button type="button" className="btn btn--primary" onClick={openRollover}>
+            <ArrowRightLeft size={15} /> {t('rollover.start')}
+          </button>
         </div>
         <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('structure.yearsHint')}</p>
 
@@ -413,7 +451,7 @@ export function Structure() {
                         </button>
                       )}
                       {y.status === 'active' && !y.isCurrent && (
-                        <button type="button" className="btn btn--ghost btn--sm" disabled={yearArchive.isPending} onClick={() => void run(() => yearArchive.mutateAsync({ id: y.id }), undefined).then(refreshYears)}>
+                        <button type="button" className="btn btn--ghost btn--sm" disabled={yearArchive.isPending} onClick={() => { if (!window.confirm(t('structure.confirmYearArchive', { name: y.label }))) return; void run(() => yearArchive.mutateAsync({ id: y.id }), undefined).then(refreshYears); }}>
                           {t('structure.archive')}
                         </button>
                       )}
@@ -516,7 +554,7 @@ export function Structure() {
                     <button type="button" className="link-btn" style={{ marginInlineStart: '0.4rem' }} onClick={() => setTermEdit({ id: tm.id, name: tm.name, startDate: tm.startDate ?? '', endDate: tm.endDate ?? '' })} aria-label={t('common.edit')}>
                       <Pencil size={12} />
                     </button>
-                    <button type="button" className="link-btn" style={{ marginInlineStart: '0.3rem' }} onClick={() => void run(() => termDelete.mutateAsync({ id: tm.id }), undefined).then(refreshTerms)} aria-label={t('common.remove')}>×</button>
+                    <button type="button" className="link-btn" style={{ marginInlineStart: '0.3rem' }} onClick={() => { if (!window.confirm(t('structure.confirmTermDelete', { name: tm.name }))) return; void run(() => termDelete.mutateAsync({ id: tm.id }), undefined).then(refreshTerms); }} aria-label={t('common.remove')}>×</button>
                   </span>
                 ))}
               </div>
@@ -596,7 +634,7 @@ export function Structure() {
                         <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => move('class', k.id, c.classes, -1)} aria-label={t('structure.moveUp')}>↑</button>
                         <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => move('class', k.id, c.classes, 1)} aria-label={t('structure.moveDown')}>↓</button>
                         <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => setRename({ kind: 'class', id: k.id, name: k.name })} aria-label={t('common.edit')}><Pencil size={12} /></button>
-                        <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => doClassArchive(k.id, k.name)} aria-label={t('structure.archive')}>×</button>
+                        <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => doClassArchive(k.id, k.name, k.studentCount)} aria-label={t('structure.archive')}>×</button>
                       </span>
                     ))}
                   </div>

@@ -8,24 +8,33 @@
  */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { and, eq, asc, desc, inArray } from 'drizzle-orm';
+import { and, eq, ne, asc, desc, inArray } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
-import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
+import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, carryIns, autopayEnrollments, paymentMethods, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
+import { makeLog } from '../logger';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
+import { billFromMonths, currentPeriod } from '../billing/joinMidYear';
 import { schoolYearMonths } from '../billing/schoolYear';
+import { yearCellsFor } from '../billing/yearCells';
 import { invoiceLines, payableLines } from '../billing/lines';
-import { periodKeyError, periodBefore, isMonthPeriod } from '../billing/period';
-import { commitCarryIn, defaultGoLivePeriod, midYearPlan } from '../billing/carryIn';
+import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
+import { commitCarryIn, defaultGoLivePeriod, midYearPlan, noteCarryIn } from '../billing/carryIn';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
+import { isIsoDay } from '../settings/dates';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
+import { paidForByPayment } from '../billing/paidFor';
+import { refundTransaction, refundableTransactions } from '../payments/refunds';
+import { stripeReady } from '../payments/stripe';
 import {
   getCurrency,
   getYearViewColumns,
   setYearViewColumns,
+  getYearViewFeeNote,
+  setYearViewFeeNote,
   YEAR_VIEW_COLUMNS,
   getAutoInvoice,
   setAutoInvoice,
@@ -34,6 +43,8 @@ import {
   setBillingStartPeriod,
   getMidYearDoneAt,
   setMidYearDoneAt,
+  getInvoiceLabelTemplate,
+  setInvoiceLabelTemplate,
 } from '../settings';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { relationKind, dedupeNumbers, type RelationKind } from '../people/relations';
@@ -41,6 +52,8 @@ import { alertStaff, householdName } from '../alerts';
 import { resolveSchoolScope } from '../schools';
 import { sendReceipt } from '../mail/notify';
 import { formatMoney } from '../db/money';
+
+const payLog = makeLog('billing');
 
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
@@ -51,6 +64,31 @@ const SIGNED_CENTS = z.number().int().min(-100_000_000).max(100_000_000);
 const PERIOD = z.string().trim().min(1).max(40);
 const NOTE = z.string().trim().max(200);
 const now = () => new Date();
+
+/**
+ * A date typed into a form on the money path (0.48.0).
+ *
+ * REFUSED HERE, with one sentence, because nothing downstream can refuse it usefully. §9 fixes the
+ * storage format as ISO precisely because every date column is compared as TEXT — so a due date of
+ * `lol` is stored happily and then sorts wherever it likes, is never past due (`due_date < today` is
+ * false), and is invisible to autopay (`due_date <= today` is false too). A payment date fails louder
+ * and worse: `new Date('T12:00:00')` is `NaN`, SQLite stores that as NULL, and the NOT NULL column
+ * refuses — which reached the office as `NOT NULL constraint failed: payments.occurred_at`. Clearing
+ * the date box in the record-a-payment form was enough to do it.
+ *
+ * A regex would not be enough: `2026-13-45` is ten characters of the right shape and is not a day, so
+ * `settings/dates.ts` is asked instead — the one place that knows what a real stored date is.
+ */
+function isoDay(value: string, what: string): string {
+  const v = value.trim();
+  if (!isIsoDay(v)) throw new TRPCError({ code: 'BAD_REQUEST', message: `${what} needs to be a real date, like 2026-03-04.` });
+  return v;
+}
+
+/** The same check for a field that may legitimately be left blank (no due date, "as of today"). */
+function isoDayOrNull(value: string | undefined, what: string): string | null {
+  return value && value.trim() ? isoDay(value, what) : null;
+}
 
 /** Who a bulk apply targets: explicit students, or everyone active in a class or course.
  *  One resolver so the fee-plan and charge-item tabs behave identically. */
@@ -107,6 +145,57 @@ function assertBillablePeriod(periodKey: string, periodKind: 'month' | 'term' = 
   }
 }
 
+/**
+ * The label an invoice gets — resolved HERE, not in the browser (0.48.0).
+ *
+ * The form used to be two free-text boxes typed out every month: the period key AND the label, with
+ * nothing checking they agreed. "Tuition — Jun 2026" filed under `2026-07` was one keystroke away, and an
+ * invoice is money history — it is never edited afterwards (§9), so the wrong month would be on that
+ * parent's bill for good. Deriving the label from the period key the invoice is actually filed under is
+ * what makes that impossible rather than merely unlikely.
+ *
+ * The template is REMEMBERED, so next month's form opens with this madrasah's own wording and the nightly
+ * job says the same thing (settings.getInvoiceLabelTemplate).
+ *
+ * An explicit `label` still wins when given: it is what every existing caller and test sends, and a
+ * caller that has already decided on an exact string should get exactly that.
+ */
+function invoiceLabelFor(input: { periodKey: string; label?: string; labelTemplate?: string }, opts: { remember?: boolean } = {}): string {
+  if (input.label?.trim()) return input.label.trim();
+  const template = input.labelTemplate?.trim() || getInvoiceLabelTemplate();
+  // `remember` is what separates the two Generate forms (0.48.0). A WHOLE-SCHOOL run defines how this
+  // madrasah names its invoices, so its wording is saved and the nightly job inherits it. A ONE-HOUSEHOLD
+  // run is usually a catch-up or a correction, and a label typed for that one family must not quietly
+  // become the default for everybody else's bills.
+  if (opts.remember && input.labelTemplate?.trim()) setInvoiceLabelTemplate(input.labelTemplate.trim());
+  return resolveInvoiceLabel(template, input.periodKey);
+}
+
+/**
+ * The months worth offering in the Generate form: the current school year's, if one is configured.
+ *
+ * Not a free-typed period key, and not every month since 1970 — a madrasa bills the months it teaches,
+ * and the school year already says which those are (billing/schoolYear.ts). With no year set yet, a
+ * window around today keeps the form usable rather than empty.
+ */
+function invoiceMonthOptions(): { periodKey: string; label: string }[] {
+  const year = db.select().from(schoolYears).where(eq(schoolYears.isCurrent, true)).get();
+  if (year?.startYear != null) {
+    return schoolYearMonths(year.startYear, year.startMonth, year.endMonth).map((m) => ({
+      periodKey: m.periodKey,
+      label: resolveInvoiceLabel('[mon] [year]', m.periodKey),
+    }));
+  }
+  const now = new Date();
+  const out: { periodKey: string; label: string }[] = [];
+  for (let i = -6; i <= 6; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const periodKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    out.push({ periodKey, label: resolveInvoiceLabel('[mon] [year]', periodKey) });
+  }
+  return out;
+}
+
 function resolveTarget(target: z.infer<typeof BULK_TARGET>): string[] {
   if (target.kind === 'students') {
     // Keep only ids that are real AND active — a stale UI selection must not create rows
@@ -160,12 +249,24 @@ function invoiceRowsFor(studentIds: string[]) {
 /** Payment rows for a set of students, newest first. */
 function paymentRowsFor(studentIds: string[]) {
   if (!studentIds.length) return [];
-  return db
+  const rows = db
     .select({ id: payments.id, studentId: payments.studentId, amountCents: payments.amountCents, channel: payments.channel, occurredAt: payments.occurredAt, memo: payments.memo, reversalOf: payments.reversalOf, by: payments.recordedByName })
     .from(payments)
     .where(inArray(payments.studentId, studentIds))
     .orderBy(desc(payments.occurredAt), desc(payments.createdAt))
     .all();
+  /**
+   * WHAT each payment was for (0.48.0), not only how it arrived.
+   *
+   * The office's ledger said cash / card / autopay and a date, which answers "how" and leaves "which bill"
+   * to be worked out from the amount — impossible on a monthly plan, where every row is the same figure.
+   * The parent portal got this first; the office needs it more, because the office is who gets asked.
+   *
+   * Derived from the allocations on every read (billing/paidFor.ts), so it follows the recompute rather
+   * than freezing whatever was true on the day.
+   */
+  const forWhat = paidForByPayment(db, rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, paidFor: forWhat.get(r.id) ?? { labels: [], more: 0, advance: true } }));
 }
 
 /** The mid-year go-live input — shared by preview and commit so they cannot drift (see below). */
@@ -178,6 +279,9 @@ const MID_YEAR_INPUT = z.object({
       z.object({
         studentId: ID,
         paidThrough: z.union([PERIOD, z.literal('')]).optional(),
+        /** "They have paid nothing at all this year" — resolved to a real month in `midYearPlan`, so
+         *  nothing downstream ever sees a sentinel (0.48.0). */
+        paidNothing: z.boolean().optional(),
         amountOverrideCents: CENTS.optional(),
         kindOverride: z.enum(['owes', 'ahead']).optional(),
       }),
@@ -340,6 +444,71 @@ export const billingRouter = router({
       return { ok: true as const };
     }),
 
+  /**
+   * The fee assignments of a named set of students (0.48.0) — what the import's fee step reads.
+   *
+   * `familyFees` above answers the same question per HOUSEHOLD, which is the wrong shape right after an
+   * import: the office is looking at the 36 children they just added, each in a household of their own,
+   * and 36 queries to show one table is silly. Bounded to the import's own cap.
+   */
+  studentFeeList: adminOrFinanceProcedure
+    .input(z.object({ studentIds: z.array(ID).min(1).max(2000) }))
+    .query(({ input }) =>
+      db
+        .select({
+          studentId: students.id,
+          fullName: students.fullName,
+          feeId: studentFees.id,
+          feePlanId: feePlans.id,
+          feePlanName: feePlans.name,
+          planAmountCents: feePlans.amountCents,
+          cadence: feePlans.cadence,
+          overrideAmountCents: studentFees.overrideAmountCents,
+          note: studentFees.note,
+        })
+        .from(students)
+        .leftJoin(studentFees, eq(studentFees.studentId, students.id))
+        .leftJoin(feePlans, eq(feePlans.id, studentFees.feePlanId))
+        .where(inArray(students.id, input.studentIds))
+        .orderBy(asc(students.fullName))
+        .all()
+        .map((r) => ({ ...r, effectiveAmountCents: r.feeId ? (r.overrideAmountCents ?? r.planAmountCents) : null })),
+    ),
+
+  /**
+   * "This child carries exactly this plan, at this amount" (0.48.0).
+   *
+   * The import gives every row the SAME default plan, because a spreadsheet column cannot express "the
+   * second child pays less"; the office then wants to correct a handful of them without opening 36
+   * household records. `assignFee` alone could not do it — it adds a plan but never takes the wrong one
+   * away, so changing a child's plan through it left them carrying both and billed twice.
+   *
+   * So this REPLACES the student's assignments with the one given, which is what "set the fee" means.
+   * That is destructive by design and therefore stated plainly: a child who legitimately carries several
+   * fees (tuition plus a book fee) must be edited on their own record, not here.
+   */
+  setStudentFee: adminOrFinanceProcedure
+    .input(z.object({ studentId: ID, feePlanId: ID, overrideAmountCents: CENTS.nullable().optional(), note: NOTE.optional() }))
+    .mutation(({ ctx, input }) => {
+      if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+      if (!db.select({ id: feePlans.id }).from(feePlans).where(eq(feePlans.id, input.feePlanId)).get()) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
+      const ts = now();
+      const override = input.overrideAmountCents ?? null;
+      // The note explains an override and only an override, so it goes when the override does — a
+      // "sibling rate" note left on a child back at the plan price is a claim about nothing.
+      const note = override == null ? null : input.note?.trim() || null;
+      db.transaction((tx) => {
+        // Any OTHER plan goes, so the child ends up billed once. Nothing here touches an invoice
+        // already raised — a fee is configuration, and money already billed is history (§9).
+        tx.delete(studentFees).where(and(eq(studentFees.studentId, input.studentId), ne(studentFees.feePlanId, input.feePlanId))).run();
+        const existing = tx.select({ id: studentFees.id }).from(studentFees).where(and(eq(studentFees.studentId, input.studentId), eq(studentFees.feePlanId, input.feePlanId))).get();
+        if (existing) tx.update(studentFees).set({ overrideAmountCents: override, note, updatedAt: ts }).where(eq(studentFees.id, existing.id)).run();
+        else tx.insert(studentFees).values({ id: rid('stf'), studentId: input.studentId, feePlanId: input.feePlanId, overrideAmountCents: override, note, createdAt: ts, updatedAt: ts }).run();
+      });
+      audit(auditActor(ctx), 'fee.setStudent', { entity: 'student', entityId: input.studentId, detail: { feePlanId: input.feePlanId, overrideAmountCents: override } });
+      return { ok: true as const };
+    }),
+
   /** Change (or clear, by omitting `overrideAmountCents`) one student's amount for a plan they
    *  already carry — the "override per student instead of making a whole new plan" path. */
   setFeeOverride: adminOrFinanceProcedure
@@ -398,20 +567,38 @@ export const billingRouter = router({
   /** `periodKind` drives the cadence gate: a `month` period bills monthly plans, a `term` period
    *  bills per-term plans, and one-time plans bill once on whichever comes first. Defaults to
    *  `month` — the common case, and what every existing caller means. */
+  /**
+   * The label TEMPLATE this madrasah uses, and the months it makes sense to generate (0.48.0).
+   *
+   * The form used to be two free-text boxes — the period key AND the label — typed out every month, with
+   * nothing checking they agreed. "Tuition — Jun 2026" filed under `2026-07` was one keystroke away, and
+   * an invoice is money history: it is not edited afterwards (§9). So the month is picked from this list
+   * and the label is written once with tags in it.
+   */
+  invoiceLabelConfig: adminOrFinanceProcedure.query(() => ({
+    template: getInvoiceLabelTemplate(),
+    /** What the tags mean, resolved against the current month so the UI can show real examples. */
+    tags: ['month', 'mon', 'year', 'yy', 'period'].map((tag) => ({ tag, example: resolveInvoiceLabel(`[${tag}]`, defaultGoLivePeriod()) })),
+    /** The months of the current school year, if one is set — the only months worth billing. Falls back
+     *  to a window around today so the form still works before a year is configured. */
+    months: invoiceMonthOptions(),
+    suggested: defaultGoLivePeriod(),
+  })),
+
   generatePeriod: adminOrFinanceProcedure
-    .input(z.object({ periodKey: PERIOD, label: NAME, dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
+    .input(z.object({ periodKey: PERIOD, label: NAME.optional(), labelTemplate: NAME.optional(), dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
     .mutation(({ ctx, input }) => {
       assertBillablePeriod(input.periodKey, input.periodKind ?? 'month');
-      const r = generateForPeriod({ periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null, periodKind: input.periodKind });
+      const r = generateForPeriod({ periodKey: input.periodKey, label: invoiceLabelFor(input, { remember: true }), dueDate: isoDayOrNull(input.dueDate, 'The due date'), periodKind: input.periodKind });
       audit(auditActor(ctx), 'invoice.generatePeriod', { entity: 'billing', detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
     }),
 
   generateFamily: adminOrFinanceProcedure
-    .input(z.object({ familyId: ID, periodKey: PERIOD, label: NAME, dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
+    .input(z.object({ familyId: ID, periodKey: PERIOD, label: NAME.optional(), labelTemplate: NAME.optional(), dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
     .mutation(({ ctx, input }) => {
       assertBillablePeriod(input.periodKey, input.periodKind ?? 'month');
-      const r = generateForFamily(input.familyId, { periodKey: input.periodKey, label: input.label, dueDate: input.dueDate || null, periodKind: input.periodKind });
+      const r = generateForFamily(input.familyId, { periodKey: input.periodKey, label: invoiceLabelFor(input), dueDate: isoDayOrNull(input.dueDate, 'The due date'), periodKind: input.periodKind });
       audit(auditActor(ctx), 'invoice.generateFamily', { entity: 'family', entityId: input.familyId, detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
     }),
@@ -469,18 +656,25 @@ export const billingRouter = router({
       const year = input?.schoolYearId
         ? db.select().from(schoolYears).where(and(eq(schoolYears.id, input.schoolYearId), inArray(schoolYears.schoolId, scope.ids))).get()
         : db.select().from(schoolYears).where(and(eq(schoolYears.isCurrent, true), inArray(schoolYears.schoolId, scope.ids))).orderBy(asc(schoolYears.label)).get();
-      if (!year) return { year: null, needsStartYear: false, months: [], columns: [], rows: [], currency: getCurrency() };
+      if (!year) return { year: null, needsStartYear: false, months: [], columns: [], rows: [], currency: getCurrency(), startPeriod: null as string | null };
       // Rows follow the YEAR's school, not the requested filter: asking for a specific year implies its
       // school, and mixing another school's children into it would be nonsense.
       const rowSchoolIds = year.schoolId ? [year.schoolId] : scope.ids;
       if (year.startYear == null) {
         // Configured before start_year existed — the UI asks for it rather than guessing a calendar.
-        return { year: { id: year.id, label: year.label }, needsStartYear: true, months: [], columns: [], rows: [], currency: getCurrency() };
+        return { year: { id: year.id, label: year.label }, needsStartYear: true, months: [], columns: [], rows: [], currency: getCurrency(), startPeriod: getBillingStartPeriod() };
       }
 
       const months = schoolYearMonths(year.startYear, year.startMonth, year.endMonth);
       const columns = getYearViewColumns();
+      // Off means NOT SENT, not hidden in the browser (0.48.0) — the same rule the optional columns
+      // follow. The note is the office's own words about a bursary, and a page that gets printed and left
+      // on a desk should carry only what an admin asked for (§14).
+      const wantsFeeNote = getYearViewFeeNote();
       const periodKeys = months.map((m) => m.periodKey);
+      // The pre-go-live marking and the invoice states both come from billing/yearCells.ts, shared with
+      // the parent portal so a family and the office are never looking at different squares (0.48.0).
+      const startPeriod = getBillingStartPeriod();
 
       const studentRows = db
         .select({
@@ -518,18 +712,7 @@ export const billingRouter = router({
         monthly.set(r.studentId, { amountCents: amt, note: r.note ?? prev?.note ?? null });
       }
 
-      // One pass over the year's invoices → per (STUDENT, period) status. Each row now reports the
-      // child's own bill rather than the household's, so two siblings can legitimately differ in the
-      // same month — which is the whole point of per-student invoices.
-      const cellByStudent = new Map<string, Map<string, { status: string; totalCents: number; paidCents: number; invoiceId: string }>>();
-      if (periodKeys.length) {
-        for (const inv of db.select({ id: invoices.id, studentId: invoices.studentId, periodKey: invoices.periodKey, status: invoices.status }).from(invoices).where(inArray(invoices.periodKey, periodKeys)).all()) {
-          const total = invoiceTotal(db, inv.id);
-          const paid = invoicePaid(db, inv.id);
-          if (!cellByStudent.has(inv.studentId)) cellByStudent.set(inv.studentId, new Map());
-          cellByStudent.get(inv.studentId)!.set(inv.periodKey, { status: inv.status, totalCents: total, paidCents: paid, invoiceId: inv.id });
-        }
-      }
+      const cellsByStudent = yearCellsFor(studentRows.map((r) => r.id), periodKeys);
 
       // Guardian contact, only when a guardian column is actually enabled — and classified by WHO each
       // adult is, so each number gets its own labelled, tappable column (§ settings/YEAR_VIEW_COLUMNS).
@@ -569,7 +752,7 @@ export const billingRouter = router({
 
       const rows = studentRows.map((s) => {
         const m = monthly.get(s.id);
-        const cells = cellByStudent.get(s.id);
+        const cells = cellsByStudent.get(s.id) ?? [];
         const gs = guardiansByFamily.get(s.familyId) ?? [];
         return {
           studentId: s.id,
@@ -582,13 +765,8 @@ export const billingRouter = router({
           courseId: s.courseId,
           courseName: s.courseName,
           monthlyAmountCents: m?.amountCents ?? 0,
-          feeNote: m?.note ?? null,
-          cells: months.map((mo) => {
-            const c = cells?.get(mo.periodKey);
-            if (!c) return { periodKey: mo.periodKey, status: 'none' as const };
-            const state = c.status === 'void' ? 'void' : c.paidCents >= c.totalCents && c.totalCents > 0 ? 'paid' : c.paidCents > 0 ? 'partial' : 'open';
-            return { periodKey: mo.periodKey, status: state, totalCents: c.totalCents, paidCents: c.paidCents, invoiceId: c.invoiceId };
-          }),
+          feeNote: wantsFeeNote ? m?.note ?? null : null,
+          cells,
           // Only enabled columns are populated — a disabled one is absent from the payload entirely.
           extra: {
             ...(columns.includes('studentId') ? { studentCode: s.studentCode } : {}),
@@ -611,18 +789,44 @@ export const billingRouter = router({
         };
       });
 
-      return { year: { id: year.id, label: year.label }, needsStartYear: false, months, columns, rows, currency: getCurrency() };
+      // startPeriod goes to the browser so the month HEADINGS can be marked too, not just the cells —
+      // a whole column being pre-go-live is a property of the month, not of each child in it.
+      return { year: { id: year.id, label: year.label }, needsStartYear: false, months, columns, rows, currency: getCurrency(), startPeriod };
+    }),
+
+  /**
+   * The months a NEW student's billing may start from (0.48.0) — this school year's months, no earlier
+   * than the billing floor and no later than the month we are in (billing/joinMidYear.ts).
+   *
+   * Admin | finance: it feeds a dropdown on the add-student form, and finance adds students too.
+   */
+  billFromMonths: adminOrFinanceProcedure
+    .input(z.object({ schoolId: ID.optional() }).optional())
+    .query(({ ctx, input }) => {
+      // Scoped like every other school-aware read (0.47.0): the months come from the school year of the
+      // school the child is being added to, since two schools can run different calendars.
+      const scope = resolveSchoolScope(ctx.session?.userId ?? null, input?.schoolId);
+      return { months: billFromMonths(input?.schoolId ?? scope.ids[0] ?? null), current: currentPeriod() };
     }),
 
   /** The optional year-view columns and which are on. Admin-only to change — the guardian-contact
    *  columns put phone numbers and email addresses on a whole-school page (§5: finance reads). */
-  yearViewColumnsGet: adminOrFinanceProcedure.query(() => ({ available: [...YEAR_VIEW_COLUMNS], enabled: getYearViewColumns() })),
+  yearViewColumnsGet: adminOrFinanceProcedure.query(() => ({
+    available: [...YEAR_VIEW_COLUMNS],
+    enabled: getYearViewColumns(),
+    /** Not a column — the fee-override note is a chip inside the "Paying" cell (0.48.0). Same panel, same
+     *  decision ("what does this grid show"), so it is carried on the same pair of procedures. */
+    feeNote: getYearViewFeeNote(),
+  })),
 
-  yearViewColumnsSet: adminProcedure.input(z.object({ columns: z.array(z.enum(YEAR_VIEW_COLUMNS)).max(YEAR_VIEW_COLUMNS.length) })).mutation(({ ctx, input }) => {
-    setYearViewColumns(input.columns);
-    audit(auditActor(ctx), 'settings.yearViewColumns', { entity: 'settings', detail: { columns: input.columns } });
-    return { ok: true as const };
-  }),
+  yearViewColumnsSet: adminProcedure
+    .input(z.object({ columns: z.array(z.enum(YEAR_VIEW_COLUMNS)).max(YEAR_VIEW_COLUMNS.length).optional(), feeNote: z.boolean().optional() }))
+    .mutation(({ ctx, input }) => {
+      if (input.columns !== undefined) setYearViewColumns(input.columns);
+      if (input.feeNote !== undefined) setYearViewFeeNote(input.feeNote);
+      audit(auditActor(ctx), 'settings.yearViewColumns', { entity: 'settings', detail: { columns: input.columns, feeNote: input.feeNote } });
+      return { ok: true as const };
+    }),
 
   /**
    * CSV export for the office's own records — the one thing the app had no way to produce.
@@ -936,6 +1140,30 @@ export const billingRouter = router({
       students: kids.map((k) => ({ ...k, balance: studentBalance(k.id) })),
       invoices: invoiceRowsFor(kidIds),
       payments: paymentRowsFor(kidIds),
+      /**
+       * Whether tuition collects itself, and off what (0.48.0).
+       *
+       * The office could not see this anywhere. Autopay is a PER-HOUSEHOLD enrolment against a
+       * per-household Stripe Customer (§13.3), so it is reported here once and the screen says "this
+       * household" rather than implying it is a property of one child — but it belongs on a child's record
+       * because that is where a volunteer stands when a parent rings to ask why nothing was taken, or when
+       * they are about to chase a family whose card is going to pay them on Friday anyway.
+       *
+       * The method is named through the same fields the parent's own screen uses, so both say "Visa ····
+       * 4242" or "Chase ···· 6789" rather than one of them guessing.
+       */
+      autopay: (() => {
+        const enr = db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, input.familyId)).get();
+        if (!enr?.enabled) return { enabled: false as const, method: null, since: null };
+        const pm = enr.defaultPmId
+          ? db
+              .select({ type: paymentMethods.type, brand: paymentMethods.brand, last4: paymentMethods.last4, expMonth: paymentMethods.expMonth, expYear: paymentMethods.expYear, wallet: paymentMethods.wallet, bankName: paymentMethods.bankName, accountType: paymentMethods.accountType })
+              .from(paymentMethods)
+              .where(eq(paymentMethods.id, enr.defaultPmId))
+              .get()
+          : undefined;
+        return { enabled: true as const, method: pm ?? null, since: enr.consentAt ?? null };
+      })(),
     };
   }),
 
@@ -970,7 +1198,7 @@ export const billingRouter = router({
       let res;
       try {
         res = recordPayment(
-          { studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${input.occurredAt}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null, directed: input.directed ?? null },
+          { studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${isoDay(input.occurredAt, 'The payment date')}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null, directed: input.directed ?? null },
           // `recordingActor`, not `auditActor`: this name is stamped on the payment row the office
           // reads back ("who took this cash?"), so it is the person's name rather than their username.
           recordingActor(ctx),
@@ -1002,6 +1230,75 @@ export const billingRouter = router({
     if (!p) throw new TRPCError({ code: 'NOT_FOUND', message: 'Payment not found.' });
     const r = reversePayment(input.paymentId, recordingActor(ctx));
     audit(auditActor(ctx), 'payment.reverse', { entity: 'student', entityId: p.studentId, detail: { paymentId: input.paymentId } });
+    return r;
+  }),
+
+  // ── Refunds (0.48.0) ────────────────────────────────────────────────────────
+  /** Recent transactions and how each one could be given back (payments/refunds.ts).
+   *
+   *  `cardRefundsReady` is separate from each row's `route` deliberately: the route says how the money
+   *  arrived (and never changes), this says whether Stripe can be reached to send a card one back right
+   *  now. Rolling the two together made a card payment read as "hand the cash over" whenever the keys
+   *  were briefly unavailable — advice that would have the family paid twice. */
+  refundable: adminOrFinanceProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).optional(), query: z.string().trim().max(120).optional() }).optional())
+    .query(({ input }) => ({ transactions: refundableTransactions(input ?? {}), currency: getCurrency(), cardRefundsReady: stripeReady() })),
+
+  /**
+   * Give a whole transaction back: the money at Stripe where it came through Stripe, and the ledger either
+   * way (§9 — payments are immutable, so this writes mirror rows rather than deleting anything).
+   *
+   * Admin OR finance, like every other money action: refunding is part of running billing, and it is
+   * audited and alerted rather than gated to admin. Finance already records and reverses payments.
+   */
+  refund: adminOrFinanceProcedure.input(z.object({ key: z.string().trim().min(1).max(255) })).mutation(async ({ ctx, input }) => {
+    let r: Awaited<ReturnType<typeof refundTransaction>>;
+    try {
+      r = await refundTransaction(input.key, recordingActor(ctx));
+    } catch (e) {
+      const msg = (e as Error).message;
+      // One friendly sentence each, and the raw Stripe/DB text stays in the log (§15/§18).
+      if (msg === 'card_refunds_unavailable') {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Card refunds aren’t available right now — the payments connection is down. Try again shortly.' });
+      }
+      if (msg === 'payment not found') throw new TRPCError({ code: 'NOT_FOUND', message: 'That payment no longer exists.' });
+      if (msg === 'not_refundable_carry_in') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'That is a balance carried forward from before you started using this app, not a payment taken here — there is nothing to send back. To correct it, re-run the go-live step.',
+        });
+      }
+      if (msg.startsWith('refund_')) {
+        throw new TRPCError({ code: 'BAD_GATEWAY', message: 'The card company refused the refund. Check the payment in Stripe before trying again.' });
+      }
+      payLog.error('refund failed', { key: input.key, error: msg });
+      throw new TRPCError({ code: 'BAD_GATEWAY', message: 'We couldn’t complete that refund. Nothing was changed — please try again.' });
+    }
+    audit(auditActor(ctx), 'payment.refund', {
+      entity: 'payment',
+      entityId: input.key,
+      // Amounts and ids, no names — the audit trail records the act, not the household (§14).
+      detail: { route: r.route, amountCents: r.amountCents, reversed: r.reversed, stripeRefundId: r.stripeRefundId, stripeStatus: r.stripeStatus },
+    });
+    if (r.reversed > 0) {
+      // Someone should know money left, and the office email may not be the person who pressed it.
+      // BOTH texts carry the amount. `publicText` goes to third-party sinks (the masjid webhook, the
+      // platform's alert channel) so it names no household — but a figure on its own identifies nobody, and
+      // an alert that says only "a refund was recorded" cannot be acted on or even sanity-checked. Same
+      // shape as `payment-received` above, which has always included its amount for the same reason.
+      const amount = formatMoney(r.amountCents, getCurrency());
+      const how = r.route === 'stripe' ? ' back to the card or bank account it came from' : ' on the ledger — the money still has to be handed back';
+      // WHO it was for and WHAT it paid go in the office's own email only. `text` may name a household —
+      // without it the alert is unactionable, which is exactly why that channel exists — while `publicText`
+      // reaches third-party sinks and so carries the figure and nothing that identifies anybody (§9/§14).
+      const who = r.students.length ? ` for ${r.students.join(', ')}` : '';
+      const what = r.labels.length ? ` It covered ${r.labels.join(', ')}.` : '';
+      void alertStaff('payment-refunded', {
+        title: `A payment of ${amount} was refunded`,
+        text: `A refund of ${amount}${who} was made${how}, by ${recordingActor(ctx).name ?? 'the office'}.${what}`,
+        publicText: `A tuition refund of ${amount} was recorded (${r.route === 'stripe' ? 'card or bank' : 'by hand'}).`,
+      });
+    }
     return r;
   }),
 
@@ -1037,6 +1334,9 @@ export const billingRouter = router({
   midYearCommit: adminProcedure.input(MID_YEAR_INPUT).mutation(({ ctx, input }) => {
     const err = periodKeyError(input.goLivePeriod);
     if (err) throw new TRPCError({ code: 'BAD_REQUEST', message: err });
+    // Checked ONCE, before a single artifact is written: this date lands on every carry-in row the run
+    // creates, so half a school's histories dated NaN is not a state to discover afterwards.
+    const asOf = isoDayOrNull(input.asOf, 'The date these balances were true');
     const plan = midYearPlan(input.goLivePeriod, input.schoolYearId ?? null, input.rows ?? []);
     // A carry-in writes real ledger rows, so it is named the same way a cash payment is.
     const actor = recordingActor(ctx);
@@ -1045,11 +1345,17 @@ export const billingRouter = router({
     let ahead = 0;
     let skipped = 0;
     for (const s of plan.students) {
+      // Keep the ANSWER first, and for every child the office actually answered for — including the
+      // square ones, who get no artifact at all (0.48.0). "Paid through November" is the only thing
+      // anybody knows about the months before go-live, and deriving an amount from it used to consume
+      // it; the year view needs it back to say which of those months a family had settled. It is a note
+      // beside the money, never a source of it (billing/carryIn.ts).
+      if (s.paidThrough) noteCarryIn({ studentId: s.studentId, goLivePeriod: input.goLivePeriod, paidThrough: s.paidThrough, kind: s.kind, amountCents: s.amountCents });
       if (s.already || s.kind === 'square' || s.amountCents <= 0) {
         if (s.already && s.kind !== 'square') skipped++;
         continue;
       }
-      const r = commitCarryIn({ studentId: s.studentId, kind: s.kind, amountCents: s.amountCents, goLivePeriod: input.goLivePeriod, asOf: input.asOf ?? null, memo: input.memo ?? null }, actor);
+      const r = commitCarryIn({ studentId: s.studentId, kind: s.kind, amountCents: s.amountCents, goLivePeriod: input.goLivePeriod, asOf: asOf, memo: input.memo ?? null }, actor);
       if (!r.wrote) continue;
       if (r.kind === 'owes') owed++;
       else ahead++;
