@@ -443,6 +443,10 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                 <tr>
                   <th>{t('students.name')}</th>
                   <th>{t('billing.amount')}</th>
+                  {/* WHAT the money was for (0.48.0). The ledger said how it arrived and when, which on a
+                      monthly plan is a column of identical amounts — so "which bill did that clear?" was
+                      unanswerable from the one screen the office has open when it is asked. */}
+                  <th>{t('billing.paidFor')}</th>
                   <th>{t('billing.channel')}</th>
                   <th>{t('billing.date')}</th>
                   <th>{t('billing.memo')}</th>
@@ -458,6 +462,13 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                   <tr key={p.id}>
                     <td>{nameOf(p.studentId)}</td>
                     <td className={p.amountCents < 0 ? 'merit-total is-neg' : 'merit-total is-pos'}>{money(p.amountCents)}</td>
+                    <td>
+                      {p.paidFor.labels.length > 0
+                        ? `${p.paidFor.labels.join(' · ')}${p.paidFor.more > 0 ? ` · ${t('refund.andMore', { count: p.paidFor.more })}` : ''}`
+                        : /* Allocated to nothing: paid before any bill existed, sitting as credit. A blank
+                             cell here reads as missing data rather than as money in hand. */
+                          <span className="muted">{p.reversalOf ? t('billing.paidForReversal') : p.amountCents < 0 ? '—' : t('refund.paidAhead')}</span>}
+                    </td>
                     <td>{t(`billing.ch_${p.channel}`, p.channel)}</td>
                     <td>{formatDate(new Date(p.occurredAt as unknown as number).toISOString().slice(0, 10), dateFormat)}</td>
                     <td className="muted">{p.memo ?? ''}</td>

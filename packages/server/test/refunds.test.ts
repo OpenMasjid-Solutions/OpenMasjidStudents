@@ -189,6 +189,44 @@ describe('a cash payment', () => {
   });
 });
 
+describe('a balance carried forward', () => {
+  /** What the go-live step writes for a family who was already paid up when the madrasah adopted the app. */
+  function carryIn(studentId: string, cents = 30000) {
+    return ledger.recordPayment(
+      { studentId, amountCents: cents, channel: 'carry_in', occurredAt: new Date('2026-02-01'), idempotencyKey: `carry:${studentId}`, memo: 'Balance carried forward' },
+      { userId: null, role: 'admin', name: 'admin' },
+    );
+  }
+
+  it('is not offered as something to refund', async () => {
+    // It is not a payment this app took. There is nothing to send back, and reversing it would re-open
+    // arrears the family does not owe.
+    const { a } = await household();
+    carryIn(a);
+    const { transactions } = await caller('finance').billing.refundable({});
+    expect(transactions.filter((tx) => tx.channel === 'carry_in')).toHaveLength(0);
+  });
+
+  it('is refused even when asked for directly', async () => {
+    // Refused in the engine, not merely filtered out of the list — a screen can be stale or bookmarked,
+    // and this is money.
+    const { a } = await household();
+    const p = carryIn(a);
+    await expect(caller('finance').billing.refund({ key: p.paymentId })).rejects.toThrow(/carried forward/i);
+    expect(liveRows().filter((r) => r.reversalOf)).toHaveLength(0);
+    expect(refundCalls).toHaveLength(0);
+  });
+
+  it('still leaves ordinary payments refundable', async () => {
+    // The exclusion must be the channel, not "anything on a student who has a carry-in".
+    const { admin, a } = await household();
+    carryIn(a);
+    const p = await admin.billing.recordManualPayment({ studentId: a, amountCents: 20000, channel: 'cash', occurredAt: '2026-07-05' });
+    const r = await caller('finance').billing.refund({ key: p.paymentId });
+    expect(r.reversed).toBe(1);
+  });
+});
+
 describe('the list', () => {
   it('groups a sibling charge into one row naming both children', async () => {
     const { familyId } = await household();
@@ -220,6 +258,29 @@ describe('the list', () => {
     expect(transactions.every((tx) => tx.amountCents > 0)).toBe(true);
   });
 
+  it('says WHAT each payment was for, not only how it arrived', async () => {
+    // "$400 · Card · 5 Jul" cannot be told apart from next month's identical row, and this is the list an
+    // office picks a refund from.
+    const { familyId } = await household();
+    cardCharge(familyId);
+    const { transactions } = await caller('finance').billing.refundable({});
+    expect(transactions[0].paidFor.labels).toContain('Tuition — Jul 2026');
+    expect(transactions[0].paidFor.advance).toBe(false);
+    // One label, not one per child: a sibling charge settles the same-named bill for each of them.
+    expect(transactions[0].paidFor.labels).toHaveLength(1);
+  });
+
+  it('marks money paid before any bill as paid ahead rather than leaving it blank', async () => {
+    const admin = caller('admin');
+    const fam = await admin.people.familyCreate({ name: 'Farooqi' });
+    const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
+    const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Bilal Farooqi', feePlanId: plan.id });
+    await admin.billing.recordManualPayment({ studentId: s.id, amountCents: 20000, channel: 'cash', occurredAt: '2026-06-20' });
+    const { transactions } = await caller('finance').billing.refundable({});
+    expect(transactions[0].paidFor.advance).toBe(true);
+    expect(transactions[0].paidFor.labels).toEqual([]);
+  });
+
   it('finds a payment by the child it was for', async () => {
     const { admin, a } = await household();
     await admin.billing.recordManualPayment({ studentId: a, amountCents: 20000, channel: 'cash', occurredAt: '2026-07-05' });
@@ -234,6 +295,35 @@ describe('who may, and what is recorded', () => {
     cardCharge(familyId);
     await expect(caller('parent').billing.refund({ key: 'pi_card_1' })).rejects.toThrow();
     expect(refundCalls).toHaveLength(0);
+  });
+
+  it('reports the amount, the child and the bill — and keeps the child out of the public text', async () => {
+    // The two texts have different audiences and different rules (§9/§14): our own email goes to addresses
+    // an admin typed and MAY name a household, because "a refund was recorded" is unactionable; the public
+    // text goes to the masjid webhook and the platform's alert channel, which are third-party sinks.
+    const { familyId } = await household();
+    cardCharge(familyId);
+    const alerts = await import('../src/alerts');
+    const sent: { text: string; publicText: string; title?: string }[] = [];
+    const spy = vi.spyOn(alerts, 'alertStaff').mockImplementation(async (_event, msg) => {
+      sent.push(msg as { text: string; publicText: string; title?: string });
+    });
+    try {
+      await caller('finance').billing.refund({ key: 'pi_card_1' });
+      expect(sent).toHaveLength(1);
+      const { text, publicText, title } = sent[0];
+      // The office's email: how much, who for, and what it covered.
+      expect(text).toContain('$400.00');
+      expect(text).toContain('Yusuf Ismail');
+      expect(text).toContain('Tuition — Jul 2026');
+      expect(title).toContain('$400.00');
+      // The public one: the figure, and nothing that identifies anybody.
+      expect(publicText).toContain('$400.00');
+      expect(publicText).not.toContain('Yusuf');
+      expect(publicText).not.toContain('Ismail');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('audits the act with amounts and ids, and no household name', async () => {

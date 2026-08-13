@@ -25,6 +25,7 @@ import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveIn
 import { commitCarryIn, defaultGoLivePeriod, midYearPlan, noteCarryIn } from '../billing/carryIn';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
+import { paidForByPayment } from '../billing/paidFor';
 import { refundTransaction, refundableTransactions } from '../payments/refunds';
 import {
   getCurrency,
@@ -221,12 +222,24 @@ function invoiceRowsFor(studentIds: string[]) {
 /** Payment rows for a set of students, newest first. */
 function paymentRowsFor(studentIds: string[]) {
   if (!studentIds.length) return [];
-  return db
+  const rows = db
     .select({ id: payments.id, studentId: payments.studentId, amountCents: payments.amountCents, channel: payments.channel, occurredAt: payments.occurredAt, memo: payments.memo, reversalOf: payments.reversalOf, by: payments.recordedByName })
     .from(payments)
     .where(inArray(payments.studentId, studentIds))
     .orderBy(desc(payments.occurredAt), desc(payments.createdAt))
     .all();
+  /**
+   * WHAT each payment was for (0.48.0), not only how it arrived.
+   *
+   * The office's ledger said cash / card / autopay and a date, which answers "how" and leaves "which bill"
+   * to be worked out from the amount — impossible on a monthly plan, where every row is the same figure.
+   * The parent portal got this first; the office needs it more, because the office is who gets asked.
+   *
+   * Derived from the allocations on every read (billing/paidFor.ts), so it follows the recompute rather
+   * than freezing whatever was true on the day.
+   */
+  const forWhat = paidForByPayment(db, rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, paidFor: forWhat.get(r.id) ?? { labels: [], more: 0, advance: true } }));
 }
 
 /** The mid-year go-live input — shared by preview and commit so they cannot drift (see below). */
@@ -1217,6 +1230,12 @@ export const billingRouter = router({
         throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Card refunds aren’t available right now — the payments connection is down. Try again shortly.' });
       }
       if (msg === 'payment not found') throw new TRPCError({ code: 'NOT_FOUND', message: 'That payment no longer exists.' });
+      if (msg === 'not_refundable_carry_in') {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'That is a balance carried forward from before you started using this app, not a payment taken here — there is nothing to send back. To correct it, re-run the go-live step.',
+        });
+      }
       if (msg.startsWith('refund_')) {
         throw new TRPCError({ code: 'BAD_GATEWAY', message: 'The card company refused the refund. Check the payment in Stripe before trying again.' });
       }
@@ -1231,10 +1250,21 @@ export const billingRouter = router({
     });
     if (r.reversed > 0) {
       // Someone should know money left, and the office email may not be the person who pressed it.
+      // BOTH texts carry the amount. `publicText` goes to third-party sinks (the masjid webhook, the
+      // platform's alert channel) so it names no household — but a figure on its own identifies nobody, and
+      // an alert that says only "a refund was recorded" cannot be acted on or even sanity-checked. Same
+      // shape as `payment-received` above, which has always included its amount for the same reason.
+      const amount = formatMoney(r.amountCents, getCurrency());
+      const how = r.route === 'stripe' ? ' back to the card or bank account it came from' : ' on the ledger — the money still has to be handed back';
+      // WHO it was for and WHAT it paid go in the office's own email only. `text` may name a household —
+      // without it the alert is unactionable, which is exactly why that channel exists — while `publicText`
+      // reaches third-party sinks and so carries the figure and nothing that identifies anybody (§9/§14).
+      const who = r.students.length ? ` for ${r.students.join(', ')}` : '';
+      const what = r.labels.length ? ` It covered ${r.labels.join(', ')}.` : '';
       void alertStaff('payment-refunded', {
-        title: 'A payment was refunded',
-        text: `A refund of ${formatMoney(r.amountCents, getCurrency())} was made${r.route === 'stripe' ? ' back to the card or bank account it came from' : ' on the ledger — the money still has to be handed back'}.`,
-        publicText: 'A tuition refund was recorded.',
+        title: `A payment of ${amount} was refunded`,
+        text: `A refund of ${amount}${who} was made${how}, by ${recordingActor(ctx).name ?? 'the office'}.${what}`,
+        publicText: `A tuition refund of ${amount} was recorded (${r.route === 'stripe' ? 'card or bank' : 'by hand'}).`,
       });
     }
     return r;

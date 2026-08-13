@@ -32,22 +32,24 @@
  */
 import { desc, eq, inArray, like, or } from 'drizzle-orm';
 import { db } from '../db';
-import { payments, students } from '../db/schema';
+import { payments, students as students_ } from '../db/schema';
 import { reversePayment } from '../billing/ledger';
-
-/** The same shape `ledger.ts` uses — declared here rather than widening its export for one caller. */
-type Actor = { userId: string | null; role: string; name: string | null };
+import { paidForByPayment } from '../billing/paidFor';
 import { stripeClient, stripeReady } from './stripe';
 import { makeLog } from '../logger';
 
 const log = makeLog('refunds');
 
+/** The same shape `ledger.ts` uses — declared here rather than widening its export for one caller. */
+type Actor = { userId: string | null; role: string; name: string | null };
+
 /** How money can be sent back for a given transaction. */
 export type RefundRoute =
   /** It came through Stripe: the refund is automatic and the parent gets it back the way they paid. */
   | 'stripe'
-  /** Cash, a check, a bank transfer, a carried-in balance: the ledger can be put right, but a person has
-   *  to hand the money over. Saying which of the two it is, up front, is the whole point of the split. */
+  /** Cash, a check, a bank transfer: the ledger can be put right, but a person has to hand the money over.
+   *  Saying which of the two it is, up front, is the whole point of the split. (A balance carried forward
+   *  is neither — it is not refundable at all; see NON_REFUNDABLE_CHANNELS.) */
   | 'manual';
 
 export interface RefundableTx {
@@ -63,6 +65,14 @@ export interface RefundableTx {
   memo: string | null;
   /** Who took it, when a person did. */
   recordedByName: string | null;
+  /**
+   * WHAT it paid — the bills or lines it settled, derived from its allocations (billing/paidFor.ts).
+   *
+   * "$400 · Card · 5 Jul" told an office how the money arrived and left them to work out which bill it
+   * cleared, which on a monthly plan is a column of identical amounts. Refunding the wrong one of those is
+   * exactly the mistake this list must not make easy.
+   */
+  paidFor: { labels: string[]; more: number; advance: boolean };
   /** One entry per child, because that is how the money landed. */
   parts: { paymentId: string; studentId: string; studentName: string; amountCents: number }[];
 }
@@ -71,6 +81,23 @@ const piOf = (externalRef: Record<string, unknown> | null): string | null => {
   const v = externalRef?.stripePaymentIntentId;
   return typeof v === 'string' && v ? v : null;
 };
+
+/**
+ * A CARRY-IN IS NOT A PAYMENT ANYBODY CAN GIVE BACK (0.48.0).
+ *
+ * `carry_in` rows are the mid-year go-live artifact: when a madrasah adopts this app in February, what each
+ * family had ALREADY paid is recorded once as a dated row so the derived balance starts from the truth
+ * (§9). No money ever reached the masjid through this app for them — it arrived months earlier, in cash, in
+ * a book somebody else kept. There is nothing to send back, and "refunding" one would only reverse an
+ * accounting fact and re-open arrears the family does not owe.
+ *
+ * So it is refused in the ENGINE, not merely hidden from the list: a screen can be stale, bookmarked, or
+ * simply wrong about what it is showing, and this is money.
+ *
+ * Getting a carry-in wrong is a real thing that happens — it is fixed by re-running the go-live step, which
+ * is what owns those rows, not by a refund.
+ */
+const NON_REFUNDABLE_CHANNELS = new Set(['carry_in']);
 
 /**
  * Recent transactions, newest first, grouped as above.
@@ -108,23 +135,36 @@ export function refundableTransactions(opts: { limit?: number; query?: string } 
       .filter((v): v is string => !!v),
   );
   const nameById = new Map(
-    db.select({ id: students.id, fullName: students.fullName }).from(students).where(inArray(students.id, [...new Set(rows.map((r) => r.studentId))])).all()
+    db.select({ id: students_.id, fullName: students_.fullName }).from(students_).where(inArray(students_.id, [...new Set(rows.map((r) => r.studentId))])).all()
       .map((s) => [s.id, s.fullName]),
   );
+
+  // What each payment settled, for the whole page in one go rather than per row.
+  const forWhat = paidForByPayment(db, rows.filter((r) => !r.reversalOf).map((r) => r.id));
 
   const groups = new Map<string, RefundableTx>();
   for (const r of rows) {
     // Mirror rows are not transactions anybody refunds; they ARE the refund.
     if (r.reversalOf) continue;
+    // Nor is a balance carried forward from before this app — see NON_REFUNDABLE_CHANNELS.
+    if (NON_REFUNDABLE_CHANNELS.has(r.channel)) continue;
     const pi = piOf(r.externalRef);
     const key = pi ?? r.id;
     const name = nameById.get(r.studentId) ?? '';
     if (needle && !`${name} ${r.channel} ${r.memo ?? ''} ${pi ?? ''}`.toLowerCase().includes(needle)) continue;
 
+    const mine = forWhat.get(r.id);
     const g = groups.get(key);
     if (g) {
       g.amountCents += r.amountCents;
       g.parts.push({ paymentId: r.id, studentId: r.studentId, studentName: name, amountCents: r.amountCents });
+      // A charge across siblings usually settles the same-named bill for each of them ("Tuition — Jul
+      // 2026" twice), so the labels are merged and de-duplicated rather than repeated per child.
+      if (mine) {
+        for (const l of mine.labels) if (!g.paidFor.labels.includes(l)) g.paidFor.labels.push(l);
+        g.paidFor.more += mine.more;
+        g.paidFor.advance = g.paidFor.advance && mine.advance;
+      }
       // A group counts as refunded only when EVERY row in it has been reversed — a half-reversed group is
       // still refundable, and pressing Refund finishes it.
       g.refunded = g.refunded && reversedIds.has(r.id);
@@ -138,6 +178,8 @@ export function refundableTransactions(opts: { limit?: number; query?: string } 
         refunded: reversedIds.has(r.id),
         memo: r.memo,
         recordedByName: r.recordedByName,
+        // Copied rather than shared: siblings' labels are merged into this object above.
+        paidFor: { labels: [...(mine?.labels ?? [])], more: mine?.more ?? 0, advance: mine?.advance ?? true },
         parts: [{ paymentId: r.id, studentId: r.studentId, studentName: name, amountCents: r.amountCents }],
       });
     }
@@ -181,6 +223,18 @@ export interface RefundResult {
   stripeRefundId: string | null;
   stripeStatus: string | null;
   alreadyDone: boolean;
+  /**
+   * WHO and WHAT, for the alert the office receives.
+   *
+   * Captured BEFORE the reversal, which is the ordering that matters: `reversePayment` mirrors the
+   * allocations and then reallocates the student's remaining money, so reading "what did this pay for"
+   * afterwards would describe the world after the refund rather than what was given back.
+   *
+   * Only the app's own email may use these — §14 keeps a household out of the webhook and the platform
+   * alert channel, so the router puts them in `text` and never in `publicText`.
+   */
+  students: string[];
+  labels: string[];
 }
 
 /**
@@ -193,6 +247,9 @@ export async function refundTransaction(key: string, actor: Actor): Promise<Refu
   const rows = rowsOf(key);
   if (!rows.length) throw new Error('payment not found');
   if (rows.some((r) => r.amountCents <= 0)) throw new Error('that is not a payment');
+  // Refused here as well as filtered out of the list: a stale screen must not be able to reverse a
+  // carried-forward balance (see NON_REFUNDABLE_CHANNELS).
+  if (rows.some((r) => NON_REFUNDABLE_CHANNELS.has(r.channel))) throw new Error('not_refundable_carry_in');
 
   const pi = piOf(rows[0].externalRef);
   const alreadyReversed = new Set(
@@ -202,8 +259,19 @@ export async function refundTransaction(key: string, actor: Actor): Promise<Refu
   );
   const outstanding = rows.filter((r) => !alreadyReversed.has(r.id));
   if (!outstanding.length) {
-    return { route: pi ? 'stripe' : 'manual', amountCents: 0, reversed: 0, stripeRefundId: null, stripeStatus: null, alreadyDone: true };
+    return { route: pi ? 'stripe' : 'manual', amountCents: 0, reversed: 0, stripeRefundId: null, stripeStatus: null, alreadyDone: true, students: [], labels: [] };
   }
+
+  // Who and what, read BEFORE anything is reversed — see RefundResult. Best-effort: a missing name or an
+  // unreadable allocation must not stop a refund, it only makes the alert less specific.
+  const students = db
+    .select({ fullName: students_.fullName })
+    .from(students_)
+    .where(inArray(students_.id, [...new Set(outstanding.map((r) => r.studentId))]))
+    .all()
+    .map((s) => s.fullName);
+  const forWhat = paidForByPayment(db, outstanding.map((r) => r.id));
+  const labels = [...new Set([...forWhat.values()].flatMap((v) => v.labels))];
 
   let stripeRefundId: string | null = null;
   let stripeStatus: string | null = null;
@@ -246,6 +314,7 @@ export async function refundTransaction(key: string, actor: Actor): Promise<Refu
       throw e;
     }
   }
+  // Ids and counts only — never the names or the bill labels gathered above (§14: no PII in logs).
   log.info('refund recorded', { key, route, reversed, stripeRefundId, stripeStatus });
-  return { route, amountCents, reversed, stripeRefundId, stripeStatus, alreadyDone: false };
+  return { route, amountCents, reversed, stripeRefundId, stripeStatus, alreadyDone: false, students, labels };
 }

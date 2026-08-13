@@ -101,6 +101,12 @@ export function Refunds() {
               <div className="refund-main">
                 <span className="refund-top">
                   <strong>{money(r.amountCents)}</strong>
+                  {/* WHAT it paid, next to the amount — the office is picking which payment to reverse, and
+                      on a monthly plan every row is the same figure. "How" alone cannot tell them apart. */}
+                  {r.paidFor.labels.length > 0 && (
+                    <span> · {r.paidFor.labels.join(' · ')}{r.paidFor.more > 0 ? ` · ${t('refund.andMore', { count: r.paidFor.more })}` : ''}</span>
+                  )}
+                  {r.paidFor.advance && <span className="muted"> · {t('refund.paidAhead')}</span>}
                   <span className="muted"> · {t(`billing.ch_${r.channel}`, r.channel)} · {formatDate(r.occurredAt as unknown as string, dateFormat)}</span>
                 </span>
                 {/* Who it was for. A charge covering several children names all of them, because that is
@@ -131,6 +137,10 @@ export function Refunds() {
         </ul>
       )}
       <p className="hint" style={{ marginBlockStart: '0.6rem' }}>{t('refund.partialHint')}</p>
+      {/* Explains an ABSENCE. A carried-forward balance is a payment on the ledger but not one this app
+          took, so it is not listed — and an office that goes looking for it deserves to be told why here
+          rather than concluding the list is incomplete. */}
+      <p className="hint">{t('refund.carryInHint')}</p>
     </section>
   );
 }

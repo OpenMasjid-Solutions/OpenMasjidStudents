@@ -26,6 +26,19 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   back up while the family's money stayed with Stripe, with nothing saying so. That is what this replaces.
   To give back only part of a payment, add a credit on the household's record instead.
 
+  **A balance carried forward is not listed and cannot be refunded** — it is not money this app took, so
+  there is nothing to send back; reversing one would only re-open arrears the family doesn't owe. Correct it
+  by re-running the go-live step.
+
+- **Every payment record says what the money was for.** The office's ledger gave the amount, how it arrived
+  and the date — which on a monthly plan is a column of identical figures, so "which bill did that clear?"
+  couldn't be answered from the screen you have open when a parent asks. Each row now names the bill, and
+  the line too when only part of a bill was paid. Money paid before any bill exists says "paid ahead".
+
+- **The refund alert says how much, for whom, and what it covered** instead of just "a refund was
+  recorded". The names stay in the madrasah's own email; the copy that goes to a webhook or the
+  OpenMasjidOS alert channel carries the amount and nothing that identifies a family.
+
 - **The billing record says whether autopay is on**, and what it will charge — "Autopay is on for this
   household — Visa ···· 4242". Nothing in the office showed this, so a family whose card pays on Friday
   looked exactly like one ignoring reminders.

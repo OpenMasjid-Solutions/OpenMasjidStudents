@@ -1024,7 +1024,9 @@
     "confirmRemoveFee": "Stop billing {{student}} for “{{name}}”?\n\nBills already raised are unaffected — this only stops future ones. You can assign it again later.",
     "confirmVoidCharge": "Cancel the charge “{{label}}” for {{amount}}?\n\nIt will not appear on any bill. Charges already on a raised invoice cannot be cancelled this way.",
     "confirmVoidInvoice": "Void the bill “{{label}}” for {{amount}}?\n\nThe amount stops being owed and the bill is kept, marked void. Only bills with nothing paid against them can be voided.",
-    "confirmArchiveItem": "Archive “{{name}}”?\n\nIt disappears from the list you apply charges from. Charges already raised from it keep their own label and price."
+    "confirmArchiveItem": "Archive “{{name}}”?\n\nIt disappears from the list you apply charges from. Charges already raised from it keep their own label and price.",
+    "paidFor": "What for",
+    "paidForReversal": "Refund"
   },
   "family": {
     "title": "Parent Portal",
@@ -1386,6 +1388,10 @@
     "doneStripe": "Refunded {{amount}}. It is on its way back to the card or bank account — a bank refund can take a few days to appear.",
     "doneManual": "Reversed {{amount}} on the ledger. Remember to hand the money back.",
     "already": "That one had already been refunded, so nothing changed.",
-    "partialHint": "To give back only part of a payment, add a credit on the household’s record instead — that shows on their next bill."
+    "partialHint": "To give back only part of a payment, add a credit on the household’s record instead — that shows on their next bill.",
+    "andMore_one": "+1 more",
+    "andMore_other": "+{{count}} more",
+    "paidAhead": "paid ahead",
+    "carryInHint": "A balance carried forward from before you used this app is not listed here — there is no money to send back. Correct it by re-running the go-live step."
   }
 }
