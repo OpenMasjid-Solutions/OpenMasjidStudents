@@ -75,8 +75,22 @@ export class LoginLimiter {
   }
 }
 
-/** Shared instance used by the auth router. */
+/** Shared instance used by the auth router — keyed on the real client IP. */
 export const loginLimiter = new LoginLimiter();
+
+/**
+ * Login failures per ACCOUNT NAME, whatever they come from (§14: "per-IP and per-account", 0.48.0).
+ *
+ * The per-IP limiter above cannot see a distributed spray: finance and parent accounts are reachable
+ * over the Cloudflare tunnel, a parent's username is just their email address, and a few hundred hosts
+ * making eight attempts each never trips a per-IP counter. This bounds what the whole internet may try
+ * against ONE name.
+ *
+ * Looser than the per-IP limiter on purpose. The key is a value the caller supplies, so a tight limit
+ * would be a denial-of-service tool aimed at a named admin; 25 failures in 15 minutes is far past honest
+ * mistyping and far short of what guessing a password needs. Locked accounts can still be reset by email.
+ */
+export const loginAccountLimiter = new LoginLimiter({ maxFailures: 25, windowMs: 15 * 60_000, blockMs: 15 * 60_000 });
 
 /** Parent-portal invite acceptance — internet-facing, so per-IP throttled (§14). Tokens are
  *  256-bit and unguessable; this just caps abusive hammering of the accept endpoint. */

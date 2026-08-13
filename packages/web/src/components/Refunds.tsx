@@ -72,6 +72,10 @@ export function Refunds() {
   }
 
   const rows = list.data?.transactions ?? [];
+  /** Can a card refund actually be sent right now? Separate from a row's route, which describes how the
+   *  money arrived — see the note on `billing.refundable`. Undefined while loading, which must not read
+   *  as "down", so it only says so once an answer has arrived. */
+  const cardRefundsReady = list.data ? list.data.cardRefundsReady : true;
 
   return (
     <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
@@ -80,6 +84,9 @@ export function Refunds() {
 
       {msg && <div className="notice" style={{ marginBlockEnd: '0.6rem' }}>{msg}</div>}
       {err && <p className="form-error">{err}</p>}
+      {/* Said once at the top rather than on every card row: the keys come from OpenMasjidOS (§13.1), so
+          this is a temporary condition and an office needs to know it is not their mistake. */}
+      {!cardRefundsReady && <div className="notice" style={{ marginBlockEnd: '0.6rem' }}>{t('refund.cardsPaused')}</div>}
 
       <div className="field" style={{ maxWidth: '22rem', marginBlockEnd: '0.7rem' }}>
         <label className="label" htmlFor="refund-q">{t('refund.search')}</label>
@@ -126,7 +133,9 @@ export function Refunds() {
                 <button
                   type="button"
                   className="btn btn--ghost btn--sm"
-                  disabled={busy !== null}
+                  // A card refund needs Stripe. Off rather than offered-then-refused, and the row says why.
+                  disabled={busy !== null || (r.route === 'stripe' && !cardRefundsReady)}
+                  title={r.route === 'stripe' && !cardRefundsReady ? t('refund.cardsPaused') : undefined}
                   onClick={() => void run(r.key, r.route, r.amountCents)}
                 >
                   {busy === r.key ? t('refund.working') : t('refund.action')}

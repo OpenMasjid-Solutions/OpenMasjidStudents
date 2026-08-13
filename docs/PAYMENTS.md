@@ -1,45 +1,117 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 OpenMasjid-Solutions -->
 
-# PAYMENTS — Stripe flows, webhook events, autopay ladder
+# PAYMENTS — how money reaches the ledger
 
-> **Status: stub.** This document is filled in as steps 15–17 (§20) land. It is the working
-> reference for everything money-side that is *ours* (the parent-portal card payments and
-> autopay) — the Fabric external-payment contract lives in
-> [`FABRIC_BILLING_CONTRACT.md`](./FABRIC_BILLING_CONTRACT.md).
+> The working reference for everything money-side that is *ours* (parent-portal card payments, autopay,
+> refunds). The Fabric external-payment contract lives in
+> [`FABRIC_BILLING_CONTRACT.md`](./FABRIC_BILLING_CONTRACT.md). Canonical spec: `CLAUDE.md` §13 (payments)
+> and §11.3/§11.4 (Stripe metadata + reconciliation).
 >
-> Canonical spec: `CLAUDE.md` §13 (payments) and §11.3/§11.4 (Stripe metadata + reconciliation).
-> One rule above all: **card data never touches our server** — Stripe Elements in the browser,
-> our backend only ever sees Stripe ids.
+> One rule above all: **card data never touches our server** — Stripe Elements in the browser, our backend
+> only ever sees Stripe ids.
+>
+> Rewritten 2026-08-13 (0.48.0). This file used to describe a Stripe **webhook** — signature verification,
+> a `stripe_events` dedupe table, endpoint auto-registration on boot. **None of that exists**, and the
+> 2026-08-04 audit flagged the drift as OMS-017. See "There is no webhook" below for what replaced it.
 
-## Contents (to be written as the slices land)
+## There is no webhook
 
-- **13.1 Stripe client & keys** — fetch account keys over the Fabric
-  (`GET ${OPENMASJID_BASE_URL}/api/fabric/stripe?account=<STRIPE_ACCOUNT>`); publishable → browser,
-  secret → server memory only (never DB, never logs). Per-family Stripe Customer id on `families`.
-- **13.2 Pay now (parent, Elements)** — PI creation, metadata (§11.3, `omos_app=students-portal`),
-  ledger truth lands on the webhook (channel `portal`, idempotency key = PI id), optimistic UI wording.
-- **13.3 Autopay** — saved card (SetupIntent, `off_session`) + **our** scheduler (croner), NOT Stripe
-  subscriptions. `autopay_runs` UNIQUE (family, run_date) → Stripe idempotency key derived from run id.
-- **13.3 Decline / SCA ladder** — retry on day +2 and +5; email each failure; after 3rd failure
-  auto-disable + email parent + Fabric-notify finance. Never exceed the ladder.
-- **13.4 Webhooks** — `POST /api/stripe/webhook` at `OPENMASJID_PUBLIC_URL`, raw-body signature verify,
-  `stripe_events` dedupe. Handle: `payment_intent.succeeded`, `payment_intent.payment_failed`,
-  `setup_intent.succeeded`, `charge.refunded`. Endpoint auto-registration on boot; manual signing-secret fallback.
-- **13.5 Failure doctrine** — no tunnel/webhook → reconciliation (§11.4) within a day; Stripe down →
-  pay-now + autopay pause visibly, everything else unaffected.
+Every payment reaches the ledger by a **pull** path. There is no `/api/stripe/webhook` route, no signature
+verification, no endpoint registration; `stripe_events` is a vestigial table nothing reads.
+
+| Path | Who triggers it | Channel recorded | Backstop if it doesn't happen |
+| --- | --- | --- | --- |
+| `POST /fabric/billing/record-payment` | Donations / Kiosk, through the OS broker | `donations-web` \| `kiosk` | reconciliation |
+| `portal.confirmPayment` (confirm-on-return) | the parent's browser, after Elements confirms | `portal` | reconciliation |
+| autopay's synchronous confirm | our own scheduler | `autopay` | reconciliation |
+| `billing.recordManualPayment` | the office | `cash` \| `check` \| `ach` \| `zelle` \| `other` | — (a person is standing there) |
+| the mid-year go-live | the office, once | `carry_in` | — |
+| **reconciliation** (§11.4) | the daily job, or the Reconcile now button | whatever the PI's metadata says | it *is* the backstop |
+
+**Why no webhook.** A webhook is an internet-facing route that must be exposed, signature-verified, deduped
+and kept in step with Stripe's event catalogue — and it can tell us nothing reconciliation will not find
+within a day. The pull paths are the optimisation; reconciliation is the guarantee. Money is never lost, only
+delayed. The one place this shows is the wording after a parent pays: the UI may say "received" from the
+client's own confirmation, softly, because the ledger write happens on the same round trip.
+
+**The one Stripe call that changes the ledger immediately** is a refund (`payments/refunds.ts`): Stripe first,
+then the mirror rows, in that order — a refused refund must leave the ledger saying the money is still here,
+because it is.
+
+## 13.1 Stripe client & keys
+
+Keys are fetched over the Fabric (`GET ${OPENMASJID_BASE_URL}/api/fabric/stripe?account=<account>`) on boot
+and whenever the admin changes the chosen account: publishable → the browser, secret → **server memory only**
+(never the DB, never a log). A failed reload **clears** the previous client rather than leaving it live, so a
+failed account switch cannot keep charging the old account. Each household that saves a method or enables
+autopay gets a Stripe Customer, its id on `families`.
+
+Only `payments/stripe.ts` imports the SDK. Everything else asks it for a client and copes with `null`.
+
+## 13.2 Pay now (parent, Elements)
+
+1. The parent picks an amount — the full balance pre-filled, or specific lines ticked — floored at
+   `MIN_PAYMENT_CENTS`.
+2. The server creates a PaymentIntent with §11.3's metadata (`omos_app=students-portal`,
+   `students_channel=portal`, `students_family_id`), the description `School balance — <family label>`, and
+   `automatic_payment_methods` enabled so the household is offered whatever the masjid's Stripe account has
+   switched on (cards, and a US bank account where it is enabled).
+3. The browser confirms with Elements. Card details never reach us.
+4. `portal.confirmPayment` retrieves the PI, checks it is **ours** and **this household's** (metadata, not
+   trust), and records it — idempotency key = the PI id, so a double-submit or a race with reconciliation is
+   a no-op. Ticked lines become the payment's stored instruction (§9), so the line the parent chose stays
+   settled through every later recompute.
+5. A receipt to the household's guardians ("payment", never "donation"), and an alert to whoever the office
+   listed.
+
+## 13.3 Autopay (saved method + our scheduler — NOT Stripe subscriptions)
+
+- **Enrol**: a SetupIntent with `usage: off_session`, then the household toggles autopay on. The consent
+  timestamp is stored.
+- **What is charged**: the sum of open invoice balances with `due_date <= today`, **capped at what the
+  household's derived balance says it owes**. That cap is not belt-and-braces: a credit line larger than its
+  invoice, or money paid ahead against a bill not yet due, would otherwise be charged as if owed.
+- **Idempotency, twice over**: `autopay_runs` is UNIQUE on (family, run_date), and the Stripe idempotency key
+  is derived from the run id.
+- **The ladder**: retry on day +2 and day +5, and each attempt presents the **next saved method in the
+  household's own order** (0.48.0) rather than the same declining card three times. After the third failure
+  autopay is switched off, the parent is emailed and the office is alerted.
+- **Indeterminate is not failure**: a network error leaves the run `pending` and does **not** advance the
+  ladder (a phantom failure could auto-disable a family early), and a pending run blocks any further charge
+  for that household until reconciliation resolves it. Guessing "no charge happened" is how you double-bill.
+
+## 13.4 Refunds (0.48.0)
+
+The unit is a **transaction**, not a payment row: one card charge covering three children is three rows
+(§9), so refunds group by PaymentIntent and reverse the group while asking Stripe once. Stripe first, ledger
+second. Idempotent at both ends — pressing twice refunds once.
+
+Full refunds only, on purpose: every mirror row is derived from the original's own allocations, line for line,
+and a partial has no such derivation. The office's tool for giving part of it back is a credit (a negative
+charge) on the next bill, which already exists and is already tested.
+
+**A `carry_in` row can never be refunded** — it is not money this app took, and reversing it would re-open
+arrears the family does not owe. Refused in the engine, not merely hidden from the list.
+
+## 13.5 Failure doctrine
+
+- A browser that never came back, or a broker call that never arrived → reconciliation records it within a day.
+- Stripe unreachable → pay-now, autopay and **card refunds** pause **visibly** and say why; cash reversals,
+  the ledger, the year view and every printed document are unaffected.
+- Skipped autopay runs are picked up by the next day's, because the due-date query is stateless.
 
 ## Paying ahead (every channel)
 
-A parent may pay **any amount at any time, including when nothing is due** — a term up front, cash at
-the start of Ramadan, the whole year in one go. There is no stored-credit table: `balance =
-invoiced − paid`, so money beyond the open invoices simply reads as that child's credit, and
-`ledger.reallocateStudent` hands it to the next invoice the moment one exists.
+A parent may pay **any amount at any time, including when nothing is due** — a term up front, cash at the
+start of Ramadan, the whole year in one go. There is no stored-credit table: `balance = invoiced − paid`, so
+money beyond the open invoices simply reads as that child's credit, and `ledger.reallocateStudent` hands it to
+the next invoice the moment one exists.
 
 The floor is `MIN_PAYMENT_CENTS` in `db/money.ts` — **one** constant, enforced on portal pay-now and
-advertised to the kiosk and donation site as `info.minAmountCents`, so the three cannot drift apart. It
-is deliberately NOT enforced on `record-payment`, which writes down money a consumer has *already*
-taken; refusing a 50¢ charge somebody really made would lose it, not prevent it.
+advertised to the kiosk and donation site as `info.minAmountCents`, so the three cannot drift apart. It is
+deliberately NOT enforced on `record-payment`, which writes down money a consumer has *already* taken;
+refusing a 50¢ charge somebody really made would lose it, not prevent it.
 
 Consumer-side note: a kiosk or donation site must offer its amount field even at a zero balance. The
 `info.allowAdvance` flag exists to tell it so — see
@@ -47,7 +119,13 @@ Consumer-side note: a kiosk or donation site must offer its amount field even at
 
 ## Ledger invariants (see `billing/ledger.ts`)
 
-- All money in **integer cents**. Balances **derived, never stored**. Payments **immutable** (corrections = reversal rows).
-- **One** `ledger.record` path used by: the Fabric provider, the Stripe webhook handler, autopay, and the manual-payment UI.
-- Idempotency at the DB: `payments.idempotency_key` UNIQUE (the Stripe PI id, whatever the channel).
-- Channels: `donations-web | kiosk | portal | autopay | cash | zelle | check | other`.
+- All money in **integer cents**. Balances **derived, never stored**. Payments **immutable** (corrections =
+  reversal rows; a refund is a Stripe refund plus those same rows).
+- **One** `recordPayment`/`recordSplit` path, used by the Fabric provider, the portal, autopay,
+  reconciliation, the manual-payment UI and the mid-year go-live.
+- Allocation is **per line** and **re-derived** whenever a bill changes, with a payer's stored instruction
+  honoured before the oldest-due-first sweep.
+- Idempotency at the DB: `payments.idempotency_key` UNIQUE (the Stripe PI id, whatever the channel), suffixed
+  `:studentId` when one charge fans out across siblings. Prefix-match it with `substr`, never `LIKE` — `_` is
+  a LIKE wildcard and Stripe ids are full of them.
+- Channels: `donations-web | kiosk | portal | autopay | cash | check | ach | zelle | other | carry_in`.

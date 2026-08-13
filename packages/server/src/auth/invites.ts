@@ -9,9 +9,10 @@
 import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
-import { guardians, guardianUsers, users, invites } from '../db/schema';
+import { guardians, guardianUsers, invites } from '../db/schema';
 import { rid } from '../db/ids';
 import { hashToken } from './sessions';
+import { usernameTaken } from './usernames';
 import { config } from '../config';
 import { cachedPublicUrl } from '../fabric/platform';
 
@@ -48,7 +49,10 @@ export function mintInvite(guardianId: string, createdByUserId: string | null): 
   const email = (g.email ?? '').trim().toLowerCase();
   if (!email) return { ok: false, reason: 'no_email' };
   if (db.select({ userId: guardianUsers.userId }).from(guardianUsers).where(eq(guardianUsers.guardianId, g.id)).get()) return { ok: false, reason: 'already_account' };
-  if (db.select({ id: users.id }).from(users).where(eq(users.username, email)).get()) return { ok: false, reason: 'email_taken' };
+  // Case-insensitively (auth/usernames.ts): a staff account created as `Office@masjid.org` holds the
+  // same login as this guardian's `office@masjid.org`, and minting an invite for it would build a
+  // second account that could never be signed into.
+  if (usernameTaken(db, email)) return { ok: false, reason: 'email_taken' };
   const token = randomBytes(32).toString('base64url');
   const ts = new Date();
   db.insert(invites).values({ id: rid('inv'), tokenHash: hashToken(token), guardianId: g.id, createdByUserId, createdAt: ts, expiresAt: new Date(ts.getTime() + INVITE_TTL_MS) }).run();

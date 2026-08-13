@@ -238,6 +238,27 @@ describe('the list', () => {
     expect(transactions[0].parts.map((p) => p.studentName).sort()).toEqual(['Yusuf Ismail', 'Zayd Ismail']);
   });
 
+  it('still calls a card payment a card payment when the payments connection is down', async () => {
+    /**
+     * The route describes how the money ARRIVED; it must not flip with the connection.
+     *
+     * It used to read `pi && stripeReady()`, so losing the Stripe keys for a minute (they come from the
+     * platform, §13.1) relabelled every card charge `manual` — and `manual` is the row that tells the
+     * office "the money still has to be handed back". Follow that and the family is paid twice.
+     */
+    const { familyId } = await household();
+    cardCharge(familyId);
+    stripeMod._setStripeForTest({}, null);
+    try {
+      const res = await caller('finance').billing.refundable({});
+      expect(res.transactions[0].route).toBe('stripe');
+      // Reported separately, so the screen can disable the button and say why.
+      expect(res.cardRefundsReady).toBe(false);
+    } finally {
+      stripeMod._setStripeForTest({ publishableKey: 'pk_test' }, fakeStripe as unknown as Stripe);
+    }
+  });
+
   it('marks what has already been refunded rather than hiding it', async () => {
     // Removing a refunded row would leave an office wondering whether the press worked.
     const { familyId } = await household();

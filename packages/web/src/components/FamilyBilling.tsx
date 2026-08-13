@@ -92,7 +92,9 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
   async function doPay(e: FormEvent) {
     e.preventDefault();
     const cents = parseCents(payment.amount);
-    if (!cents || cents < 1 || !payment.studentId) return;
+    // The date is required as well — a cleared date box used to reach the server and come back as a raw
+    // constraint error (0.48.0). Same guard as the Billing tab's own payment box.
+    if (!cents || cents < 1 || !payment.studentId || !payment.occurredAt) return;
     await pay.mutateAsync({ studentId: payment.studentId, amountCents: cents, channel: payment.channel, occurredAt: payment.occurredAt, memo: payment.memo.trim() || undefined });
     // The child stays selected: several siblings paying at once is several records in a row, and
     // re-picking the same name every time would be the annoying part.
@@ -432,7 +434,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
           </div>
           <div className="field" style={{ flex: '0 1 10rem' }}><label className="label">{t('billing.date')}</label><input type="date" className="input glass-inset" value={payment.occurredAt} onChange={(e) => setPayment({ ...payment, occurredAt: e.target.value })} /></div>
           <div className="field"><label className="label">{t('billing.memo')}</label><input className="input glass-inset" value={payment.memo} onChange={(e) => setPayment({ ...payment, memo: e.target.value })} /></div>
-          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount)}>{t('billing.record')}</button>
+          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount) || !payment.occurredAt}>{t('billing.record')}</button>
           <p className="hint">{t('billing.recordHint')}</p>
         </form>
 

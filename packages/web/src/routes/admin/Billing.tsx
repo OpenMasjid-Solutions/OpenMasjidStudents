@@ -129,7 +129,10 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
     setPayErr(null);
     setPayMsg(null);
     const cents = parseCents(payment.amount);
-    if (!cents || cents < 1 || !payment.studentId) return;
+    // The DATE is required too (0.48.0). A date box can be cleared, and an empty one used to reach the
+    // server, fail its NOT NULL column and come back as a raw SQLite message — so it is treated like the
+    // amount and the child: nothing is sent until it is there, and the button says so.
+    if (!cents || cents < 1 || !payment.studentId || !payment.occurredAt) return;
     const name = roster.data?.find((s) => s.id === payment.studentId)?.fullName ?? '';
     // Only direct the money when the ticks actually describe the amount — a part-payment of a ticked
     // line, or extra on top, is ordinary money and belongs on the oldest bill.
@@ -338,7 +341,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
           <div className="field" style={{ flex: '1 1 8rem' }}><label className="label">{t('billing.memo')}</label>
             <input className="input glass-inset" value={payment.memo} onChange={(e) => setPayment({ ...payment, memo: e.target.value })} maxLength={200} />
           </div>
-          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount)}>{t('billing.record')}</button>
+          <button type="submit" className="btn btn--primary" disabled={pay.isPending || !payment.studentId || !parseCents(payment.amount) || !payment.occurredAt}>{t('billing.record')}</button>
         </form>
 
         {/* What this child owes, line by line. Ticking lines fills in the amount AND records the money

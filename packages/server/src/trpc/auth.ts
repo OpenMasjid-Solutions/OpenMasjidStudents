@@ -22,7 +22,8 @@ import { probePlatformSession } from '../fabric/platform';
 import { alertStaff } from '../alerts';
 import { fabricConfigured, config } from '../config';
 import { clientIp } from '../security/origin';
-import { loginLimiter, inviteAcceptLimiter, resetRequestLimiter, resetConfirmLimiter, registerLimiter, codeLookupLimiter } from '../security/rateLimit';
+import { loginLimiter, loginAccountLimiter, inviteAcceptLimiter, resetRequestLimiter, resetConfirmLimiter, registerLimiter, codeLookupLimiter } from '../security/rateLimit';
+import { findUserByUsername, normalizeUsername, usernameTaken } from '../auth/usernames';
 import { audit } from '../audit';
 import { mintInvite, portalBase } from '../auth/invites';
 import { normalizeStudentCode } from '../billing/studentCodes';
@@ -130,16 +131,31 @@ export const authRouter = router({
     .input(z.object({ username: USERNAME, password: PASSWORD }))
     .mutation(async ({ ctx, input }) => {
       const key = clientIp(ctx.req);
-      const wait = loginLimiter.retryAfterMs(key);
+      /**
+       * TWO buckets, per §14's "per-IP and per-account" (0.48.0).
+       *
+       * The per-IP one alone leaves a DISTRIBUTED password spray unlimited: finance and parent accounts
+       * are reachable over the tunnel, a parent's username is simply their email address, and a few
+       * hundred hosts each making a handful of attempts never trips a per-IP counter. The per-account
+       * bucket caps the whole internet's attempts on one name.
+       *
+       * Deliberately looser than the per-IP one (25 in 15 minutes, blocked for 15) because it is keyed on
+       * something an attacker chooses: a tight limit would be a way to lock a named admin out on demand.
+       * At 25 it is far beyond honest mistyping and far below what a spray needs. It counts every failed
+       * attempt on the SUPPLIED name whether or not that account exists, so it is not an enumeration
+       * oracle either — and a parent who is locked out can still reset by email.
+       */
+      const account = normalizeUsername(input.username);
+      const wait = Math.max(loginLimiter.retryAfterMs(key), loginAccountLimiter.retryAfterMs(account));
       if (wait > 0) {
         throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: `Too many attempts. Try again in ${Math.ceil(wait / 1000)}s.` });
       }
 
       // Case-insensitive match: parent accounts store the guardian email lowercased, and phone
       // keyboards auto-capitalize — so a case-sensitive lookup would lock legitimate users out.
-      // Works for existing mixed-case admin/staff usernames too (compared via lower()).
-      const uname = input.username.trim().toLowerCase();
-      const user = db.select().from(users).where(sql`lower(${users.username}) = ${uname}`).get();
+      // ONE place decides how a username matches, and it is the same place the "is this name taken?"
+      // checks use — those two disagreeing is what let un-signinable accounts be created (0.48.0).
+      const user = findUserByUsername(input.username);
       const isTunnel = ctx.origin === 'tunnel';
       // A login can legitimately succeed here only for an active account that isn't an
       // admin signing in over the tunnel. Every other case still runs a verify against a
@@ -150,10 +166,37 @@ export const authRouter = router({
       const passwordOk = await verifyPassword(target, input.password);
       if (!canAuthHere || !passwordOk) {
         loginLimiter.fail(key);
+        /**
+         * And TELL somebody, the moment a real account's name locks (0.48.0).
+         *
+         * The 2026-08-04 audit raised this gap and left the choice open, recommending an alert over a
+         * lockout because a lockout is a denial-of-service primitive aimed at a named person. Both is the
+         * honest answer: the cap is what §14 asks for and what actually stops a distributed spray, and the
+         * alert is what turns "somebody ground the finance login for an hour" from invisible into
+         * actionable. The DoS objection is answered by the numbers rather than dismissed — 25 attempts,
+         * blocked for 15 minutes, a parent can still reset by email, and admin sign-in is LAN-only, so
+         * locking an admin means already being on the masjid's Wi-Fi.
+         *
+         * Raised only on the TRANSITION into blocked (one email per name per window, not per attempt), and
+         * only when the name is a real account: a spray across invented usernames is noise, and an inbox
+         * that fills with noise is one nobody reads the real one out of.
+         */
+        const wasBlocked = loginAccountLimiter.retryAfterMs(account) > 0;
+        loginAccountLimiter.fail(account);
+        if (user && !wasBlocked && loginAccountLimiter.retryAfterMs(account) > 0) {
+          void alertStaff('login-blocked', {
+            title: 'Too many failed sign-ins',
+            // The account name may be said here — this goes to addresses an admin typed, and "one of your
+            // accounts" is not something anybody can act on. Never in publicText (§14).
+            text: `Sign-in for “${user.username}” was blocked for an hour after repeated failed attempts. If that is not somebody in the office forgetting a password, someone is guessing it — change that password, and disable the account if you are unsure.`,
+            publicText: 'Sign-in for one account was blocked after repeated failed attempts.',
+          });
+        }
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Incorrect username or password.' });
       }
 
       loginLimiter.succeed(key);
+      loginAccountLimiter.succeed(account);
       const { token } = createSession({ userId: user!.id, role: user!.role, source: 'local', username: user!.username });
       ctx.res.setCookie(COOKIE, token, cookieOptions(ctx.https));
       return { ok: true as const, role: user!.role, mustChangePassword: user!.mustChangePassword };
@@ -288,7 +331,9 @@ export const authRouter = router({
         !!g &&
         !!email &&
         !db.select({ userId: guardianUsers.userId }).from(guardianUsers).where(eq(guardianUsers.guardianId, g.id)).get() &&
-        !db.select({ id: users.id }).from(users).where(eq(users.username, email)).get();
+        // Case-insensitively: the address may already be a staff account typed with a capital, and
+        // creating a second row for it would make one of the two unreachable (auth/usernames.ts).
+        !usernameTaken(db, email);
       if (!valid) {
         inviteAcceptLimiter.fail(key);
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'This invite link is invalid or has already been used. Ask the office for a new one.' });
@@ -302,7 +347,7 @@ export const authRouter = router({
         const live = tx.select({ usedAt: invites.usedAt }).from(invites).where(eq(invites.id, inv!.id)).get();
         if (!live || live.usedAt) return false;
         if (tx.select({ userId: guardianUsers.userId }).from(guardianUsers).where(eq(guardianUsers.guardianId, g!.id)).get()) return false;
-        if (tx.select({ id: users.id }).from(users).where(eq(users.username, email)).get()) return false;
+        if (usernameTaken(tx, email)) return false;
         tx.insert(users).values({ id: userId, username: email, email, passwordHash, role: 'parent', status: 'active', mustChangePassword: false, displayName: g!.name, createdAt: ts, updatedAt: ts }).run();
         tx.insert(guardianUsers).values({ guardianId: g!.id, userId, createdAt: ts }).run();
         tx.update(invites).set({ usedAt: ts }).where(eq(invites.id, inv!.id)).run();

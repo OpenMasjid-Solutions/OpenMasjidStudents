@@ -30,6 +30,7 @@ import { db } from '../db';
 import { users, guardianUsers, userSchools } from '../db/schema';
 import { rid } from '../db/ids';
 import { hashPassword, MIN_PASSWORD_LENGTH } from '../auth/passwords';
+import { usernameTaken } from '../auth/usernames';
 import { fabricConfigured } from '../config';
 import { audit } from '../audit';
 import { setUserSchools } from '../schools';
@@ -127,7 +128,10 @@ export const staffRouter = router({
   create: adminProcedure
     .input(z.object({ username: USERNAME, displayName: z.string().trim().max(120).optional(), role: STAFF_ROLE, tempPassword: TEMP_PW }))
     .mutation(async ({ ctx, input }) => {
-      if (db.select({ id: users.id }).from(users).where(eq(users.username, input.username)).get()) {
+      // Case-INSENSITIVELY, because that is how signing in matches (auth/usernames.ts). Comparing
+      // exactly let `Office` and `office` both exist, and only the first of them could ever be signed
+      // into — a second admin account that silently did not work.
+      if (usernameTaken(db, input.username)) {
         throw new TRPCError({ code: 'CONFLICT', message: 'That username is already taken.' });
       }
       const id = rid('usr');

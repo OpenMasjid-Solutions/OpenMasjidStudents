@@ -820,7 +820,8 @@
     "parentMailPause": "Pause all email to parents",
     "parentMailPauseHint": "Nothing at all is sent to a parent while this is on — not receipts, not autopay notices, and not invites or password resets. Turn it on while you are setting up or testing with your real families in the system, so nothing goes out by accident. Staff alerts and your own test sends are unaffected.",
     "parentMailPausedNotice": "Email to parents is paused. Invites and resets still give you a link to copy or print, and nothing is being sent.",
-    "ev_payment-refunded": "Refund made"
+    "ev_payment-refunded": "Refund made",
+    "ev_login-blocked": "Sign-in blocked"
   },
   "ftype": {
     "text": "Text",
@@ -1412,6 +1413,7 @@
     "andMore_one": "+1 more",
     "andMore_other": "+{{count}} more",
     "paidAhead": "paid ahead",
+    "cardsPaused": "Card refunds aren’t available at the moment — the connection to your payments account is down. Cash and bank payments can still be reversed here, and card refunds will work again shortly.",
     "carryInHint": "A balance carried forward from before you used this app is not listed here — there is no money to send back. Correct it by re-running the go-live step."
   }
 }

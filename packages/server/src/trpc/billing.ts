@@ -24,9 +24,11 @@ import { invoiceLines, payableLines } from '../billing/lines';
 import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
 import { commitCarryIn, defaultGoLivePeriod, midYearPlan, noteCarryIn } from '../billing/carryIn';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
+import { isIsoDay } from '../settings/dates';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
 import { paidForByPayment } from '../billing/paidFor';
 import { refundTransaction, refundableTransactions } from '../payments/refunds';
+import { stripeReady } from '../payments/stripe';
 import {
   getCurrency,
   getYearViewColumns,
@@ -62,6 +64,31 @@ const SIGNED_CENTS = z.number().int().min(-100_000_000).max(100_000_000);
 const PERIOD = z.string().trim().min(1).max(40);
 const NOTE = z.string().trim().max(200);
 const now = () => new Date();
+
+/**
+ * A date typed into a form on the money path (0.48.0).
+ *
+ * REFUSED HERE, with one sentence, because nothing downstream can refuse it usefully. §9 fixes the
+ * storage format as ISO precisely because every date column is compared as TEXT — so a due date of
+ * `lol` is stored happily and then sorts wherever it likes, is never past due (`due_date < today` is
+ * false), and is invisible to autopay (`due_date <= today` is false too). A payment date fails louder
+ * and worse: `new Date('T12:00:00')` is `NaN`, SQLite stores that as NULL, and the NOT NULL column
+ * refuses — which reached the office as `NOT NULL constraint failed: payments.occurred_at`. Clearing
+ * the date box in the record-a-payment form was enough to do it.
+ *
+ * A regex would not be enough: `2026-13-45` is ten characters of the right shape and is not a day, so
+ * `settings/dates.ts` is asked instead — the one place that knows what a real stored date is.
+ */
+function isoDay(value: string, what: string): string {
+  const v = value.trim();
+  if (!isIsoDay(v)) throw new TRPCError({ code: 'BAD_REQUEST', message: `${what} needs to be a real date, like 2026-03-04.` });
+  return v;
+}
+
+/** The same check for a field that may legitimately be left blank (no due date, "as of today"). */
+function isoDayOrNull(value: string | undefined, what: string): string | null {
+  return value && value.trim() ? isoDay(value, what) : null;
+}
 
 /** Who a bulk apply targets: explicit students, or everyone active in a class or course.
  *  One resolver so the fee-plan and charge-item tabs behave identically. */
@@ -562,7 +589,7 @@ export const billingRouter = router({
     .input(z.object({ periodKey: PERIOD, label: NAME.optional(), labelTemplate: NAME.optional(), dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
     .mutation(({ ctx, input }) => {
       assertBillablePeriod(input.periodKey, input.periodKind ?? 'month');
-      const r = generateForPeriod({ periodKey: input.periodKey, label: invoiceLabelFor(input, { remember: true }), dueDate: input.dueDate || null, periodKind: input.periodKind });
+      const r = generateForPeriod({ periodKey: input.periodKey, label: invoiceLabelFor(input, { remember: true }), dueDate: isoDayOrNull(input.dueDate, 'The due date'), periodKind: input.periodKind });
       audit(auditActor(ctx), 'invoice.generatePeriod', { entity: 'billing', detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
     }),
@@ -571,7 +598,7 @@ export const billingRouter = router({
     .input(z.object({ familyId: ID, periodKey: PERIOD, label: NAME.optional(), labelTemplate: NAME.optional(), dueDate: z.string().max(20).optional(), periodKind: z.enum(['month', 'term']).optional() }))
     .mutation(({ ctx, input }) => {
       assertBillablePeriod(input.periodKey, input.periodKind ?? 'month');
-      const r = generateForFamily(input.familyId, { periodKey: input.periodKey, label: invoiceLabelFor(input), dueDate: input.dueDate || null, periodKind: input.periodKind });
+      const r = generateForFamily(input.familyId, { periodKey: input.periodKey, label: invoiceLabelFor(input), dueDate: isoDayOrNull(input.dueDate, 'The due date'), periodKind: input.periodKind });
       audit(auditActor(ctx), 'invoice.generateFamily', { entity: 'family', entityId: input.familyId, detail: { periodKey: input.periodKey, periodKind: input.periodKind ?? 'month', created: r.created } });
       return r;
     }),
@@ -1171,7 +1198,7 @@ export const billingRouter = router({
       let res;
       try {
         res = recordPayment(
-          { studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${input.occurredAt}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null, directed: input.directed ?? null },
+          { studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: new Date(`${isoDay(input.occurredAt, 'The payment date')}T12:00:00`), idempotencyKey: rid('man'), memo: input.memo || null, directed: input.directed ?? null },
           // `recordingActor`, not `auditActor`: this name is stamped on the payment row the office
           // reads back ("who took this cash?"), so it is the person's name rather than their username.
           recordingActor(ctx),
@@ -1207,10 +1234,15 @@ export const billingRouter = router({
   }),
 
   // ── Refunds (0.48.0) ────────────────────────────────────────────────────────
-  /** Recent transactions and how each one could be given back (payments/refunds.ts). */
+  /** Recent transactions and how each one could be given back (payments/refunds.ts).
+   *
+   *  `cardRefundsReady` is separate from each row's `route` deliberately: the route says how the money
+   *  arrived (and never changes), this says whether Stripe can be reached to send a card one back right
+   *  now. Rolling the two together made a card payment read as "hand the cash over" whenever the keys
+   *  were briefly unavailable — advice that would have the family paid twice. */
   refundable: adminOrFinanceProcedure
     .input(z.object({ limit: z.number().int().min(1).max(200).optional(), query: z.string().trim().max(120).optional() }).optional())
-    .query(({ input }) => ({ transactions: refundableTransactions(input ?? {}), currency: getCurrency() })),
+    .query(({ input }) => ({ transactions: refundableTransactions(input ?? {}), currency: getCurrency(), cardRefundsReady: stripeReady() })),
 
   /**
    * Give a whole transaction back: the money at Stripe where it came through Stripe, and the ledger either
@@ -1302,6 +1334,9 @@ export const billingRouter = router({
   midYearCommit: adminProcedure.input(MID_YEAR_INPUT).mutation(({ ctx, input }) => {
     const err = periodKeyError(input.goLivePeriod);
     if (err) throw new TRPCError({ code: 'BAD_REQUEST', message: err });
+    // Checked ONCE, before a single artifact is written: this date lands on every carry-in row the run
+    // creates, so half a school's histories dated NaN is not a state to discover afterwards.
+    const asOf = isoDayOrNull(input.asOf, 'The date these balances were true');
     const plan = midYearPlan(input.goLivePeriod, input.schoolYearId ?? null, input.rows ?? []);
     // A carry-in writes real ledger rows, so it is named the same way a cash payment is.
     const actor = recordingActor(ctx);
@@ -1320,7 +1355,7 @@ export const billingRouter = router({
         if (s.already && s.kind !== 'square') skipped++;
         continue;
       }
-      const r = commitCarryIn({ studentId: s.studentId, kind: s.kind, amountCents: s.amountCents, goLivePeriod: input.goLivePeriod, asOf: input.asOf ?? null, memo: input.memo ?? null }, actor);
+      const r = commitCarryIn({ studentId: s.studentId, kind: s.kind, amountCents: s.amountCents, goLivePeriod: input.goLivePeriod, asOf: asOf, memo: input.memo ?? null }, actor);
       if (!r.wrote) continue;
       if (r.kind === 'owes') owed++;
       else ahead++;

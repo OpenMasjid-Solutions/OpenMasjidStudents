@@ -30,12 +30,12 @@
  * place, and §16 keeps money math in one. The office's tool for giving part of it back is a credit on the
  * next bill (a negative charge), which is already there and already tested.
  */
-import { desc, eq, inArray, like, or } from 'drizzle-orm';
+import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { payments, students as students_ } from '../db/schema';
 import { reversePayment } from '../billing/ledger';
 import { paidForByPayment } from '../billing/paidFor';
-import { stripeClient, stripeReady } from './stripe';
+import { stripeClient } from './stripe';
 import { makeLog } from '../logger';
 
 const log = makeLog('refunds');
@@ -174,7 +174,17 @@ export function refundableTransactions(opts: { limit?: number; query?: string } 
         channel: r.channel,
         occurredAt: r.occurredAt,
         amountCents: r.amountCents,
-        route: pi && stripeReady() ? 'stripe' : 'manual',
+        /**
+         * WHAT THIS PAYMENT IS, not what we can do about it this minute (0.48.0).
+         *
+         * It used to read `pi && stripeReady()`, so a momentary loss of the Stripe keys (they are fetched
+         * from the platform, §13.1) relabelled every card payment as a manual one — and `manual` is the
+         * row that tells the office "the money still has to be handed back". Two volunteers and a cash box
+         * later, Stripe reconnects and refunds the card too. The route is a property of how the money
+         * ARRIVED and never changes; whether a card refund can be sent right now is a separate fact, and
+         * `refundable` reports it separately so the screen can say so and disable the button.
+         */
+        route: pi ? 'stripe' : 'manual',
         refunded: reversedIds.has(r.id),
         memo: r.memo,
         recordedByName: r.recordedByName,
@@ -192,11 +202,14 @@ export function refundableTransactions(opts: { limit?: number; query?: string } 
  *
  * Found by IDEMPOTENCY KEY rather than by scanning: §9 fixes that key as the Stripe PaymentIntent id for
  * every channel, and `recordSplit` suffixes `:studentId` when one charge fans out over several children.
- * So one `LIKE` on a unique-indexed column finds the whole group, where filtering the JSON `externalRef`
- * in JavaScript would mean reading every payment the madrasah has ever taken.
+ * So one prefix match on a unique-indexed column finds the whole group, where filtering the JSON
+ * `externalRef` in JavaScript would mean reading every payment the madrasah has ever taken.
  *
- * The `externalRef` check afterwards is the belt and braces: a manual payment whose memo-shaped key
- * happened to collide with a PaymentIntent id must not be swept into someone else's refund.
+ * Prefix-matched with `substr`, NOT `LIKE key || ':%'` — the same reason `ledger.recordedSplit` and the
+ * Fabric `check` method give: `_` is a LIKE wildcard and Stripe ids are full of them (`pi_3Pabc…`), so a
+ * LIKE pattern needs an ESCAPE clause to even be correct. The `externalRef` filter below already caught
+ * anything a loose pattern let through, but a query that is only correct because of a later filter is one
+ * refactor away from being wrong, and this is the refund path.
  */
 function rowsOf(key: string) {
   const direct = db.select().from(payments).where(eq(payments.id, key)).get();
@@ -206,7 +219,7 @@ function rowsOf(key: string) {
   const group = db
     .select()
     .from(payments)
-    .where(or(eq(payments.idempotencyKey, key), like(payments.idempotencyKey, `${key}:%`)))
+    .where(sql`${payments.idempotencyKey} = ${key} OR substr(${payments.idempotencyKey}, 1, ${key.length + 1}) = ${`${key}:`}`)
     .all()
     .filter((p) => !p.reversalOf && piOf(p.externalRef) === key);
   if (group.length) return group;

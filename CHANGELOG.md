@@ -303,6 +303,33 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 - **The account menu in the parent portal is opaque.** The tabs behind it were reading through it.
 
+### From a security & correctness review of the whole app
+
+- **A refund never tells you to hand cash back for a card payment.** If the connection to your payments
+  account dropped for a moment, every card payment in the refund list was relabelled as one you had to
+  repay by hand — and an office that did what it said would have paid the family twice, because the card
+  gets refunded as soon as the connection returns. A row now says how the money actually arrived, which
+  never changes, and card refunds are simply switched off with a line explaining why until the connection
+  is back.
+
+- **Recording a payment with an empty date box said "NOT NULL constraint failed".** A database error, in
+  front of whoever was taking cash at the desk. The date is now required like the amount and the child, and
+  a date that isn't a real one is refused with a sentence instead. The same check now covers a bill's due
+  date, where a bad value was worse for being silent: the bill would have sat there for good — never chased,
+  never collected by autopay — because nothing could compare the date to today.
+
+- **Repeated failed sign-ins on one account are stopped, and you're told.** Attempts were only counted per
+  device, so somebody trying one of your logins from a hundred different places was never slowed down at
+  all. Now the account itself is capped — 25 tries in a quarter of an hour — and Settings → Email alerts
+  gains **Sign-in blocked**, which emails you the first time it happens so you can change that password.
+  It's generous enough that forgetting your own password a few times won't lock you out, and a parent can
+  always reset by email.
+
+- **Two staff accounts can no longer differ only by capital letters.** "Office" and "office" were accepted
+  as two accounts, and only the first could ever be signed into — so an admin account created that way
+  silently didn't work, with no error to say so. Signing in has always ignored capitals; creating an
+  account now does too, and an install that already has such a pair keeps working.
+
 ## [0.47.0]
 
 - **More than one school, in one masjid.** If your madrasah runs programmes on different calendars —

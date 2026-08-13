@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 OpenMasjid-Solutions
 
-# OpenMasjid Students — one container that runs everything: the four role UIs
-# (admin / teacher / finance / parent), the public admissions form, the API, the
-# Fabric provider routes, the Stripe webhook, and the SQLite data store. One image
-# to install, one to update. Least-privilege: no privileged mode, no host
-# networking, no devices, no Docker socket.
+# OpenMasjid Students — one container that runs everything: the three role UIs
+# (admin / finance / parent), the API, the Fabric provider routes, the printable
+# statements and sheets, and the SQLite data store. One image to install, one to
+# update. Least-privilege: no privileged mode, no host networking, no devices,
+# no Docker socket.
+#
+# (This header described teachers, a public admissions form and a Stripe webhook
+# until 0.48.0. None of the three exist: the academics went in v0.35.0 and there
+# has never been a webhook — payments are pulled, see CLAUDE.md §13.4.)
 #
 # Nothing to configure at install time beyond the settings below — install it, open
 # it, create the admin account, and set up the rest inside the app (saved to /data).
@@ -31,7 +35,7 @@ services:
     #   ghcr.io/openmasjid-solutions/openmasjidstudents:0.45.2@sha256:25542ea8…
     # Restoring that pin is a step OF the merge-to-main release (CLAUDE.md "Branching policy" + §19); CI
     # refuses to publish a v* tag whose compose is not digest-pinned.
-    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.48.0-dev.38
+    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.48.0-dev.39
     restart: unless-stopped
     environment:
       PORT: "8080"
@@ -44,8 +48,8 @@ services:
       OPENMASJID_APP_ID: ${OPENMASJID_APP_ID:-}
       OPENMASJID_APP_SECRET: ${OPENMASJID_APP_SECRET:-}
       # Public HTTPS URL from the OS Cloudflare tunnel (manifest `tunnel: true`); used
-      # for parent/teacher/finance access, the public admissions form, QR links, and
-      # inbound Stripe webhooks. Empty when not exposed.
+      # for parent + finance access and for the absolute links in invite, reset and QR
+      # codes. Empty when not exposed.
       OPENMASJID_PUBLIC_URL: ${OPENMASJID_PUBLIC_URL:-}
       # No install settings: school name, currency, and the OpenMasjidOS Stripe account
       # to charge through are all configured INSIDE the app (first-run + admin settings,

@@ -259,8 +259,28 @@ async function main(): Promise<void> {
      * and an entire release to lose. The hashed assets it points at stay cacheable, which is the whole
      * point of hashing them.
      */
+    /**
+     * `nosniff` and `no-referrer` alongside the cache directive (0.48.0).
+     *
+     * The shell had neither. `nosniff` costs nothing and removes a whole class of content-type confusion.
+     * `no-referrer` is the one that matters here: the invite, reset and register pages carry a
+     * single-use TOKEN in the query string, and the portal's pay page loads Stripe's script from another
+     * origin. Modern browsers default to `strict-origin-when-cross-origin`, which strips the path — but
+     * that is a default, not a promise, and older webviews (which is what a parent's phone may be) still
+     * send the full URL on a same-protocol cross-origin request. A token in someone else's logs cannot be
+     * un-leaked, so the header is stated rather than assumed.
+     *
+     * Deliberately NOT `X-Frame-Options`/`frame-ancestors` here: whether OpenMasjidOS embeds an app in
+     * its dashboard is the platform's business, and guessing wrong would break the whole UI rather than
+     * one page. The printed documents, which are ours alone, do set `frame-ancestors 'none'`.
+     */
     const sendIndex = (_req: unknown, reply: import('fastify').FastifyReply) =>
-      reply.type('text/html').header('cache-control', 'no-store, must-revalidate').send(rawIndex);
+      reply
+        .type('text/html')
+        .header('cache-control', 'no-store, must-revalidate')
+        .header('x-content-type-options', 'nosniff')
+        .header('referrer-policy', 'no-referrer')
+        .send(rawIndex);
     // Serve the SPA index at the root explicitly — @fastify/static with index:false
     // returns 403 for a bare directory request, so it never reaches the fallback below.
     app.get('/', sendIndex);
