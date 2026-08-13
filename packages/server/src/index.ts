@@ -24,7 +24,7 @@ import { registerFabricProvider } from './fabric/provider';
 import { refreshSiteInfo } from './fabric/platform';
 import { backfillStudentCodes } from './billing/studentCodes';
 import { ensureDefaultSchool } from './schools';
-import { getSchoolLogo, parseLogoDataUri } from './settings';
+import { getSchoolLogo, getSchoolName, parseLogoDataUri } from './settings';
 import { loadStripeKeys } from './payments/stripe';
 import { startSchedulers } from './payments/scheduler';
 import { stripBasePath } from './http/basePath';
@@ -127,6 +127,50 @@ async function main(): Promise<void> {
       // shouldn't refetch it per render.
       .header('cache-control', 'public, max-age=300')
       .send(parsed.bytes);
+  });
+
+  /**
+   * The web app manifest — what a phone reads when somebody adds this to their home screen (0.48.0).
+   *
+   * SERVED RATHER THAN STATIC, for one reason worth the route: the NAME. A parent's home screen should say
+   * "Madani Academy", not "OpenMasjid Students" — they are adding their madrasah, not a piece of software
+   * — and only the server knows what the masjid called itself. Everything else here could have been a file.
+   *
+   * The ICONS stay the app's own (public/icon-*.png), not the masjid's uploaded logo: a home-screen icon is
+   * square and gets cropped to the platform's shape, and a wordmark logo — which is what most masajid
+   * upload — would come out sliced. The bundled mark is drawn for this.
+   *
+   * Relative icon paths and a relative `start_url`, resolved against the manifest's own URL, so this works
+   * unchanged at the root and under the tunnel's path prefix (the same reason index.html uses `./`).
+   * Unauthenticated, like the logo above: it carries the madrasah's public name and nothing else, and a
+   * manifest that 401s is a manifest the phone ignores.
+   */
+  app.get('/manifest.webmanifest', async (_req, reply) => {
+    const name = getSchoolName().trim() || 'OpenMasjid Students';
+    return reply
+      .header('content-type', 'application/manifest+json; charset=utf-8')
+      .header('cache-control', 'public, max-age=300')
+      .send(
+        JSON.stringify({
+          name,
+          // What fits under an icon. Phones truncate at roughly a dozen characters, so a long madrasah
+          // name is better cut here than silently ellipsised by the launcher.
+          short_name: name.length > 14 ? `${name.slice(0, 13).trimEnd()}…` : name,
+          description: 'Tuition and fees for the madrasah',
+          start_url: './',
+          scope: './',
+          display: 'standalone',
+          orientation: 'any',
+          // The shell's own background, so the splash screen does not flash white before a dark app.
+          background_color: '#020912',
+          theme_color: '#020912',
+          icons: [
+            { src: './icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: './icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: './icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          ],
+        }),
+      );
   });
 
   // Same-origin appearance relay (CLAUDE.md §15). The parent portal + staff surfaces INHERIT the OS

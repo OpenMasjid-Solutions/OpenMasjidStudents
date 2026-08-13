@@ -271,12 +271,25 @@ export function Structure() {
     await refreshTree();
   }
 
+  /**
+   * Confirmations on this screen (0.48.0). It had none, and everything on it is a one-press change to the
+   * shape of the whole madrasah: archiving a course hides it and every class inside it, archiving a class
+   * leaves its children unplaced, deleting a school or a year moves what the Year view shows.
+   *
+   * Each message says WHAT HAPPENS rather than asking whether the office is sure — the useful half of a
+   * confirmation is the sentence, not the second click.
+   */
   async function doCourseArchive(id: string, name: string) {
+    const classCount = (tree.data ?? []).find((c) => c.id === id)?.classes.length ?? 0;
+    if (!window.confirm(t('structure.confirmCourseArchive', { name, count: classCount }))) return;
     await run(() => courseArchive.mutateAsync({ id }), () => setNote(t('structure.courseArchived', { name })));
     await refreshTree();
   }
 
-  async function doClassArchive(id: string, name: string) {
+  async function doClassArchive(id: string, name: string, studentCount: number) {
+    // The number of children about to be left without a class is the fact that decides it, so it is in
+    // the question rather than only in the note afterwards.
+    if (!window.confirm(t('structure.confirmClassArchive', { name, count: studentCount }))) return;
     await run(async () => {
       const r = await classArchive.mutateAsync({ id });
       setNote(r.unplaced > 0 ? t('structure.classArchivedUnplaced', { name, count: r.unplaced }) : t('structure.classArchived', { name }));
@@ -438,7 +451,7 @@ export function Structure() {
                         </button>
                       )}
                       {y.status === 'active' && !y.isCurrent && (
-                        <button type="button" className="btn btn--ghost btn--sm" disabled={yearArchive.isPending} onClick={() => void run(() => yearArchive.mutateAsync({ id: y.id }), undefined).then(refreshYears)}>
+                        <button type="button" className="btn btn--ghost btn--sm" disabled={yearArchive.isPending} onClick={() => { if (!window.confirm(t('structure.confirmYearArchive', { name: y.label }))) return; void run(() => yearArchive.mutateAsync({ id: y.id }), undefined).then(refreshYears); }}>
                           {t('structure.archive')}
                         </button>
                       )}
@@ -541,7 +554,7 @@ export function Structure() {
                     <button type="button" className="link-btn" style={{ marginInlineStart: '0.4rem' }} onClick={() => setTermEdit({ id: tm.id, name: tm.name, startDate: tm.startDate ?? '', endDate: tm.endDate ?? '' })} aria-label={t('common.edit')}>
                       <Pencil size={12} />
                     </button>
-                    <button type="button" className="link-btn" style={{ marginInlineStart: '0.3rem' }} onClick={() => void run(() => termDelete.mutateAsync({ id: tm.id }), undefined).then(refreshTerms)} aria-label={t('common.remove')}>×</button>
+                    <button type="button" className="link-btn" style={{ marginInlineStart: '0.3rem' }} onClick={() => { if (!window.confirm(t('structure.confirmTermDelete', { name: tm.name }))) return; void run(() => termDelete.mutateAsync({ id: tm.id }), undefined).then(refreshTerms); }} aria-label={t('common.remove')}>×</button>
                   </span>
                 ))}
               </div>
@@ -621,7 +634,7 @@ export function Structure() {
                         <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => move('class', k.id, c.classes, -1)} aria-label={t('structure.moveUp')}>↑</button>
                         <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => move('class', k.id, c.classes, 1)} aria-label={t('structure.moveDown')}>↓</button>
                         <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => setRename({ kind: 'class', id: k.id, name: k.name })} aria-label={t('common.edit')}><Pencil size={12} /></button>
-                        <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => doClassArchive(k.id, k.name)} aria-label={t('structure.archive')}>×</button>
+                        <button type="button" className="link-btn" style={{ marginInlineStart: '0.2rem' }} onClick={() => doClassArchive(k.id, k.name, k.studentCount)} aria-label={t('structure.archive')}>×</button>
                       </span>
                     ))}
                   </div>

@@ -15,6 +15,32 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [0.48.0]
 
+- **Refund any payment, at the bottom of Billing.** Every transaction the madrasah has taken, newest first,
+  each with one button. A card or bank payment is **sent back automatically** through Stripe; cash, a check
+  or a bank transfer is put right on the ledger for you to hand back — and each row says which of the two
+  it is *before* you press, because they are not the same act. One card payment covering three children is
+  one row, and refunding it reverses all three while asking Stripe once. Pressing twice refunds once.
+  Whatever it paid becomes owing again, and the office is emailed that money went out.
+
+  Reversing a payment used to only put the ledger right: press it on a card payment and the balance went
+  back up while the family's money stayed with Stripe, with nothing saying so. That is what this replaces.
+  To give back only part of a payment, add a credit on the household's record instead.
+
+- **The billing record says whether autopay is on**, and what it will charge — "Autopay is on for this
+  household — Visa ···· 4242". Nothing in the office showed this, so a family whose card pays on Friday
+  looked exactly like one ignoring reminders.
+
+- **Confirmations where things are hard to undo**, each saying what will actually happen rather than just
+  asking: withdrawing a student, voiding a bill or a charge, taking a fee off a child, archiving a course,
+  a class, a year or a charge item, deleting a term, and disabling a staff account. Archiving a class tells
+  you how many children it is about to leave unplaced. Actions that take nothing away — reinstating a
+  student, re-enabling an account — still don't ask, because a dialog on a harmless action is how people
+  learn to click through the ones that matter.
+
+- **Add it to your phone's home screen and it looks like an app** — the madrasah's own name under the icon,
+  the OpenMasjid Students mark on it, and it opens without the browser's address bar. Icons for Android and
+  iPhone both.
+
 - **A bank account can be added in the parent portal.** There was no option — the "add a payment method"
   step only ever asked Stripe for cards, so whatever the madrasah had switched on, a parent could pay *from*
   a bank account at the checkout but never save one. It now offers exactly what your Stripe account

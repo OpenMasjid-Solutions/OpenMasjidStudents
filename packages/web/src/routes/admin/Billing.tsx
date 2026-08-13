@@ -30,6 +30,8 @@ import { formatMoney, parseCents, parseSignedCents } from '../../lib/money';
 /** The go-live wizard is a once-per-install screen — no reason for every parent's phone to download it
  *  with the rest of the app. (Same treatment as What's new.) */
 const MidYearSetup = lazy(() => import('../../components/MidYearSetup').then((m) => ({ default: m.MidYearSetup })));
+/** Giving money back is the rarest thing on this page — no reason for it to ride in the main bundle. */
+const Refunds = lazy(() => import('../../components/Refunds').then((m) => ({ default: m.Refunds })));
 
 /** The channels the office can record by hand — kept in step with the server by the mutation's own
  *  input type, so a drift here fails `tsc` rather than at runtime. */
@@ -259,8 +261,11 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
     URL.revokeObjectURL(url);
   }
 
-  async function doChargeVoid(id: string) {
+  async function doChargeVoid(id: string, label: string, amountCents: number) {
     setChargeErr(null);
+    // Cancelling a charge somebody deliberately raised. Named and priced in the question, because "void"
+    // beside a row is not enough to be sure you are on the right one.
+    if (!window.confirm(t('billing.confirmVoidCharge', { label, amount: money(amountCents) }))) return;
     try {
       await chargeVoid.mutateAsync({ id });
       await Promise.all([utils.billing.chargeList.invalidate()]);
@@ -419,7 +424,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
               <span key={i.id} className="chip">
                 {i.name} · {money(i.defaultAmountCents)}
                 <button type="button" className="link-btn" style={{ marginInlineStart: '0.4rem' }} aria-label={t('common.edit')} onClick={() => setItemEdit({ id: i.id, name: i.name, amount: (i.defaultAmountCents / 100).toFixed(2) })}><Pencil size={12} /></button>
-                <button type="button" className="link-btn" style={{ marginInlineStart: '0.3rem' }} aria-label={t('structure.archive')} onClick={async () => { await itemArchive.mutateAsync({ id: i.id }); await utils.billing.chargeItemList.invalidate(); }}>×</button>
+                <button type="button" className="link-btn" style={{ marginInlineStart: '0.3rem' }} aria-label={t('structure.archive')} onClick={async () => { if (!window.confirm(t('billing.confirmArchiveItem', { name: i.name }))) return; await itemArchive.mutateAsync({ id: i.id }); await utils.billing.chargeItemList.invalidate(); }}>×</button>
               </span>
             ))}
           </div>
@@ -469,7 +474,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
                     <td><span className={`chip ${c.status === 'invoiced' ? 'is-accent' : c.status === 'void' ? 'is-muted' : ''}`}>{t(`billing.cs_${c.status}`)}</span></td>
                     <td className="actions">
                       {c.status === 'pending' && (
-                        <button type="button" className="btn btn--ghost btn--sm" disabled={chargeVoid.isPending} onClick={() => doChargeVoid(c.id)}>{t('billing.void')}</button>
+                        <button type="button" className="btn btn--ghost btn--sm" disabled={chargeVoid.isPending} onClick={() => doChargeVoid(c.id, c.label, c.amountCents)}>{t('billing.void')}</button>
                       )}
                     </td>
                   </tr>
@@ -534,6 +539,12 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
           )}
         </div>
       </section>
+
+      {/* Refunds, last on purpose: giving money back is the rarest thing on this page and the one nobody
+          should reach by accident. Its own component, and lazy — most days it is not opened at all. */}
+      <Suspense fallback={<p className="empty">{t('common.loading')}</p>}>
+        <Refunds />
+      </Suspense>
 
       {/* No households grid here any more. It was a wall of cards with one number on each, and the way
           into a family's record is now the year view — where the same name also tells you their course,

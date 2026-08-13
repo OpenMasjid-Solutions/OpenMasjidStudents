@@ -9,7 +9,8 @@
  *  window still shows the whole household, because one adult pays for all of them. */
 import { Fragment, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Printer, Pencil, Users } from 'lucide-react';
+import { Printer, Pencil, Repeat, Users } from 'lucide-react';
+import { describeMethod, methodTitle } from '../lib/paymentMethod';
 import { trpc } from '../lib/trpc';
 import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
 import { formatDate, type DateFormat } from '../lib/dates';
@@ -135,6 +136,10 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
   }
 
   const bal = billing.data?.balance;
+  const autopay = billing.data?.autopay;
+  /** "Visa ···· 4242" / "Chase ···· 6789" — the same descriptor the parent's own screen renders, so the
+   *  office and the family cannot end up naming different things. */
+  const autopayMethod = autopay?.method ? methodTitle(describeMethod(autopay.method), t('family.savedMethod')) : null;
   const activePlans = plans.data ?? [];
   // Group the flat (student × assignment) rows by student: a student with no fee has one row with
   // a null feeId; a student with N plans has N rows. Grouping lets us show every assigned plan AND
@@ -183,6 +188,19 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             {bal.owedCents > 0 ? money(bal.owedCents) : bal.creditCents > 0 ? `${money(bal.creditCents)} ${t('billing.credit')}` : money(0)}
           </div>
         )}
+        {/* AUTOPAY, where the volunteer is standing (0.48.0). Nothing in the office ever showed this, so a
+            family whose card pays them on Friday looked exactly like one that had ignored two reminders.
+            Worded as the HOUSEHOLD's, because that is what the enrolment is (§13.3) — the parent's own
+            screen has one switch for the family, and implying it belongs to one child would be a lie the
+            office would repeat down the phone. */}
+        {autopay?.enabled ? (
+          <p className="chip is-accent" style={{ marginBlockStart: '0.6rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+            <Repeat size={13} />
+            {autopayMethod ? t('billing.autopayOnWith', { method: autopayMethod }) : t('billing.autopayOn')}
+          </p>
+        ) : (
+          <p className="hint" style={{ marginBlockStart: '0.6rem' }}>{t('billing.autopayOff')}</p>
+        )}
       </section>
 
       {/* Fees + discount */}
@@ -222,7 +240,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                         >
                           <Pencil size={12} />
                         </button>
-                        <button type="button" className="btn btn--ghost btn--sm" style={{ padding: '0 0.25rem' }} aria-label={t('billing.removeFee')} onClick={async () => { await unassign.mutateAsync({ id: f.feeId }); await refresh(); }}>×</button>
+                        <button type="button" className="btn btn--ghost btn--sm" style={{ padding: '0 0.25rem' }} aria-label={t('billing.removeFee')} onClick={async () => { if (!window.confirm(t('billing.confirmRemoveFee', { name: f.feePlanName, student: g.name }))) return; await unassign.mutateAsync({ id: f.feeId }); await refresh(); }}>×</button>
                       </span>
                     );
                   })}
@@ -280,6 +298,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                           disabled={chargeVoid.isPending}
                           onClick={async () => {
                             setChargeErr(null);
+                            if (!window.confirm(t('billing.confirmVoidCharge', { label: c.label, amount: money(c.amountCents) }))) return;
                             try {
                               await chargeVoid.mutateAsync({ id: c.id });
                               await refresh();
@@ -357,7 +376,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                         <a className="btn btn--ghost btn--sm" href={withBase(`/invoices/${i.id}`)} target="_blank" rel="noopener noreferrer" title={t('billing.printInvoiceHint')}>
                           <Printer size={14} /> {t('billing.printInvoice')}
                         </a>
-                        {i.status !== 'void' && i.paidCents === 0 && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { await voidInv.mutateAsync({ id: i.id }); await refresh(); }}>{t('billing.void')}</button>}
+                        {i.status !== 'void' && i.paidCents === 0 && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { if (!window.confirm(t('billing.confirmVoidInvoice', { label: i.label, amount: money(i.totalCents) }))) return; await voidInv.mutateAsync({ id: i.id }); await refresh(); }}>{t('billing.void')}</button>}
                       </td>
                     </tr>
                     {/* The lines of that bill. Shown for every invoice with more than one, because a

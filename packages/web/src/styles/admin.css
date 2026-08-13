@@ -1433,6 +1433,36 @@ ul.picker-list {
 .setup-steps .is-done { color: var(--color-ink-muted); }
 .setup-steps .is-done .n { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 16%, transparent); color: var(--color-primary); }
 
+/* ── Refunds (0.48.0) ─────────────────────────────────────────────────────────
+   A list of cards rather than a table, on every screen size. A refund is read one row at a time — how
+   much, for whom, and whether pressing the button moves real money — so there are no columns to line up,
+   and nothing to drag sideways on the phone the office actually keeps at the desk. */
+.refund-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+.refund-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-button);
+}
+.refund-row > .ico { display: inline-flex; color: var(--color-primary); flex: 0 0 auto; }
+.refund-main { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; flex: 1 1 auto; }
+.refund-top { font-size: 0.95rem; }
+.refund-sub { font-size: 0.84rem; }
+/* The route matters more than it looks — it is the difference between the parent being paid back and the
+   parent waiting at the desk — so it is tinted rather than left as another grey line. */
+.refund-route { font-size: 0.78rem; color: var(--color-ink-faint); }
+/* A refunded row stays in the list. Removing it would leave an office wondering whether the press worked,
+   and the record of what happened is the point. */
+.refund-row.is-done { opacity: 0.6; }
+.refund-row.is-done .refund-route { display: none; }
+
 /* The email step's two facts. Not a `.notice` each, because they are as often good news as bad — the
    colour carries which, and the icon repeats it for anyone who cannot see the colour. */
 .setup-checks {

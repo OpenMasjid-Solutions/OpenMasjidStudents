@@ -162,7 +162,8 @@
     "inviteToPortal": "Invite to portal",
     "inviteHint": "Creates a one-time sign-up link (valid 7 days) — copy it to the guardian. They need an email on file.",
     "mailPaused": "Not sent — email to parents is paused in Settings. Use the link below.",
-    "choosePlan": "Choose a plan…"
+    "choosePlan": "Choose a plan…",
+    "confirmWithdraw": "Withdraw {{name}}?\n\nThey stop being billed from now on and drop out of the roster and the year view. Their record and their payment history are kept, and you can bring them back at any time."
   },
   "students": {
     "title": "Students",
@@ -383,7 +384,14 @@
     "courseArchived": "Archived “{{name}}” and its classes. Students in them are now unplaced.",
     "classArchived": "Archived “{{name}}”.",
     "classArchivedUnplaced_one": "Archived “{{name}}” and unplaced {{count}} student.",
-    "classArchivedUnplaced_other": "Archived “{{name}}” and unplaced {{count}} students."
+    "classArchivedUnplaced_other": "Archived “{{name}}” and unplaced {{count}} students.",
+    "confirmYearArchive": "Archive the year “{{name}}”?\n\nIt stops being offered when you generate invoices. Bills already raised are unaffected, since they are filed by month rather than by year.",
+    "confirmTermDelete": "Delete the term “{{name}}”?\n\nAnything charged per term has nothing to bill against until you add another. No money is affected.",
+    "confirmCourseArchive_one": "Archive the course “{{name}}”?\n\nIt disappears from the roster and the year view along with its 1 class. Nothing is deleted and no student loses their record.",
+    "confirmCourseArchive_other": "Archive the course “{{name}}”?\n\nIt disappears from the roster and the year view along with its {{count}} classes. Nothing is deleted and no student loses their record.",
+    "confirmClassArchive_one": "Archive the class “{{name}}”?\n\nIts 1 student is left without a class until you put them in another one — they keep their fees and their history.",
+    "confirmClassArchive_other": "Archive the class “{{name}}”?\n\nIts {{count}} students are left without a class until you put them in another one — they keep their fees and their history.",
+    "confirmClassArchive_zero": "Archive the class “{{name}}”?\n\nNobody is in it, so nothing else changes. Nothing is deleted."
   },
   "mass": {
     "title": "Mass apply",
@@ -661,7 +669,8 @@
     "roleHint": "Finance runs billing and can work from home over the internet. Admin can change everything, including settings, and can only sign in on the masjid network. Changing someone’s role takes effect straight away — they don’t need to sign out.",
     "schools": "Schools",
     "allSchools": "All schools",
-    "formHint": "Enter a username and a temporary password of at least 12 characters."
+    "formHint": "Enter a username and a temporary password of at least 12 characters.",
+    "confirmDisable": "Disable {{username}}?\n\nThey are signed out on their next click and cannot sign in again until you enable them. Nothing they have recorded is affected."
   },
   "settings": {
     "title": "Settings",
@@ -1008,7 +1017,14 @@
     "ch_carry_in": "Carried forward",
     "forMonth": "For which month",
     "labelPreview": "Invoices will read: {{label}}",
-    "tagInsert": "Insert this tag — becomes \"{{example}}\""
+    "tagInsert": "Insert this tag — becomes \"{{example}}\"",
+    "autopayOn": "Autopay is on for this household",
+    "autopayOnWith": "Autopay is on for this household — {{method}}",
+    "autopayOff": "Autopay is off for this household.",
+    "confirmRemoveFee": "Stop billing {{student}} for “{{name}}”?\n\nBills already raised are unaffected — this only stops future ones. You can assign it again later.",
+    "confirmVoidCharge": "Cancel the charge “{{label}}” for {{amount}}?\n\nIt will not appear on any bill. Charges already on a raised invoice cannot be cancelled this way.",
+    "confirmVoidInvoice": "Void the bill “{{label}}” for {{amount}}?\n\nThe amount stops being owed and the bill is kept, marked void. Only bills with nothing paid against them can be voided.",
+    "confirmArchiveItem": "Archive “{{name}}”?\n\nIt disappears from the list you apply charges from. Charges already raised from it keep their own label and price."
   },
   "family": {
     "title": "Parent Portal",
@@ -1349,5 +1365,27 @@
     "donePlans": "{{count}} fee plan amounts changed",
     "doneTerms": "{{count}} terms created",
     "doneOwing": "Balances from last year are unchanged and still showing. Generate the new year’s first month when you are ready."
+  },
+  "refund": {
+    "title": "Refunds",
+    "intro": "Every payment the madrasah has taken, newest first. A card or bank payment is sent back automatically; cash and checks are put right on the ledger and handed back by you.",
+    "search": "Find a payment",
+    "searchPlaceholder": "A child's name, or how it was paid",
+    "none": "No payments have been recorded yet.",
+    "noMatches": "No payments match that.",
+    "action": "Refund",
+    "working": "Refunding…",
+    "refunded": "Refunded",
+    "routeStripe": "Goes back to the card or bank account automatically",
+    "routeManual": "The ledger is put right — you hand the money back",
+    "unknownStudent": "Student removed",
+    "acrossChildren_one": "across 1 child",
+    "acrossChildren_other": "across {{count}} children",
+    "confirmStripe": "Refund {{amount}} back to the card or bank account it came from?\n\nThe money leaves the madrasah’s account and the bills it paid become owing again. This cannot be undone here.",
+    "confirmManual": "Refund {{amount}} on the ledger?\n\nThe bills it paid become owing again. No money moves — you still have to hand it back yourself.",
+    "doneStripe": "Refunded {{amount}}. It is on its way back to the card or bank account — a bank refund can take a few days to appear.",
+    "doneManual": "Reversed {{amount}} on the ledger. Remember to hand the money back.",
+    "already": "That one had already been refunded, so nothing changed.",
+    "partialHint": "To give back only part of a payment, add a credit on the household’s record instead — that shows on their next bill."
   }
 }

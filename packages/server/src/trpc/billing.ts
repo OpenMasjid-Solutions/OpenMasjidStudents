@@ -11,9 +11,10 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, ne, asc, desc, inArray } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
-import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, carryIns, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
+import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, carryIns, autopayEnrollments, paymentMethods, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
+import { makeLog } from '../logger';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
 import { billFromMonths, currentPeriod } from '../billing/joinMidYear';
@@ -24,6 +25,7 @@ import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveIn
 import { commitCarryIn, defaultGoLivePeriod, midYearPlan, noteCarryIn } from '../billing/carryIn';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
+import { refundTransaction, refundableTransactions } from '../payments/refunds';
 import {
   getCurrency,
   getYearViewColumns,
@@ -47,6 +49,8 @@ import { alertStaff, householdName } from '../alerts';
 import { resolveSchoolScope } from '../schools';
 import { sendReceipt } from '../mail/notify';
 import { formatMoney } from '../db/money';
+
+const payLog = makeLog('billing');
 
 const ID = z.string().min(1).max(64);
 const NAME = z.string().trim().min(1).max(120);
@@ -1096,6 +1100,30 @@ export const billingRouter = router({
       students: kids.map((k) => ({ ...k, balance: studentBalance(k.id) })),
       invoices: invoiceRowsFor(kidIds),
       payments: paymentRowsFor(kidIds),
+      /**
+       * Whether tuition collects itself, and off what (0.48.0).
+       *
+       * The office could not see this anywhere. Autopay is a PER-HOUSEHOLD enrolment against a
+       * per-household Stripe Customer (§13.3), so it is reported here once and the screen says "this
+       * household" rather than implying it is a property of one child — but it belongs on a child's record
+       * because that is where a volunteer stands when a parent rings to ask why nothing was taken, or when
+       * they are about to chase a family whose card is going to pay them on Friday anyway.
+       *
+       * The method is named through the same fields the parent's own screen uses, so both say "Visa ····
+       * 4242" or "Chase ···· 6789" rather than one of them guessing.
+       */
+      autopay: (() => {
+        const enr = db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, input.familyId)).get();
+        if (!enr?.enabled) return { enabled: false as const, method: null, since: null };
+        const pm = enr.defaultPmId
+          ? db
+              .select({ type: paymentMethods.type, brand: paymentMethods.brand, last4: paymentMethods.last4, expMonth: paymentMethods.expMonth, expYear: paymentMethods.expYear, wallet: paymentMethods.wallet, bankName: paymentMethods.bankName, accountType: paymentMethods.accountType })
+              .from(paymentMethods)
+              .where(eq(paymentMethods.id, enr.defaultPmId))
+              .get()
+          : undefined;
+        return { enabled: true as const, method: pm ?? null, since: enr.consentAt ?? null };
+      })(),
     };
   }),
 
@@ -1162,6 +1190,53 @@ export const billingRouter = router({
     if (!p) throw new TRPCError({ code: 'NOT_FOUND', message: 'Payment not found.' });
     const r = reversePayment(input.paymentId, recordingActor(ctx));
     audit(auditActor(ctx), 'payment.reverse', { entity: 'student', entityId: p.studentId, detail: { paymentId: input.paymentId } });
+    return r;
+  }),
+
+  // ── Refunds (0.48.0) ────────────────────────────────────────────────────────
+  /** Recent transactions and how each one could be given back (payments/refunds.ts). */
+  refundable: adminOrFinanceProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).optional(), query: z.string().trim().max(120).optional() }).optional())
+    .query(({ input }) => ({ transactions: refundableTransactions(input ?? {}), currency: getCurrency() })),
+
+  /**
+   * Give a whole transaction back: the money at Stripe where it came through Stripe, and the ledger either
+   * way (§9 — payments are immutable, so this writes mirror rows rather than deleting anything).
+   *
+   * Admin OR finance, like every other money action: refunding is part of running billing, and it is
+   * audited and alerted rather than gated to admin. Finance already records and reverses payments.
+   */
+  refund: adminOrFinanceProcedure.input(z.object({ key: z.string().trim().min(1).max(255) })).mutation(async ({ ctx, input }) => {
+    let r: Awaited<ReturnType<typeof refundTransaction>>;
+    try {
+      r = await refundTransaction(input.key, recordingActor(ctx));
+    } catch (e) {
+      const msg = (e as Error).message;
+      // One friendly sentence each, and the raw Stripe/DB text stays in the log (§15/§18).
+      if (msg === 'card_refunds_unavailable') {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Card refunds aren’t available right now — the payments connection is down. Try again shortly.' });
+      }
+      if (msg === 'payment not found') throw new TRPCError({ code: 'NOT_FOUND', message: 'That payment no longer exists.' });
+      if (msg.startsWith('refund_')) {
+        throw new TRPCError({ code: 'BAD_GATEWAY', message: 'The card company refused the refund. Check the payment in Stripe before trying again.' });
+      }
+      payLog.error('refund failed', { key: input.key, error: msg });
+      throw new TRPCError({ code: 'BAD_GATEWAY', message: 'We couldn’t complete that refund. Nothing was changed — please try again.' });
+    }
+    audit(auditActor(ctx), 'payment.refund', {
+      entity: 'payment',
+      entityId: input.key,
+      // Amounts and ids, no names — the audit trail records the act, not the household (§14).
+      detail: { route: r.route, amountCents: r.amountCents, reversed: r.reversed, stripeRefundId: r.stripeRefundId, stripeStatus: r.stripeStatus },
+    });
+    if (r.reversed > 0) {
+      // Someone should know money left, and the office email may not be the person who pressed it.
+      void alertStaff('payment-refunded', {
+        title: 'A payment was refunded',
+        text: `A refund of ${formatMoney(r.amountCents, getCurrency())} was made${r.route === 'stripe' ? ' back to the card or bank account it came from' : ' on the ledger — the money still has to be handed back'}.`,
+        publicText: 'A tuition refund was recorded.',
+      });
+    }
     return r;
   }),
 

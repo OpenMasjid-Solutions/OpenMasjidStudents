@@ -9,6 +9,20 @@
     <meta name="theme-color" content="#020912" />
     <!-- Relative so the injected <base href> governs it (works at the root AND under the tunnel prefix). -->
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <!--
+      Add to Home Screen (0.48.0). The manifest is served by the app rather than being a file, so the name
+      under the icon is the MADRASAH's, not this software's (see index.ts).
+
+      iOS reads none of the manifest's icons: `apple-touch-icon` is the only one Safari looks at, and with
+      no PNG there it puts a screenshot of the page on the home screen. `apple-mobile-web-app-capable`
+      makes it open without Safari's chrome, like the Android install does, and `black-translucent` lets
+      the app's own dark background run under the status bar instead of leaving a white band above it.
+    -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <title>OpenMasjid Students</title>
   </head>
   <body>

@@ -147,7 +147,16 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     setShowEC(false);
     await refresh();
   }
-  async function toggleWithdraw(id: string, status: 'active' | 'withdrawn') {
+  /**
+   * Withdraw a child, or bring them back.
+   *
+   * Only WITHDRAWING asks (0.48.0), and it says what withdrawing does: it stops future billing, which is
+   * not obvious from the word and is the whole reason the office presses it. Re-activating needs no
+   * confirmation — it takes nothing away, and a dialog on a harmless action is how people learn to click
+   * through the ones that matter.
+   */
+  async function toggleWithdraw(id: string, status: 'active' | 'withdrawn', name: string) {
+    if (status === 'active' && !window.confirm(t('directory.confirmWithdraw', { name }))) return;
     await updateStudent.mutateAsync({ id, status: status === 'active' ? 'withdrawn' : 'active' });
     await refresh();
   }
@@ -309,7 +318,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     <td className="actions">
                       {!readOnly && (
                         <>
-                          <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
+                          <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status, s.fullName)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
                           {/* Delete is for a mistake — a duplicate or a child who never enrolled. A student
                               who has been billed is part of the invoice history and can only be withdrawn,
                               so ask the server first and say why rather than offering a button that fails. */}
