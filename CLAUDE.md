@@ -52,8 +52,9 @@ one branch per channel:
    the next push to `dev` gets the same question again. Silence, a new task, or an unrelated reply all
    mean **stay on `dev`**; only the explicit words move `main`.
 4. **That merge IS the release.** It carries the whole §19 runbook with it: bump the version in all six
-   places, FF-merge, let CI build, **re-pin the `@sha256` digest in `docker-compose.yml`**, tag, then
-   bump `OpenMasjidAPPS/registry.yaml`. Nothing is released until the registry bump lands.
+   places, merge `dev` into `main` (not a fast-forward — §19 step 3), let CI build, **re-pin the `@sha256`
+   digest in `docker-compose.yml`**, tag THAT commit, then open a PR against **`OpenMasjidAPPS`'s `dev`
+   branch** — never its `main`, which only a catalog maintainer moves. Nothing is released until that lands.
 5. **Re-pinning the digest at step 4 is not optional bookkeeping.** `dev`'s compose names a *prerelease*
    tag. Merging that to `main` unchanged would ship a stable release pointing at a dev build's tag.
    `build-image.yml` refuses to publish a `v*` tag whose compose is not digest-pinned, or whose manifest
@@ -93,7 +94,9 @@ to. Distinct versions and immutable per-build tags are the fix. Two consequences
   channel is where a Pi-only regression should surface.
 - `ci.yml` (lint + test + build) runs on `dev` as well as `main`. `dev` is the branch that most needs it.
 - The catalog needs **`dev_ref: dev`** alongside the stable `ref:` in this app's `OpenMasjidAPPS/registry.yaml`
-  entry. That edit belongs to the catalog repo, not here.
+  entry. That edit belongs to the catalog repo, not here — and once it is there the dev channel is
+  self-serving: `dev_ref` follows this branch and the catalog rebuilds hourly, so **a dev build never needs a
+  catalog change**. Only a STABLE release does, and that goes through a PR to the catalog's `dev` (§19 step 6).
 - The CHANGELOG is filed under the **release** (`## [0.48.0]`), not per dev build; `version.test.ts`
   checks the base version, so `0.48.0-dev.3` is satisfied by the `0.48.0` heading.
 - **The two channels read the SAME entry at different depths** — headlines on stable, everything on dev.
@@ -1058,12 +1061,15 @@ would be a lie about which way round they are). Default branch: **`main`**; all 
 Branching policy).
 
 **The key idea (two repos):** this repo builds and **digest-pins** the Docker image; the catalog repo
-(`OpenMasjidAPPS`) is what makes a version downloadable — bumping this app's entry in
-`OpenMasjidAPPS/registry.yaml` triggers its "Build catalog" CI, which regenerates `catalog.json`, which is
-what every OpenMasjidOS install fetches. **Nothing is "released" until the registry bump lands.**
+(`OpenMasjidAPPS`) is what makes a version downloadable — this app's entry in `OpenMasjidAPPS/registry.yaml`
+names the tag and commit its "Build catalog" CI reads, and the `catalog.json` that produces is what every
+OpenMasjidOS install fetches. **Nothing is "released" until that lands** — and on the STABLE channel, landing
+it is not ours to do: we open a PR against the catalog's `dev` branch and a catalog maintainer runs the
+release (step 6).
 
 **Auth pieces (none typed per release):**
-1. `gh` CLI's stored token — authenticates pushes and the registry edit.
+1. `gh` CLI's stored token — authenticates pushes to this repo and opening the catalog PR. It can also write
+   to the catalog directly; that it *can* is not permission to (step 6).
 2. GHCR push = CI's built-in `GITHUB_TOKEN` — the image is pushed by this repo's **"Build image" GitHub
    Action** (`.github/workflows/build-image.yml`), **never from a laptop**. One-time setup after the first
    build: set the GHCR package to **Public**.
@@ -1117,14 +1123,44 @@ How to write one, every time:
    the new digest does not exist until step 3 has run.
 4. Grab the **`@sha256` digest** from that build and pin it in `docker-compose.yml`'s `image:` line. Confirm
    it with `docker buildx imagetools inspect …:<version>` before trusting the log line.
-5. Commit the pin, `git tag v<version>`, push `main` + the tag. (The tag lands on the **pin commit**, so the
-   catalog serves the pinned compose — that's the point. `docker-compose.yml` is in the workflow's
-   `paths-ignore`, so neither the pin nor the tag rebuilds the image and the digest stays the one you pinned.)
-6. Bump `OpenMasjidAPPS/registry.yaml` for `students`: `ref: v<version>` **plus the immutable `commit:` SHA**
-   of that tag, keeping `dev_ref: dev`. Via PR, or — house standard, since we own the org — a direct commit to
-   its `main` with `gh api -X PUT …/registry.yaml`.
-7. That commit runs **"Build catalog"** → `catalog.json` regenerates → the update is live; installs offer
-   **Update**.
+5. Commit the pin, then `git tag v<version>` and push `main` + the tag.
+
+   **TAG THE DIGEST-PIN COMMIT, NOT THE COMMIT BEFORE IT.** Do not tag until step 4's pin is committed. The
+   catalog fetches a COMMIT and serves the `docker-compose.yml` it finds there, so a tag placed one commit
+   early carries the PREVIOUS release's digest — and every masjid installing that version then runs the wrong
+   code under the new version number, while the release looks entirely successful. **This has already
+   happened twice in the org.** Check it before you push: `git tag --points-at HEAD` on the pin commit, and
+   `git rev-list -n 1 v<version>` must be that same SHA — the one you then put in the catalog PR's `commit:`.
+   (`docker-compose.yml` is in the workflow's `paths-ignore`, so neither the pin nor the tag rebuilds the
+   image; the digest stays the one you pinned.)
+6. **Open a PR against `OpenMasjid-Solutions/OpenMasjidAPPS` — base branch `dev`, NEVER `main`.** Change only
+   this app's own entry in `registry.yaml`, nothing else in the file:
+
+   ```yaml
+     - id: students
+       ref: v0.49.0        # the tag you just published — the human label
+       commit: 222f0640…   # the 40-char SHA of that tagged commit — what actually gets FETCHED
+   ```
+
+   `git rev-list -n 1 v0.49.0` gives the SHA. If you followed steps 1–5 the tag and the pin commit are the
+   same commit; **if they ever differ, pin the commit that carries the correct digest** — `commit:` is what
+   the catalog fetches and `ref:` is only the label beside it. Leave `dev_ref: dev` alone.
+7. **Stop there.** A catalog maintainer runs the release that moves the catalog's `main`. Do **not** commit to
+   the catalog's `main`, and do **not** merge the catalog's `dev` into its `main`: those branches legitimately
+   hold different builds of `catalog.json` — the dev channel's and the stable channel's — so merging either
+   way publishes one channel's column to the other's masajid.
+
+> **This section told you to do the opposite until 0.50.0, and I did.** It called a direct commit to the
+> catalog's `main` (`gh api -X PUT …/registry.yaml`) "house standard, since we own the org". It is not:
+> stable moves only through a catalog release, run by a maintainer. **v0.48.0 and v0.49.0 were both pushed
+> straight to the catalog's `main` on 2026-08-13** under that instruction, and a maintainer had to reconcile
+> the stable column afterwards. Open the PR against `dev` and wait for it.
+
+**The dev channel needs none of steps 6–7.** `dev_ref: dev` tracks this repo's `dev` branch by itself and the
+catalog rebuilds hourly, so a dev build never needs a catalog change at all. What the dev channel does ask is
+that the prerelease version (`X.Y.Z-dev.N`) and the version-tagged image stay current — and that **the image
+is published before the version bump is pushed**, since the catalog pins the exact tag and an entry that
+arrives first hands a masjid a pull failure.
 
 The `version:` in the registry entry, `manifest.yaml`, and `VERSION` must agree; the digest pin and the tag
 must point at the same commit lineage. Commit messages per house style (`chore: bump version to x.y.z`,
