@@ -700,6 +700,16 @@ ports:
     label: Web interface
 ```
 
+**A capability declared here is necessary and NEVER sufficient** — the same trap as an alert id (§9), one
+layer further out. OpenMasjidOS reads capabilities from the entry the masjid installed from, and
+`OpenMasjidAPPS/scripts/build-catalog.mjs` copies them into `catalog.json` by an explicit ALLOW-LIST
+(`sso`, `notifications`, `stripe`, `domain`, `https`, `tunnel`, `email`, `alerts`, `fabric`). A key with no
+line there is silently dropped in the middle, and the platform then refuses an app that as far as it can
+see never asked. That is exactly what happened to `whatsapp: true` in 0.50.0: manifest correct, platform
+correct, `403` on every call. **Adding a capability to this file means adding a line to that builder in the
+same breath** — and the fastest way to prove it landed is to read the built entry, not the manifest:
+`git show origin/dev:catalog.json` in the catalog repo.
+
 **No install-time `settings:` on purpose** — installation is one-click, and everything a masjid needs (school
 name, currency, logo, which OpenMasjidOS Stripe account to charge, email alert recipients) is collected
 INSIDE the app by the first-run setup and Settings, persisted to `/data`. Same pattern as OpenMasjid

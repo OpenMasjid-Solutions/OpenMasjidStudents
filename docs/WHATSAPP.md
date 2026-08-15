@@ -64,6 +64,28 @@ setting that was already correct. A 403 means the capability grant is missing �
 against the **catalog entry the masjid installed from**, exactly the trap that swallowed `payment-short`
 for a whole release (§9) — and nothing in OpenMasjidOS → Settings can fix that.
 
+### The 403 was real, and the bug is in a third repo
+
+The first install hit exactly that case, and it is worth recording because two of the three repos
+involved are innocent:
+
+1. this app declares `whatsapp: true` in `manifest.yaml` — **correct**;
+2. OpenMasjidOS gates `/api/fabric/whatsapp` on `app.whatsapp`, read from the installed catalog entry
+   (`packages/core/src/apps/manager.ts`) — **correct**, and its own docs say "the admin can turn you
+   off; WhatsApp being configured does not mean it is enabled for your messages";
+3. `OpenMasjidAPPS/scripts/build-catalog.mjs` copies capabilities into `catalog.json` by an explicit
+   **allow-list** — `sso`, `notifications`, `stripe`, `domain`, `https`, `tunnel`, `email`, `alerts`,
+   `fabric` — and had **no `whatsapp` line**. The key was dropped in the middle.
+
+So `catalog.json` carried `students` at `0.50.0-dev.6` with `email: true`, `stripe: true`,
+`domain: true` and **no `whatsapp` key at all**, the platform stored `whatsapp: false`, and every call
+was refused. The fix is one line in the catalog builder (plus the type check its neighbours have);
+nothing in this repo or in OpenMasjidOS can work around it, and no amount of updating this app helps
+until the catalogue carries the key.
+
+**Check the built entry, not the manifest.** `git show origin/dev:catalog.json` in the catalog repo is
+the only place that answers "did the capability actually ship?".
+
 `WhatsAppStatus` therefore also carries **`source`** (`platform` = the OS said this in a 200,
 `http` = we inferred it from a status code, `local` = we never got as far as asking) and the raw
 **`httpStatus`**. Both are printed under the status chip when the gateway is not ready, because a

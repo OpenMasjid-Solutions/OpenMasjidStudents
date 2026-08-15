@@ -208,9 +208,18 @@ export async function sendPlatformEmail(to: string, subject: string, text: strin
  * claiming both "mean the same thing to an admin standing in front of the screen" — and they do not:
  *
  *   • `not-configured` sends an admin to OpenMasjidOS → Settings → WhatsApp to set the gateway up.
- *   • `not-permitted` (403) means the gateway is fine and THIS APP is not allowed to use it yet —
- *     the platform checks the capability on the catalog entry the masjid installed from, exactly as
- *     it does for alert ids (§9). Nothing in OpenMasjidOS → Settings will fix that.
+ *   • `not-permitted` (403) means the gateway is fine and THIS APP is not allowed to use it —
+ *     the platform checks `app.whatsapp` on the entry the masjid installed from, exactly as it does
+ *     for alert ids (§9). Nothing in OpenMasjidOS → Settings will fix that.
+ *
+ * That third case turned out to be REAL on the first install, and it is worth recording where the
+ * chain actually breaks, because two of the three repos involved are innocent: this app declares
+ * `whatsapp: true` in `manifest.yaml`, OpenMasjidOS reads `app.whatsapp` from the catalog entry — and
+ * `OpenMasjidAPPS/scripts/build-catalog.mjs` copies capabilities into `catalog.json` by an explicit
+ * ALLOW-LIST (`sso`, `notifications`, `stripe`, `domain`, `https`, `tunnel`, `email`, `alerts`,
+ * `fabric`) that had no `whatsapp` line. So the key was dropped in the middle and the platform
+ * correctly refused an app that, as far as it could see, had never asked. Declaring a capability here
+ * is necessary and never sufficient; the catalog builder needs a line for every new one.
  *   • `unsupported` (404/405) means the platform predates the endpoint.
  *
  * A masjid with a working, linked gateway was told their server had no WhatsApp set up, and went and

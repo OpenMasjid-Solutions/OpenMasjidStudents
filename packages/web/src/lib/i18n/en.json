@@ -773,10 +773,10 @@
     "parentEmailHint_cardExpiring": "The month before. An expired card is the usual reason automatic payments quietly stop working.",
     "parentEmail_refund": "Email a parent when a refund is made",
     "parentEmailHint_refund": "A written confirmation, and it sets the expectation that a card refund takes a few days to appear.",
-    "waReason_not-permitted": "WhatsApp is working on this server, but this app hasn’t been granted permission to use it yet. That comes from the app catalogue, not from your OpenMasjidOS settings — update OpenMasjid Students, or reinstall it, and it will be granted.",
+    "waReason_not-permitted": "WhatsApp is working on this server, but this app hasn’t been granted permission to use it. That permission travels with the app catalogue entry — if updating OpenMasjid Students doesn’t clear this, the catalogue entry is missing the WhatsApp capability and it has to be fixed there, not here.",
     "waReason_unsupported": "This version of OpenMasjidOS doesn’t have the WhatsApp connection yet. Update OpenMasjidOS.",
     "waDiag": "Server said: {{reason}} ({{source}}, HTTP {{status}})",
-    "waBlock_gateway_not-permitted": "This app isn’t allowed to use WhatsApp yet — the gateway is fine, the permission is missing. Update or reinstall OpenMasjid Students.",
+    "waBlock_gateway_not-permitted": "This app isn’t allowed to use WhatsApp — the gateway is fine, the permission is missing from the app catalogue entry.",
     "waBlock_gateway_unsupported": "This version of OpenMasjidOS doesn’t have the WhatsApp connection yet."
   },
   "relation": {

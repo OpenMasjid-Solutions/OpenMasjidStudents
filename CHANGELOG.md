@@ -114,7 +114,8 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   problems were being reported with that one sentence, and one of them sent an admin to check a setting
   that was already correct: a server can have WhatsApp working perfectly while *this app* has not been
   granted permission to use it, which comes from the app catalogue and not from your settings. Each now
-  says what it actually is, and the panel prints exactly what the server answered underneath.
+  says what it actually is, and the panel prints exactly what the server answered underneath — which is
+  what identified the real cause on the first install, in a third repository entirely.
 
 - **The test student now lifts the email pause as well.** It only ever lifted the WhatsApp one, so on a
   fresh install — where parent email starts paused too — an office could set a test student, take a
