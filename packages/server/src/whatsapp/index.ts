@@ -46,7 +46,7 @@ import { and, eq, inArray, lt } from 'drizzle-orm';
 import { db } from '../db';
 import { families, guardians, guardianFamilies, students, users, whatsappLog } from '../db/schema';
 import { rid } from '../db/ids';
-import { getCurrency, getWhatsApp } from '../settings';
+import { getCurrency, getSchoolName, getWhatsApp } from '../settings';
 import { pausedFor, testFamilyId } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
 import { sendPlatformWhatsApp, sendPlatformWhatsAppGroup, whatsappGroups, whatsappStatus, type WhatsAppGroup, type WhatsAppStatus } from '../fabric/platform';
@@ -381,46 +381,73 @@ export async function notifyGuardian(event: string, r: WaRecipient, text: string
 
 // ── Groups (0.50.0) ─────────────────────────────────────────────────────────
 /**
- * An ANNOUNCEMENT to a WhatsApp group the masjid's admin approved for this app.
+ * STAFF ALERTS to a WhatsApp group the masjid's admin approved for this app — "the finance group gets
+ * every payment alert".
  *
- * ONE RULE GOVERNS THIS ENTIRE FEATURE, and it comes from the platform: a group post is for genuine
- * announcements, and must NEVER carry a family's own business. Their fees are not the other 199
- * members'. Everything below follows from that:
+ * A GROUP IS A STAFF CHANNEL HERE, not a parent one, and that is the whole design. It is the same
+ * audience as the office's alert inbox and the same audience as a staff member's own number: the
+ * events are `ALERT_EVENTS` (alerts/index.ts), subscribed per group by an admin, and there is
+ * deliberately no way to send a PARENT event or a free-typed message to a group. A family's receipt,
+ * bill or balance is their own business and never an announcement — the platform's rule, and the
+ * reason the two paths never meet in the type system: per-family sends call `sendPlatformWhatsApp`,
+ * which cannot name a group, and this calls `sendPlatformWhatsAppGroup`, which cannot name a person.
  *
- *  • **Its own path, all the way down.** `notifyFamily` and `notifyGuardian` call
- *    `sendPlatformWhatsApp`, which has no parameter that could name a group; this calls
- *    `sendPlatformWhatsAppGroup`, which has no parameter that could name a person. A receipt cannot
- *    reach a group by mistake, because there is no expressible way to ask for it.
- *  • **No events, ever.** There are no per-event toggles for groups and there must not be: every one
- *    of the seven parent events is about one household. A group post is only ever a human typing a
- *    message and confirming it.
- *  • **Nothing is interpolated but the school's own name.** The app never puts a household, a child,
- *    an amount or a balance into a group message — there is no tag for any of them. An office that
- *    types a family's name into the box is a person making that choice, not the app leaking it.
+ * WHICH TEXT A GROUP GETS IS THE ADMIN'S CHOICE, and it defaults to the careful one. An alert carries
+ * two (§9): `text`, which may name a household and an amount and is what makes it actionable, and
+ * `publicText`, which names nobody. An admin approving a group and ticking these events is doing the
+ * same deliberate thing as typing an address into the alert list — but this app cannot see who is IN
+ * a group, and the wrong group is one mis-click away. So `detail` is off until somebody turns it on
+ * in front of a sentence explaining it: the cost of that default being wrong is a vaguer message, and
+ * the cost of the opposite is two hundred parents reading a family's balance.
  *
- * The PAUSE applies. A group of parents is parents, and "do not message parents while I set this up"
- * has to mean the loudest path too — this is the single highest blast radius in the app, two hundred
- * people in one call. The test student cannot except a group (there is no household to except), so a
- * paused install simply cannot announce, and the screen says so with the way out.
+ * The PARENT PAUSE does not apply, exactly as it does not for a staff member's own number: it is a
+ * switch about writing to families, and an office that paused parent messages while importing a
+ * roster still wants to know when a card fails.
  */
-export async function announceToGroup(groupId: string, text: string): Promise<'queued' | 'off' | 'unavailable' | 'paused' | 'failed'> {
+export async function notifyGroups(event: string, msg: { title: string; text: string; publicText: string }): Promise<number> {
+  try {
+    const cfg = getWhatsApp();
+    if (!cfg.enabled || !fabricConfigured()) return 0;
+    const subscribed = Object.entries(cfg.groupAlerts).filter(([, g]) => g.events.includes(event));
+    if (!subscribed.length) return 0;
+    const status = await currentWhatsAppStatus();
+    if (!status.available) return 0;
+
+    let queued = 0;
+    for (const [groupId, g] of subscribed) {
+      const body = `${getSchoolName()} — ${msg.title}\n\n${g.detail ? msg.text : msg.publicText}`;
+      const res = await sendPlatformWhatsAppGroup(groupId, body);
+      writeLog({ event, recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? null : res.reason });
+      if (res.queued) queued++;
+    }
+    // Ids and counts only — never the alert text (§14).
+    log.info('whatsapp group alerts', { event, groups: subscribed.length, queued });
+    return queued;
+  } catch (e) {
+    log.warn('whatsapp group alert failed', { event, error: (e as Error).message });
+    return 0;
+  }
+}
+
+/**
+ * "Does this group actually receive?" — the same question the per-recipient alert test answers.
+ *
+ * A FIXED test message rather than anything typed: this is not a composer, and a box that posts
+ * arbitrary text to a parents group is exactly the misuse the design rules out. It ignores the event
+ * subscriptions on purpose — an admin who has just approved a group wants to confirm the plumbing
+ * before deciding what should flow through it.
+ */
+export async function testGroup(groupId: string): Promise<'queued' | 'off' | 'unavailable' | 'failed'> {
   try {
     const cfg = getWhatsApp();
     if (!cfg.enabled || !fabricConfigured()) return 'off';
-    if (cfg.paused) {
-      writeLog({ event: 'announcement', recipientKind: 'group', recipientId: groupId, status: 'skipped', reason: 'paused' });
-      return 'paused';
-    }
     const status = await currentWhatsAppStatus();
     if (!status.available) return 'unavailable';
-
-    const res = await sendPlatformWhatsAppGroup(groupId, text);
-    writeLog({ event: 'announcement', recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? null : res.reason });
-    // The group id, never the text — a group message is still a message (§14).
-    log.info('whatsapp announcement', { queued: res.queued });
+    const res = await sendPlatformWhatsAppGroup(groupId, `${getSchoolName()} — test. If you can read this, staff alerts will reach this group. No reply is needed.`);
+    writeLog({ event: 'test', recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? null : res.reason });
     return res.queued ? 'queued' : 'failed';
   } catch (e) {
-    log.warn('whatsapp announcement failed', { error: (e as Error).message });
+    log.warn('whatsapp group test failed', { error: (e as Error).message });
     return 'failed';
   }
 }

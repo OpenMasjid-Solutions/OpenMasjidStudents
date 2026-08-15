@@ -242,7 +242,7 @@ ring the office to get their spouse's number switched on. The wall is the usual 
 `parentFamilyIds`, checked in the query (§14) — so a guardian id from another household simply is not
 in the set and is refused; a parent still cannot name anybody they could not already see.
 
-## 5a. Groups — announcements, and the wall around them
+## 5a. Groups — a STAFF channel, and the wall around it
 
 OpenMasjidOS lets an admin approve specific WhatsApp groups for an app:
 
@@ -254,21 +254,32 @@ POST /api/fabric/whatsapp          → { "group": "…@g.us", "text": "…" }   
 The list **is** the authorisation: an id we did not get from it is refused `403`, approval can be
 withdrawn at any moment, and an empty list means the feature is hidden rather than shown broken.
 
-**One rule governs the whole feature, and it is the platform's:** *a group post is for genuine
-announcements, and must never tell a family about their own fees — their business is not the other 199
-members'.* Everything about the design follows from it:
+**A group is a STAFF channel in this app** — a masjid's finance group getting every payment alert. It
+is the fifth fan-out of `alertStaff` (alerts/index.ts), beside the office's email addresses, the
+platform alert channel, the webhook and a staff member's own number, and it subscribes to exactly the
+same `ALERT_EVENTS` a staff account can. It is **not** a way to reach parents, and the platform's own
+rule is why: *never use a group to tell a family about their own fees — their business is not the
+other 199 members'.*
 
+- **No parent event can reach a group, and nothing free-typed can either.** There is no composer. The
+  seven parent events are each about one household, so none of them is offered here; a group's
+  subscription list is the staff alert catalogue and nothing else.
 - **Its own path, all the way down.** Per-family messages call `sendPlatformWhatsApp`, which has no
-  parameter that can name a group; announcements call `sendPlatformWhatsAppGroup`, which has no
-  parameter that can name a person. A receipt cannot reach a group by mistake, because there is no
-  expressible way to ask for it. That is the enforcement — the comment is only the explanation.
-- **No events, ever.** There are no per-event toggles for groups and there must not be: all seven
-  parent events are about one household. An announcement is only ever a human typing and confirming.
-- **`[school]` is the only tag.** The app offers no way to interpolate a household, a child, an amount
-  or a balance into a group message. An office that types a family's name in is a person making that
-  choice; the app never puts it there.
-- **The pause applies**, with no test-student exception — there is no household to except, and this is
-  the loudest path in the app: two hundred people in one call.
+  parameter that can name a group; group alerts call `sendPlatformWhatsAppGroup`, which has no
+  parameter that can name a person. A receipt cannot reach a group by mistake because there is no
+  expressible way to ask for it. That is the enforcement — the prose is only the explanation.
+- **`detail` decides which of the alert's two texts a group gets, and defaults to the careful one.**
+  An alert carries `text` (may name a household and an amount — what makes it actionable) and
+  `publicText` (names nobody). An admin approving a group and ticking events is doing the same
+  deliberate thing as typing an address into the alert list, but this app cannot see who is IN a
+  group and the wrong group is one mis-click away. So a group gets `publicText` until somebody turns
+  `detail` on in front of a sentence saying what that means: the cost of that default being wrong is
+  a vaguer message; the cost of the opposite is two hundred parents reading a family's balance.
+- **The parent pause does not apply**, exactly as it does not for a staff member's own number: it is a
+  switch about writing to families, and an office that paused it while importing a roster still wants
+  to know when a card fails.
+- The per-group **test** sends a fixed message, never anything typed — a box that posts arbitrary text
+  to a group is precisely the misuse the design rules out.
 - The queue log records the group and the outcome, never the text, like every other row.
 
 Media (a base64 poster) is part of the platform's contract and deliberately unused here: a tuition
@@ -328,7 +339,8 @@ then set a different one per person.
 ## 8. Staff alerts
 
 `alerts/index.ts` stays the one place that decides who hears about an event; WhatsApp is its fourth
-fan-out, beside the office's email addresses, the OpenMasjidOS alert channel and the masjid webhook.
+and fifth fan-outs — staff numbers and approved groups (§5a) — beside the office's email addresses,
+the OpenMasjidOS alert channel and the masjid webhook.
 Staff subscribe **per account** (`users.phone` + `users.wa_events`), entirely opt-in, and clearing the
 number is the off switch. The editor is offered on **every** staff row whether or not WhatsApp is
 switched on — it was hidden behind the master switch at first, which made it unfindable in the one

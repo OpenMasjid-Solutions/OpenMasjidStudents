@@ -659,11 +659,24 @@ export interface WhatsAppConfig {
    * off, and never an opt-out (whatsapp/index.ts).
    */
   testStudentId: string;
+  /**
+   * Which STAFF ALERTS go to which approved WhatsApp group (0.50.0) — "the finance group gets every
+   * payment alert", keyed by the opaque group id the platform gave us.
+   *
+   * `detail` is the load-bearing field and it defaults to FALSE. A staff alert has two texts (§9): the
+   * one that may name a household and an amount, and the de-identified one for third-party sinks. A
+   * group is somewhere in between — an admin approved it and chose these events, which is the same
+   * deliberate act as typing an address into the alert list, but this app cannot see who is IN the
+   * group and an admin can subscribe the wrong one. So the safe half is the default: turning `detail`
+   * on is a decision made in front of a sentence explaining it, and the cost of getting it wrong the
+   * other way is one click rather than two hundred parents reading a family's balance.
+   */
+  groupAlerts: Record<string, { events: string[]; detail: boolean }>;
 }
 
 /** `+1` unless the office says otherwise — this app's first madāris are North American, and a wrong
  *  default is visible and one click to fix, whereas no default means every number fails silently. */
-const WA_DEFAULTS: WhatsAppConfig = { enabled: false, paused: true, events: {}, defaultCountry: '+1', countries: ['+1'], testStudentId: '' };
+const WA_DEFAULTS: WhatsAppConfig = { enabled: false, paused: true, events: {}, defaultCountry: '+1', countries: ['+1'], testStudentId: '', groupAlerts: {} };
 
 /** A country code as we store it: `+` and 1–3 digits. Anything else is dropped rather than stored, since
  *  it is glued onto the front of a real phone number and a bad one silently messages a stranger. */
@@ -673,7 +686,7 @@ export function isCountryCode(v: unknown): v is string {
 
 export function getWhatsApp(): WhatsAppConfig {
   const raw = getSetting(SETTING_KEYS.whatsapp);
-  if (!raw) return { ...WA_DEFAULTS, events: {}, countries: [...WA_DEFAULTS.countries] };
+  if (!raw) return { ...WA_DEFAULTS, events: {}, countries: [...WA_DEFAULTS.countries], groupAlerts: {} };
   try {
     const p = JSON.parse(raw) as Partial<WhatsAppConfig>;
     const defaultCountry = isCountryCode(p.defaultCountry) ? p.defaultCountry.trim() : WA_DEFAULTS.defaultCountry;
@@ -690,16 +703,38 @@ export function getWhatsApp(): WhatsAppConfig {
       defaultCountry,
       countries,
       testStudentId: typeof p.testStudentId === 'string' ? p.testStudentId.trim() : '',
+      groupAlerts: readGroupAlerts(p.groupAlerts),
     };
   } catch {
-    return { ...WA_DEFAULTS, events: {}, countries: [...WA_DEFAULTS.countries] };
+    return { ...WA_DEFAULTS, events: {}, countries: [...WA_DEFAULTS.countries], groupAlerts: {} };
   }
+}
+
+/** Coerce a hand-edited or older `groupAlerts` row into shape. Unknown event ids are left alone here —
+ *  whatsapp/index.ts owns the catalogue and filters against it, exactly as `alert_recipients` does. */
+function readGroupAlerts(raw: unknown): Record<string, { events: string[]; detail: boolean }> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, { events: string[]; detail: boolean }> = {};
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object') continue;
+    const g = v as { events?: unknown; detail?: unknown };
+    const events = Array.isArray(g.events) ? g.events.filter((e): e is string => typeof e === 'string') : [];
+    // Nothing subscribed means nothing to store; and `detail` is opt-in, never inferred.
+    if (events.length) out[id] = { events, detail: g.detail === true };
+  }
+  return out;
 }
 
 export function setWhatsApp(patch: Partial<WhatsAppConfig>): void {
   const next = { ...getWhatsApp(), ...patch };
   // Merged rather than replaced, so a screen that only knows about three events cannot clear a fourth.
   if (patch.events) next.events = { ...getWhatsApp().events, ...patch.events };
+  // Group subscriptions are merged the same way, and a group with no events is REMOVED rather than
+  // stored empty — an approval that was withdrawn should not leave a row behind claiming a setting.
+  if (patch.groupAlerts) {
+    const merged = { ...getWhatsApp().groupAlerts, ...patch.groupAlerts };
+    next.groupAlerts = Object.fromEntries(Object.entries(merged).filter(([, v]) => v.events.length > 0));
+  }
   setSetting(SETTING_KEYS.whatsapp, JSON.stringify(next));
 }
 

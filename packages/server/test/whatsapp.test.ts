@@ -931,28 +931,66 @@ describe('sending a test', () => {
   });
 });
 
-// -- Announcements to a group ------------------------------------------------
+// -- Staff alerts to a group -------------------------------------------------
 /**
- * ONE RULE governs this whole feature, and it comes from the platform: a group post is for genuine
- * announcements and must NEVER carry a family's own business, because their fees are not the other
- * 199 members'.
+ * A group here is a STAFF channel — a masjid's finance group getting every payment alert — and not a
+ * way to reach parents. Two things have to hold, and both are the kind that fail silently:
  *
- * The wall is in the type system rather than in a comment — `notifyFamily` calls
- * `sendPlatformWhatsApp`, which has no parameter that can name a group; `announceToGroup` calls
- * `sendPlatformWhatsAppGroup`, which has no parameter that can name a person. These tests hold the
- * wire shape to that, because the wire is where a mistake would actually show.
+ *  • **A parent's business never reaches a group.** Per-family sends call `sendPlatformWhatsApp`,
+ *    which has no parameter that can name a group; group alerts call `sendPlatformWhatsAppGroup`,
+ *    which has no parameter that can name a person. The wire is asserted in both directions.
+ *  • **`detail` decides which of an alert's two texts a group gets**, and defaults to the one that
+ *    names nobody. This app cannot see who is in a group; getting that default backwards would put a
+ *    family's balance in front of everyone in it.
  */
-describe('group announcements', () => {
-  it('posts to a group with `group`, and never a `to`', async () => {
+describe('staff alerts to a group', () => {
+  /** Subscribe the approved group to one alert. */
+  async function subscribe(events: string[], detail = false) {
     const admin = caller('admin');
+    await admin.whatsapp.groupSet({ groupId: '1203630001@g.us', events: events as ('autopay-disabled')[], detail });
+    return admin;
+  }
+  const posts = () => calls.filter((c) => c.url.endsWith('/api/fabric/whatsapp') && typeof c.body.group === 'string');
+
+  it('sends an alert to a subscribed group, with `group` and never a `to`', async () => {
     await turnOn();
+    await subscribe(['autopay-disabled']);
     calls = [];
-    await admin.whatsapp.announce({ groupId: '1203630001@g.us', text: 'Fees for this month are now out.' });
-    const posts = calls.filter((c) => c.url.endsWith('/api/fabric/whatsapp') && typeof c.body.group === 'string');
-    expect(posts).toHaveLength(1);
-    expect(posts[0].body.group).toBe('1203630001@g.us');
-    expect(posts[0].body.to).toBeUndefined();
-    expect(posts[0].body.text).toContain('Fees for this month');
+    await alerts.alertStaff('autopay-disabled', { title: 'Autopay off', text: 'Ismail family — three failures.', publicText: 'Autopay was turned off for a family.' });
+    await drain();
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0].body.group).toBe('1203630001@g.us');
+    expect(posts()[0].body.to).toBeUndefined();
+  });
+
+  it('sends nothing to a group that is not subscribed to that alert', async () => {
+    await turnOn();
+    await subscribe(['payment-received']);
+    calls = [];
+    await alerts.alertStaff('autopay-disabled', { title: 'T', text: 'B', publicText: 'B' });
+    await drain();
+    expect(posts()).toHaveLength(0);
+  });
+
+  /** The default. A group gets the text that names nobody until an admin says otherwise. */
+  it('names no household by default', async () => {
+    await turnOn();
+    await subscribe(['autopay-disabled']);
+    calls = [];
+    await alerts.alertStaff('autopay-disabled', { title: 'Autopay off', text: 'Ismail family — three failures.', publicText: 'Autopay was turned off for a family.' });
+    await drain();
+    const text = String(posts()[0].body.text);
+    expect(text).not.toContain('Ismail');
+    expect(text).toContain('Autopay was turned off for a family');
+  });
+
+  it('names the household once an admin turns detail on for that group', async () => {
+    await turnOn();
+    await subscribe(['autopay-disabled'], true);
+    calls = [];
+    await alerts.alertStaff('autopay-disabled', { title: 'Autopay off', text: 'Ismail family — three failures.', publicText: 'Autopay was turned off for a family.' });
+    await drain();
+    expect(String(posts()[0].body.text)).toContain('Ismail');
   });
 
   /** The other half of the wall: a per-family message must never grow a `group` field. */
@@ -966,69 +1004,61 @@ describe('group announcements', () => {
     expect(sends()[0].body.to).toBe('+15551234567');
   });
 
-  /** [school] is the only tag there is. Nothing about a household can be interpolated into a group
-   *  post, which is the app's half of the rule; the other half is a person typing. */
-  it('fills in the school and offers no way to name a household', async () => {
-    const admin = caller('admin');
-    await admin.settings.set({ schoolName: 'An-Noor' });
-    await turnOn();
-    calls = [];
-    await admin.whatsapp.announce({ groupId: 'g1@g.us', text: '[school]: bills are out. [family] [balance] [children]' });
-    const text = String(calls.filter((c) => typeof c.body.group === 'string')[0].body.text);
-    expect(text).toContain('An-Noor');
-    // Every other tag is left as literal text — there is no code path that resolves it here.
-    expect(text).toContain('[family]');
-    expect(text).toContain('[balance]');
-    expect(text).toContain('[children]');
-  });
-
-  /**
-   * The pause covers announcements too. A group of parents is parents, and this is the loudest path
-   * in the app — two hundred people in one call. The test student cannot except it: there is no
-   * household to except.
-   */
-  it('is held by the parent pause, with no test-student exception', async () => {
-    const h = await household('Ismail');
+  /** The PARENT pause is a switch about writing to families. An office that paused it while importing
+   *  a roster still wants to know when a card fails — exactly as for a staff member's own number. */
+  it('is not held by the parent pause', async () => {
     await turnOn('receipt', { paused: true });
-    await h.admin.whatsapp.set({ testStudentId: h.studentId });
+    await subscribe(['autopay-disabled']);
     calls = [];
-    await expect(h.admin.whatsapp.announce({ groupId: 'g1@g.us', text: 'hello' })).rejects.toThrow(/paused/i);
-    expect(calls.filter((c) => typeof c.body.group === 'string')).toHaveLength(0);
-    // …and the refusal is logged, because somebody pressed a button and is waiting for an answer.
-    expect((await h.admin.whatsapp.log({}))[0]).toMatchObject({ kind: 'group', status: 'skipped', reason: 'paused' });
+    await alerts.alertStaff('autopay-disabled', { title: 'T', text: 'B', publicText: 'B' });
+    await drain();
+    expect(posts()).toHaveLength(1);
   });
 
-  /** An id the admin has withdrawn is a 403 from the platform — an authorisation answer, and the
-   *  message should send an admin to OpenMasjidOS rather than hunting a bug here. */
-  it('reports a withdrawn group as something to fix in OpenMasjidOS', async () => {
+  it('refuses a group the admin has not approved, and an event id it does not know', async () => {
     const admin = caller('admin');
     await turnOn();
-    queueStatus = 403;
-    await expect(admin.whatsapp.announce({ groupId: 'gone@g.us', text: 'hello' })).rejects.toThrow(/no longer be approved/i);
+    await expect(admin.whatsapp.groupSet({ groupId: 'never@g.us', events: ['autopay-disabled'] })).rejects.toThrow(/approved/i);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberately invalid input
+    await expect(admin.whatsapp.groupSet({ groupId: '1203630001@g.us', events: ['everything'] as any })).rejects.toThrow();
   });
 
-  it('lists only the groups the platform hands back, and hides the feature when there are none', async () => {
+  it('lists the approved groups with what each one hears, and hides the feature when there are none', async () => {
     const admin = caller('admin');
     await turnOn();
-    groupList = [{ id: 'g1@g.us', label: 'Parents — Hifz' }];
-    expect((await admin.whatsapp.groups()).groups).toEqual([{ id: 'g1@g.us', label: 'Parents — Hifz' }]);
+    await subscribe(['autopay-disabled', 'past-due'], true);
+    const got = await admin.whatsapp.groups();
+    expect(got.groups).toHaveLength(1);
+    expect(got.groups[0].events.sort()).toEqual(['autopay-disabled', 'past-due']);
+    expect(got.groups[0].detail).toBe(true);
     groupList = [];
     expect((await admin.whatsapp.groups()).groups).toEqual([]);
   });
 
-  it('shows the group by its label in the queue log, never the message', async () => {
+  it('unticking the last alert leaves no setting behind', async () => {
+    await turnOn();
+    const admin = await subscribe(['autopay-disabled']);
+    await admin.whatsapp.groupSet({ groupId: '1203630001@g.us', events: [] });
+    expect((await admin.whatsapp.groups()).groups[0].events).toEqual([]);
+  });
+
+  it('has a fixed test message, and logs the group by label without the text', async () => {
     const admin = caller('admin');
     await turnOn();
-    groupList = [{ id: 'g1@g.us', label: 'Parents — Hifz' }];
-    await admin.whatsapp.announce({ groupId: 'g1@g.us', text: 'Closed on Friday' });
+    groupList = [{ id: 'g1@g.us', label: 'Finance' }];
+    calls = [];
+    await admin.whatsapp.groupTest({ groupId: 'g1@g.us' });
+    expect(posts()).toHaveLength(1);
+    expect(String(posts()[0].body.text)).toContain('test');
     const log = await admin.whatsapp.log({});
-    expect(log[0]).toMatchObject({ kind: 'group', who: 'Parents — Hifz', status: 'queued' });
-    expect(JSON.stringify(log)).not.toContain('Closed on Friday');
+    expect(log[0]).toMatchObject({ kind: 'group', who: 'Finance', status: 'queued' });
+    expect(JSON.stringify(log)).not.toContain('If you can read this');
   });
 
   it('is admin-only', async () => {
     await expect(caller('finance').whatsapp.groups()).rejects.toThrow(/access/i);
-    await expect(caller('finance').whatsapp.announce({ groupId: 'g1@g.us', text: 'x' })).rejects.toThrow(/access/i);
+    await expect(caller('finance').whatsapp.groupSet({ groupId: 'g1@g.us', events: [] })).rejects.toThrow(/access/i);
+    await expect(caller('finance').whatsapp.groupTest({ groupId: 'g1@g.us' })).rejects.toThrow(/access/i);
   });
 });
 

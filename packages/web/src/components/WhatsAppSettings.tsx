@@ -399,44 +399,49 @@ function MessageWording() {
 }
 
 /**
- * Announcements to a WhatsApp group (0.50.0).
+ * Staff alerts to a WhatsApp group (0.50.0) — a masjid's finance group getting every payment alert.
  *
- * A DIFFERENT KIND OF MESSAGE from everything else on this screen, and the copy has to make that
- * obvious or somebody will use it wrongly once and cannot take it back. Every other message here goes
- * to one household about their own business; this one goes to everybody in a group at once, which
- * means a family's fees must never appear in it — their business is not the other 199 members'.
+ * A GROUP IS A STAFF CHANNEL, not a way to reach parents. The events are the same ones a staff account
+ * can subscribe to, laid out as the same matrix the email-alert list uses, because it is the same
+ * decision: who hears about what. There is deliberately no composer — nothing free-typed can be sent
+ * to a group, and no parent event can reach one at all.
  *
- * The app enforces the half it can: there are no tags but `[school]`, so nothing about a household can
- * be interpolated in. The other half is a person, so the section says it plainly and the confirmation
- * shows the exact text and names the group before it goes.
+ * THE ONE THING TO GET RIGHT IS `detail`. An alert has two texts: the one that names the household and
+ * the amount, and the one that names nobody. This app cannot see who is in a group, so the choice is
+ * the admin's — and it starts on the careful side, with the consequence written next to the switch
+ * rather than in a document. A finance group of three wants the names; a group of two hundred parents
+ * must never get them.
  *
- * Renders nothing when the admin has approved no groups. That is a normal state — approval is theirs
- * to give and withdraw in OpenMasjidOS — and a feature with nowhere to send is better hidden than
- * shown broken.
+ * Renders nothing when no groups are approved. That is a normal state — approval is the admin's to
+ * give and withdraw in OpenMasjidOS — and a feature with nowhere to send is better hidden than broken.
  */
 function Groups() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
   const q = trpc.whatsapp.groups.useQuery();
-  const announce = trpc.whatsapp.announce.useMutation();
-  const [groupId, setGroupId] = useState('');
-  const [text, setText] = useState('');
+  const save = trpc.whatsapp.groupSet.useMutation();
+  const test = trpc.whatsapp.groupTest.useMutation();
   const [note, setNote] = useState<string | null>(null);
 
   if (!q.data || q.data.groups.length === 0) return null;
   const d = q.data;
-  const chosen = groupId || d.groups[0].id;
-  const chosenLabel = d.groups.find((g) => g.id === chosen)?.label ?? '';
+  type Group = (typeof d.groups)[number];
 
-  async function send() {
+  async function set(g: Group, patch: { events?: Group['events']; detail?: boolean }) {
     setNote(null);
-    // The dialog shows the message AND the group, because both are the mistake worth preventing:
-    // the right words to the wrong room is as bad as the wrong words.
-    if (!window.confirm(t('settings.waGroupConfirm', { group: chosenLabel, text }))) return;
     try {
-      await announce.mutateAsync({ groupId: chosen, text: text.trim() });
-      setText('');
-      setNote(t('settings.waGroupQueued', { group: chosenLabel }));
+      await save.mutateAsync({ groupId: g.id, events: patch.events ?? g.events, detail: patch.detail ?? g.detail });
+      await utils.whatsapp.groups.invalidate();
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
+  async function runTest(g: Group) {
+    setNote(null);
+    try {
+      await test.mutateAsync({ groupId: g.id });
+      setNote(t('settings.waGroupTestQueued', { group: g.label }));
       await utils.whatsapp.log.invalidate();
     } catch (e) {
       setNote((e as Error).message);
@@ -447,35 +452,55 @@ function Groups() {
     <>
       <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.waGroups')}</h3>
       <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>{t('settings.waGroupsHint')}</p>
-      {/* The rule, stated where the box is, not in a document nobody opens. */}
-      <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{t('settings.waGroupsRule')}</div>
-
-      <div className="inline-form glass-inset" style={{ marginBlockStart: 0, flexWrap: 'wrap' }}>
-        <div className="field" style={{ flex: '1 1 14rem' }}>
-          <label className="label" htmlFor="wa-group">{t('settings.waGroupWhich')}</label>
-          <select id="wa-group" className="input glass-inset" value={chosen} onChange={(e) => setGroupId(e.target.value)}>
-            {d.groups.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
-          </select>
-        </div>
-        <div className="field" style={{ flexBasis: '100%' }}>
-          <label className="label" htmlFor="wa-announce">{t('settings.waGroupText')}</label>
-          <textarea
-            id="wa-announce"
-            className="textarea glass-inset"
-            style={{ minHeight: '5rem', fontFamily: 'inherit', fontSize: '0.9rem' }}
-            value={text}
-            maxLength={d.maxLength}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={t('settings.waGroupPlaceholder')}
-          />
-          <span className="hint">{t('settings.waGroupTags')}</span>
-        </div>
-        <button type="button" className="btn btn--primary" onClick={() => void send()} disabled={announce.isPending || !text.trim() || d.paused || !d.ready}>
-          {announce.isPending ? t('settings.waGroupSending') : t('settings.waGroupSend')}
-        </button>
-        {d.paused && <span className="hint">{t('settings.waGroupPaused')}</span>}
-      </div>
       {note && <div className="notice" style={{ marginBlockEnd: '0.6rem' }}>{note}</div>}
+
+      <div style={{ overflowX: 'auto' }}>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>{t('settings.waGroupWhich')}</th>
+              {d.events.map((e) => <th key={e} style={{ fontSize: '0.72rem', whiteSpace: 'normal', minWidth: '5.5rem' }}>{t(`settings.ev_${e}`)}</th>)}
+              <th className="actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {d.groups.map((g) => (
+              <tr key={g.id}>
+                <td>{g.label}</td>
+                {d.events.map((e) => (
+                  <td key={e} style={{ textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      aria-label={`${g.label} — ${t(`settings.ev_${e}`)}`}
+                      checked={g.events.includes(e)}
+                      disabled={save.isPending}
+                      onChange={(ev) => void set(g, { events: ev.target.checked ? [...g.events, e] : g.events.filter((x) => x !== e) })}
+                    />
+                  </td>
+                ))}
+                <td className="actions">
+                  <button type="button" className="btn btn--ghost btn--sm" title={t('settings.waGroupTest')} onClick={() => void runTest(g)} disabled={test.isPending || !d.ready}>
+                    <Send size={14} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* The consequence, per group, next to the switch that causes it. */}
+      {d.groups.map((g) => (
+        <label key={`d-${g.id}`} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer', marginBlockStart: '0.5rem' }}>
+          <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={g.detail} disabled={save.isPending} onChange={() => void set(g, { detail: !g.detail })} />
+          <span>
+            {t('settings.waGroupDetail', { group: g.label })}
+            <br />
+            <span className="hint">{g.detail ? t('settings.waGroupDetailOn') : t('settings.waGroupDetailOff')}</span>
+          </span>
+        </label>
+      ))}
+      <p className="hint" style={{ marginBlockStart: '0.5rem' }}>{t('settings.waGroupsParentsHint')}</p>
     </>
   );
 }

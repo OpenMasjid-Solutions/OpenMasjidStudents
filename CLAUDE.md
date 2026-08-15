@@ -585,11 +585,14 @@ Non-negotiable rules:
   household**, because the portal IS the household (§5) and two parents sharing one balance and one set of
   cards should not need the office to switch a spouse's number on. Every parent message is an office-editable
   TEMPLATE with a fixed tag list per message (`whatsapp/templates.ts`); there is no tag for a Student ID or a
-  card, which is the enforcement rather than a rule in a document. **A GROUP announcement is a separate
-  path all the way down** (0.50.0): the platform's rule is that a group post never carries a family's own
-  business — their fees are not the other 199 members' — so per-family sends and announcements use two
-  functions with no shared parameter, there are no per-event toggles for groups, `[school]` is the only
-  tag, and the pause applies with no test-student exception. **The three GLOBAL gates write no log
+  card, which is the enforcement rather than a rule in a document. **A WhatsApp GROUP is a STAFF channel**
+  (0.50.0) — a finance group subscribing to the same `ALERT_EVENTS` a staff account can, and the fifth
+  fan-out of `alertStaff`. No parent event can reach one and nothing free-typed can either, because the
+  platform's rule is that a group never carries a family's own business; per-family sends and group alerts
+  use two functions with no shared parameter, so it is not expressible rather than merely forbidden. Which
+  of an alert's two texts a group gets is the admin's `detail` switch, defaulting to the one that names
+  NOBODY — this app cannot see who is in a group, and the wrong group is one mis-click away. **The three
+  GLOBAL gates write no log
   row** — a switch that is off would fill the trail every invoice run — so `whatsapp.get` returns a
   `blockers` list instead and the screen prints it: without that an office turned the feature on, took a
   real payment and got no message AND no log entry, with nothing anywhere saying which gate did it. A new

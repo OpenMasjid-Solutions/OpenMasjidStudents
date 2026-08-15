@@ -20,8 +20,8 @@ import { getWhatsApp, setWhatsApp, getWhatsAppEmailRequest, setWhatsAppEmailRequ
 import { testFamilyId } from '../settings/testStudent';
 import {
   WA_PARENT_EVENTS,
-  announceToGroup,
   approvedGroups,
+  testGroup,
   currentWhatsAppStatus,
   familyRecipients,
   familyVars,
@@ -457,9 +457,13 @@ export const whatsappRouter = router({
     return { emailed, whatsapp };
   }),
 
-  // ── Group announcements (0.50.0) ──────────────────────────────────────────
+  // ── Staff alerts to a group (0.50.0) ──────────────────────────────────────
   /**
-   * The groups an admin approved for this app, and whether an announcement can go out right now.
+   * The groups an admin approved for this app, and which STAFF ALERTS each one is subscribed to.
+   *
+   * A group here is a staff channel — a masjid's finance group getting every payment alert — and not
+   * a way to reach parents: the events are the same `ALERT_EVENTS` a staff account can subscribe to,
+   * and no parent event or free-typed message can be sent to a group at all.
    *
    * An empty list HIDES the feature rather than showing it broken (the platform's own guidance): the
    * approval is somebody else's to give and to withdraw, so "no groups" is a normal state and not an
@@ -468,44 +472,71 @@ export const whatsappRouter = router({
   groups: adminProcedure.query(async () => {
     const cfg = getWhatsApp();
     const status = await currentWhatsAppStatus();
+    const groups = await approvedGroups();
     return {
-      groups: await approvedGroups(),
-      /** The pause applies to announcements too — a group of parents is parents, and this is the
-       *  loudest path in the app. Reported separately so the screen can offer the way out. */
-      paused: cfg.paused,
+      /** The catalogue, so the UI never hard-codes the event list (same rule as every other screen). */
+      events: ALERT_EVENTS,
+      groups: groups.map((g) => {
+        const sub = cfg.groupAlerts[g.id];
+        return {
+          ...g,
+          // Filtered against the catalogue so a stale or hand-edited row cannot widen what a group hears.
+          events: (sub?.events ?? []).filter((e): e is (typeof ALERT_EVENTS)[number] => (ALERT_EVENTS as readonly string[]).includes(e)),
+          detail: sub?.detail === true,
+        };
+      }),
       ready: cfg.enabled && status.available,
-      maxLength: WA_TEXT_MAX,
     };
   }),
 
   /**
-   * Post one announcement to one approved group.
+   * Subscribe a group to some alerts, and decide how much each one may say.
    *
-   * `[school]` is the ONLY tag, and that is the enforcement of the platform's rule rather than a note
-   * about it: a group post must never carry a family's own business, so the app offers no way to
-   * interpolate a household, a child, an amount or a balance. An office that types a family's name in
-   * is a person making that choice; the app never puts it there.
+   * `detail` is the field that matters. An alert carries two texts (§9) — one that may name a
+   * household and an amount, one that names nobody — and which a group gets is the ADMIN's call,
+   * because they can see who is in the group and this app cannot. It defaults off, and the screen puts
+   * the consequence next to the switch rather than in a document.
    */
-  announce: adminProcedure
-    .input(z.object({ groupId: z.string().trim().min(1).max(200), text: z.string().trim().min(1).max(WA_TEXT_MAX) }))
+  groupSet: adminProcedure
+    .input(
+      z.object({
+        groupId: z.string().trim().min(1).max(200),
+        /** Validated against the catalogue, so a stale client can never subscribe to an unknown id. */
+        events: z.array(z.enum(ALERT_EVENTS)).max(ALERT_EVENTS.length),
+        detail: z.boolean().optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
-      const text = input.text.replaceAll('[school]', getSchoolName());
-      const outcome = await announceToGroup(input.groupId, text);
-      // The group and the outcome — never the announcement itself (§14: no message bodies, anywhere).
-      audit(auditActor(ctx), 'whatsapp.announce', { entity: 'settings', detail: { groupId: input.groupId, outcome } });
-      if (outcome !== 'queued') {
-        throw new TRPCError({
-          code: outcome === 'paused' ? 'PRECONDITION_FAILED' : 'BAD_GATEWAY',
-          message:
-            outcome === 'paused'
-              ? 'Parent messages are paused, so nothing was sent. Turn the pause off above first — an announcement reaches everybody in the group at once.'
-              : outcome === 'off'
-                ? 'WhatsApp is switched off for this madrasah.'
-                : 'That didn’t reach the queue. The group may no longer be approved in OpenMasjidOS — check there, then try again.',
-        });
+      // Only a group the admin has actually approved. The platform would refuse the send anyway, but a
+      // setting stored against an id we were never given is a setting nobody can explain later.
+      const approved = await approvedGroups();
+      if (!approved.some((g) => g.id === input.groupId)) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'That group isn’t approved for this app in OpenMasjidOS.' });
       }
+      const cur = getWhatsApp().groupAlerts[input.groupId];
+      setWhatsApp({ groupAlerts: { [input.groupId]: { events: input.events, detail: input.detail ?? cur?.detail === true } } });
+      audit(auditActor(ctx), 'whatsapp.groupAlerts', { entity: 'settings', detail: { groupId: input.groupId, events: input.events.length, detail: input.detail ?? cur?.detail === true } });
       return { ok: true as const };
     }),
+
+  /** "Does this group actually receive?" — a FIXED test message, never anything typed. This is not a
+   *  composer, and a box that posts arbitrary text to a group is the misuse the design rules out. */
+  groupTest: adminProcedure.input(z.object({ groupId: z.string().trim().min(1).max(200) })).mutation(async ({ ctx, input }) => {
+    const outcome = await testGroup(input.groupId);
+    audit(auditActor(ctx), 'whatsapp.groupTest', { entity: 'settings', detail: { groupId: input.groupId, outcome } });
+    if (outcome !== 'queued') {
+      throw new TRPCError({
+        code: 'BAD_GATEWAY',
+        message:
+          outcome === 'off'
+            ? 'WhatsApp is switched off for this madrasah.'
+            : outcome === 'unavailable'
+              ? 'WhatsApp isn’t ready on this server yet.'
+              : 'That didn’t reach the queue. The group may no longer be approved in OpenMasjidOS — check there, then try again.',
+      });
+    }
+    return { ok: true as const };
+  }),
 
   /**
    * What we handed to the queue, most recent first — never the message itself (§14).

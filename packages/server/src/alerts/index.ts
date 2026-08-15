@@ -9,13 +9,15 @@
  * the masjid installed from, so a newly-declared id answers 400 until a release lands. Neither reaches
  * the person a madrasa actually wants told: the treasurer, the imām, whoever chases a failed card.
  *
- * So an alert now fans out to FOUR places, each best-effort and independent:
+ * So an alert now fans out to FIVE places, each best-effort and independent:
  *   1. the addresses the office listed in Settings → Email alerts (this app's own email, always works
  *      once OpenMasjidOS can send mail at all);
  *   2. the OpenMasjidOS alert channel, when the event maps to a declared id;
  *   3. the masjid webhook, for the routine ones that would flood an alert channel;
  *   4. the WhatsApp numbers of staff who asked for this alert (0.50.0) — the one channel that finds a
- *      treasurer who is nowhere near an inbox, which is most evenings and every Sunday.
+ *      treasurer who is nowhere near an inbox, which is most evenings and every Sunday;
+ *   5. any WhatsApp GROUP an admin subscribed to this alert (0.50.0) — a masjid's finance group, where
+ *      the people who chase a failed card already talk to each other.
  *
  * WHAT AN ALERT MAY SAY. These emails go to addresses an ADMIN typed, so they may name a household
  * ("the Ismail family") and an amount — without that they are unactionable, which is the state the old
@@ -28,7 +30,7 @@ import { db } from '../db';
 import { alertRecipients, families } from '../db/schema';
 import { raiseAlert, notifyPlatform, type AlertId, type AlertLevel } from '../fabric/platform';
 import { sendAlert } from '../mail/notify';
-import { notifyStaff } from '../whatsapp';
+import { notifyStaff, notifyGroups } from '../whatsapp';
 import { waStaffAlert } from '../whatsapp/templates';
 import { makeLog } from '../logger';
 
@@ -196,6 +198,11 @@ export async function alertStaff(event: AlertEvent, msg: AlertMessage): Promise<
     // that cannot name the family is not actionable. Not awaited, for the same reason as the two
     // above — the queue paces sends, and none of this belongs in a caller's critical path.
     void notifyStaff(event, waStaffAlert(msg.title, msg.text));
+    // …and to any WhatsApp GROUP an admin subscribed to this alert — a finance group that wants every
+    // payment. Handed BOTH texts rather than one: an admin can see who is in a group and this app
+    // cannot, so which of the two a group gets is their decision, defaulting to the one that names
+    // nobody (whatsapp/index.ts `notifyGroups`).
+    void notifyGroups(event, msg);
 
     const to = recipientsFor(event);
     if (!to.length) return;
