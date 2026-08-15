@@ -246,6 +246,152 @@ export function autopayFailureEmail(schoolName: string, portalUrl: string, final
   return { subject, text, html };
 }
 
+/**
+ * This period's bill has been generated (0.50.0).
+ *
+ * The biggest gap the app had: between one receipt and the past-due reminder that followed, a parent
+ * was told nothing at all — including that a bill existed. So the first they heard of a month's
+ * tuition was a message saying they were late with it.
+ *
+ * Names the CHILDREN, unlike the past-due reminder: this is the one message where "what is this for?"
+ * is the question, and a household with three children on different plans cannot answer it from a
+ * total. Still no Student ID (§14) — it is a payment credential, not a label.
+ */
+export function invoiceReadyEmail(schoolName: string, amountFormatted: string, dueFormatted: string, childrenLine: string, portalUrl: string): Email {
+  const subject = `Your ${schoolName} tuition — ${amountFormatted}`;
+  const due = dueFormatted ? ` It is due on ${dueFormatted}.` : '';
+  const forWhom = childrenLine ? ` for ${childrenLine}` : '';
+  const text = [
+    'Assalāmu ʿalaykum,',
+    '',
+    `Your tuition${forWhom} is ready: ${amountFormatted}.${due}`,
+    '',
+    portalUrl ? `You can see the full bill and pay it in the parent portal:\n${portalUrl}` : 'You can see the full bill and pay it in the parent portal.',
+    '',
+    'If anything on it looks wrong, please tell the office — it is easier to fix now than later.',
+    '',
+    `— ${schoolName}`,
+    ...textContact(),
+  ].join('\n');
+  const html = shell(
+    'Your tuition is ready',
+    [
+      `Your tuition${esc(forWhom)} is ready: <strong>${esc(amountFormatted)}</strong>.${esc(due)}`,
+      'You can see the full bill and pay it in the parent portal.',
+      'If anything on it looks wrong, please tell the office — it is easier to fix now than later.',
+    ],
+    portalUrl ? { label: 'See the bill', url: portalUrl } : undefined,
+    `— ${schoolName}`,
+  );
+  return { subject, text, html };
+}
+
+/**
+ * "We'll charge your saved card on Tuesday" (0.50.0).
+ *
+ * A courtesy note a few days ahead, and it is the one that prevents disputes: a card charge nobody
+ * expected is what makes a parent ring the bank rather than the office. It also gives them time to
+ * move money, or to switch autopay off if this month is a bad one — which is a better outcome for the
+ * madrasah than a decline and a retry ladder.
+ *
+ * Says the card by brand and last four, never anything more (§14).
+ */
+export function autopayUpcomingEmail(schoolName: string, amountFormatted: string, whenFormatted: string, cardLabel: string, portalUrl: string): Email {
+  const subject = `${schoolName} will charge ${amountFormatted} on ${whenFormatted}`;
+  const card = cardLabel ? ` your ${cardLabel}` : ' your saved card';
+  const text = [
+    'Assalāmu ʿalaykum,',
+    '',
+    `This is just so it isn't a surprise: we'll charge${card} ${amountFormatted} on ${whenFormatted}.`,
+    '',
+    'There is nothing you need to do.',
+    '',
+    portalUrl ? `If you'd rather pay another way this month, or change the card, you can do that in the parent portal:\n${portalUrl}` : 'If you’d rather pay another way this month, or change the card, you can do that in the parent portal.',
+    '',
+    `— ${schoolName}`,
+    ...textContact(),
+  ].join('\n');
+  const html = shell(
+    'An automatic payment is coming up',
+    [
+      `This is just so it isn't a surprise: we'll charge${esc(card)} <strong>${esc(amountFormatted)}</strong> on ${esc(whenFormatted)}.`,
+      'There is nothing you need to do.',
+      'If you’d rather pay another way this month, or change the card, you can do that in the portal.',
+    ],
+    portalUrl ? { label: 'Open the parent portal', url: portalUrl } : undefined,
+    `— ${schoolName}`,
+  );
+  return { subject, text, html };
+}
+
+/**
+ * A saved card is about to expire (0.50.0).
+ *
+ * This is how autopay stops working without anybody noticing: the card expires, the next charge
+ * declines, the retry ladder runs, autopay switches itself off, and the family finds out they are
+ * three months behind. One message a year per card removes the whole sequence.
+ */
+export function cardExpiringEmail(schoolName: string, cardLabel: string, whenFormatted: string, portalUrl: string): Email {
+  const subject = `Your saved card for ${schoolName} expires soon`;
+  const card = cardLabel || 'your saved card';
+  const when = whenFormatted ? ` (${whenFormatted})` : '';
+  const text = [
+    'Assalāmu ʿalaykum,',
+    '',
+    `The card you have saved with us — ${card}${when} — expires soon, and automatic payments will stop working once it does.`,
+    '',
+    portalUrl ? `You can add a new card in the parent portal whenever suits you:\n${portalUrl}` : 'You can add a new card in the parent portal whenever suits you.',
+    '',
+    `— ${schoolName}`,
+    ...textContact(),
+  ].join('\n');
+  const html = shell(
+    'Your saved card expires soon',
+    [
+      `The card you have saved with us — <strong>${esc(card)}</strong>${esc(when)} — expires soon, and automatic payments will stop working once it does.`,
+      'You can add a new card in the portal whenever suits you.',
+    ],
+    portalUrl ? { label: 'Add a new card', url: portalUrl } : undefined,
+    `— ${schoolName}`,
+  );
+  return { subject, text, html };
+}
+
+/**
+ * Money has gone back to the family (0.50.0).
+ *
+ * Rare, and exactly the kind of thing that should exist in writing on both sides: an office knows it
+ * refunded, a parent should not have to take their word for it. It deliberately sets the expectation
+ * about timing — a card refund takes days to appear, and "where is my money?" three days later is the
+ * support call this paragraph prevents.
+ */
+export function refundEmail(schoolName: string, amountFormatted: string, portalUrl: string): Email {
+  const subject = `${schoolName} has refunded ${amountFormatted}`;
+  const text = [
+    'Assalāmu ʿalaykum,',
+    '',
+    `We've refunded ${amountFormatted} to you.`,
+    '',
+    'If it went back to a card, please allow a few days for it to appear on your statement — that part is the bank’s, not ours.',
+    '',
+    portalUrl ? `Your balance and payment history are in the parent portal:\n${portalUrl}` : 'Your balance and payment history are in the parent portal.',
+    '',
+    `— ${schoolName}`,
+    ...textContact(),
+  ].join('\n');
+  const html = shell(
+    'A refund is on its way',
+    [
+      `We've refunded <strong>${esc(amountFormatted)}</strong> to you.`,
+      'If it went back to a card, please allow a few days for it to appear on your statement — that part is the bank’s, not ours.',
+      'Your balance and payment history are in the parent portal.',
+    ],
+    portalUrl ? { label: 'Open the parent portal', url: portalUrl } : undefined,
+    `— ${schoolName}`,
+  );
+  return { subject, text, html };
+}
+
 /** Password reset (§12). */
 export function resetEmail(schoolName: string, url: string): Email {
   const subject = `Reset your ${schoolName} password`;

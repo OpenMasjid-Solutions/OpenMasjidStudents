@@ -90,8 +90,11 @@ export function WhatsAppSettings() {
   async function runTest() {
     setMsg(null);
     try {
-      await testSend.mutateAsync();
-      setMsg(t('settings.waTestQueued'));
+      // Reports BOTH channels: the test student governs the email pause too, so "the email went and
+      // the WhatsApp did not" is a real and useful outcome rather than a failure.
+      const r = await testSend.mutateAsync();
+      setMsg(t('settings.waTestDone', { emailed: r.emailed, whatsapp: t(`settings.waTestWa_${r.whatsapp}`) }));
+      await utils.whatsapp.log.invalidate();
     } catch (e) {
       setMsg((e as Error).message);
     }
@@ -122,6 +125,21 @@ export function WhatsAppSettings() {
         <span className={`chip ${canSend ? '' : 'is-muted'}`}>{canSend ? t('settings.waReady') : t('settings.waNotReady')}</span>
         <span className="hint" style={{ display: 'block', marginBlockStart: '0.3rem' }}>{t(`settings.waReason_${reason}`)}</span>
       </p>
+
+      {/* WHY NOTHING IS SENDING — the line this screen should always have had.
+          The global gates stop a message before any recipient is considered and write no log row (a
+          switch that is off would otherwise fill the trail every invoice run), so an office could
+          turn the feature on, take a real payment and get nothing at all with nothing anywhere saying
+          which gate did it. Now the gates report themselves, in the order they are applied. */}
+      {c.blockers.length > 0 && (
+        <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>
+          <strong>{t('settings.waBlocked')}</strong>
+          <ul style={{ margin: '0.35rem 0 0', paddingInlineStart: '1.1rem' }}>
+            {c.blockers.map((b) => <li key={b}>{t(`settings.waBlock_${b}`)}</li>)}
+          </ul>
+        </div>
+      )}
+      {c.blockers.length === 0 && c.pausedWithTest && <div className="notice" style={{ marginBlockEnd: '0.6rem' }}>{t('settings.waOnlyTest')}</div>}
 
       {/* 2. The risk, next to the switch — not in a document nobody opens. */}
       <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{t('settings.waRisk')}</div>
@@ -232,7 +250,10 @@ export function WhatsAppSettings() {
               />
               <span className="hint">{t('settings.waTestStudentHint')}</span>
             </div>
-            <button type="button" className="btn btn--ghost" onClick={() => void runTest()} disabled={testSend.isPending || !c.testStudentId || !canSend}>
+            {/* Enabled as soon as there is a test student. It no longer waits on the WhatsApp gateway:
+                the test student governs the EMAIL pause too, so an office setting this up before OpenWA
+                exists on the server can still prove the exception works. */}
+            <button type="button" className="btn btn--ghost" onClick={() => void runTest()} disabled={testSend.isPending || !c.testStudentId}>
               <Send size={14} style={{ marginInlineEnd: '0.3rem' }} />
               {testSend.isPending ? t('settings.waTesting') : t('settings.waSendTest')}
             </button>

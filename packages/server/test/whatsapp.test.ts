@@ -713,6 +713,217 @@ describe('rewriting what a message says', () => {
   });
 });
 
+// -- The four notification types added in 0.50.0 -----------------------------
+/**
+ * Each of these is a gap a madrasah notices the week it starts using this, and each is on BOTH
+ * channels rather than WhatsApp alone: email is the reliable one and the one a household with no
+ * phone number still has, so a notification type that existed only on WhatsApp would be one those
+ * families could never receive.
+ *
+ * All four default OFF on both channels. That is the rule for any NEW message (§ getParentEmails): a
+ * madrasah that updates on a Tuesday must not start writing to two hundred families on the Wednesday.
+ */
+describe('the newer notification types', () => {
+  it('all start switched off, on both channels', async () => {
+    const admin = caller('admin');
+    const prefs = (await admin.settings.alertsGet()).parentEmails;
+    expect(prefs.invoiceReady).toBe(false);
+    expect(prefs.autopayUpcoming).toBe(false);
+    expect(prefs.cardExpiring).toBe(false);
+    expect(prefs.refund).toBe(false);
+    // ...and the two that shipped before them are still ON, because an upgraded install was sending
+    // those and must keep doing so.
+    expect(prefs.receipt).toBe(true);
+    expect(prefs.autopayFailure).toBe(true);
+    expect((await admin.whatsapp.get()).events).toEqual({});
+  });
+
+  /**
+   * ONE message per household, not one per child.
+   *
+   * Bills are per child; the message is to a parent. A household with three children would otherwise
+   * get three of them for one billing run, on a channel whose allowance belongs to the masjid's number.
+   */
+  it('tells a household its bill is ready, once, however many children it has', async () => {
+    const admin = caller('admin');
+    const h = await household('Ismail');
+    await admin.people.studentCreate({ familyId: h.familyId, fullName: 'Maryam Ismail', feePlanId: h.feePlanId });
+    await turnOn('invoice-ready');
+    calls = [];
+    await admin.billing.generateFamily({ familyId: h.familyId, periodKey: '2026-07', label: 'Tuition - Jul 2026', dueDate: '2026-07-01' });
+    await drain();
+    expect(sends()).toHaveLength(1);
+    const text = String(sends()[0].body.text);
+    // Both children are named -- "what is this for?" is the question this message answers.
+    expect(text).toContain('Yusuf');
+    expect(text).toContain('Maryam');
+    // The whole household's new bills, added up.
+    expect(text).toContain('$100.00');
+  });
+
+  /** Re-running a period is idempotent by design, so it must not message anybody a second time. */
+  it('does not tell them twice when a period is generated again', async () => {
+    const admin = caller('admin');
+    const h = await household('Ismail');
+    await turnOn('invoice-ready');
+    await admin.billing.generateFamily({ familyId: h.familyId, periodKey: '2026-07', label: 'Tuition', dueDate: '2026-07-01' });
+    await drain();
+    calls = [];
+    await admin.billing.generateFamily({ familyId: h.familyId, periodKey: '2026-07', label: 'Tuition', dueDate: '2026-07-01' });
+    await drain();
+    expect(sends()).toHaveLength(0);
+  });
+
+  /**
+   * The upcoming-charge notice, and the rule that stops it becoming a daily one: a household
+   * qualifies only when a bill falls due EXACTLY on the notice day. Selecting on "something is due
+   * soon" would message a family with an older overdue bill every single day until they paid.
+   */
+  it('warns about an autopay charge on the day it is three days off, and no other day', async () => {
+    const admin = caller('admin');
+    const h = await household('Ismail');
+    await admin.billing.generateFamily({ familyId: h.familyId, periodKey: '2026-07', label: 'Tuition', dueDate: '2026-07-10' });
+    const { db } = app.dbmod;
+    const { autopayEnrollments, paymentMethods } = await import('../src/db/schema');
+    const ts = new Date();
+    db.insert(paymentMethods)
+      .values({ id: 'pm_1', familyId: h.familyId, stripePaymentMethodId: 'pm_x', brand: 'visa', last4: '4242', expMonth: 12, expYear: 2030, isDefault: true, sortOrder: 0, createdAt: ts, updatedAt: ts })
+      .run();
+    db.insert(autopayEnrollments).values({ familyId: h.familyId, enabled: true, defaultPmId: 'pm_1', consentAt: ts, failureCount: 0, createdAt: ts, updatedAt: ts }).run();
+
+    const autopay = await import('../src/payments/autopay');
+    expect(autopay.autopayUpcoming('2026-07-07').map((x) => x.familyId)).toEqual([h.familyId]);
+    // A day earlier, a day later, and the day of the charge itself: nothing.
+    expect(autopay.autopayUpcoming('2026-07-06')).toEqual([]);
+    expect(autopay.autopayUpcoming('2026-07-08')).toEqual([]);
+    expect(autopay.autopayUpcoming('2026-07-10')).toEqual([]);
+
+    await turnOn('autopay-upcoming');
+    calls = [];
+    await autopay.runAutopayNotice('2026-07-07');
+    await drain();
+    expect(sends()).toHaveLength(1);
+    // Brand and last four only -- never a PAN, never a holder name.
+    expect(String(sends()[0].body.text)).toContain('Visa');
+    expect(String(sends()[0].body.text)).toContain('4242');
+  });
+
+  /** The message that removes a whole failure sequence: expired card, decline, retry ladder, autopay
+   *  off, family three months behind. */
+  it('warns about a card expiring this month or next, and not one expiring later', async () => {
+    const admin = caller('admin');
+    const h = await household('Ismail');
+    const { db } = app.dbmod;
+    const { autopayEnrollments, paymentMethods } = await import('../src/db/schema');
+    const ts = new Date();
+    db.insert(paymentMethods)
+      .values({ id: 'pm_1', familyId: h.familyId, stripePaymentMethodId: 'pm_x', brand: 'visa', last4: '4242', expMonth: 8, expYear: 2026, isDefault: true, sortOrder: 0, createdAt: ts, updatedAt: ts })
+      .run();
+    db.insert(autopayEnrollments).values({ familyId: h.familyId, enabled: true, defaultPmId: 'pm_1', consentAt: ts, failureCount: 0, createdAt: ts, updatedAt: ts }).run();
+    await turnOn('card-expiring');
+
+    const autopay = await import('../src/payments/autopay');
+    // The month before, and the month itself.
+    calls = [];
+    expect((await autopay.runCardExpiryNotice('2026-07-01')).notified).toBe(1);
+    calls = [];
+    expect((await autopay.runCardExpiryNotice('2026-08-01')).notified).toBe(1);
+    // Not two months out, and not after it has gone.
+    calls = [];
+    expect((await autopay.runCardExpiryNotice('2026-06-01')).notified).toBe(0);
+    expect((await autopay.runCardExpiryNotice('2026-09-01')).notified).toBe(0);
+    expect(admin).toBeTruthy();
+  });
+});
+
+// -- Why nothing is sending --------------------------------------------------
+/**
+ * The diagnostic that was missing, and it cost a real madrasah an evening: they turned WhatsApp on,
+ * set a test student, took a genuine tuition payment, and got no message AND no log row — because the
+ * global gates stop a send before any recipient is considered and deliberately write nothing (a
+ * switch that is off would otherwise fill the trail every invoice run).
+ */
+describe('the screen says why nothing is sending', () => {
+  it('names the master switch when the feature is off', async () => {
+    expect((await caller('admin').whatsapp.get()).blockers).toContain('off');
+  });
+
+  it('names the gateway when the platform cannot send', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    waAvailable = { available: false, reason: 'not-linked' };
+    whatsapp.resetWhatsAppStatusCache();
+    expect((await admin.whatsapp.get()).blockers).toContain('gateway_not-linked');
+  });
+
+  /** The one that actually bit: everything on, nothing selected, so nothing can ever fire. */
+  it('names the empty event list', async () => {
+    const admin = caller('admin');
+    await admin.whatsapp.set({ enabled: true, paused: false });
+    expect((await admin.whatsapp.get()).blockers).toContain('no_events');
+  });
+
+  it('names a pause with nobody excepted from it', async () => {
+    const admin = caller('admin');
+    await turnOn('receipt', { paused: true });
+    expect((await admin.whatsapp.get()).blockers).toContain('paused_no_test');
+  });
+
+  it('is empty once everything is actually set up — and says so when only the test household hears', async () => {
+    const h = await household('Ismail');
+    await turnOn('receipt', { paused: false });
+    expect((await h.admin.whatsapp.get()).blockers).toEqual([]);
+
+    await h.admin.whatsapp.set({ paused: true, testStudentId: h.studentId });
+    const paused = await h.admin.whatsapp.get();
+    expect(paused.blockers).toEqual([]);
+    expect(paused.pausedWithTest).toBe(true);
+  });
+});
+
+// -- The test button ---------------------------------------------------------
+describe('sending a test', () => {
+  /** It refused outright unless WhatsApp was ready, which made it useless in the exact situation an
+   *  office is in when they press it — and the test student governs the email pause too. */
+  it('still emails the test household when WhatsApp is not ready', async () => {
+    const h = await household('Ismail', { email: 'parent@test.org' });
+    await h.admin.whatsapp.set({ enabled: true, testStudentId: h.studentId });
+    await h.admin.settings.parentMailPauseSet({ paused: true });
+    waAvailable = { available: false, reason: 'not-configured' };
+    whatsapp.resetWhatsAppStatusCache();
+    calls = [];
+
+    const r = await h.admin.whatsapp.testSend();
+    expect(r.emailed).toBe(1);
+    expect(r.whatsapp).toBe('not_ready');
+    expect(emails().map((c) => c.body.to)).toEqual(['parent@test.org']);
+  });
+
+  it('does both when it can', async () => {
+    const h = await household('Ismail', { email: 'parent@test.org' });
+    await turnOn();
+    await h.admin.whatsapp.set({ testStudentId: h.studentId });
+    calls = [];
+    const r = await h.admin.whatsapp.testSend();
+    expect(r.emailed).toBe(1);
+    expect(r.whatsapp).toBe('queued');
+  });
+
+  it('still refuses with no test student at all', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    await expect(admin.whatsapp.testSend()).rejects.toThrow(/test student/i);
+  });
+
+  it('fails honestly when the household can be reached on neither channel', async () => {
+    const h = await household('Ismail', { phone: 'ask mum' });
+    await h.admin.whatsapp.set({ enabled: true, testStudentId: h.studentId });
+    waAvailable = { available: false, reason: 'not-configured' };
+    whatsapp.resetWhatsAppStatusCache();
+    await expect(h.admin.whatsapp.testSend()).rejects.toThrow(/nothing could be sent/i);
+  });
+});
+
 // ── Settings ────────────────────────────────────────────────────────────────
 describe('the settings themselves', () => {
   it('start off, paused, and with no event switched on', async () => {
@@ -772,6 +983,19 @@ describe('the manifest and the screen agree with the code', () => {
     for (const e of whatsapp.WA_PARENT_EVENTS) {
       expect(en.settings[`waEv_${e}`], `missing i18n key settings.waEv_${e}`).toBeTruthy();
       expect(en.settings[`waEvHint_${e}`], `missing i18n key settings.waEvHint_${e}`).toBeTruthy();
+    }
+  });
+
+  /** …and a heading for every editable message. The wording screen renders one box per key, so a
+   *  missing label prints the raw key at a masjid exactly as `settings.ev_payment-refunded` once did. */
+  it('has a heading for every message an office can rewrite', async () => {
+    const templates = await import('../src/whatsapp/templates');
+    const en = JSON.parse(readFileSync(path.resolve(__dirname, '..', '..', 'web', 'src', 'lib', 'i18n', 'en.json'), 'utf8')) as { settings: Record<string, string> };
+    for (const k of templates.WA_TEXT_KEYS) {
+      expect(en.settings[`waText_${k}`], `missing i18n key settings.waText_${k}`).toBeTruthy();
+      // Every message must also offer at least one tag, or the editor shows an empty "You can use:".
+      expect(templates.WA_TEXT_TAGS[k]?.length, `no tags declared for ${k}`).toBeGreaterThan(0);
+      expect(templates.WA_TEXT_DEFAULTS[k], `no shipped sentence for ${k}`).toBeTruthy();
     }
   });
 

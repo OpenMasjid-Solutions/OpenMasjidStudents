@@ -50,7 +50,7 @@ import { runAutoInvoice } from '../billing/autoInvoice';
 import { relationKind, dedupeNumbers, type RelationKind } from '../people/relations';
 import { alertStaff, householdName } from '../alerts';
 import { resolveSchoolScope } from '../schools';
-import { sendReceipt } from '../mail/notify';
+import { sendReceipt, sendRefund } from '../mail/notify';
 import { formatMoney } from '../db/money';
 
 const payLog = makeLog('billing');
@@ -1298,6 +1298,9 @@ export const billingRouter = router({
         text: `A refund of ${amount}${who} was made${how}, by ${recordingActor(ctx).name ?? 'the office'}.${what}`,
         publicText: `A tuition refund of ${amount} was recorded (${r.route === 'stripe' ? 'card or bank' : 'by hand'}).`,
       });
+      // …and the family, who should not have to take the office's word for it (0.50.0). Off by
+      // default like every other message added since, and gated inside the sender, not here.
+      for (const familyId of r.familyIds) void sendRefund(familyId, amount);
     }
     return r;
   }),

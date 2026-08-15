@@ -29,10 +29,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [0.50.0]
 
-- **You can now message parents on WhatsApp.** Receipts, card-declined notices and past-due reminders can go
-  to a parent's phone as well as their inbox — through your masjid's own server, with nothing passing
+- **You can now message parents on WhatsApp** — through your masjid's own server, with nothing passing
   through an outside company. Everything with detail in it still goes by email; a WhatsApp is the short
   note that tells a family to look.
+- **Four new things you can tell a parent, by email as well as WhatsApp:** a new bill is ready, an
+  automatic payment is coming up in three days, a saved card is about to expire, and a refund has been
+  made. The first closes the biggest gap the app had — until now the first a family heard about a month's
+  tuition was the reminder that it was late — and the card one heads off the usual reason automatic
+  payments quietly stop working.
 - **It starts switched off, paused, with nothing selected.** Turning it on sends nobody anything. You choose
   which messages, set a **test student** whose household receives them — **by email as well as WhatsApp** —
   while everyone else stays quiet, see a real one arrive, and only then lift the pause.
@@ -98,6 +102,15 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 **Fixed after the first madrasah set it up**
 
+- **Settings now says why nothing is being sent.** Turning WhatsApp on and stopping there is a working
+  set-up that sends nothing, because every message type starts switched off — and there was no sign of
+  that anywhere: no message, and no entry in the queue log either. The panel now lists exactly which
+  thing is stopping it, whether that is the master switch, the gateway, an empty message list, or a pause
+  with nobody excepted from it.
+- **"Send a test" works before WhatsApp does.** It now sends an email as well, so an office setting this
+  up on a server that has no WhatsApp gateway yet can still prove the test student is working — and it
+  says what happened on each channel rather than just failing.
+
 - **The test student now lifts the email pause as well.** It only ever lifted the WhatsApp one, so on a
   fresh install — where parent email starts paused too — an office could set a test student, take a
   payment, and get nothing at all on either channel. Every send path honours it now, including the
@@ -112,6 +125,20 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **The opt-out covers the household, not just whoever is signed in.** The portal is a household — both
   parents log in to the same balance, bills and cards — so a parent can switch messages off for either
   number without ringing the office. A guardian on somebody else's household is still refused.
+
+**The four new notification types**
+
+- A bill notice goes out **once per household**, not once per child, and only for invoices actually
+  created in that run — so re-generating a period (which is safe by design) does not message anybody a
+  second time. It names the children, because "what is this for?" is the question it answers.
+- The upcoming-payment notice fires only when a bill falls due **exactly three days out**. Anything
+  looser would message a family with an older overdue bill every single day until they paid, which is
+  not a courtesy.
+- The card-expiry notice runs on the 1st of the month and covers cards expiring this month or next, so a
+  card gets at most two notices ever. Only the card autopay would actually charge — warning about a
+  spare nobody is using is noise.
+- All four are off on both channels until an office turns them on, and each carries the card by brand
+  and last four only.
 
 **Elsewhere**
 

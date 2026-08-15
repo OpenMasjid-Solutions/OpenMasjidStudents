@@ -42,6 +42,7 @@ import {
 } from '../whatsapp/templates';
 import { ALERT_EVENTS } from '../alerts';
 import { audit } from '../audit';
+import { sendTestToHousehold } from '../mail/notify';
 import { getCurrency } from '../settings';
 import { formatDate } from '../settings/dates';
 import { formatMoney } from '../db/money';
@@ -127,12 +128,40 @@ export const whatsappRouter = router({
     const testStudent = cfg.testStudentId
       ? db.select({ id: students.id, fullName: students.fullName, familyId: students.familyId, status: students.status }).from(students).where(eq(students.id, cfg.testStudentId)).get()
       : null;
+    const status = await currentWhatsAppStatus();
+
+    /**
+     * WHY NOTHING IS SENDING (0.50.0-dev.5) — the diagnostic this screen should have had from the start.
+     *
+     * The three global gates return before any recipient is looked at, and deliberately write no log
+     * row: a switch that is off would otherwise put two hundred "skipped" rows in the trail every time
+     * an invoice run finished. The cost of that decision was invisibility — a masjid turned the feature
+     * on, took a real payment for the test student, and got no message AND no log entry, with nothing
+     * anywhere saying which gate had stopped it.
+     *
+     * So the gates report themselves, in the order they are actually applied. Anything in this list
+     * means nothing reaches a parent, whatever else the screen shows.
+     */
+    const blockers: string[] = [];
+    if (!fabricConfigured()) blockers.push('no_platform');
+    else if (!cfg.enabled) blockers.push('off');
+    else {
+      if (!status.available) blockers.push(`gateway_${status.reason}`);
+      if (!WA_PARENT_EVENTS.some((e) => cfg.events[e])) blockers.push('no_events');
+      if (cfg.paused && !testFam) blockers.push('paused_no_test');
+    }
+
     return {
       ...cfg,
+      /** Empty means messages can actually go out. See above — this is the answer to "why nothing?". */
+      blockers,
+      /** True when the pause is on but a test household is set: not a blocker, but the screen should
+       *  say plainly that only that household will hear anything. */
+      pausedWithTest: cfg.paused && !!testFam,
       /** The catalogues, so the UI hard-codes no event list (same rule as the alert screen). */
       parentEvents: WA_PARENT_EVENTS,
       staffEvents: ALERT_EVENTS,
-      status: await currentWhatsAppStatus(),
+      status,
       /** Without the Fabric there is no platform to ask, so the feature cannot work at all. */
       fabric: fabricConfigured(),
       testStudent: testStudent ? { id: testStudent.id, fullName: testStudent.fullName, familyId: testStudent.familyId, active: testStudent.status === 'active' } : null,
@@ -392,16 +421,38 @@ export const whatsappRouter = router({
     if (!famId) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'Pick a test student first — that household is the one this test can safely go to.' });
     }
+
+    /**
+     * BOTH CHANNELS, and it succeeds if EITHER works (0.50.0-dev.5).
+     *
+     * It used to refuse outright unless the WhatsApp gateway was ready, which made the button useless
+     * in the exact situation an office is in when they press it: setting the app up, before OpenWA is
+     * installed on the server. Worse, the test student now governs the email pause too, so the one
+     * thing an admin most wants to prove — that the exception works — could not be tested at all.
+     *
+     * So: try the email, try the WhatsApp, report what each did. It only fails when neither channel
+     * could do anything, and then it says which.
+     */
+    const emailed = await sendTestToHousehold(famId);
+
+    let whatsapp: 'queued' | 'paused' | 'opted_out' | 'no_number' | 'failed' | 'not_ready' = 'not_ready';
     const status = await currentWhatsAppStatus();
-    if (!status.available) throw new TRPCError({ code: 'BAD_GATEWAY', message: 'WhatsApp isn’t ready on this server yet.' });
-    const to = familyRecipients(famId).filter((r) => !!r.to && !r.optedOut);
-    if (!to.length) {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Nobody on that household has a WhatsApp number we can read.' });
+    if (getWhatsApp().enabled && status.available) {
+      const to = familyRecipients(famId).filter((r) => !!r.to && !r.optedOut);
+      whatsapp = to.length ? await notifyGuardian('test', to[0], waTest()) : 'no_number';
     }
-    const outcome = await notifyGuardian('test', to[0], waTest());
-    audit(auditActor(ctx), 'whatsapp.test', { entity: 'settings', detail: { outcome } });
-    if (outcome !== 'queued') throw new TRPCError({ code: 'BAD_GATEWAY', message: 'That didn’t reach the queue. Check WhatsApp in OpenMasjidOS, then try again.' });
-    return { ok: true as const };
+
+    audit(auditActor(ctx), 'whatsapp.test', { entity: 'settings', detail: { emailed, whatsapp } });
+    if (!emailed && whatsapp !== 'queued') {
+      throw new TRPCError({
+        code: 'BAD_GATEWAY',
+        message:
+          whatsapp === 'not_ready'
+            ? 'Nothing could be sent: WhatsApp isn’t ready on this server, and there is no email address on that household either.'
+            : 'That didn’t reach anybody. Check that the household has an email address or a WhatsApp number we can read.',
+      });
+    }
+    return { emailed, whatsapp };
   }),
 
   /**

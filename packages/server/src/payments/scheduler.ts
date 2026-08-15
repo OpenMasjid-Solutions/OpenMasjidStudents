@@ -9,7 +9,7 @@
 import { Cron } from 'croner';
 import { fabricConfigured } from '../config';
 import { makeLog } from '../logger';
-import { runAutopay } from './autopay';
+import { runAutopay, runAutopayNotice, runCardExpiryNotice } from './autopay';
 import { reconcile } from './reconcile';
 import { refreshSiteInfo } from '../fabric/platform';
 import { writeSnapshot } from '../db/snapshot';
@@ -81,6 +81,21 @@ export function startSchedulers(): void {
       log.info('autopay run complete', { attempted: r.attempted });
     } catch (e) {
       log.error('autopay run failed', { error: (e as Error).message });
+    }
+  });
+  // Daily at 09:00 — "we'll charge your card on Tuesday" (0.50.0). AFTER the 06:00 run, deliberately:
+  // a household charged this morning must not then be told a charge is coming, and the notice looks
+  // three days ahead so the two never describe the same invoice. Stateless — see `autopayUpcoming`.
+  //
+  // On the FIRST of the month it also warns about a card that is about to expire, which is the whole
+  // of that job's idempotency: at most two notices per card, never a daily nag.
+  new Cron('0 9 * * *', async () => {
+    const today = todayIso();
+    try {
+      await runAutopayNotice(today);
+      if (today.endsWith('-01')) await runCardExpiryNotice(today);
+    } catch (e) {
+      log.error('autopay notices failed', { error: (e as Error).message });
     }
   });
   // Daily at 07:00 — reconcile against Stripe: record any succeeded tuition PI a broker call or a

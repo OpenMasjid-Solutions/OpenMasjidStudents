@@ -19,12 +19,17 @@
  *     — a discount belongs on the child whose bill it reduces, not on a household line no single
  *     invoice could honestly carry.
  */
-import { and, eq, asc, ne, or, isNull } from 'drizzle-orm';
+import { and, eq, asc, inArray, ne, or, isNull } from 'drizzle-orm';
 import { db } from '../db';
 import { invoices, invoiceItems, studentFees, students, feePlans, charges } from '../db/schema';
 import { rid } from '../db/ids';
-import { refreshStatus, reallocateStudent, type Tx } from './ledger';
+import { refreshStatus, reallocateStudent, invoiceTotal, type Tx } from './ledger';
 import { firstDayOf, isMonthPeriod } from './period';
+import { getCurrency } from '../settings';
+import { formatDate } from '../settings/dates';
+import { formatMoney } from '../db/money';
+import { givenName } from '../people/names';
+import { sendInvoiceReady } from '../mail/notify';
 
 /** Which kind of period is being generated. Drives the cadence gate. */
 export type PeriodKind = 'month' | 'term';
@@ -170,15 +175,62 @@ export function generateForFamily(familyId: string, opts: GenerateOpts): { creat
     if (r.invoiceId) invoiceIds.push(r.invoiceId);
     if (r.created) created++;
   }
+  if (created) void tellFamilies(invoiceIds);
   return { created, invoiceIds };
 }
 
 /** Generate invoices for every active student who has something to bill. Returns how many were created. */
 export function generateForPeriod(opts: GenerateOpts): { created: number } {
   const kids = db.select({ id: students.id }).from(students).where(eq(students.status, 'active')).all();
-  let created = 0;
-  for (const k of kids) if (generateForStudent(k.id, opts).created) created++;
-  return { created };
+  const fresh: string[] = [];
+  for (const k of kids) {
+    const r = generateForStudent(k.id, opts);
+    if (r.created && r.invoiceId) fresh.push(r.invoiceId);
+  }
+  if (fresh.length) void tellFamilies(fresh);
+  return { created: fresh.length };
+}
+
+/**
+ * Tell each household its bill is ready (0.50.0) — ONE message per household, not one per child.
+ *
+ * Notified from the two RUN-level functions rather than from `generateForStudent`, and that is the
+ * whole reason this helper exists: bills are per child, but the message is to a parent, and a
+ * household with three children would otherwise get three of them for one billing run — on a channel
+ * whose sending allowance belongs to the masjid's own number.
+ *
+ * Fire-and-forget and never throws: generation is a money operation and must not fail because a
+ * notification did. Only invoices CREATED in this run are counted, so re-running a period (which is
+ * idempotent by design) does not message anybody a second time.
+ */
+function tellFamilies(invoiceIds: string[]): Promise<void> {
+  const rows = db
+    .select({ familyId: students.familyId, invoiceId: invoices.id, dueDate: invoices.dueDate, fullName: students.fullName })
+    .from(invoices)
+    .innerJoin(students, eq(students.id, invoices.studentId))
+    .where(inArray(invoices.id, invoiceIds))
+    .all();
+
+  const byFamily = new Map<string, { total: number; due: string | null; children: string[] }>();
+  for (const r of rows) {
+    const cur = byFamily.get(r.familyId) ?? { total: 0, due: r.dueDate, children: [] };
+    cur.total += invoiceTotal(db, r.invoiceId);
+    // The earliest due date across the household's new bills — the one a parent has to act on first.
+    if (r.dueDate && (!cur.due || r.dueDate < cur.due)) cur.due = r.dueDate;
+    cur.children.push(givenName(r.fullName));
+    byFamily.set(r.familyId, cur);
+  }
+
+  const currency = getCurrency();
+  return (async () => {
+    for (const [familyId, v] of byFamily) {
+      try {
+        await sendInvoiceReady(familyId, formatMoney(v.total, currency), v.due ? formatDate(v.due) : '', v.children);
+      } catch {
+        /* best-effort — a household we could not tell must not stop the rest being told */
+      }
+    }
+  })();
 }
 
 /** Append a single pending charge onto the family's ALREADY-EXISTING invoice for its period, when

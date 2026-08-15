@@ -40,7 +40,7 @@ import { getSchoolName, getWhatsAppTexts } from '../settings';
  * Keys are stored in the settings row, so renaming one silently reverts that message to the shipped
  * sentence. Add, don't rename.
  */
-export const WA_TEXT_KEYS = ['receipt', 'autopay-failed', 'autopay-stopped', 'past-due'] as const;
+export const WA_TEXT_KEYS = ['invoice-ready', 'receipt', 'past-due', 'autopay-upcoming', 'autopay-failed', 'autopay-stopped', 'card-expiring', 'payment-refunded'] as const;
 export type WaTextKey = (typeof WA_TEXT_KEYS)[number];
 
 /**
@@ -51,10 +51,14 @@ export type WaTextKey = (typeof WA_TEXT_KEYS)[number];
  * in it. The settings screen shows only the tags that apply to the box being edited.
  */
 export const WA_TEXT_TAGS: Record<WaTextKey, readonly string[]> = {
+  'invoice-ready': ['school', 'family', 'children', 'amount', 'due', 'balance', 'portal', 'email'],
   receipt: ['school', 'family', 'children', 'amount', 'balance', 'portal', 'email'],
-  'autopay-failed': ['school', 'family', 'children', 'balance', 'portal', 'email'],
-  'autopay-stopped': ['school', 'family', 'children', 'balance', 'portal', 'email'],
   'past-due': ['school', 'family', 'children', 'amount', 'due', 'balance', 'portal', 'email'],
+  'autopay-upcoming': ['school', 'family', 'amount', 'due', 'card', 'balance', 'portal', 'email'],
+  'autopay-failed': ['school', 'family', 'children', 'card', 'balance', 'portal', 'email'],
+  'autopay-stopped': ['school', 'family', 'children', 'card', 'balance', 'portal', 'email'],
+  'card-expiring': ['school', 'family', 'card', 'portal', 'email'],
+  'payment-refunded': ['school', 'family', 'amount', 'balance', 'portal', 'email'],
 };
 
 /** What every tag means, so the settings screen explains itself and this list cannot drift from
@@ -65,7 +69,8 @@ export const WA_TAG_HELP: Record<string, string> = {
   children: 'the children in that household, by name',
   amount: 'the amount this message is about',
   balance: 'what the household owes right now',
-  due: 'the date it was due',
+  due: 'the date it is due',
+  card: 'the saved card, e.g. “Visa ···· 4242”',
   portal: 'a link to the parent portal (nothing, if there is no public address yet)',
   email: '“We’ve emailed you the full details.” — only for a parent who has an address on file',
 };
@@ -78,13 +83,17 @@ export const WA_TAG_HELP: Record<string, string> = {
  * real prose rather than a blank box.
  */
 export const WA_TEXT_DEFAULTS: Record<WaTextKey, string> = {
+  'invoice-ready': 'Assalamu alaykum. Your [school] tuition for [children] is ready — [amount], due [due].[portal][email]',
   receipt: 'Assalamu alaykum. [school] has received your payment of [amount]. JazakumAllahu khayran.[email]',
+  'past-due':
+    'Assalamu alaykum. This is a reminder from [school] that [amount] has been due since [due]. If you’ve already paid, please ignore this message.[portal][email]',
+  'autopay-upcoming': 'Assalamu alaykum. [school] will charge your [card] [amount] on [due]. Nothing to do — this is just so it isn’t a surprise.[email]',
   'autopay-failed':
     'Assalamu alaykum. We couldn’t charge your saved card for this month’s tuition. We’ll try again in a couple of days. This is [school].[portal][email]',
   'autopay-stopped':
     'Assalamu alaykum. We tried three times to charge your saved card and it didn’t go through, so automatic payments are now switched off. This is [school].[portal][email]',
-  'past-due':
-    'Assalamu alaykum. This is a reminder from [school] that [amount] has been due since [due]. If you’ve already paid, please ignore this message.[portal][email]',
+  'card-expiring': 'Assalamu alaykum. Your [card] saved with [school] expires soon, so automatic payments will stop working. You can add a new one any time.[portal][email]',
+  'payment-refunded': 'Assalamu alaykum. [school] has refunded [amount] to you. Please allow a few days for it to appear.[email]',
 };
 
 /** Everything a message can be filled in with. Assembled once per household by the caller. */
@@ -97,6 +106,9 @@ export interface WaVars {
   due?: string;
   /** The household's derived balance right now. */
   balance?: string;
+  /** The saved card this message is about — "Visa ···· 4242". Brand and last four only; a PAN and a
+   *  holder name are never stored, let alone sent (§14). */
+  card?: string;
   /** An absolute portal URL, or '' when this install has no public address yet. */
   portal?: string;
 }
@@ -123,6 +135,7 @@ export function renderText(key: WaTextKey, vars: WaVars, opts: { hasEmail: boole
     .replaceAll('[amount]', vars.amount ?? '')
     .replaceAll('[due]', vars.due ?? '')
     .replaceAll('[balance]', vars.balance ?? '')
+    .replaceAll('[card]', vars.card ?? 'saved card')
     .replaceAll('[portal]', portal)
     .replaceAll('[email]', email)
     .trim();

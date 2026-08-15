@@ -410,7 +410,19 @@ export const settingsRouter = router({
   }),
 
   /** Which emails PARENTS get. Invites and password resets are not here — they always send (§ settings). */
-  parentEmailsSet: adminProcedure.input(z.object({ receipt: z.boolean().optional(), autopayFailure: z.boolean().optional() })).mutation(({ ctx, input }) => {
+  parentEmailsSet: adminProcedure
+    .input(
+      z.object({
+        receipt: z.boolean().optional(),
+        autopayFailure: z.boolean().optional(),
+        // Added in 0.50.0, all defaulting off (§ settings/getParentEmails).
+        invoiceReady: z.boolean().optional(),
+        autopayUpcoming: z.boolean().optional(),
+        cardExpiring: z.boolean().optional(),
+        refund: z.boolean().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
     setParentEmails(input);
     audit(auditActor(ctx), 'settings.parentEmails', { entity: 'settings', detail: { ...input } });
     return { ok: true as const };

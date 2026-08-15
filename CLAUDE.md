@@ -271,8 +271,10 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   card-declined notices, past-due reminders; invites and resets always send), and **which addresses at the
   masjid** get told when something needs a person. A recipient is an address, not an account. See §9's alert
   rule for why this does not go through the platform's alert channel alone.
-- **WhatsApp (0.50.0, `whatsapp: true`)** — the same three parent messages and the same staff alerts, on the
-  channel families actually read, through the masjid's own self-hosted OpenWA gateway. **The platform owns
+- **WhatsApp (0.50.0, `whatsapp: true`)** — **seven** parent messages and the same staff alerts, on the
+  channel families actually read, through the masjid's own self-hosted OpenWA gateway. Every one of the
+  seven exists on EMAIL too, with its own switch on each channel: `invoice-ready`, `receipt`, `past-due`,
+  `autopay-upcoming`, `autopay-failed`, `card-expiring`, `payment-refunded`. **The platform owns
   the connection AND the single paced queue every app shares**, which is the entire defence for a number
   WhatsApp does not officially permit; this app never goes near a gateway and never designs for volume.
   Off by default, **paused by default**, every event off, with a **test student** whose household gets
@@ -583,8 +585,13 @@ Non-negotiable rules:
   household**, because the portal IS the household (§5) and two parents sharing one balance and one set of
   cards should not need the office to switch a spouse's number on. Every parent message is an office-editable
   TEMPLATE with a fixed tag list per message (`whatsapp/templates.ts`); there is no tag for a Student ID or a
-  card, which is the enforcement rather than a rule in a document. `whatsapp_log` records event / recipient
-  id / time / outcome and **never a message body**: a
+  card, which is the enforcement rather than a rule in a document. **The three GLOBAL gates write no log
+  row** — a switch that is off would fill the trail every invoice run — so `whatsapp.get` returns a
+  `blockers` list instead and the screen prints it: without that an office turned the feature on, took a
+  real payment and got no message AND no log entry, with nothing anywhere saying which gate did it. A new
+  notification type is added to BOTH channels and defaults OFF on both; the two that ship ON by email
+  (`receipt`, `autopayFailure`) do so only because an upgraded install was already sending them.
+  `whatsapp_log` records event / recipient id / time / outcome and **never a message body**: a
   tuition message names a child and their fees, and a log is the copy that outlives the conversation.
   Nothing auth-critical (invite, reset, verification) is ever sent this way — a number can be banned
   overnight, and that day must not be the day nobody can sign in. `whatsapp/numbers.ts` is the one place a

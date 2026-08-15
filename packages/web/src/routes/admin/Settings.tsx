@@ -234,7 +234,7 @@ export function Settings() {
     }
   }
 
-  async function toggleParentEmail(key: 'receipt' | 'autopayFailure') {
+  async function toggleParentEmail(key: 'receipt' | 'autopayFailure' | 'invoiceReady' | 'autopayUpcoming' | 'cardExpiring' | 'refund') {
     const cur = alerts.data?.parentEmails;
     if (!cur) return;
     await saveParentEmails.mutateAsync({ [key]: !cur[key] });
@@ -565,6 +565,14 @@ export function Settings() {
               <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={alerts.data.parentEmails.autopayFailure} onChange={() => void toggleParentEmail('autopayFailure')} disabled={saveParentEmails.isPending} />
               <span>{t('settings.parentAutopay')}<br /><span className="hint">{t('settings.parentAutopayHint')}</span></span>
             </label>
+            {/* The four added in 0.50.0, all starting OFF — a madrasah that updates on a Tuesday must
+                not begin emailing two hundred families on the Wednesday because we added a feature. */}
+            {(['invoiceReady', 'autopayUpcoming', 'cardExpiring', 'refund'] as const).map((k) => (
+              <label key={k} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBlockStart: '0.5rem', cursor: 'pointer' }}>
+                <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={alerts.data!.parentEmails[k]} onChange={() => void toggleParentEmail(k)} disabled={saveParentEmails.isPending} />
+                <span>{t(`settings.parentEmail_${k}`)}<br /><span className="hint">{t(`settings.parentEmailHint_${k}`)}</span></span>
+              </label>
+            ))}
             <p className="hint" style={{ marginBlockStart: '0.5rem' }}>{t('settings.parentAlwaysHint')}</p>
           </>
         )}

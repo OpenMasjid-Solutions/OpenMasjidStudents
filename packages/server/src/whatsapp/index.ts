@@ -64,14 +64,25 @@ const log = makeLog('whatsapp');
 /**
  * The parent-facing events an office can switch on.
  *
- * Deliberately the SAME three the app already emails parents about, rather than a new catalogue.
- * Every one of these is a message a family is already receiving in some form, so switching it on adds
- * a channel rather than a conversation — and the sending caps mean a fourth routine message would
- * come out of the same allowance as these three.
+ * SEVEN, and every one of them exists on EMAIL as well (0.50.0-dev.5). The first three were simply
+ * the messages the app already sent; the other four were the gaps a madrasah notices as soon as it
+ * starts using this — a bill nobody was told about, a card charge that arrived unannounced, a card
+ * that expired and quietly broke autopay, and money going back with no confirmation.
+ *
+ * They are added to BOTH channels rather than to WhatsApp alone, deliberately. Email is the reliable
+ * channel and the one a household with no phone number still has; a notification type that existed
+ * only on WhatsApp would be one those families could never receive. Each has its own switch on each
+ * channel, and every one of them defaults OFF — a madrasah that updates on a Tuesday must not start
+ * messaging two hundred families on the Wednesday because we added a feature.
+ *
+ * Volume was the deciding factor in what is NOT here. The sending allowance belongs to the masjid's
+ * number and is shared with every other app, so each of these had to earn its place: `invoice-ready`
+ * and `autopay-upcoming` are once a month, `card-expiring` is once a year per card, and the rest are
+ * per event and rare. A "your balance changed" message would have been none of those things.
  *
  * Ids are stored in the settings row, so renaming one silently switches it off. Add, don't rename.
  */
-export const WA_PARENT_EVENTS = ['receipt', 'autopay-failed', 'past-due'] as const;
+export const WA_PARENT_EVENTS = ['invoice-ready', 'receipt', 'past-due', 'autopay-upcoming', 'autopay-failed', 'card-expiring', 'payment-refunded'] as const;
 export type WaParentEvent = (typeof WA_PARENT_EVENTS)[number];
 
 export function isParentEvent(v: unknown): v is WaParentEvent {

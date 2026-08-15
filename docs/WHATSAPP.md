@@ -126,6 +126,22 @@ finishes.
 5. **This person has not opted out.** Never overridden, by anything.
 6. **Their number can be read as E.164.**
 
+### …and the screen says which gate stopped it
+
+The first three write **no log row**, by design: a switch that is off would otherwise put a "skipped"
+row in the trail for every household every time an invoice run finished. The cost of that decision was
+invisibility — a masjid turned the feature on, took a real tuition payment for the test student, and
+got no message *and* no log entry, with nothing anywhere saying why.
+
+So `whatsapp.get` returns a **`blockers`** list computed from the gates in the order they are applied
+(`no_platform`, `off`, `gateway_<reason>`, `no_events`, `paused_no_test`), and the settings screen
+prints it as the first thing under the status chip. Anything in that list means nothing reaches a
+parent, whatever else the screen shows. `pausedWithTest` is the companion: not a blocker, but the
+screen says plainly that only one household will hear anything.
+
+The single most common entry is `no_events` — every message type ships switched off, so turning the
+feature on and stopping there is a working install that sends nothing.
+
 ### The pause starts ON
 
 Unlike the parent-email pause, which defaults off. The asymmetry is the point: parent email is a
@@ -183,8 +199,14 @@ in the set and is refused; a parent still cannot name anybody they could not alr
 ## 6. The two things an office presses
 
 **Send a test** — goes to the test student's household, which is the one household that gets through
-the pause. With no test student set it refuses and says exactly that, rather than offering to message
-somebody at random.
+the pause, and sends on **both channels**: an email, and a WhatsApp when the gateway is ready. It
+succeeds if either worked and reports each separately.
+
+It used to refuse outright unless WhatsApp was ready, which made it useless in the exact situation an
+office is in when they press it — setting the app up, before OpenWA is installed on the server — and
+meant the one thing an admin most wants to prove, that the pause exception works, could not be tested
+at all. With no test student set it still refuses and says exactly that, rather than offering to
+message somebody at random.
 
 **Ask for a missing email address** — the outreach. A household with no address on file silently
 receives no receipts, no invoices, no statements and no reminders; until now the only fix was a list of
@@ -289,11 +311,57 @@ merging them behind a tag would have made both worse.
 The test message and the staff alert are **not** editable: the first exists to be recognisable as a
 test, and the second is our own operational wording rather than the madrasah's voice to a parent.
 
+### The seven parent events
+
+Every one exists on **both** channels, with its own switch on each. That is deliberate: email is the
+reliable channel and the one a household with no phone number still has, so a notification type that
+existed only on WhatsApp would be one those families could never receive.
+
+All seven default OFF on WhatsApp. On email, `receipt` and `autopayFailure` default ON because an
+upgraded install was already sending them; the four added in 0.50.0 default OFF, because a madrasah
+that updates on a Tuesday must not start writing to two hundred families on the Wednesday.
+
+| Event | When | Volume |
+| --- | --- | --- |
+| `invoice-ready` | this period's bill has been generated | monthly, **one per household** |
+| `receipt` | money has landed, however it arrived | per payment |
+| `past-due` | a balance is past its due date, after the grace period | on the office's cadence |
+| `autopay-upcoming` | 3 days before a saved card is charged | monthly |
+| `autopay-failed` | a decline, and again on the third strike (two texts, one switch) | rare |
+| `card-expiring` | the month before a saved card expires, and the month of | ~once a year per card |
+| `payment-refunded` | money has gone back | rare |
+
+Volume decided what is *not* here. The allowance belongs to the masjid's number and is shared with
+every other installed app, so each of these had to earn its place — a "your balance changed" message
+would have earned none of it.
+
+Three of them close real gaps rather than adding noise. **`invoice-ready`** is the biggest: without
+it a parent heard nothing between one receipt and the past-due reminder that followed a bill they were
+never told about. **`autopay-upcoming`** is what stops a card charge being a surprise, which is what
+makes a parent ring their bank instead of the office. **`card-expiring`** removes an entire failure
+sequence: card expires → charge declines → retry ladder runs → autopay switches itself off → the
+family finds out three months later that they are behind.
+
+`invoice-ready` is notified from the two run-level functions in `billing/invoices.ts`, never from
+`generateForStudent` — bills are per child and the message is to a parent, so a household with three
+children would otherwise get three messages for one billing run. Only invoices CREATED in that run
+count, so re-running a period (idempotent by design) messages nobody twice.
+
+`autopay-upcoming` and `card-expiring` are **stateless**, and the rules that make them so are the
+whole of their idempotency. A household qualifies for the charge notice only when a bill falls due
+*exactly* on `today + 3` — selecting on "something is due soon" would message a family with an older
+overdue bill every single day until they paid. The card notice runs on the **1st of the month** and
+fires while the card expires this month or next, so a card gets at most two notices, ever.
+
 | Event | WhatsApp | Email |
 | --- | --- | --- |
 | `receipt` | "…has received your payment of $250. JazakumAllahu khayran." | the receipt itself, letterhead, portal link |
 | `autopay-failed` | what failed, whether autopay is now off, a pay-now link | the same plus the household's detail |
 | `past-due` | the amount, since when, "if you've already paid, please ignore this" | the full statement position |
+| `invoice-ready` | the total, the children it covers, when it is due | the same plus "tell us if it looks wrong" |
+| `autopay-upcoming` | the card, the amount, the date | the same plus how to pay another way |
+| `card-expiring` | which card, and that autopay will stop | the same plus a link to add one |
+| `payment-refunded` | the amount, and that a card takes days | the same plus the timing caveat spelled out |
 
 `past-due` counts per channel (`emailed` / `messaged` in `PastDueRunResult`), and a household reached
 by **either** starts its cooldown — a WhatsApp that was queued is a household that was written to, even

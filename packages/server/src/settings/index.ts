@@ -314,18 +314,58 @@ export interface ParentEmailPrefs {
   receipt: boolean;
   /** "We couldn't charge your card" + the third-strike "autopay is now off" (§13.3). */
   autopayFailure: boolean;
+  /**
+   * The four added in 0.50.0, all defaulting OFF — see the note below on why the split matters.
+   *
+   * `invoiceReady`: this month's bill has been generated. The biggest gap in the app: a parent heard
+   * nothing at all between one receipt and the past-due reminder that followed a bill they were never
+   * told about.
+   */
+  invoiceReady: boolean;
+  /** "We'll charge your saved card on Tuesday" — a few days before autopay runs, so it is not a
+   *  surprise on a statement and there is time to move money or turn it off. */
+  autopayUpcoming: boolean;
+  /** A saved card is about to expire, which is how autopay silently stops working. */
+  cardExpiring: boolean;
+  /** Money went back to the family. Rare, and worth confirming in writing. */
+  refund: boolean;
 }
+
+/**
+ * TWO DIFFERENT DEFAULTS IN ONE FUNCTION, and the difference is the whole rule.
+ *
+ * `receipt` and `autopayFailure` default ON because an install that upgraded was already sending
+ * them: defaulting to OFF would silently stop mail a madrasah relies on. Everything added since
+ * defaults OFF because it is a NEW message — turning it on by default would mean a madrasah that
+ * updated on a Tuesday started emailing two hundred families on the Wednesday without anyone deciding
+ * to, which is the worst surprise this app could produce. The office switches each one on.
+ */
+const PARENT_EMAIL_DEFAULTS: ParentEmailPrefs = {
+  receipt: true,
+  autopayFailure: true,
+  invoiceReady: false,
+  autopayUpcoming: false,
+  cardExpiring: false,
+  refund: false,
+};
 
 export function getParentEmails(): ParentEmailPrefs {
   const raw = getSetting(SETTING_KEYS.parentEmails);
-  // Absent = an install that upgraded, which was sending both; defaulting to ON keeps the morning
-  // after an update looking like the day before it.
-  if (!raw) return { receipt: true, autopayFailure: true };
+  if (!raw) return { ...PARENT_EMAIL_DEFAULTS };
   try {
     const p = JSON.parse(raw) as Partial<ParentEmailPrefs>;
-    return { receipt: p.receipt !== false, autopayFailure: p.autopayFailure !== false };
+    return {
+      // `!== false` for the two that ship on: an upgraded row has neither key and must keep sending.
+      receipt: p.receipt !== false,
+      autopayFailure: p.autopayFailure !== false,
+      // `=== true` for the rest: absent means an office that has never been asked, which is off.
+      invoiceReady: p.invoiceReady === true,
+      autopayUpcoming: p.autopayUpcoming === true,
+      cardExpiring: p.cardExpiring === true,
+      refund: p.refund === true,
+    };
   } catch {
-    return { receipt: true, autopayFailure: true };
+    return { ...PARENT_EMAIL_DEFAULTS };
   }
 }
 

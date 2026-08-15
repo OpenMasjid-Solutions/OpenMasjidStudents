@@ -273,8 +273,16 @@ describe('what parents are emailed', () => {
     calls = [];
     expect(await notify.sendReceipt(familyId, '$50.00')).toBe(0);
     expect(emailCalls()).toHaveLength(0);
-    // The other switch is independent.
-    expect((await admin.settings.alertsGet()).parentEmails).toEqual({ receipt: false, autopayFailure: true });
+    // The other switch is independent — and the four added in 0.50.0 start OFF, because each is a
+    // message the app never used to send (§ settings/getParentEmails).
+    expect((await admin.settings.alertsGet()).parentEmails).toEqual({
+      receipt: false,
+      autopayFailure: true,
+      invoiceReady: false,
+      autopayUpcoming: false,
+      cardExpiring: false,
+      refund: false,
+    });
   });
 
   it('gates the autopay-failure notice separately', async () => {

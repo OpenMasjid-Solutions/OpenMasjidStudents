@@ -8,16 +8,17 @@
  * ladder; a failure advances a +2 / +5-day retry ladder and, after the third failure, auto-disables
  * autopay and notifies. The ledger truth (channel `autopay`) still lands via the webhook.
  */
-import { and, eq, inArray, lte, isNull, or } from 'drizzle-orm';
+import { and, eq, inArray, lte, ne, isNull, or } from 'drizzle-orm';
 import { db } from '../db';
-import { autopayEnrollments, autopayRuns, families, invoices } from '../db/schema';
+import { autopayEnrollments, autopayRuns, families, invoices, paymentMethods, students } from '../db/schema';
 import { invoiceTotal, invoicePaid, recordSplit, splitAcrossFamily, familyStudentIds, familyBalance } from '../billing/ledger';
 import { formatMoney } from '../db/money';
 import { getCurrency } from '../settings';
 import { rid } from '../db/ids';
 import { makeLog } from '../logger';
 import { alertStaff, householdName } from '../alerts';
-import { sendReceipt, sendAutopayFailure } from '../mail/notify';
+import { sendReceipt, sendAutopayFailure, sendAutopayUpcoming, sendCardExpiring } from '../mail/notify';
+import { formatDate } from '../settings/dates';
 import { stripeClient } from './stripe';
 import { orderedMethods } from './methods';
 
@@ -77,6 +78,51 @@ export function autopayDue(today: string): { familyId: string; amountCents: numb
     if (!e.defaultPmId) continue;
     const amountCents = amountDue(e.familyId, today);
     if (amountCents > 0) out.push({ familyId: e.familyId, amountCents });
+  }
+  return out;
+}
+
+/**
+ * How many days before a charge the family is told about it (0.50.0).
+ *
+ * Three: long enough to move money or to switch autopay off for the month, short enough that the
+ * message is still true when it arrives — a fortnight's notice would be forgotten, and a bill can be
+ * paid another way in between, which is exactly why the notice is a courtesy and not a promise.
+ */
+export const AUTOPAY_NOTICE_DAYS = 3;
+
+/**
+ * Households to warn today that a charge is coming (0.50.0).
+ *
+ * IDEMPOTENT BY CONSTRUCTION, with no state of its own, and the rule that makes it so is the one
+ * subtle thing here: a household qualifies only when it has an open invoice whose due date is
+ * EXACTLY `today + AUTOPAY_NOTICE_DAYS`. Selecting on "something is due soon" instead would message a
+ * family with an older overdue bill every single day until they paid it — which is not a courtesy,
+ * it is the behaviour that gets a school's messages muted.
+ *
+ * The amount quoted is what autopay would actually take on that day, capped by the household's real
+ * balance, so it is the same figure `autopayDue` will compute when the run happens.
+ */
+export function autopayUpcoming(today: string): { familyId: string; amountCents: number; on: string }[] {
+  const on = addDays(today, AUTOPAY_NOTICE_DAYS);
+  const enrolled = db
+    .select({ familyId: autopayEnrollments.familyId, defaultPmId: autopayEnrollments.defaultPmId })
+    .from(autopayEnrollments)
+    .where(eq(autopayEnrollments.enabled, true))
+    .all();
+
+  const out: { familyId: string; amountCents: number; on: string }[] = [];
+  for (const e of enrolled) {
+    if (!e.defaultPmId) continue;
+    const dueThatDay = db
+      .select({ id: invoices.id })
+      .from(invoices)
+      .innerJoin(students, eq(students.id, invoices.studentId))
+      .where(and(eq(students.familyId, e.familyId), eq(invoices.dueDate, on), ne(invoices.status, 'void')))
+      .all();
+    if (!dueThatDay.length) continue;
+    const amountCents = amountDue(e.familyId, on);
+    if (amountCents > 0) out.push({ familyId: e.familyId, amountCents, on });
   }
   return out;
 }
@@ -198,6 +244,76 @@ export async function runAutopay(today: string): Promise<{ attempted: number }> 
   const due = autopayDue(today);
   for (const d of due) await chargeFamily(d.familyId, d.amountCents, today);
   return { attempted: due.length };
+}
+
+/** How a card is named to a parent — "Visa ···· 4242", brand and last four only. Never a PAN and never
+ *  a holder name; neither is stored (§14). Empty when there is nothing recognisable to say. */
+function cardLabelFor(familyId: string): string {
+  const pm = orderedMethods(familyId)[0];
+  if (!pm) return '';
+  const brand = (pm.brand ?? '').trim();
+  const last4 = (pm.last4 ?? '').trim();
+  if (!brand && !last4) return '';
+  const nice = brand ? brand.charAt(0).toUpperCase() + brand.slice(1) : 'card';
+  return last4 ? `${nice} ···· ${last4}` : nice;
+}
+
+/**
+ * Tell the households that autopay will charge them in a few days (0.50.0).
+ *
+ * Daily, and stateless — see `autopayUpcoming` for the exactly-on-that-day rule that keeps it from
+ * becoming a daily message. Best-effort per household: one that cannot be reached must not stop the
+ * rest being told.
+ */
+export async function runAutopayNotice(today: string): Promise<{ notified: number }> {
+  const currency = getCurrency();
+  let notified = 0;
+  for (const u of autopayUpcoming(today)) {
+    try {
+      await sendAutopayUpcoming(u.familyId, formatMoney(u.amountCents, currency), formatDate(u.on), cardLabelFor(u.familyId));
+      notified++;
+    } catch (e) {
+      log.warn('autopay notice failed for one household', { error: (e as Error).message });
+    }
+  }
+  if (notified) log.info('autopay notices sent', { notified });
+  return { notified };
+}
+
+/**
+ * Tell the households whose saved card is about to expire (0.50.0).
+ *
+ * Run on the FIRST of the month, which is the whole of its idempotency: a card qualifies while it
+ * expires this month or next, so a family gets at most two notices per card — one the month before
+ * and one during — and never a daily nag.
+ *
+ * This is the message that removes an entire failure sequence. Without it a card expires, the next
+ * charge declines, the retry ladder runs, autopay switches itself off, and a family discovers three
+ * months later that they are behind.
+ */
+export async function runCardExpiryNotice(today: string): Promise<{ notified: number }> {
+  const [y, m] = today.split('-').map(Number);
+  if (!y || !m) return { notified: 0 };
+  const nextY = m === 12 ? y + 1 : y;
+  const nextM = m === 12 ? 1 : m + 1;
+  const soon = (em: number | null, ey: number | null) => !!em && !!ey && ((ey === y && em === m) || (ey === nextY && em === nextM));
+
+  let notified = 0;
+  for (const e of db.select({ familyId: autopayEnrollments.familyId, defaultPmId: autopayEnrollments.defaultPmId }).from(autopayEnrollments).where(eq(autopayEnrollments.enabled, true)).all()) {
+    // The card autopay would actually use — warning about a spare nobody is charging is noise.
+    const pm = e.defaultPmId
+      ? db.select().from(paymentMethods).where(eq(paymentMethods.id, e.defaultPmId)).get()
+      : orderedMethods(e.familyId)[0];
+    if (!pm || !soon(pm.expMonth, pm.expYear)) continue;
+    try {
+      await sendCardExpiring(e.familyId, cardLabelFor(e.familyId), `${String(pm.expMonth).padStart(2, '0')}/${pm.expYear}`);
+      notified++;
+    } catch (err) {
+      log.warn('card expiry notice failed for one household', { error: (err as Error).message });
+    }
+  }
+  if (notified) log.info('card expiry notices sent', { notified });
+  return { notified };
 }
 
 /** Find an autopay run by OUR run id (always carried in the PI metadata) first, then fall back to the
