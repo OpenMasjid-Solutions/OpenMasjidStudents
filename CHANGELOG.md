@@ -34,16 +34,20 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   through an outside company. Everything with detail in it still goes by email; a WhatsApp is the short
   note that tells a family to look.
 - **It starts switched off, paused, with nothing selected.** Turning it on sends nobody anything. You choose
-  which messages, set a **test student** whose household receives them while everyone else stays quiet, see
-  a real message arrive, and only then lift the pause.
+  which messages, set a **test student** whose household receives them — **by email as well as WhatsApp** —
+  while everyone else stays quiet, see a real one arrive, and only then lift the pause.
+- **You can rewrite what every message says.** Ours are short on purpose, but if your madrasah says it
+  differently, or wants the balance in every message, write your own — with the family's name, the
+  children, the amount, the balance and a payment link available as tags, and a preview of exactly what a
+  real family will read.
 - **Before you turn it on, the screen tells you who you could actually reach** — how many parents have a
   number that works, how many have asked not to be messaged, and which numbers it cannot read, with a
   country box beside each one to fix it.
 - **One button asks the families with no email address for one.** It names their children, explains why the
   school needs it, and you can rewrite the wording and read exactly what each family will get before it
   goes.
-- **Parents can turn it off themselves**, from their own portal, and back on again. Nobody in the office can
-  override that.
+- **Parents can turn it off themselves**, from the portal, and back on again — for either parent on the
+  account, since both of them sign in to the same household. Nobody in the office can override that.
 - **Staff can get alerts on their phone.** A declined card on a Sunday evening reaches whoever chases it,
   rather than sitting in an inbox until Monday. Each person adds their own number and picks what they want
   to hear about.
@@ -91,6 +95,23 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - Staff phone numbers came back to the database with a purpose. They had been deliberately removed on the
   grounds that nothing ever contacted staff by phone; that is what changed, and the column is opt-in per
   account with clearing the number as the off switch.
+
+**Fixed after the first madrasah set it up**
+
+- **The test student now lifts the email pause as well.** It only ever lifted the WhatsApp one, so on a
+  fresh install — where parent email starts paused too — an office could set a test student, take a
+  payment, and get nothing at all on either channel. Every send path honours it now, including the
+  address lookup that was quietly cancelling it.
+- **"Send a test" is no longer greyed out on a working install.** The screen read a gateway status that
+  nothing filled in until a quarter of an hour after the app started, so a perfectly good set-up reported
+  "not ready". It now asks when the screen is opened, and again as soon as the app starts.
+- **Staff phone numbers can be added before WhatsApp is switched on.** The editor was hidden until the
+  channel was live, which is the opposite of the order anyone works in — and looked exactly like the
+  feature not existing. Every staff row has it, with a phone column beside the name, and it says plainly
+  when the ticks will not do anything yet.
+- **The opt-out covers the household, not just whoever is signed in.** The portal is a household — both
+  parents log in to the same balance, bills and cards — so a parent can switch messages off for either
+  number without ringing the office. A guardian on somebody else's household is still refused.
 
 **Elsewhere**
 

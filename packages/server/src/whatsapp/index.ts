@@ -44,12 +44,18 @@
  */
 import { and, eq, inArray, lt } from 'drizzle-orm';
 import { db } from '../db';
-import { guardians, guardianFamilies, students, users, whatsappLog } from '../db/schema';
+import { families, guardians, guardianFamilies, students, users, whatsappLog } from '../db/schema';
 import { rid } from '../db/ids';
-import { getWhatsApp } from '../settings';
+import { getCurrency, getWhatsApp } from '../settings';
+import { pausedFor, testFamilyId } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
 import { sendPlatformWhatsApp, whatsappStatus, type WhatsAppStatus } from '../fabric/platform';
 import { toE164 } from './numbers';
+import { renderText, type WaTextKey, type WaVars } from './templates';
+import { familyBalance } from '../billing/ledger';
+import { formatMoney } from '../db/money';
+import { givenName } from '../people/names';
+import { portalBase } from '../auth/invites';
 import { makeLog } from '../logger';
 
 /** Ids and counts only — never a number, never a body (§14). */
@@ -189,17 +195,34 @@ export function familyRecipients(familyId: string): WaRecipient[] {
 }
 
 /**
- * The household whose messages get through the pause, or null.
+ * Everything a message about this household can be filled in with.
  *
- * Resolved from the STUDENT each time rather than stored as a family id, so a child moved between
- * households (a sibling link, a merge) takes the setting with them instead of leaving it pointing at
- * a household nobody meant to test with. A withdrawn or deleted student resolves to null, which
- * fails closed.
+ * Assembled ONCE per household rather than per recipient — the household's name, its children and its
+ * balance are the same for both parents; only the "check your email" line differs, and that is
+ * decided at render time (`renderText`).
+ *
+ * `[balance]` is the DERIVED balance, like everywhere else in this app (§9): a figure that is computed
+ * at the moment of sending cannot go stale against the ledger the way a stored one would.
  */
-export function testFamilyId(): string | null {
-  const id = getWhatsApp().testStudentId;
-  if (!id) return null;
-  return db.select({ familyId: students.familyId }).from(students).where(and(eq(students.id, id), eq(students.status, 'active'))).get()?.familyId ?? null;
+export function familyVars(familyId: string): WaVars {
+  const fam = db.select({ name: families.name }).from(families).where(eq(families.id, familyId)).get();
+  const kids = db
+    .select({ fullName: students.fullName })
+    .from(students)
+    .where(and(eq(students.familyId, familyId), eq(students.status, 'active')))
+    .orderBy(students.fullName)
+    .all();
+  const bal = familyBalance(familyId);
+  return {
+    family: fam?.name ?? 'your family',
+    // First names only: this is a message to their own parent, and a household's own children do not
+    // need surnames — "Yusuf and Maryam" is how the family says it (people/names.ts).
+    children: kids.map((k) => givenName(k.fullName)).filter(Boolean),
+    balance: formatMoney(Math.max(0, bal.owedCents), getCurrency()),
+    // Empty when this install has no public address yet — a portal link that resolves to a LAN
+    // address is worse than no link at all for a parent reading this at home.
+    portal: portalBase() ? `${portalBase()}/family` : '',
+  };
 }
 
 // ── Sending ─────────────────────────────────────────────────────────────────
@@ -257,14 +280,21 @@ async function queueGuardian(event: string, r: WaRecipient, text: string): Promi
 /**
  * Message a household about one of the parent events.
  *
- * `build` is given each recipient's own context so the message can be honest per person — the
- * "we've emailed you the details" line is only true for a guardian who has an address on file, and
- * a household routinely has one parent who does and one who doesn't.
+ * The TEXT is rendered here rather than handed in by the caller (0.50.0-dev.4). It has to be, now
+ * that an office can rewrite the wording: the tags a template may use — the household's children, its
+ * balance, the portal link — are facts about the household, and a caller in `mail/notify.ts` holds
+ * none of them. Doing it here also means the "we've emailed you the details" line is decided per
+ * RECIPIENT, which is the honest version: a household routinely has one parent with an address on
+ * file and one without.
+ *
+ * `textKey` is separate from `event` because one event can have more than one message — an autopay
+ * failure reads differently on the third strike, and an office rewriting one wants to rewrite the
+ * other differently (whatsapp/templates.ts).
  *
  * Fire-and-forget from the caller's point of view: never throws, and a failure to message never fails
  * the payment, invoice or reminder that triggered it. Call sites use `void notifyFamily(...)`.
  */
-export async function notifyFamily(event: WaParentEvent, familyId: string, build: (r: WaRecipient) => string): Promise<WaOutcome> {
+export async function notifyFamily(event: WaParentEvent, familyId: string, textKey: WaTextKey, extra: Partial<WaVars> = {}): Promise<WaOutcome> {
   try {
     const blocked = await globalGate(event);
     if (blocked) return nothing(blocked);
@@ -272,15 +302,16 @@ export async function notifyFamily(event: WaParentEvent, familyId: string, build
     const out: WaOutcome = { queued: 0, skipped: {} };
     // The pause NARROWS rather than stops: the test student's household still hears everything, which
     // is the only way to try a real message without letting it reach a real roster.
-    if (getWhatsApp().paused && testFamilyId() !== familyId) {
+    if (pausedFor(getWhatsApp().paused, familyId)) {
       // Deliberately unlogged and uncounted per household: a paused install would otherwise write a
       // row for every family on every event, and "we are paused" is a fact about the install, not
       // about any one of them.
       return { queued: 0, skipped: { paused: 1 } };
     }
 
+    const vars = { ...familyVars(familyId), ...extra };
     for (const r of familyRecipients(familyId)) {
-      if (await queueGuardian(event, r, build(r))) out.queued++;
+      if (await queueGuardian(event, r, renderText(textKey, vars, { hasEmail: r.hasEmail }))) out.queued++;
       else bump(out, r.optedOut ? 'opted_out' : r.to ? 'failed' : 'no_number');
     }
     log.info('whatsapp family notify', { event, queued: out.queued });
@@ -306,7 +337,7 @@ export async function notifyGuardian(event: string, r: WaRecipient, text: string
   try {
     const blocked = await globalGate(null);
     if (blocked) return 'failed';
-    if (getWhatsApp().paused && testFamilyId() !== r.familyId) {
+    if (pausedFor(getWhatsApp().paused, r.familyId)) {
       writeLog({ event, recipientKind: 'guardian', recipientId: r.guardianId, familyId: r.familyId, status: 'skipped', reason: 'paused' });
       return 'paused';
     }

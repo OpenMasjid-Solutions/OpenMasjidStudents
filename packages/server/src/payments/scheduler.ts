@@ -106,6 +106,10 @@ export function startSchedulers(): void {
   new Cron('*/15 * * * *', async () => {
     await refreshWhatsAppStatus();
   });
+  // …and once at boot. A cron's first tick is a quarter of an hour away, and until it came the cache
+  // was cold — which the settings screen read as "not ready" and used to grey out the Send-a-test
+  // button on an install that was working perfectly (0.50.0-dev.4).
+  void refreshWhatsAppStatus();
   // Weekly — trim the WhatsApp queue log. It is an operational trail, not a record anybody bills from
   // (and it holds no message bodies), so an install running for years should not carry every line.
   new Cron('0 3 * * 0', () => {

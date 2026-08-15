@@ -68,6 +68,9 @@ export const SETTING_KEYS = {
   // The office's own wording for the "we don't have your email address" message (0.50.0). One string;
   // blank means the shipped sentence. See whatsapp/templates.ts.
   whatsappEmailRequest: 'whatsapp_email_request',
+  // JSON {textKey: string} — the madrasah's own wording for each WhatsApp message (0.50.0). A partial
+  // map; anything absent uses the shipped sentence. Stored opaquely, like `sheet_text`.
+  whatsappTexts: 'whatsapp_texts',
 } as const;
 
 /** Image types a logo may be. Kept to the three that every browser, print path and mail client
@@ -669,6 +672,45 @@ export function getWhatsAppEmailRequest(): string {
 }
 export function setWhatsAppEmailRequest(text: string | null): void {
   setSetting(SETTING_KEYS.whatsappEmailRequest, (text ?? '').trim().slice(0, WA_TEXT_MAX));
+}
+
+/**
+ * The madrasah's own wording for each WhatsApp message (0.50.0).
+ *
+ * Stored OPAQUELY — this module knows nothing about which messages exist, so the catalogue and the
+ * shipped sentences stay in whatsapp/templates.ts next to the code that renders them, exactly as
+ * `sheet_text` keeps the printed sheet's registry beside the sheet. Unknown keys are never read back,
+ * and the tRPC boundary validates against the real list.
+ *
+ * A key set to '' is REMOVED rather than stored blank: clearing the box in Settings means "use our
+ * sentence again", and empty wording would send a family an empty message.
+ */
+export function getWhatsAppTexts(): Record<string, string> {
+  const raw = getSetting(SETTING_KEYS.whatsappTexts);
+  if (!raw) return {};
+  try {
+    const p = JSON.parse(raw) as unknown;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+      if (typeof v !== 'string') continue;
+      const text = v.trim().slice(0, WA_TEXT_MAX);
+      if (text) out[k] = text;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function setWhatsAppTexts(patch: Record<string, string | null | undefined>): void {
+  const next = getWhatsAppTexts();
+  for (const [k, v] of Object.entries(patch)) {
+    const text = (v ?? '').trim().slice(0, WA_TEXT_MAX);
+    if (text) next[k] = text;
+    else delete next[k];
+  }
+  setSetting(SETTING_KEYS.whatsappTexts, Object.keys(next).length ? JSON.stringify(next) : '');
 }
 
 /** When the mid-year go-live step was committed, or null. Only used to stop nagging about it. */

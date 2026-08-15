@@ -11,6 +11,7 @@ import { useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { fadeRise } from '../../lib/motion';
+import { formatUsPhone } from '../../lib/phone';
 import { trpc, type RouterOutputs } from '../../lib/trpc';
 
 const MIN_PW = 12;
@@ -60,9 +61,15 @@ export function Staff() {
   const wa = trpc.whatsapp.get.useQuery();
   const setContact = trpc.staff.setContact.useMutation();
   const [waFor, setWaFor] = useState<{ id: string; username: string; phone: string; phoneCountry: string; events: AlertEvent[] } | null>(null);
-  /** The feature is off (or this install has no platform): the button would open an editor for
-   *  messages nobody will ever receive, so it isn't drawn. */
-  const waOn = !!wa.data?.enabled && !!wa.data?.fabric;
+  /**
+   * ALWAYS OFFERED, on every account (0.50.0-dev.4).
+   *
+   * It was hidden until WhatsApp was switched on, which made it unfindable in the one order an admin
+   * naturally works in — set the staff up, then turn the channel on — and looked exactly like the
+   * feature not existing. A number is worth recording before the channel is live, and the editor
+   * itself says when the ticks will not do anything yet.
+   */
+  const waLive = !!wa.data?.enabled && wa.data?.status?.available === true;
 
   async function saveContact() {
     setErr('');
@@ -138,7 +145,7 @@ export function Staff() {
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table className="data-table">
-              <thead><tr><th>{t('staff.username')}</th><th>{t('staff.name')}</th><th>{t('staff.role')}</th>{multiSchool && <th>{t('staff.schools')}</th>}<th>{t('directory.status')}</th><th className="actions" /></tr></thead>
+              <thead><tr><th>{t('staff.username')}</th><th>{t('staff.name')}</th><th>{t('staff.role')}</th>{multiSchool && <th>{t('staff.schools')}</th>}<th>{t('staff.waPhone')}</th><th>{t('directory.status')}</th><th className="actions" /></tr></thead>
               <tbody>
                 {list.data?.map((u) => (
                   <tr key={u.id}>
@@ -176,22 +183,32 @@ export function Staff() {
                         </span>
                       </td>
                     )}
+                    {/* A column rather than only an editor: "who in this office can be reached on their
+                        phone?" is a question an admin asks of the whole list at once. */}
+                    <td>
+                      {u.phone ? (
+                        <>
+                          {formatUsPhone(u.phone)}
+                          {u.waEvents.length === 0 && <span className="hint" style={{ display: 'block' }}>{t('staff.waNoAlerts')}</span>}
+                        </>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
                     <td>{u.status === 'active' ? <span className="chip">{t('directory.active')}</span> : <span className="chip is-muted">{t('staff.disabled')}</span>}</td>
                     <td className="actions">
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggle(u.id, u.status, u.username)} disabled={setStatus.isPending}>{u.status === 'active' ? t('staff.disable') : t('staff.enable')}</button>
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPwFor({ id: u.id, username: u.username, tempPassword: '' })}>{t('staff.resetPw')}</button>
-                      {waOn && (
-                        <button
-                          type="button"
-                          className="btn btn--ghost btn--sm"
-                          onClick={() => setWaFor({ id: u.id, username: u.username, phone: u.phone ?? '', phoneCountry: u.phoneCountry ?? '', events: u.waEvents })}
-                        >
-                          {/* The count is the state of it at a glance — an admin should not have to open
-                              five editors to find who is actually subscribed. */}
-                          {t('staff.waEdit')}
-                          {u.waEvents.length > 0 && u.phone ? <span className="chip is-accent" style={{ marginInlineStart: '0.35rem' }}>{u.waEvents.length}</span> : null}
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setWaFor({ id: u.id, username: u.username, phone: u.phone ?? '', phoneCountry: u.phoneCountry ?? '', events: u.waEvents })}
+                      >
+                        {/* The count is the state of it at a glance — an admin should not have to open
+                            five editors to find who is actually subscribed. */}
+                        {t('staff.waEdit')}
+                        {u.waEvents.length > 0 && u.phone ? <span className="chip is-accent" style={{ marginInlineStart: '0.35rem' }}>{u.waEvents.length}</span> : null}
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -218,6 +235,9 @@ export function Staff() {
             <div className="field" style={{ flexBasis: '100%' }}>
               <span className="label">{t('staff.waFor', { username: waFor.username })}</span>
               <span className="hint">{t('staff.waHint')}</span>
+              {/* Says plainly that the ticks will not fire yet, rather than letting an admin set them
+                  and wonder why nothing arrives. */}
+              {!waLive && <span className="hint">{wa.data.enabled ? t('staff.waNotReady') : t('staff.waOffHint')}</span>}
             </div>
             <div className="field" style={{ flex: '0 1 7rem' }}>
               <label className="label" htmlFor="wa-country">{t('settings.waCountry')}</label>

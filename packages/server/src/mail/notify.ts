@@ -25,7 +25,7 @@ import { inviteEmail, receiptEmail, autopayFailureEmail, pastDueEmail, resetEmai
 import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
 import { notifyFamily } from '../whatsapp';
-import { waReceipt, waAutopayFailed, waPastDue } from '../whatsapp/templates';
+import { pausedFor } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
 
 function portalHome(): string {
@@ -134,8 +134,10 @@ export async function sendReset(email: string, url: string, audience: 'staff' | 
 export async function sendReceipt(familyId: string, amountFormatted: string): Promise<number> {
   // WhatsApp first and unawaited: its gates are its own (0.50.0), so it must not sit behind the email
   // switches — an office that turned email receipts off has said nothing about the other channel.
-  void notifyFamily('receipt', familyId, (r) => waReceipt(amountFormatted, { hasEmail: r.hasEmail }));
-  if (getParentMailPaused() || !mailAvailable() || !getParentEmails().receipt) return 0;
+  void notifyFamily('receipt', familyId, 'receipt', { amount: amountFormatted });
+  // `pausedFor` rather than the raw switch: the test student's household is the one that gets through,
+  // on BOTH channels (settings/testStudent.ts).
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getParentEmails().receipt) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   refreshEmailLogo();
@@ -165,8 +167,10 @@ export async function sendTestEmail(to: string): Promise<boolean> {
 /** Email an autopay-failure notice to a family's guardians (§13.3). `final` = the third strike (autopay
  *  now off). Returns how many were sent. */
 export async function sendAutopayFailure(familyId: string, final: boolean): Promise<number> {
-  void notifyFamily('autopay-failed', familyId, (r) => waAutopayFailed({ final, portalUrl: portalHome(), hasEmail: r.hasEmail }));
-  if (getParentMailPaused() || !mailAvailable() || !getParentEmails().autopayFailure) return 0;
+  // Two texts behind one switch: the third strike reads differently from the first two, and an office
+  // rewriting one wants to rewrite the other differently (whatsapp/templates.ts).
+  void notifyFamily('autopay-failed', familyId, final ? 'autopay-stopped' : 'autopay-failed');
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getParentEmails().autopayFailure) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   refreshEmailLogo();
@@ -194,9 +198,9 @@ export async function sendAutopayFailure(familyId: string, final: boolean): Prom
  * to means we chase them again tomorrow.
  */
 export async function sendPastDue(familyId: string, amountFormatted: string, sinceFormatted: string): Promise<{ emails: number; whatsapp: number }> {
-  const wa = await notifyFamily('past-due', familyId, (r) => waPastDue(amountFormatted, sinceFormatted, { portalUrl: portalHome(), hasEmail: r.hasEmail }));
+  const wa = await notifyFamily('past-due', familyId, 'past-due', { amount: amountFormatted, due: sinceFormatted });
   const out = { emails: 0, whatsapp: wa.queued };
-  if (getParentMailPaused() || !mailAvailable() || !getPastDue().parentEmails) return out;
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getPastDue().parentEmails) return out;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return out;
   refreshEmailLogo();

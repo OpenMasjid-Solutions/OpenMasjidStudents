@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { guardians, guardianFamilies } from '../db/schema';
 import { getParentMailPaused } from '../settings';
+import { pausedFor } from '../settings/testStudent';
 
 /** All valid guardian email addresses for a family (deduped). Empty when none is on file — and empty
  *  while parent mail is paused (0.48.0).
@@ -13,9 +14,13 @@ import { getParentMailPaused } from '../settings';
  *  The senders in notify.ts each check the pause themselves, so this is a SECOND line, deliberately.
  *  This function's whole job is "the addresses of parents", and it is what any future parent-facing
  *  message will reach for; making it answer honestly that there is nobody to write to means the next
- *  such message is safe before anybody remembers the switch exists. It is only ever used to send. */
+ *  such message is safe before anybody remembers the switch exists. It is only ever used to send.
+ *
+ *  The TEST STUDENT's household is the one exception (0.50.0), and it has to be honoured here as well
+ *  as at the senders — this second line would otherwise quietly cancel the exception the first one
+ *  granted, which is exactly what happened when the setting only lifted the WhatsApp pause. */
 export function guardianEmailsForFamily(familyId: string): string[] {
-  if (getParentMailPaused()) return [];
+  if (pausedFor(getParentMailPaused(), familyId)) return [];
   const rows = db
     .select({ email: guardians.email })
     .from(guardianFamilies)

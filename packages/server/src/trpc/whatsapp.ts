@@ -16,22 +16,35 @@ import { asc, desc, eq, inArray } from 'drizzle-orm';
 import { router, adminProcedure, auditActor } from './trpc';
 import { db } from '../db';
 import { families, guardians, guardianFamilies, students, users, whatsappLog } from '../db/schema';
-import { getWhatsApp, setWhatsApp, getWhatsAppEmailRequest, setWhatsAppEmailRequest, isCountryCode, WA_TEXT_MAX } from '../settings';
+import { getWhatsApp, setWhatsApp, getWhatsAppEmailRequest, setWhatsAppEmailRequest, getWhatsAppTexts, setWhatsAppTexts, isCountryCode, WA_TEXT_MAX } from '../settings';
+import { testFamilyId } from '../settings/testStudent';
 import {
   WA_PARENT_EVENTS,
-  cachedWhatsAppStatus,
   currentWhatsAppStatus,
   familyRecipients,
+  familyVars,
   notifyGuardian,
   refreshWhatsAppStatus,
   staffRecipientsFor,
-  testFamilyId,
   type WaRecipient,
 } from '../whatsapp';
 import { maskNumber, toE164 } from '../whatsapp/numbers';
-import { WA_EMAIL_REQUEST_DEFAULT, WA_EMAIL_REQUEST_TAGS, renderEmailRequest, waTest } from '../whatsapp/templates';
+import {
+  WA_EMAIL_REQUEST_DEFAULT,
+  WA_EMAIL_REQUEST_TAGS,
+  WA_TAG_HELP,
+  WA_TEXT_DEFAULTS,
+  WA_TEXT_KEYS,
+  WA_TEXT_TAGS,
+  renderEmailRequest,
+  renderText,
+  waTest,
+} from '../whatsapp/templates';
 import { ALERT_EVENTS } from '../alerts';
 import { audit } from '../audit';
+import { getCurrency } from '../settings';
+import { formatDate } from '../settings/dates';
+import { formatMoney } from '../db/money';
 import { fabricConfigured } from '../config';
 
 /**
@@ -101,11 +114,14 @@ export const whatsappRouter = router({
   /**
    * Everything the settings screen needs, in one read.
    *
-   * The gateway status is the CACHED one — a settings render must not wait on a network hop, and the
-   * screen has its own "check again" button for when an admin has just linked a phone. Null means we
-   * have never successfully asked, which the UI reports as "checking" rather than as a failure.
+   * The gateway status is resolved LIVE here — `currentWhatsAppStatus` answers from a five-minute
+   * cache and only crosses the network when that is cold or stale (0.50.0-dev.4). It read the cache
+   * alone at first, which produced a real fault rather than a slow screen: nothing primed the cache
+   * except a 15-minute cron, so for the first quarter of an hour after a container start the panel
+   * said "Not ready" and greyed out the Send-a-test button on an install that was working perfectly.
+   * One request on an admin settings render is the right trade for that.
    */
-  get: adminProcedure.query(() => {
+  get: adminProcedure.query(async () => {
     const cfg = getWhatsApp();
     const testFam = testFamilyId();
     const testStudent = cfg.testStudentId
@@ -116,7 +132,7 @@ export const whatsappRouter = router({
       /** The catalogues, so the UI hard-codes no event list (same rule as the alert screen). */
       parentEvents: WA_PARENT_EVENTS,
       staffEvents: ALERT_EVENTS,
-      status: cachedWhatsAppStatus(),
+      status: await currentWhatsAppStatus(),
       /** Without the Fabric there is no platform to ask, so the feature cannot work at all. */
       fabric: fabricConfigured(),
       testStudent: testStudent ? { id: testStudent.id, fullName: testStudent.fullName, familyId: testStudent.familyId, active: testStudent.status === 'active' } : null,
@@ -222,6 +238,74 @@ export const whatsappRouter = router({
       staff: ALERT_EVENTS.map((e) => ({ event: e, recipients: staffRecipientsFor(e).length })),
     };
   }),
+
+  // ── What each message says (0.50.0-dev.4) ─────────────────────────────────
+  /**
+   * The wording of every parent message: the catalogue, the shipped sentences, this madrasah's own
+   * versions, the tags each one may use, and a live preview against a real household.
+   *
+   * The whole registry comes from the server (whatsapp/templates.ts owns it), so the UI hard-codes no
+   * sentence and no tag list — adding a message there makes a new box appear here with no change on
+   * the browser side, exactly like the printed sheet's wording.
+   *
+   * The PREVIEW is the part that matters. A template with tags in it is unreadable as prose; what an
+   * office needs to see is the message a real family will actually get, with the names and figures
+   * filled in. It uses the test student's household when one is set (that is what it is for) and
+   * otherwise the first household on the roll, so the tags resolve to something real rather than to
+   * "[family]".
+   */
+  textsGet: adminProcedure.query(() => {
+    const sample = testFamilyId() ?? db.select({ id: families.id }).from(families).orderBy(asc(families.name)).get()?.id ?? null;
+    const vars = sample ? { ...familyVars(sample), amount: formatMoney(5000, getCurrency()), due: formatDate(new Date().toISOString().slice(0, 10)) } : null;
+    return {
+      keys: [...WA_TEXT_KEYS],
+      defaults: WA_TEXT_DEFAULTS,
+      /** Only the boxes this madrasah changed; everything else falls through to `defaults`. */
+      overrides: getWhatsAppTexts(),
+      /** Per message, because a tag that cannot be filled in leaves a hole in a sentence. */
+      tags: WA_TEXT_TAGS,
+      tagHelp: WA_TAG_HELP,
+      maxLength: WA_TEXT_MAX,
+      /** Which household the preview is of, so the screen can say so rather than showing an
+       *  unattributed message. Null on an install with no families yet. */
+      sampleFamily: sample ? (db.select({ name: families.name }).from(families).where(eq(families.id, sample)).get()?.name ?? null) : null,
+      /** Rendered both ways: a parent WITH an address on file sees the "check your email" line and a
+       *  parent without does not, and an office rewriting the wording should see both. */
+      preview: vars
+        ? WA_TEXT_KEYS.map((k) => ({
+            key: k,
+            withEmail: renderText(k, vars, { hasEmail: true }),
+            withoutEmail: renderText(k, vars, { hasEmail: false }),
+          }))
+        : [],
+    };
+  }),
+
+  /**
+   * Save changed boxes. A box sent as '' goes back to the shipped sentence — that is what clearing
+   * the field means, and blank wording would send a family an empty message.
+   *
+   * A LIST of key/text pairs rather than a free-form object, so every key is validated against the
+   * registry: an unknown one is refused at the boundary instead of stored and silently ignored.
+   */
+  textsSet: adminProcedure
+    .input(
+      z.object({
+        boxes: z.array(z.object({ key: z.enum(WA_TEXT_KEYS), text: z.string().max(WA_TEXT_MAX) })).max(WA_TEXT_KEYS.length).optional(),
+        /** Put every message back to the shipped wording. */
+        reset: z.boolean().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      const patch: Record<string, string> = {};
+      if (input.reset) for (const k of WA_TEXT_KEYS) patch[k] = '';
+      for (const b of input.boxes ?? []) patch[b.key] = b.text;
+      setWhatsAppTexts(patch);
+      // Key names only — the wording is the school's own prose, and there is no reason to copy
+      // paragraphs of it into the audit trail to record that it changed (§14).
+      audit(auditActor(ctx), 'whatsapp.texts', { entity: 'settings', detail: { keys: Object.keys(patch), reset: !!input.reset } });
+      return { ok: true as const };
+    }),
 
   // ── The missing-email outreach ────────────────────────────────────────────
   /**

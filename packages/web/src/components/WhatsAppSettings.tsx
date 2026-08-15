@@ -251,11 +251,119 @@ export function WhatsAppSettings() {
             </label>
           ))}
 
+          <MessageWording />
           <EmailRequest />
           <QueueLog />
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * What each message actually says (0.50.0-dev.4).
+ *
+ * The shipped sentences follow one rule — WhatsApp carries the fact, email carries the detail — and
+ * that rule is a good default rather than a law about somebody else's madrasah. One school wants the
+ * balance in every message, another wants three words and a name, and a school writing in Urdu wants
+ * their own sentences entirely.
+ *
+ * Two things make this safe to hand over. The tags are a fixed list per message, so an office can only
+ * interpolate what the server offers — there is no tag for a Student ID or a card, which is the
+ * enforcement rather than a rule in a document. And the PREVIEW is rendered against a real household
+ * (the test student's, when one is set), both with and without the "check your email" line, because a
+ * template full of brackets is unreadable as prose and the message a family gets is the thing being
+ * decided.
+ */
+function MessageWording() {
+  const { t } = useTranslation();
+  const utils = trpc.useUtils();
+  const q = trpc.whatsapp.textsGet.useQuery();
+  const save = trpc.whatsapp.textsSet.useMutation();
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [open, setOpen] = useState(false);
+  const dirty = Object.keys(draft).length > 0;
+
+  if (!q.data) return null;
+  const d = q.data;
+  type TextKey = (typeof d.keys)[number];
+  // Pre-filled with the wording IN FORCE, so an office edits real prose; clearing a box is how they
+  // put our sentence back (the server treats '' as "use the default").
+  const boxValue = (k: TextKey) => draft[k] ?? d.overrides[k] ?? d.defaults[k] ?? '';
+
+  async function persist(boxes: { key: TextKey; text: string }[], reset = false) {
+    await save.mutateAsync(reset ? { reset: true } : { boxes });
+    await utils.whatsapp.textsGet.invalidate();
+    setDraft({});
+  }
+
+  return (
+    <>
+      <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>
+        {t('settings.waWording')}
+        <button type="button" className="btn btn--ghost btn--sm" style={{ marginInlineStart: '0.5rem' }} onClick={() => setOpen((v) => !v)}>
+          {open ? t('common.close') : t('settings.waWordingEdit')}
+        </button>
+      </h3>
+      <p className="hint">{t('settings.waWordingHint')}</p>
+
+      {open && (
+        <>
+          {d.sampleFamily && <p className="hint" style={{ marginBlock: '0.5rem' }}>{t('settings.waWordingSample', { family: d.sampleFamily })}</p>}
+          {d.keys.map((k) => {
+            const preview = d.preview.find((p) => p.key === k);
+            const custom = d.overrides[k] !== undefined;
+            return (
+              <div className="field" key={k}>
+                <label className="label" htmlFor={`wa-text-${k}`}>
+                  {t(`settings.waText_${k}`)}
+                  {custom && <span className="chip is-muted" style={{ marginInlineStart: '0.4rem' }}>{t('settings.sheetTextCustom')}</span>}
+                </label>
+                <textarea
+                  id={`wa-text-${k}`}
+                  className="textarea glass-inset"
+                  style={{ minHeight: '4.5rem', fontFamily: 'inherit', fontSize: '0.9rem' }}
+                  value={boxValue(k)}
+                  maxLength={d.maxLength}
+                  onChange={(e) => setDraft({ ...draft, [k]: e.target.value })}
+                />
+                {/* Only the tags THIS message can fill in: one that cannot resolve would leave a hole
+                    in the sentence, so offering it would be a trap. */}
+                <span className="hint">
+                  {t('settings.waWordingTags', { tags: (d.tags[k] ?? []).map((g) => `[${g}]`).join(' ') })}
+                </span>
+                {preview && !draft[k] && (
+                  <div className="glass-inset" style={{ padding: '0.5rem 0.7rem', borderRadius: '0.6rem', marginBlockStart: '0.35rem' }}>
+                    <span className="hint">{t('settings.waWordingPreview')}</span>
+                    <p style={{ whiteSpace: 'pre-wrap', fontSize: '0.88rem', margin: '0.25rem 0 0' }}>{preview.withEmail}</p>
+                  </div>
+                )}
+                {/* Unsaved edits show no preview rather than a stale one: the tags are resolved on the
+                    server, and a preview of the previous wording beside a changed box is a lie. */}
+                {draft[k] !== undefined && <span className="hint">{t('settings.waWordingUnsaved')}</span>}
+              </div>
+            );
+          })}
+
+          <div className="inline-form glass-inset" style={{ alignItems: 'center' }}>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => void persist(Object.entries(draft).map(([key, text]) => ({ key: key as TextKey, text })))}
+              disabled={!dirty || save.isPending}
+            >
+              {t('common.save')}
+            </button>
+            {dirty && <button type="button" className="btn btn--ghost" onClick={() => setDraft({})}>{t('common.cancel')}</button>}
+            <span className="spacer" />
+            <button type="button" className="btn btn--ghost" onClick={() => void persist([], true)} disabled={save.isPending}>
+              {t('settings.sheetTextReset')}
+            </button>
+          </div>
+          <p className="hint">{t('settings.waWordingClearHint')}</p>
+        </>
+      )}
+    </>
   );
 }
 

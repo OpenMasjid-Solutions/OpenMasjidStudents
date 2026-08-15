@@ -498,7 +498,10 @@
     "waFor": "WhatsApp alerts for {{username}}",
     "waHint": "Alerts on their phone as well as by email. Entirely up to them — leave the number blank and they get nothing.",
     "waPhone": "WhatsApp number",
-    "waEvents": "What they hear about"
+    "waEvents": "What they hear about",
+    "waNoAlerts": "No alerts selected",
+    "waNotReady": "WhatsApp is on, but the gateway isn’t ready yet — check the WhatsApp section in Settings.",
+    "waOffHint": "You can record a number now. Alerts start arriving once WhatsApp is switched on in Settings."
   },
   "settings": {
     "title": "Settings",
@@ -678,7 +681,7 @@
     "waPausedNotice": "Parent messages are paused. Only the test student’s household will receive anything.",
     "waTestStudent": "Test student",
     "waTestStudentPick": "Choose a student",
-    "waTestStudentHint": "This child’s household receives messages even while everything is paused — so you can see a real one arrive before anyone else does. It changes nothing about their fees or bills. Someone in the office is the right choice.",
+    "waTestStudentHint": "This child’s household receives messages and emails even while everything is paused — so you can watch a real one arrive before anyone else does. It changes nothing about their fees or bills. Someone in the office is the right choice.",
     "waTestStudentGone": "That student is no longer on the roll, so nothing is getting through the pause. Pick another one.",
     "waSendTest": "Send a test",
     "waTesting": "Sending…",
@@ -720,7 +723,19 @@
     "waReasonShort_unreachable": "The gateway did not respond",
     "waReasonShort_http_429": "The queue asked us to slow down",
     "waReasonShort_http_400": "The gateway refused it",
-    "waReasonShort_http_403": "This app isn’t allowed to send WhatsApp yet"
+    "waReasonShort_http_403": "This app isn’t allowed to send WhatsApp yet",
+    "waWording": "What each message says",
+    "waWordingEdit": "Edit the wording",
+    "waWordingHint": "Our sentences are short on purpose — a WhatsApp is a note, and anything with detail in it goes by email. If your madrasah says it differently, or wants the balance in every message, write your own.",
+    "waWordingSample": "Previews use the {{family}} household, so you can see the real names and figures.",
+    "waWordingTags": "You can use: {{tags}}",
+    "waWordingPreview": "A parent will read:",
+    "waWordingUnsaved": "Save to see this one previewed.",
+    "waWordingClearHint": "Clear a box to go back to our wording.",
+    "waText_receipt": "When a payment is received",
+    "waText_autopay-failed": "When a saved card is declined",
+    "waText_autopay-stopped": "When automatic payments are switched off",
+    "waText_past-due": "When a balance is past due"
   },
   "relation": {
     "father": "Father",
@@ -1006,9 +1021,11 @@
     "payingFor": "You’re paying for",
     "signInWith": "You’ll sign in with {{email}}",
     "messages": "Messages",
-    "waOptIn": "Message me on WhatsApp",
     "waOptInHint": "Short notes about payments and bills, to {{mask}}. Anything with detail in it still comes by email.",
-    "waNoNumber": "We don’t have a WhatsApp number for you — tell the office and they’ll add one."
+    "waNoNumber": "No WhatsApp number on file — tell the office and they’ll add one.",
+    "waOptInYou": "Message me on WhatsApp",
+    "waOptInOther": "Message {{name}} on WhatsApp",
+    "waHouseholdHint": "Everyone on the account can change these, the same way you all see the same bills and cards."
   },
   "midyear": {
     "title": "Starting mid-year",

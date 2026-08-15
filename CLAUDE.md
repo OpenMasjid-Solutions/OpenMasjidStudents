@@ -343,7 +343,7 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | Settings: WhatsApp (on/off, pause, events, country codes, test student, outreach, queue log) | ✅ | ❌ | ❌ |
 | Staff accounts (create, role, disable, reset password, school limits) | ✅ | ❌ | ❌ |
 | Staff WhatsApp number + which alerts they get on it | ✅ | ❌ | ❌ |
-| **Opt out of WhatsApp** (and back in) | ❌ | ❌ | ✅ own number only |
+| **Opt out of WhatsApp** (and back in) | ❌ | ❌ | ✅ anyone on their own household |
 | Schools, school years, terms, courses, classes, rollover — write | ✅ | ❌ | ❌ |
 | Schools / years / courses / classes — read | ✅ | ✅ | ❌ |
 | Students / households / guardians / emergency contacts — write | ✅ | ❌ | ❌ |
@@ -572,10 +572,19 @@ Non-negotiable rules:
   and the safe starting state is *configured but silent*. The pause **narrows** rather than stops — the
   **test student's household** still hears everything, which is the only way to try a real message without
   letting it reach a real roster; it is resolved from the STUDENT on every send (a moved child takes it with
-  them, a withdrawn one fails closed) and it overrides the pause and nothing else. `guardians.wa_opt_out` is
-  the parent's own answer, set from their portal, stored on the PERSON rather than the household because it
-  is a decision about a phone — and **nothing overrides it**, not the pause exception and not an office
-  broadcast. `whatsapp_log` records event / recipient id / time / outcome and **never a message body**: a
+  them, a withdrawn one fails closed) and it overrides a pause and nothing else. **It covers BOTH channels**
+  (`settings/testStudent.ts`, which is why it lives in settings and not in `whatsapp/`): it lifted only the
+  WhatsApp pause at first, so an office that set a test student and took a payment got nothing at all —
+  the parent-EMAIL pause is a separate switch and held the receipt back silently. The email side honours it
+  twice, at the sender AND in `guardianEmailsForFamily`, because that second line would otherwise cancel the
+  exception the first one granted. `guardians.wa_opt_out` is the parent's own answer, stored on the PERSON
+  rather than the household because it is a decision about a phone — and **nothing overrides it**, not the
+  pause exception and not an office broadcast — but **any adult on a household may set it for anyone on that
+  household**, because the portal IS the household (§5) and two parents sharing one balance and one set of
+  cards should not need the office to switch a spouse's number on. Every parent message is an office-editable
+  TEMPLATE with a fixed tag list per message (`whatsapp/templates.ts`); there is no tag for a Student ID or a
+  card, which is the enforcement rather than a rule in a document. `whatsapp_log` records event / recipient
+  id / time / outcome and **never a message body**: a
   tuition message names a child and their fees, and a log is the copy that outlives the conversation.
   Nothing auth-critical (invite, reset, verification) is ever sent this way — a number can be banned
   overnight, and that day must not be the day nobody can sign in. `whatsapp/numbers.ts` is the one place a
@@ -1232,6 +1241,7 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | a card, a refund or a saved method | `payments/*` — and only `payments/stripe.ts` imports the SDK |
   | who gets told | `alerts/index.ts`, then `mail/notify.ts` (which fans out BOTH parent channels) |
   | a WhatsApp message — whether it goes, to whom, or what it says | `whatsapp/index.ts`, `whatsapp/numbers.ts`, `whatsapp/templates.ts` |
+  | which household a pause does NOT apply to (either channel) | `settings/testStudent.ts` |
   | a printed sheet | `billing/statements.ts`, `billing/invoiceDoc.ts`, `people/onboardingSheet.ts`, `people/idSheet.ts` |
   | a date | `settings/dates.ts` |
   | the calendar or the roster tree | `structure/*`, `schools/index.ts` |

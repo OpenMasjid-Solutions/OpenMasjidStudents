@@ -1,71 +1,135 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * What a WhatsApp message from the madrasa actually says (0.50.0).
+ * What a WhatsApp message from the madrasa says — and how much of that the office decides (0.50.0).
  *
- * ONE RULE DECIDES HOW MUCH GOES IN EACH CHANNEL, and it is not arbitrary: **WhatsApp carries the
- * fact and the figure; email carries the breakdown, the receipt and the links.** A WhatsApp message
- * is read on a lock screen between other conversations, it cannot be printed, it has no letterhead
- * and it cannot be trusted to arrive at all (the number can be restricted at any time). So it says
- * the one thing a parent needs to know and, when the school has an address for them, points at the
- * email where the rest of it is. When the school has NO address, the WhatsApp has to stand alone —
- * which is exactly why the missing-email outreach below exists.
+ * THE SHIPPED DEFAULTS FOLLOW ONE RULE: **WhatsApp carries the fact and the figure; email carries the
+ * breakdown, the receipt and the links.** A WhatsApp message is read on a lock screen between other
+ * conversations, cannot be printed, has no letterhead, and cannot be trusted to arrive at all. So it
+ * says the one thing a parent needs to know and points at the email for the rest.
  *
- * What never appears in any of these, whatever the wording:
- *  • a **Student ID** — it is a payment credential (§14), and this channel is not one we control;
+ * THE OFFICE CAN REWRITE ANY OF IT (0.50.0-dev.4). The rule above is a good default, not a law about
+ * somebody else's madrasah: one school wants the balance in every message, another wants three words
+ * and a name, and a school writing in Urdu wants their own sentences entirely. So every message is a
+ * TEMPLATE with tags, edited in Settings, previewed against a real household before it is saved. What
+ * stays ours is the shape of the data — which tag means what, and what may never appear at all.
+ *
+ * WHAT NEVER APPEARS, whatever anybody types:
+ *  • a **Student ID** — it is a payment credential (§14), and this is not a channel we control;
  *  • card details, of any kind;
  *  • another household's anything.
+ * There is no tag for any of those, which is the enforcement: an office can only interpolate what the
+ * catalogue below offers.
  *
  * A child's FIRST NAME is allowed in a message to that child's own parent, and is most of the value —
  * "we've received your payment for Yusuf" is worth sending; "a payment was received" is not.
  *
- * Voice: plain and warm (§15). No jargon, no "PaymentIntent", nothing a parent has to decode. Every
- * one of these is a shipped DEFAULT in English; the office can rewrite the outreach message in
- * Settings, and the rest go through i18n on the screens that describe them.
+ * Voice: plain and warm (§15). No jargon, nothing a parent has to decode.
  */
-import { getSchoolName } from '../settings';
+import { getSchoolName, getWhatsAppTexts } from '../settings';
 
-/** The sentence appended when the school also has an email address for this household. Kept as one
- *  string so the "check your email" promise is worded identically everywhere it is made. */
-function seeEmail(hasEmail: boolean): string {
-  return hasEmail ? '\n\nWe’ve emailed you the full details.' : '';
-}
+// ── The catalogue ────────────────────────────────────────────────────────────
+/**
+ * Every message whose wording an office can change.
+ *
+ * Note `autopay-failed` and `autopay-stopped` are two texts behind ONE event switch. They are
+ * genuinely different messages — "we'll try again in a couple of days" and "we've stopped trying" —
+ * and an office that rewrites one almost always wants to rewrite the other differently. Merging them
+ * behind a tag would have made both worse.
+ *
+ * Keys are stored in the settings row, so renaming one silently reverts that message to the shipped
+ * sentence. Add, don't rename.
+ */
+export const WA_TEXT_KEYS = ['receipt', 'autopay-failed', 'autopay-stopped', 'past-due'] as const;
+export type WaTextKey = (typeof WA_TEXT_KEYS)[number];
 
-/** A pay-here line, only when there is an absolute public URL to give. A portal link that resolves to
- *  a LAN address is worse than no link at all for a parent reading this at home. */
-function payLine(portalUrl: string): string {
-  return portalUrl ? `\n\nYou can pay here: ${portalUrl}` : '';
-}
+/**
+ * The tags each message may use.
+ *
+ * Per message rather than one global list, because a tag that cannot be filled in is worse than one
+ * that does not exist: `[due]` in a receipt would render as nothing and leave a sentence with a hole
+ * in it. The settings screen shows only the tags that apply to the box being edited.
+ */
+export const WA_TEXT_TAGS: Record<WaTextKey, readonly string[]> = {
+  receipt: ['school', 'family', 'children', 'amount', 'balance', 'portal', 'email'],
+  'autopay-failed': ['school', 'family', 'children', 'balance', 'portal', 'email'],
+  'autopay-stopped': ['school', 'family', 'children', 'balance', 'portal', 'email'],
+  'past-due': ['school', 'family', 'children', 'amount', 'due', 'balance', 'portal', 'email'],
+};
 
-/** Money has landed (§11.3 — a receipt is a PAYMENT, never a donation). */
-export function waReceipt(amountFormatted: string, opts: { hasEmail: boolean }): string {
-  return `Assalamu alaykum. ${getSchoolName()} has received your payment of ${amountFormatted}. JazakumAllahu khayran.${seeEmail(opts.hasEmail)}`;
+/** What every tag means, so the settings screen explains itself and this list cannot drift from
+ *  `renderText` below — it is the same set of names. */
+export const WA_TAG_HELP: Record<string, string> = {
+  school: 'the madrasah’s name',
+  family: 'the household’s name, e.g. “Ismail family”',
+  children: 'the children in that household, by name',
+  amount: 'the amount this message is about',
+  balance: 'what the household owes right now',
+  due: 'the date it was due',
+  portal: 'a link to the parent portal (nothing, if there is no public address yet)',
+  email: '“We’ve emailed you the full details.” — only for a parent who has an address on file',
+};
+
+/**
+ * The shipped sentences.
+ *
+ * Each one is a complete, sendable message on its own: an office that never opens this screen still
+ * sends something a parent can act on, and a school that only wants to change one word can start from
+ * real prose rather than a blank box.
+ */
+export const WA_TEXT_DEFAULTS: Record<WaTextKey, string> = {
+  receipt: 'Assalamu alaykum. [school] has received your payment of [amount]. JazakumAllahu khayran.[email]',
+  'autopay-failed':
+    'Assalamu alaykum. We couldn’t charge your saved card for this month’s tuition. We’ll try again in a couple of days. This is [school].[portal][email]',
+  'autopay-stopped':
+    'Assalamu alaykum. We tried three times to charge your saved card and it didn’t go through, so automatic payments are now switched off. This is [school].[portal][email]',
+  'past-due':
+    'Assalamu alaykum. This is a reminder from [school] that [amount] has been due since [due]. If you’ve already paid, please ignore this message.[portal][email]',
+};
+
+/** Everything a message can be filled in with. Assembled once per household by the caller. */
+export interface WaVars {
+  family: string;
+  /** Active children in that household, by name. */
+  children: string[];
+  /** The amount this message is about — a receipt's payment, a reminder's overdue figure. */
+  amount?: string;
+  due?: string;
+  /** The household's derived balance right now. */
+  balance?: string;
+  /** An absolute portal URL, or '' when this install has no public address yet. */
+  portal?: string;
 }
 
 /**
- * A saved card was declined (§13.3). `final` is the third strike, where autopay switches itself off.
+ * Fill in one message for one recipient.
  *
- * No amount, deliberately — the email doesn't carry one either. What failed is a whole autopay run
- * across a household's open bills, and a figure quoted here would go stale the moment any of it is
- * paid another way; the portal shows what is actually owed, which is where this points.
+ * `hasEmail` is per RECIPIENT, not per household, and that is the point of doing this here: a
+ * household routinely has one parent with an address on file and one without, and telling the one
+ * without to "check your email" is a promise about an inbox that does not exist.
+ *
+ * The `[portal]` and `[email]` tags carry their own leading blank line, so an office can drop them
+ * mid-sentence without leaving a double space, and a message that resolves neither does not end in
+ * stray whitespace.
  */
-export function waAutopayFailed(opts: { final: boolean; portalUrl: string; hasEmail: boolean }): string {
-  const head = opts.final
-    ? 'We tried three times to charge your saved card for this month’s tuition and it didn’t go through, so automatic payments are now switched off.'
-    : 'We couldn’t charge your saved card for this month’s tuition. We’ll try again in a couple of days.';
-  return `Assalamu alaykum. ${head} This is ${getSchoolName()}.${payLine(opts.portalUrl)}${seeEmail(opts.hasEmail)}`;
+export function renderText(key: WaTextKey, vars: WaVars, opts: { hasEmail: boolean }): string {
+  const template = getWhatsAppTexts()[key]?.trim() || WA_TEXT_DEFAULTS[key];
+  const portal = vars.portal ? `\n\nYou can pay here: ${vars.portal}` : '';
+  const email = opts.hasEmail ? '\n\nWe’ve emailed you the full details.' : '';
+  return template
+    .replaceAll('[school]', getSchoolName())
+    .replaceAll('[family]', vars.family)
+    .replaceAll('[children]', vars.children.length ? listNames(vars.children) : 'your children')
+    .replaceAll('[amount]', vars.amount ?? '')
+    .replaceAll('[due]', vars.due ?? '')
+    .replaceAll('[balance]', vars.balance ?? '')
+    .replaceAll('[portal]', portal)
+    .replaceAll('[email]', email)
+    .trim();
 }
 
-/** A balance is past its due date. Deliberately gentle, and it says what to do if they have paid —
- *  a family who settled yesterday should not have to defend themselves. */
-export function waPastDue(amountFormatted: string, sinceFormatted: string, opts: { portalUrl: string; hasEmail: boolean }): string {
-  return (
-    `Assalamu alaykum. This is a reminder from ${getSchoolName()} that ${amountFormatted} has been due since ${sinceFormatted}.` +
-    ` If you’ve already paid, please ignore this message.${payLine(opts.portalUrl)}${seeEmail(opts.hasEmail)}`
-  );
-}
-
-/** The office's "does this reach you?" probe. Says plainly that it is a test, so nobody rings back. */
+/** The office's "does this reach you?" probe. Not editable: its whole job is to be recognisable as a
+ *  test, and a rewritten one that reads like a real message defeats the point. */
 export function waTest(): string {
   return `Assalamu alaykum. This is a test message from ${getSchoolName()}’s tuition app. No reply is needed.`;
 }
@@ -80,16 +144,16 @@ export function waTest(): string {
  * treasurer's own phone — the same audience and the same actionability requirement as their inbox. An
  * alert that cannot say which family is not worth sending.
  *
- * A Student ID and card details are still forbidden, as they are in the email.
+ * Not editable either: it is our own operational wording, not the madrasah's voice to a parent.
  */
 export function waStaffAlert(title: string, text: string): string {
   return `${getSchoolName()} — ${title}\n\n${text}`;
 }
 
-// ── The missing-email outreach (office-editable) ─────────────────────────────
+// ── The missing-email outreach (its own text, its own screen) ────────────────
 
-/** The tags the office may use in their own wording. Sent to the settings screen so the UI never
- *  hard-codes this list and it cannot drift from what `renderEmailRequest` actually substitutes. */
+/** The tags the office may use in the outreach wording. Kept separate from `WA_TEXT_TAGS` because
+ *  this message is not one of the parent events — it is a one-off an office presses. */
 export const WA_EMAIL_REQUEST_TAGS = ['school', 'family', 'children'] as const;
 
 /**
@@ -105,19 +169,10 @@ export const WA_EMAIL_REQUEST_DEFAULT =
   'Assalamu alaykum. This is [school]. We don’t have an email address on file for [children], so we can’t send you receipts, invoices or statements — a WhatsApp message can only carry a short note, and anything with detail in it goes by email.\n\n' +
   'Could you reply with the best email address for the family? JazakumAllahu khayran.';
 
-/**
- * Fill in the office's wording (or the shipped one) for one household.
- *
- * `children` is the list of names this household has no address for — "which emails are missing, and
- * for whom", which is the question a parent will ask the moment they read the message. Joined here
- * rather than at the call site so every message reads the same way.
- */
+/** Fill in the office's wording (or the shipped one) for one household. */
 export function renderEmailRequest(template: string, vars: { family: string; children: string[] }): string {
   const kids = vars.children.length ? listNames(vars.children) : 'your children';
-  return (template.trim() || WA_EMAIL_REQUEST_DEFAULT)
-    .replaceAll('[school]', getSchoolName())
-    .replaceAll('[family]', vars.family)
-    .replaceAll('[children]', kids);
+  return (template.trim() || WA_EMAIL_REQUEST_DEFAULT).replaceAll('[school]', getSchoolName()).replaceAll('[family]', vars.family).replaceAll('[children]', kids);
 }
 
 /** "Yusuf", "Yusuf and Maryam", "Yusuf, Maryam and Bilal" — a sentence, not a CSV dump. */

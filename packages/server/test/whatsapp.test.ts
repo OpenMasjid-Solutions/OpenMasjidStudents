@@ -62,6 +62,9 @@ function installFetch(): void {
   }) as unknown as typeof fetch;
 }
 
+/** The emails, for the tests that assert on both channels at once. */
+const emails = () => calls.filter((c) => c.url.endsWith('/api/fabric/email'));
+
 /** Only the messages we actually handed to the queue — a GET status probe is not a send. */
 const sends = () => calls.filter((c) => c.url.endsWith('/api/fabric/whatsapp') && typeof c.body.to === 'string');
 
@@ -155,6 +158,20 @@ describe('turning a number an office typed into one WhatsApp will take', () => {
   });
 });
 
+/** A signed-in parent portal caller for one guardian - the portal's scoping wall is `guardian_users`. */
+async function portalFor(guardianId: string) {
+  const { db } = app.dbmod;
+  const { eq } = await import('drizzle-orm');
+  const { guardianUsers } = await import('../src/db/schema');
+  const uid = `usr_p_${guardianId}`;
+  const ts = new Date();
+  if (!db.select().from(users).where(eq(users.id, uid)).get()) {
+    db.insert(users).values({ id: uid, username: `p-${guardianId}@test.org`, passwordHash: 'x', role: 'parent', status: 'active', createdAt: ts, updatedAt: ts }).run();
+    db.insert(guardianUsers).values({ guardianId, userId: uid, createdAt: ts }).run();
+  }
+  return app.appRouter.createCaller(makeCtx({ origin: 'tunnel', session: { role: 'parent', source: 'local', username: 'p', userId: uid } }).ctx);
+}
+
 // ── Fixtures ────────────────────────────────────────────────────────────────
 /** A household with one guardian who has a number, and one child. */
 async function household(surname: string, opts: { phone?: string | null; email?: string; kid?: string } = {}) {
@@ -183,7 +200,7 @@ describe('the gates, in order', () => {
   it('sends nothing at all while the feature is off — which is how every install starts', async () => {
     const { familyId } = await household('Ismail');
     calls = [];
-    const out = await whatsapp.notifyFamily('receipt', familyId, () => 'hello');
+    const out = await whatsapp.notifyFamily('receipt', familyId, 'receipt');
     expect(out.blocked).toBe('off');
     expect(sends()).toHaveLength(0);
   });
@@ -194,7 +211,7 @@ describe('the gates, in order', () => {
     waAvailable = { available: false, reason: 'not-linked' };
     whatsapp.resetWhatsAppStatusCache();
     calls = [];
-    const out = await whatsapp.notifyFamily('receipt', familyId, () => 'hello');
+    const out = await whatsapp.notifyFamily('receipt', familyId, 'receipt');
     expect(out.blocked).toBe('unavailable');
     expect(sends()).toHaveLength(0);
   });
@@ -203,7 +220,7 @@ describe('the gates, in order', () => {
     const { familyId } = await household('Ismail');
     await turnOn('receipt');
     calls = [];
-    const out = await whatsapp.notifyFamily('past-due', familyId, () => 'hello');
+    const out = await whatsapp.notifyFamily('past-due', familyId, 'past-due');
     expect(out.blocked).toBe('event_off');
     expect(sends()).toHaveLength(0);
   });
@@ -212,18 +229,19 @@ describe('the gates, in order', () => {
     const { familyId } = await household('Ismail');
     await turnOn();
     calls = [];
-    const out = await whatsapp.notifyFamily('receipt', familyId, () => 'Assalamu alaykum');
+    const out = await whatsapp.notifyFamily('receipt', familyId, 'receipt', { amount: '$50.00' });
     expect(out.queued).toBe(1);
     expect(sends()).toHaveLength(1);
     expect(sends()[0].body.to).toBe('+15551234567');
-    expect(sends()[0].body.text).toBe('Assalamu alaykum');
+    // Rendered from the template, not handed in by the caller — the tags resolve to this household.
+    expect(String(sends()[0].body.text)).toContain('$50.00');
   });
 
   it('skips a guardian whose number cannot be read, and says so in the log', async () => {
     const { admin, familyId } = await household('Ismail', { phone: 'ask mum' });
     await turnOn();
     calls = [];
-    const out = await whatsapp.notifyFamily('receipt', familyId, () => 'hi');
+    const out = await whatsapp.notifyFamily('receipt', familyId, 'receipt');
     expect(out.queued).toBe(0);
     expect(out.skipped.no_number).toBe(1);
     expect(sends()).toHaveLength(0);
@@ -236,7 +254,7 @@ describe('the gates, in order', () => {
     await turnOn();
     queueStatus = 429; // the platform protecting the masjid's number
     calls = [];
-    const out = await whatsapp.notifyFamily('receipt', familyId, () => 'hi');
+    const out = await whatsapp.notifyFamily('receipt', familyId, 'receipt');
     expect(out.queued).toBe(0);
     const log = await admin.whatsapp.log({});
     expect(log[0]).toMatchObject({ status: 'failed', reason: 'http_429' });
@@ -249,7 +267,7 @@ describe('the pause, and the test student who gets through it', () => {
     const { familyId } = await household('Ismail');
     await turnOn('receipt', { paused: true });
     calls = [];
-    const out = await whatsapp.notifyFamily('receipt', familyId, () => 'hi');
+    const out = await whatsapp.notifyFamily('receipt', familyId, 'receipt');
     expect(out.queued).toBe(0);
     expect(out.skipped.paused).toBe(1);
     expect(sends()).toHaveLength(0);
@@ -263,8 +281,8 @@ describe('the pause, and the test student who gets through it', () => {
     await a.admin.whatsapp.set({ testStudentId: a.studentId });
     calls = [];
 
-    expect((await whatsapp.notifyFamily('receipt', a.familyId, () => 'hi')).queued).toBe(1);
-    expect((await whatsapp.notifyFamily('receipt', b.familyId, () => 'hi')).queued).toBe(0);
+    expect((await whatsapp.notifyFamily('receipt', a.familyId, 'receipt')).queued).toBe(1);
+    expect((await whatsapp.notifyFamily('receipt', b.familyId, 'receipt')).queued).toBe(0);
     expect(sends().map((c) => c.body.to)).toEqual(['+15551234567']);
   });
 
@@ -275,7 +293,7 @@ describe('the pause, and the test student who gets through it', () => {
     await a.admin.whatsapp.set({ testStudentId: a.studentId });
     await a.admin.people.studentUpdate({ id: a.studentId, status: 'withdrawn' });
     calls = [];
-    expect((await whatsapp.notifyFamily('receipt', a.familyId, () => 'hi')).queued).toBe(0);
+    expect((await whatsapp.notifyFamily('receipt', a.familyId, 'receipt')).queued).toBe(0);
     // …and the settings screen says so rather than leaving it looking configured.
     expect((await a.admin.whatsapp.get()).testFamilyId).toBeNull();
   });
@@ -316,7 +334,7 @@ describe('a parent who asked not to be messaged', () => {
     await turnOn();
     await optOut(guardianId, familyId);
     calls = [];
-    const out = await whatsapp.notifyFamily('receipt', familyId, () => 'hi');
+    const out = await whatsapp.notifyFamily('receipt', familyId, 'receipt');
     expect(out.queued).toBe(0);
     expect(out.skipped.opted_out).toBe(1);
     expect(sends()).toHaveLength(0);
@@ -329,7 +347,7 @@ describe('a parent who asked not to be messaged', () => {
     await a.admin.whatsapp.set({ testStudentId: a.studentId });
     await optOut(a.guardianId, a.familyId);
     calls = [];
-    expect((await whatsapp.notifyFamily('receipt', a.familyId, () => 'hi')).queued).toBe(0);
+    expect((await whatsapp.notifyFamily('receipt', a.familyId, 'receipt')).queued).toBe(0);
     expect(sends()).toHaveLength(0);
   });
 
@@ -337,11 +355,11 @@ describe('a parent who asked not to be messaged', () => {
     const { familyId, guardianId } = await household('Ismail');
     await turnOn();
     const parent = await optOut(guardianId, familyId);
-    expect((await parent.portal.messagingGet()).optedOut).toBe(true);
+    expect((await parent.portal.messagingGet()).people[0].optedOut).toBe(true);
     await parent.portal.messagingSet({ optOut: false });
-    expect((await parent.portal.messagingGet()).optedOut).toBe(false);
+    expect((await parent.portal.messagingGet()).people[0].optedOut).toBe(false);
     calls = [];
-    expect((await whatsapp.notifyFamily('receipt', familyId, () => 'hi')).queued).toBe(1);
+    expect((await whatsapp.notifyFamily('receipt', familyId, 'receipt')).queued).toBe(1);
   });
 
   it('shows the parent which number it is about, without printing it', async () => {
@@ -349,8 +367,9 @@ describe('a parent who asked not to be messaged', () => {
     await turnOn();
     const parent = await optOut(guardianId, familyId);
     const view = await parent.portal.messagingGet();
-    expect(view.mask).toBe('···4567');
     expect(view.available).toBe(true);
+    expect(view.people[0].mask).toBe('···4567');
+    expect(view.people[0].isYou).toBe(true);
   });
 
   it('shows a parent nothing at all when the madrasah has not switched WhatsApp on', async () => {
@@ -382,12 +401,12 @@ describe('what is allowed on this channel', () => {
   it('never stores the message body', async () => {
     const { familyId } = await household('Ismail');
     await turnOn();
-    const secret = 'Yusuf owes $250 for November';
-    await whatsapp.notifyFamily('receipt', familyId, () => secret);
+    await whatsapp.notifyFamily('receipt', familyId, 'receipt', { amount: '$250.00' });
     const rows = app.dbmod.db.select().from(whatsappLog).all();
     expect(rows).toHaveLength(1);
+    // The figure and the child's name both went out in the message and neither is in the row.
     expect(JSON.stringify(rows)).not.toContain('$250');
-    expect(JSON.stringify(rows)).not.toContain(secret);
+    expect(JSON.stringify(rows)).not.toContain('Yusuf');
   });
 
   /** A receipt is a PAYMENT, never a donation (§11.3) — the same wording rule the email follows. */
@@ -529,6 +548,168 @@ describe('asking for a missing email address', () => {
     // Clearing the box puts our sentence back rather than sending a blank message.
     await admin.whatsapp.emailRequestSet({ text: '' });
     expect((await admin.whatsapp.emailRequestPreview()).preview[0].text).toContain('don’t have an email address');
+  });
+});
+
+// -- The four things a real office hit on the first build --------------------
+/**
+ * Every test in this block is a bug a masjid found by using it, and each one failed SILENTLY — which
+ * is the whole hazard of a notification channel. Nothing errors when a message is not sent; you just
+ * stand there waiting for a phone that never buzzes.
+ */
+describe('reported by an office setting this up', () => {
+  /**
+   * "I set a test student and neither the email NOR the WhatsApp arrived."
+   *
+   * The setting lifted the WhatsApp pause and nothing else, so on a fresh install — where the parent
+   * MAIL pause also defaults on — a receipt was held back by the other switch. "That household will
+   * receive notifications even if paused" has to mean notifications, not one kind of them.
+   */
+  it('the test student household gets the EMAIL too, not only the WhatsApp', async () => {
+    const a = await household('Ismail', { email: 'parent@test.org' });
+    const b = await household('Farooqi', { phone: '5559998888', email: 'other@test.org' });
+    await turnOn('receipt', { paused: true });
+    await a.admin.settings.parentMailPauseSet({ paused: true });
+    await a.admin.whatsapp.set({ testStudentId: a.studentId });
+    calls = [];
+
+    // The test household hears on both channels...
+    expect(await notify.sendReceipt(a.familyId, '$50.00')).toBe(1);
+    await drain();
+    expect(emails().map((c) => c.body.to)).toEqual(['parent@test.org']);
+    expect(sends()).toHaveLength(1);
+
+    // ...and everybody else still hears nothing at all, which is what the pause is for.
+    calls = [];
+    expect(await notify.sendReceipt(b.familyId, '$50.00')).toBe(0);
+    await drain();
+    expect(emails()).toHaveLength(0);
+    expect(sends()).toHaveLength(0);
+  });
+
+  /** The second line of the mail pause has to honour the exception too, or it silently cancels it. */
+  it('the exception survives the guardian-address lookup, not just the sender', async () => {
+    const a = await household('Ismail', { email: 'parent@test.org' });
+    await a.admin.settings.parentMailPauseSet({ paused: true });
+    await a.admin.whatsapp.set({ testStudentId: a.studentId });
+    const recipients = await import('../src/mail/recipients');
+    expect(recipients.guardianEmailsForFamily(a.familyId)).toEqual(['parent@test.org']);
+    // Any other household is still empty while paused.
+    const b = await household('Farooqi', { email: 'other@test.org' });
+    expect(recipients.guardianEmailsForFamily(b.familyId)).toEqual([]);
+  });
+
+  /**
+   * "The Send test button is greyed out even after adding a test student."
+   *
+   * The screen read a CACHED gateway status that nothing primed except a 15-minute cron, so for the
+   * first quarter of an hour after a container start a perfectly working install reported "not ready".
+   */
+  it('reports the gateway status on the first read, not fifteen minutes later', async () => {
+    const admin = caller('admin');
+    whatsapp.resetWhatsAppStatusCache(); // exactly the state a freshly-booted container is in
+    const got = await admin.whatsapp.get();
+    expect(got.status).toEqual({ available: true, reason: 'ready' });
+  });
+
+  /**
+   * "The portal is per household, not per parent — both of them log in and see the same thing."
+   *
+   * So a parent manages messages for the household, not only for themselves.
+   */
+  it('a parent can switch messages off for the other parent on their household', async () => {
+    const admin = caller('admin');
+    const h = await household('Ismail');
+    const mum = await admin.people.guardianCreate({ familyId: h.familyId, name: 'Umm Yusuf', phone: '5551112222' });
+    await turnOn();
+    const dad = await portalFor(h.guardianId);
+
+    const view = await dad.portal.messagingGet();
+    expect(view.people.map((x) => x.name).sort()).toEqual(['Abu Ismail', 'Umm Yusuf']);
+    expect(view.people.find((x) => x.guardianId === h.guardianId)?.isYou).toBe(true);
+    expect(view.people.find((x) => x.guardianId === mum.id)?.isYou).toBe(false);
+
+    await dad.portal.messagingSet({ guardianId: mum.id, optOut: true });
+    calls = [];
+    const out = await whatsapp.notifyFamily('receipt', h.familyId, 'receipt', { amount: '$50.00' });
+    // Dad still hears; mum does not.
+    expect(out.queued).toBe(1);
+    expect(out.skipped.opted_out).toBe(1);
+  });
+
+  /** ...but only on a household they are actually linked to (the wall is the query, as always). */
+  it('cannot touch a guardian on somebody elses household', async () => {
+    const a = await household('Ismail');
+    const b = await household('Farooqi', { phone: '5559998888' });
+    await turnOn();
+    const dad = await portalFor(a.guardianId);
+    await expect(dad.portal.messagingSet({ guardianId: b.guardianId, optOut: true })).rejects.toThrow(/access/i);
+  });
+});
+
+// -- The office's own wording ------------------------------------------------
+describe('rewriting what a message says', () => {
+  it('fills in the tags an office is offered', async () => {
+    const admin = caller('admin');
+    const h = await household('Ismail');
+    await turnOn();
+    await admin.whatsapp.textsSet({ boxes: [{ key: 'receipt', text: 'Salam [family] - [amount] received for [children]. You owe [balance]. - [school]' }] });
+    calls = [];
+    await whatsapp.notifyFamily('receipt', h.familyId, 'receipt', { amount: '$50.00' });
+    const text = String(sends()[0].body.text);
+    expect(text).toContain('Salam Ismail');
+    expect(text).toContain('$50.00 received for Yusuf');
+    // [balance] is the DERIVED figure, like every other balance in this app.
+    expect(text).toContain('You owe $0.00');
+    expect(text).not.toContain('[school]');
+  });
+
+  it('previews against a real household, with and without the check-your-email line', async () => {
+    const admin = caller('admin');
+    const h = await household('Ismail');
+    await admin.whatsapp.set({ enabled: true, testStudentId: h.studentId });
+    const p = await admin.whatsapp.textsGet();
+    // The DERIVED household label (people/household.ts), not the name the fixture typed — which is
+    // exactly what a parent sees on their statement, so it is what the preview should show.
+    expect(p.sampleFamily).toBe('Ismail family');
+    const receipt = p.preview.find((x) => x.key === 'receipt')!;
+    expect(receipt.withEmail).toContain('emailed');
+    expect(receipt.withoutEmail).not.toContain('emailed');
+  });
+
+  it('clearing a box goes back to our sentence rather than sending a blank message', async () => {
+    const admin = caller('admin');
+    await household('Ismail');
+    await admin.whatsapp.textsSet({ boxes: [{ key: 'receipt', text: 'mine' }] });
+    expect((await admin.whatsapp.textsGet()).overrides.receipt).toBe('mine');
+    await admin.whatsapp.textsSet({ boxes: [{ key: 'receipt', text: '' }] });
+    expect((await admin.whatsapp.textsGet()).overrides.receipt).toBeUndefined();
+    await admin.whatsapp.textsSet({ boxes: [{ key: 'receipt', text: 'mine' }] });
+    await admin.whatsapp.textsSet({ reset: true });
+    expect((await admin.whatsapp.textsGet()).overrides).toEqual({});
+  });
+
+  it('refuses a message key the server does not know, and is admin-only', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberately invalid input
+    await expect(caller('admin').whatsapp.textsSet({ boxes: [{ key: 'nope' as any, text: 'x' }] })).rejects.toThrow();
+    await expect(caller('finance').whatsapp.textsGet()).rejects.toThrow(/access/i);
+  });
+
+  /** Two texts behind one switch: the third strike is a different message, and an office rewriting
+   *  one almost always wants to rewrite the other differently. */
+  it('has its own wording for the third autopay strike', async () => {
+    const admin = caller('admin');
+    const h = await household('Ismail');
+    await turnOn('autopay-failed');
+    await admin.whatsapp.textsSet({ boxes: [{ key: 'autopay-stopped', text: 'STOPPED' }, { key: 'autopay-failed', text: 'RETRYING' }] });
+    calls = [];
+    await notify.sendAutopayFailure(h.familyId, false);
+    await drain();
+    expect(String(sends()[0].body.text)).toBe('RETRYING');
+    calls = [];
+    await notify.sendAutopayFailure(h.familyId, true);
+    await drain();
+    expect(String(sends()[0].body.text)).toBe('STOPPED');
   });
 });
 
