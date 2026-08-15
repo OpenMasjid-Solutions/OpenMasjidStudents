@@ -51,7 +51,7 @@ import { pausedFor, testFamilyId } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
 import { sendPlatformWhatsApp, sendPlatformWhatsAppGroup, whatsappGroups, whatsappStatus, type WhatsAppGroup, type WhatsAppStatus } from '../fabric/platform';
 import { toE164 } from './numbers';
-import { renderText, type WaTextKey, type WaVars } from './templates';
+import { renderText, waStaffAlert, type WaTextKey, type WaVars } from './templates';
 import { familyBalance } from '../billing/ledger';
 import { formatMoney } from '../db/money';
 import { givenName } from '../people/names';
@@ -415,7 +415,11 @@ export async function notifyGroups(event: string, msg: { title: string; text: st
 
     let queued = 0;
     for (const [groupId, g] of subscribed) {
-      const body = `${getSchoolName()} — ${msg.title}\n\n${g.detail ? msg.text : msg.publicText}`;
+      // The same terse shape a staff number gets (whatsapp/templates.ts `waStaffAlert`): no greeting
+      // and no school name. This is an operational notice to people who have to act on it, arriving
+      // on the masjid's own number — the sender is already obvious and a salam is a line to scroll
+      // past. `detail` is the only thing that varies.
+      const body = waStaffAlert(msg.title, g.detail ? msg.text : msg.publicText);
       const res = await sendPlatformWhatsAppGroup(groupId, body);
       writeLog({ event, recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? null : res.reason });
       if (res.queued) queued++;
@@ -443,7 +447,9 @@ export async function testGroup(groupId: string): Promise<'queued' | 'off' | 'un
     if (!cfg.enabled || !fabricConfigured()) return 'off';
     const status = await currentWhatsAppStatus();
     if (!status.available) return 'unavailable';
-    const res = await sendPlatformWhatsAppGroup(groupId, `${getSchoolName()} — test. If you can read this, staff alerts will reach this group. No reply is needed.`);
+    // Terse, like the alerts it is standing in for — and it must READ like one, or it is not a test of
+    // anything. No salam, no letterhead.
+    const res = await sendPlatformWhatsAppGroup(groupId, waStaffAlert('Test', 'Staff alerts will reach this group. No reply is needed.'));
     writeLog({ event: 'test', recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? null : res.reason });
     return res.queued ? 'queued' : 'failed';
   } catch (e) {

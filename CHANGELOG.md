@@ -167,6 +167,9 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   cannot see who is in a group — only you can.
 - A per-group test sends a fixed message, so you can check a group receives before deciding what should
   flow through it.
+- **Staff alerts get straight to the point** — no salam, no letterhead, just what happened. They arrive
+  on the masjid’s own number for someone who has to act on them, so a line of greeting is a line to
+  scroll past first. Messages to parents still greet properly; that is the madrasah speaking to a family.
 
 **Elsewhere**
 

@@ -293,6 +293,10 @@ other 199 members'.*
 - **The parent pause does not apply**, exactly as it does not for a staff member's own number: it is a
   switch about writing to families, and an office that paused it while importing a roster still wants
   to know when a card fails.
+- **No greeting on an operational notice.** A staff alert — to a number or a group — is the title then
+  what happened, with no salam and no school name: it arrives on the masjid's own number for somebody
+  who has to act on it, and a line of ceremony ahead of "a card was declined" is a line to scroll past.
+  Parent messages are the opposite and still greet, because that is the madrasah speaking to a family.
 - The per-group **test** sends a fixed message, never anything typed — a box that posts arbitrary text
   to a group is precisely the misuse the design rules out.
 - The queue log records the group and the outcome, never the text, like every other row.

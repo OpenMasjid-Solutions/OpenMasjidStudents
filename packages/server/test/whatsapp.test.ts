@@ -1049,7 +1049,7 @@ describe('staff alerts to a group', () => {
     calls = [];
     await admin.whatsapp.groupTest({ groupId: 'g1@g.us' });
     expect(posts()).toHaveLength(1);
-    expect(String(posts()[0].body.text)).toContain('test');
+    expect(String(posts()[0].body.text)).toContain('Test');
     const log = await admin.whatsapp.log({});
     expect(log[0]).toMatchObject({ kind: 'group', who: 'Finance', status: 'queued' });
     expect(JSON.stringify(log)).not.toContain('If you can read this');
@@ -1059,6 +1059,73 @@ describe('staff alerts to a group', () => {
     await expect(caller('finance').whatsapp.groups()).rejects.toThrow(/access/i);
     await expect(caller('finance').whatsapp.groupSet({ groupId: 'g1@g.us', events: [] })).rejects.toThrow(/access/i);
     await expect(caller('finance').whatsapp.groupTest({ groupId: 'g1@g.us' })).rejects.toThrow(/access/i);
+  });
+});
+
+// -- Staff and group alerts are terse ---------------------------------------
+/**
+ * NO GREETING ON AN OPERATIONAL NOTICE.
+ *
+ * A parent message is the madrasah speaking to a family and is written like it — salam, the school's
+ * name, warm wording. A staff alert is not that: it arrives on the masjid's own number, in a thread
+ * the recipient already recognises, for somebody who has to act on it. "Assalamu alaykum" ahead of "a
+ * card was declined" is a line to scroll past before reaching the point.
+ *
+ * Worth a test rather than a comment because it is exactly the sort of thing a well-meaning edit
+ * puts back — and because the same rule has to hold on three paths that are easy to change apart: a
+ * staff number, a group, and the group test.
+ */
+describe('what a staff alert sounds like', () => {
+  const posts = () => calls.filter((c) => c.url.endsWith('/api/fabric/whatsapp') && typeof c.body.group === 'string');
+
+  async function staffNumber() {
+    const admin = caller('admin');
+    const staff = await admin.staff.create({ username: 'treasurer', role: 'finance', tempPassword: 'a-long-temp-password' });
+    await admin.staff.setContact({ userId: staff.id, phone: '5557778888', waEvents: ['autopay-disabled'] });
+    return admin;
+  }
+
+  it('greets nobody, and does not repeat the school name', async () => {
+    await turnOn();
+    await staffNumber();
+    calls = [];
+    await alerts.alertStaff('autopay-disabled', { title: 'Autopay switched off', text: 'Ismail family had three failed charges.', publicText: 'Autopay was turned off for a family.' });
+    await drain();
+    const text = String(sends()[0].body.text);
+    expect(text.toLowerCase()).not.toContain('alaykum');
+    // Straight into the alert: the title, then what happened.
+    expect(text.startsWith('Autopay switched off')).toBe(true);
+    expect(text).toContain('Ismail family had three failed charges.');
+  });
+
+  it('is just as terse to a group', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    await admin.whatsapp.groupSet({ groupId: '1203630001@g.us', events: ['autopay-disabled'], detail: true });
+    calls = [];
+    await alerts.alertStaff('autopay-disabled', { title: 'Autopay switched off', text: 'Ismail family had three failed charges.', publicText: 'Autopay was turned off for a family.' });
+    await drain();
+    const text = String(posts()[0].body.text);
+    expect(text.toLowerCase()).not.toContain('alaykum');
+    expect(text.startsWith('Autopay switched off')).toBe(true);
+  });
+
+  it('sends a group test that reads like the alerts it stands in for', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    calls = [];
+    await admin.whatsapp.groupTest({ groupId: '1203630001@g.us' });
+    expect(String(posts()[0].body.text).toLowerCase()).not.toContain('alaykum');
+  });
+
+  /** …and the other side of the line: a PARENT message still greets, because it is the madrasah
+   *  speaking to a family. Dropping the salam everywhere would have been the opposite mistake. */
+  it('still greets a parent', async () => {
+    const h = await household('Ismail');
+    await turnOn();
+    calls = [];
+    await whatsapp.notifyFamily('receipt', h.familyId, 'receipt', { amount: '$50.00' });
+    expect(String(sends()[0].body.text).toLowerCase()).toContain('alaykum');
   });
 });
 

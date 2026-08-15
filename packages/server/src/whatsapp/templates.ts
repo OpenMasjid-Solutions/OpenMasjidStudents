@@ -141,26 +141,34 @@ export function renderText(key: WaTextKey, vars: WaVars, opts: { hasEmail: boole
     .trim();
 }
 
-/** The office's "does this reach you?" probe. Not editable: its whole job is to be recognisable as a
- *  test, and a rewritten one that reads like a real message defeats the point. */
+/** The office's "does this reach you?" probe, sent to the test student's HOUSEHOLD — a parent's phone,
+ *  so it greets like every other parent message. Not editable: its whole job is to be recognisable as
+ *  a test, and a rewritten one that reads like a real message defeats the point. */
 export function waTest(): string {
   return `Assalamu alaykum. This is a test message from ${getSchoolName()}’s tuition app. No reply is needed.`;
 }
 
 /**
- * A staff alert on WhatsApp.
+ * A staff alert on WhatsApp — and on a staff group, which uses the same shape.
+ *
+ * NO GREETING, NO LETTERHEAD, JUST THE ALERT. A parent message is the madrasah speaking to a family
+ * and is written like it; this is an operational notice to somebody who has to act on it, arriving on
+ * the masjid's own number in a thread they already recognise. "Assalamu alaykum" ahead of "a card was
+ * declined" is a line to scroll past before reaching the point — and the point is the whole message.
+ * The school name went for the same reason: it is the sender, so saying it again is noise.
  *
  * Carries the SAME text as the alert email — the one that may name a household and an amount — and
  * not the de-identified `publicText` (§14). The line §14 draws is around THIRD-PARTY SINKS: a masjid
  * webhook is usually a Slack channel, and the platform's alert delivery is not ours to reason about.
  * This is a number an admin typed into Settings, on a gateway the masjid runs itself, going to the
  * treasurer's own phone — the same audience and the same actionability requirement as their inbox. An
- * alert that cannot say which family is not worth sending.
+ * alert that cannot say which family is not worth sending. (A GROUP is the one place that text may be
+ * the de-identified one instead — see whatsapp/index.ts `notifyGroups`.)
  *
- * Not editable either: it is our own operational wording, not the madrasah's voice to a parent.
+ * Not editable: it is our own operational wording, not the madrasah's voice to a parent.
  */
 export function waStaffAlert(title: string, text: string): string {
-  return `${getSchoolName()} — ${title}\n\n${text}`;
+  return `${title}\n\n${text}`;
 }
 
 // ── The missing-email outreach (its own text, its own screen) ────────────────
