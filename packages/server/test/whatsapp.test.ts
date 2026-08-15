@@ -46,6 +46,8 @@ let calls: Call[] = [];
 let waAvailable: { available: boolean; reason: string } = { available: true, reason: 'ready' };
 /** The HTTP status the STATUS probe answers with. 200 unless a test is exercising a refusal. */
 let statusHttp = 200;
+/** The groups the platform says this app may post into. Only what an ADMIN approved ever appears. */
+let groupList: { id: string; label: string }[] = [{ id: '1203630001@g.us', label: 'Parents' }];
 /** The status the queue answers with. 202 is the real one; the others are the four documented refusals. */
 let queueStatus = 202;
 const realFetch = globalThis.fetch;
@@ -55,6 +57,7 @@ function installFetch(): void {
     const i = (init ?? {}) as { body?: string; method?: string };
     const url = String(input);
     calls.push({ url, body: i.body ? (JSON.parse(i.body) as Record<string, unknown>) : { _method: i.method ?? 'GET' } });
+    if (url.endsWith('/api/fabric/whatsapp/groups')) return { ok: true, status: 200, json: async () => ({ groups: groupList }) } as unknown as Response;
     if (url.endsWith('/api/fabric/whatsapp')) {
       if ((i.method ?? 'GET') === 'GET') return { ok: statusHttp < 300, status: statusHttp, json: async () => waAvailable } as unknown as Response;
       return { ok: queueStatus < 300, status: queueStatus, json: async () => ({ queued: queueStatus === 202 }) } as unknown as Response;
@@ -100,6 +103,7 @@ beforeEach(() => {
   waAvailable = { available: true, reason: 'ready' };
   statusHttp = 200;
   queueStatus = 202;
+  groupList = [{ id: '1203630001@g.us', label: 'Parents' }];
   // The availability answer is cached for five minutes so a send never pays for a status hop; a test
   // that changed it would otherwise be reading the previous test's answer.
   whatsapp.resetWhatsAppStatusCache();
@@ -924,6 +928,107 @@ describe('sending a test', () => {
     waAvailable = { available: false, reason: 'not-configured' };
     whatsapp.resetWhatsAppStatusCache();
     await expect(h.admin.whatsapp.testSend()).rejects.toThrow(/nothing could be sent/i);
+  });
+});
+
+// -- Announcements to a group ------------------------------------------------
+/**
+ * ONE RULE governs this whole feature, and it comes from the platform: a group post is for genuine
+ * announcements and must NEVER carry a family's own business, because their fees are not the other
+ * 199 members'.
+ *
+ * The wall is in the type system rather than in a comment — `notifyFamily` calls
+ * `sendPlatformWhatsApp`, which has no parameter that can name a group; `announceToGroup` calls
+ * `sendPlatformWhatsAppGroup`, which has no parameter that can name a person. These tests hold the
+ * wire shape to that, because the wire is where a mistake would actually show.
+ */
+describe('group announcements', () => {
+  it('posts to a group with `group`, and never a `to`', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    calls = [];
+    await admin.whatsapp.announce({ groupId: '1203630001@g.us', text: 'Fees for this month are now out.' });
+    const posts = calls.filter((c) => c.url.endsWith('/api/fabric/whatsapp') && typeof c.body.group === 'string');
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body.group).toBe('1203630001@g.us');
+    expect(posts[0].body.to).toBeUndefined();
+    expect(posts[0].body.text).toContain('Fees for this month');
+  });
+
+  /** The other half of the wall: a per-family message must never grow a `group` field. */
+  it('a household message never carries a group', async () => {
+    const h = await household('Ismail');
+    await turnOn();
+    calls = [];
+    await whatsapp.notifyFamily('receipt', h.familyId, 'receipt', { amount: '$50.00' });
+    expect(sends()).toHaveLength(1);
+    expect(sends()[0].body.group).toBeUndefined();
+    expect(sends()[0].body.to).toBe('+15551234567');
+  });
+
+  /** [school] is the only tag there is. Nothing about a household can be interpolated into a group
+   *  post, which is the app's half of the rule; the other half is a person typing. */
+  it('fills in the school and offers no way to name a household', async () => {
+    const admin = caller('admin');
+    await admin.settings.set({ schoolName: 'An-Noor' });
+    await turnOn();
+    calls = [];
+    await admin.whatsapp.announce({ groupId: 'g1@g.us', text: '[school]: bills are out. [family] [balance] [children]' });
+    const text = String(calls.filter((c) => typeof c.body.group === 'string')[0].body.text);
+    expect(text).toContain('An-Noor');
+    // Every other tag is left as literal text — there is no code path that resolves it here.
+    expect(text).toContain('[family]');
+    expect(text).toContain('[balance]');
+    expect(text).toContain('[children]');
+  });
+
+  /**
+   * The pause covers announcements too. A group of parents is parents, and this is the loudest path
+   * in the app — two hundred people in one call. The test student cannot except it: there is no
+   * household to except.
+   */
+  it('is held by the parent pause, with no test-student exception', async () => {
+    const h = await household('Ismail');
+    await turnOn('receipt', { paused: true });
+    await h.admin.whatsapp.set({ testStudentId: h.studentId });
+    calls = [];
+    await expect(h.admin.whatsapp.announce({ groupId: 'g1@g.us', text: 'hello' })).rejects.toThrow(/paused/i);
+    expect(calls.filter((c) => typeof c.body.group === 'string')).toHaveLength(0);
+    // …and the refusal is logged, because somebody pressed a button and is waiting for an answer.
+    expect((await h.admin.whatsapp.log({}))[0]).toMatchObject({ kind: 'group', status: 'skipped', reason: 'paused' });
+  });
+
+  /** An id the admin has withdrawn is a 403 from the platform — an authorisation answer, and the
+   *  message should send an admin to OpenMasjidOS rather than hunting a bug here. */
+  it('reports a withdrawn group as something to fix in OpenMasjidOS', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    queueStatus = 403;
+    await expect(admin.whatsapp.announce({ groupId: 'gone@g.us', text: 'hello' })).rejects.toThrow(/no longer be approved/i);
+  });
+
+  it('lists only the groups the platform hands back, and hides the feature when there are none', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    groupList = [{ id: 'g1@g.us', label: 'Parents — Hifz' }];
+    expect((await admin.whatsapp.groups()).groups).toEqual([{ id: 'g1@g.us', label: 'Parents — Hifz' }]);
+    groupList = [];
+    expect((await admin.whatsapp.groups()).groups).toEqual([]);
+  });
+
+  it('shows the group by its label in the queue log, never the message', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    groupList = [{ id: 'g1@g.us', label: 'Parents — Hifz' }];
+    await admin.whatsapp.announce({ groupId: 'g1@g.us', text: 'Closed on Friday' });
+    const log = await admin.whatsapp.log({});
+    expect(log[0]).toMatchObject({ kind: 'group', who: 'Parents — Hifz', status: 'queued' });
+    expect(JSON.stringify(log)).not.toContain('Closed on Friday');
+  });
+
+  it('is admin-only', async () => {
+    await expect(caller('finance').whatsapp.groups()).rejects.toThrow(/access/i);
+    await expect(caller('finance').whatsapp.announce({ groupId: 'g1@g.us', text: 'x' })).rejects.toThrow(/access/i);
   });
 });
 

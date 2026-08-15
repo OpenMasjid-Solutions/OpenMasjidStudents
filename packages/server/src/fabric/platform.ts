@@ -281,6 +281,83 @@ export async function whatsappStatus(): Promise<WhatsAppStatus> {
 /** What happened when we handed one message over. `queued` is NOT `sent` — see `sendPlatformWhatsApp`. */
 export type WhatsAppQueueResult = { queued: true } | { queued: false; reason: string };
 
+/** A group the masjid's admin approved this app to post into. A label and an opaque id, nothing else —
+ *  the platform never exposes the masjid's other groups, and we never learn who is in one. */
+export interface WhatsAppGroup {
+  id: string;
+  label: string;
+}
+
+/**
+ * The groups an admin has approved for THIS app.
+ *
+ * The list is authorisation, not decoration: an id we did not get from here is refused with 403, and
+ * approval can be withdrawn at any moment. An empty list therefore means "no groups available" and the
+ * feature is hidden rather than shown broken — the platform's own guidance, and the right shape for a
+ * permission that is somebody else's to give.
+ *
+ * Fail-soft to `[]`, like every other platform call here.
+ */
+export async function whatsappGroups(): Promise<WhatsAppGroup[]> {
+  if (!fabricConfigured()) return [];
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp/groups`, {
+      headers: { 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      log.warn('whatsapp groups rejected', { status: res.status });
+      return [];
+    }
+    const j = (await res.json().catch(() => null)) as { groups?: unknown } | null;
+    const list = Array.isArray(j?.groups) ? j!.groups : [];
+    return list
+      .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object' && typeof (g as { id?: unknown }).id === 'string')
+      .map((g) => ({ id: String(g.id), label: typeof g.label === 'string' && g.label ? g.label.slice(0, 120) : String(g.id) }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Post ONE announcement into ONE approved group.
+ *
+ * A SEPARATE FUNCTION from `sendPlatformWhatsApp`, deliberately, and this is the enforcement rather
+ * than a note in a document: the platform's rule is that a group post is for genuine announcements and
+ * must never carry a family's own business, because their fees are not the other 199 members'. Every
+ * per-family path in this app calls `sendPlatformWhatsApp`, which has no parameter that could name a
+ * group — so a receipt cannot reach a group even by mistake, and the wall is in the type system.
+ *
+ * The wire shape is the same endpoint with `group` in place of `to`; sending both is a 400 by design,
+ * which is another reason these are two functions and not one with an optional field.
+ */
+export async function sendPlatformWhatsAppGroup(groupId: string, text: string): Promise<WhatsAppQueueResult> {
+  if (!fabricConfigured()) return { queued: false, reason: 'no_fabric' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      body: JSON.stringify({ group: groupId, text }),
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (res.status === 202 || res.ok) return { queued: true };
+    // 403 here is specifically "that group is not approved (any more)" — an authorisation answer, not
+    // a malformed request, and the screen should tell an admin to re-approve it rather than hunt a bug.
+    log.warn('whatsapp group post rejected', { status: res.status });
+    return { queued: false, reason: `http_${res.status}` };
+  } catch {
+    return { queued: false, reason: 'unreachable' };
+  }
+}
+
 /**
  * Hand ONE message for ONE recipient to the platform's queue.
  *

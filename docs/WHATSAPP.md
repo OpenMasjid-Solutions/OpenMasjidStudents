@@ -242,6 +242,38 @@ ring the office to get their spouse's number switched on. The wall is the usual 
 `parentFamilyIds`, checked in the query (§14) — so a guardian id from another household simply is not
 in the set and is refused; a parent still cannot name anybody they could not already see.
 
+## 5a. Groups — announcements, and the wall around them
+
+OpenMasjidOS lets an admin approve specific WhatsApp groups for an app:
+
+```
+GET  /api/fabric/whatsapp/groups   → { "groups": [{ "id": "…@g.us", "label": "Parents — Hifz" }] }
+POST /api/fabric/whatsapp          → { "group": "…@g.us", "text": "…" }   (`group` in place of `to`)
+```
+
+The list **is** the authorisation: an id we did not get from it is refused `403`, approval can be
+withdrawn at any moment, and an empty list means the feature is hidden rather than shown broken.
+
+**One rule governs the whole feature, and it is the platform's:** *a group post is for genuine
+announcements, and must never tell a family about their own fees — their business is not the other 199
+members'.* Everything about the design follows from it:
+
+- **Its own path, all the way down.** Per-family messages call `sendPlatformWhatsApp`, which has no
+  parameter that can name a group; announcements call `sendPlatformWhatsAppGroup`, which has no
+  parameter that can name a person. A receipt cannot reach a group by mistake, because there is no
+  expressible way to ask for it. That is the enforcement — the comment is only the explanation.
+- **No events, ever.** There are no per-event toggles for groups and there must not be: all seven
+  parent events are about one household. An announcement is only ever a human typing and confirming.
+- **`[school]` is the only tag.** The app offers no way to interpolate a household, a child, an amount
+  or a balance into a group message. An office that types a family's name in is a person making that
+  choice; the app never puts it there.
+- **The pause applies**, with no test-student exception — there is no household to except, and this is
+  the loudest path in the app: two hundred people in one call.
+- The queue log records the group and the outcome, never the text, like every other row.
+
+Media (a base64 poster) is part of the platform's contract and deliberately unused here: a tuition
+desk has no poster to send, and the smallest surface is the right one for the highest blast radius.
+
 ## 6. The two things an office presses
 
 **Send a test** — goes to the test student's household, which is the one household that gets through

@@ -567,8 +567,11 @@ export const whatsappLog = sqliteTable(
     id: text('id').primaryKey(),
     /** Our own event id — a parent event (`receipt`…) or a staff alert id. See whatsapp/index.ts. */
     event: text('event').notNull(),
-    recipientKind: text('recipient_kind').$type<'guardian' | 'staff'>().notNull(),
-    /** `guardians.id` or `users.id`. Not an FK: the log outlives the row, like `audit_log`'s actor. */
+    /** `group` (0.50.0) is an ANNOUNCEMENT to an admin-approved WhatsApp group, never a family's own
+     *  business — see whatsapp/index.ts for why the two paths are kept apart in the type system. */
+    recipientKind: text('recipient_kind').$type<'guardian' | 'staff' | 'group'>().notNull(),
+    /** `guardians.id`, `users.id`, or the opaque group id. Not an FK: the log outlives the row, like
+     *  `audit_log`'s actor — and a group id belongs to the platform, not to us at all. */
     recipientId: text('recipient_id').notNull(),
     /** The household this was about, when it was about one. */
     familyId: text('family_id'),

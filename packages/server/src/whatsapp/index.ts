@@ -49,7 +49,7 @@ import { rid } from '../db/ids';
 import { getCurrency, getWhatsApp } from '../settings';
 import { pausedFor, testFamilyId } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
-import { sendPlatformWhatsApp, whatsappStatus, type WhatsAppStatus } from '../fabric/platform';
+import { sendPlatformWhatsApp, sendPlatformWhatsAppGroup, whatsappGroups, whatsappStatus, type WhatsAppGroup, type WhatsAppStatus } from '../fabric/platform';
 import { toE164 } from './numbers';
 import { renderText, type WaTextKey, type WaVars } from './templates';
 import { familyBalance } from '../billing/ledger';
@@ -135,10 +135,22 @@ export function resetWhatsAppStatusCache(): void {
   statusCache = null;
 }
 
+/**
+ * The groups this app may post into, or [] when there are none (or the feature is off).
+ *
+ * Not cached: approval is the admin's to withdraw at any moment, this is only ever read by an admin
+ * settings screen, and a stale "yes you may" is the one answer worth paying a network hop to avoid.
+ */
+export async function approvedGroups(): Promise<WhatsAppGroup[]> {
+  if (!getWhatsApp().enabled || !fabricConfigured()) return [];
+  return whatsappGroups();
+}
+
 // ── The log ─────────────────────────────────────────────────────────────────
 interface LogRow {
   event: string;
-  recipientKind: 'guardian' | 'staff';
+  /** `group` is an announcement — see `announceToGroup` for why it is a path of its own. */
+  recipientKind: 'guardian' | 'staff' | 'group';
   recipientId: string;
   familyId?: string | null;
   status: 'queued' | 'failed' | 'skipped';
@@ -363,6 +375,52 @@ export async function notifyGuardian(event: string, r: WaRecipient, text: string
     return (await queueGuardian(event, r, text)) ? 'queued' : 'failed';
   } catch (e) {
     log.warn('whatsapp guardian notify failed', { event, error: (e as Error).message });
+    return 'failed';
+  }
+}
+
+// ── Groups (0.50.0) ─────────────────────────────────────────────────────────
+/**
+ * An ANNOUNCEMENT to a WhatsApp group the masjid's admin approved for this app.
+ *
+ * ONE RULE GOVERNS THIS ENTIRE FEATURE, and it comes from the platform: a group post is for genuine
+ * announcements, and must NEVER carry a family's own business. Their fees are not the other 199
+ * members'. Everything below follows from that:
+ *
+ *  • **Its own path, all the way down.** `notifyFamily` and `notifyGuardian` call
+ *    `sendPlatformWhatsApp`, which has no parameter that could name a group; this calls
+ *    `sendPlatformWhatsAppGroup`, which has no parameter that could name a person. A receipt cannot
+ *    reach a group by mistake, because there is no expressible way to ask for it.
+ *  • **No events, ever.** There are no per-event toggles for groups and there must not be: every one
+ *    of the seven parent events is about one household. A group post is only ever a human typing a
+ *    message and confirming it.
+ *  • **Nothing is interpolated but the school's own name.** The app never puts a household, a child,
+ *    an amount or a balance into a group message — there is no tag for any of them. An office that
+ *    types a family's name into the box is a person making that choice, not the app leaking it.
+ *
+ * The PAUSE applies. A group of parents is parents, and "do not message parents while I set this up"
+ * has to mean the loudest path too — this is the single highest blast radius in the app, two hundred
+ * people in one call. The test student cannot except a group (there is no household to except), so a
+ * paused install simply cannot announce, and the screen says so with the way out.
+ */
+export async function announceToGroup(groupId: string, text: string): Promise<'queued' | 'off' | 'unavailable' | 'paused' | 'failed'> {
+  try {
+    const cfg = getWhatsApp();
+    if (!cfg.enabled || !fabricConfigured()) return 'off';
+    if (cfg.paused) {
+      writeLog({ event: 'announcement', recipientKind: 'group', recipientId: groupId, status: 'skipped', reason: 'paused' });
+      return 'paused';
+    }
+    const status = await currentWhatsAppStatus();
+    if (!status.available) return 'unavailable';
+
+    const res = await sendPlatformWhatsAppGroup(groupId, text);
+    writeLog({ event: 'announcement', recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? null : res.reason });
+    // The group id, never the text — a group message is still a message (§14).
+    log.info('whatsapp announcement', { queued: res.queued });
+    return res.queued ? 'queued' : 'failed';
+  } catch (e) {
+    log.warn('whatsapp announcement failed', { error: (e as Error).message });
     return 'failed';
   }
 }

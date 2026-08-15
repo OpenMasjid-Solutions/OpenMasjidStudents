@@ -50,6 +50,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **One button asks the families with no email address for one.** It names their children, explains why the
   school needs it, and you can rewrite the wording and read exactly what each family will get before it
   goes.
+- **You can post an announcement to a WhatsApp group** your admin approved for the app in OpenMasjidOS —
+  "fees for this month are out", "the office is closed Friday". Never a family's own bill: an
+  announcement reaches everyone in the group, so there is deliberately no way to put a household, a
+  child or an amount into one.
 - **Parents can turn it off themselves**, from the portal, and back on again — for either parent on the
   account, since both of them sign in to the same household. Nobody in the office can override that.
 - **Staff can get alerts on their phone.** A declined card on a Sunday evening reaches whoever chases it,
@@ -145,6 +149,18 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   spare nobody is using is noise.
 - All four are off on both channels until an office turns them on, and each carries the card by brand
   and last four only.
+
+**Group announcements**
+
+- You only ever see the groups an admin approved for this app; the platform never shows the masjid's
+  other groups, and approval can be withdrawn at any time. No approved groups means the section simply
+  isn't there, rather than a button that fails.
+- The confirmation names the group *and* shows the message, because the right words in the wrong room
+  is as bad as the wrong words.
+- The pause covers announcements too, with no test-student exception — there is no one household to
+  except, and this is the one action in the app that reaches everybody at once.
+- `[school]` is the only thing that fills itself in. There is no tag for a family, a child, a balance
+  or an amount, and that is on purpose rather than an omission.
 
 **Elsewhere**
 

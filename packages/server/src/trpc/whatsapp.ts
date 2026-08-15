@@ -20,6 +20,8 @@ import { getWhatsApp, setWhatsApp, getWhatsAppEmailRequest, setWhatsAppEmailRequ
 import { testFamilyId } from '../settings/testStudent';
 import {
   WA_PARENT_EVENTS,
+  announceToGroup,
+  approvedGroups,
   currentWhatsAppStatus,
   familyRecipients,
   familyVars,
@@ -43,7 +45,7 @@ import {
 import { ALERT_EVENTS } from '../alerts';
 import { audit } from '../audit';
 import { sendTestToHousehold } from '../mail/notify';
-import { getCurrency } from '../settings';
+import { getCurrency, getSchoolName } from '../settings';
 import { formatDate } from '../settings/dates';
 import { formatMoney } from '../db/money';
 import { fabricConfigured } from '../config';
@@ -455,13 +457,63 @@ export const whatsappRouter = router({
     return { emailed, whatsapp };
   }),
 
+  // ── Group announcements (0.50.0) ──────────────────────────────────────────
+  /**
+   * The groups an admin approved for this app, and whether an announcement can go out right now.
+   *
+   * An empty list HIDES the feature rather than showing it broken (the platform's own guidance): the
+   * approval is somebody else's to give and to withdraw, so "no groups" is a normal state and not an
+   * error. Read live on every call — a stale "yes you may" is the one answer worth a network hop.
+   */
+  groups: adminProcedure.query(async () => {
+    const cfg = getWhatsApp();
+    const status = await currentWhatsAppStatus();
+    return {
+      groups: await approvedGroups(),
+      /** The pause applies to announcements too — a group of parents is parents, and this is the
+       *  loudest path in the app. Reported separately so the screen can offer the way out. */
+      paused: cfg.paused,
+      ready: cfg.enabled && status.available,
+      maxLength: WA_TEXT_MAX,
+    };
+  }),
+
+  /**
+   * Post one announcement to one approved group.
+   *
+   * `[school]` is the ONLY tag, and that is the enforcement of the platform's rule rather than a note
+   * about it: a group post must never carry a family's own business, so the app offers no way to
+   * interpolate a household, a child, an amount or a balance. An office that types a family's name in
+   * is a person making that choice; the app never puts it there.
+   */
+  announce: adminProcedure
+    .input(z.object({ groupId: z.string().trim().min(1).max(200), text: z.string().trim().min(1).max(WA_TEXT_MAX) }))
+    .mutation(async ({ ctx, input }) => {
+      const text = input.text.replaceAll('[school]', getSchoolName());
+      const outcome = await announceToGroup(input.groupId, text);
+      // The group and the outcome — never the announcement itself (§14: no message bodies, anywhere).
+      audit(auditActor(ctx), 'whatsapp.announce', { entity: 'settings', detail: { groupId: input.groupId, outcome } });
+      if (outcome !== 'queued') {
+        throw new TRPCError({
+          code: outcome === 'paused' ? 'PRECONDITION_FAILED' : 'BAD_GATEWAY',
+          message:
+            outcome === 'paused'
+              ? 'Parent messages are paused, so nothing was sent. Turn the pause off above first — an announcement reaches everybody in the group at once.'
+              : outcome === 'off'
+                ? 'WhatsApp is switched off for this madrasah.'
+                : 'That didn’t reach the queue. The group may no longer be approved in OpenMasjidOS — check there, then try again.',
+        });
+      }
+      return { ok: true as const };
+    }),
+
   /**
    * What we handed to the queue, most recent first — never the message itself (§14).
    *
    * Names are resolved at READ time from the guardian and staff rows this points at, so the log adds
    * no personal data of its own and a corrected name is corrected here too.
    */
-  log: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(500).optional() })).query(({ input }) => {
+  log: adminProcedure.input(z.object({ limit: z.number().int().min(1).max(500).optional() })).query(async ({ input }) => {
     const rows = db.select().from(whatsappLog).orderBy(desc(whatsappLog.createdAt)).limit(input.limit ?? 100).all();
     const guardianIds = rows.filter((r) => r.recipientKind === 'guardian').map((r) => r.recipientId);
     const staffIds = rows.filter((r) => r.recipientKind === 'staff').map((r) => r.recipientId);
@@ -472,6 +524,12 @@ export const whatsappRouter = router({
         names.set(u.id, u.displayName?.trim() || u.username);
       }
     }
+    // Group rows point at an opaque platform id, so the label has to come from the platform too —
+    // and only when there is actually a group row to name, so the common case pays nothing. A group
+    // whose approval has since been withdrawn falls through to the id, which is still true history.
+    if (rows.some((r) => r.recipientKind === 'group')) {
+      for (const g of await approvedGroups()) names.set(g.id, g.label);
+    }
     const famIds = [...new Set(rows.map((r) => r.familyId).filter((v): v is string => !!v))];
     const labels = new Map<string, string>();
     if (famIds.length) for (const f of db.select({ id: families.id, name: families.name }).from(families).where(inArray(families.id, famIds)).all()) labels.set(f.id, f.name);
@@ -480,8 +538,9 @@ export const whatsappRouter = router({
       id: r.id,
       event: r.event,
       kind: r.recipientKind,
-      /** '(removed)' rather than a blank when the person is gone — the row is still true history. */
-      who: names.get(r.recipientId) ?? '(removed)',
+      /** '(removed)' rather than a blank when the person is gone — the row is still true history. A
+       *  group that is no longer approved shows its id, which is at least unambiguous. */
+      who: names.get(r.recipientId) ?? (r.recipientKind === 'group' ? r.recipientId.replace(/@g\.us$/, '') : '(removed)'),
       household: r.familyId ? (labels.get(r.familyId) ?? null) : null,
       status: r.status,
       reason: r.reason,

@@ -282,6 +282,7 @@ export function WhatsAppSettings() {
           ))}
 
           <MessageWording />
+          <Groups />
           <EmailRequest />
           <QueueLog />
         </>
@@ -393,6 +394,88 @@ function MessageWording() {
           <p className="hint">{t('settings.waWordingClearHint')}</p>
         </>
       )}
+    </>
+  );
+}
+
+/**
+ * Announcements to a WhatsApp group (0.50.0).
+ *
+ * A DIFFERENT KIND OF MESSAGE from everything else on this screen, and the copy has to make that
+ * obvious or somebody will use it wrongly once and cannot take it back. Every other message here goes
+ * to one household about their own business; this one goes to everybody in a group at once, which
+ * means a family's fees must never appear in it — their business is not the other 199 members'.
+ *
+ * The app enforces the half it can: there are no tags but `[school]`, so nothing about a household can
+ * be interpolated in. The other half is a person, so the section says it plainly and the confirmation
+ * shows the exact text and names the group before it goes.
+ *
+ * Renders nothing when the admin has approved no groups. That is a normal state — approval is theirs
+ * to give and withdraw in OpenMasjidOS — and a feature with nowhere to send is better hidden than
+ * shown broken.
+ */
+function Groups() {
+  const { t } = useTranslation();
+  const utils = trpc.useUtils();
+  const q = trpc.whatsapp.groups.useQuery();
+  const announce = trpc.whatsapp.announce.useMutation();
+  const [groupId, setGroupId] = useState('');
+  const [text, setText] = useState('');
+  const [note, setNote] = useState<string | null>(null);
+
+  if (!q.data || q.data.groups.length === 0) return null;
+  const d = q.data;
+  const chosen = groupId || d.groups[0].id;
+  const chosenLabel = d.groups.find((g) => g.id === chosen)?.label ?? '';
+
+  async function send() {
+    setNote(null);
+    // The dialog shows the message AND the group, because both are the mistake worth preventing:
+    // the right words to the wrong room is as bad as the wrong words.
+    if (!window.confirm(t('settings.waGroupConfirm', { group: chosenLabel, text }))) return;
+    try {
+      await announce.mutateAsync({ groupId: chosen, text: text.trim() });
+      setText('');
+      setNote(t('settings.waGroupQueued', { group: chosenLabel }));
+      await utils.whatsapp.log.invalidate();
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
+  return (
+    <>
+      <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.waGroups')}</h3>
+      <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>{t('settings.waGroupsHint')}</p>
+      {/* The rule, stated where the box is, not in a document nobody opens. */}
+      <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{t('settings.waGroupsRule')}</div>
+
+      <div className="inline-form glass-inset" style={{ marginBlockStart: 0, flexWrap: 'wrap' }}>
+        <div className="field" style={{ flex: '1 1 14rem' }}>
+          <label className="label" htmlFor="wa-group">{t('settings.waGroupWhich')}</label>
+          <select id="wa-group" className="input glass-inset" value={chosen} onChange={(e) => setGroupId(e.target.value)}>
+            {d.groups.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+          </select>
+        </div>
+        <div className="field" style={{ flexBasis: '100%' }}>
+          <label className="label" htmlFor="wa-announce">{t('settings.waGroupText')}</label>
+          <textarea
+            id="wa-announce"
+            className="textarea glass-inset"
+            style={{ minHeight: '5rem', fontFamily: 'inherit', fontSize: '0.9rem' }}
+            value={text}
+            maxLength={d.maxLength}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={t('settings.waGroupPlaceholder')}
+          />
+          <span className="hint">{t('settings.waGroupTags')}</span>
+        </div>
+        <button type="button" className="btn btn--primary" onClick={() => void send()} disabled={announce.isPending || !text.trim() || d.paused || !d.ready}>
+          {announce.isPending ? t('settings.waGroupSending') : t('settings.waGroupSend')}
+        </button>
+        {d.paused && <span className="hint">{t('settings.waGroupPaused')}</span>}
+      </div>
+      {note && <div className="notice" style={{ marginBlockEnd: '0.6rem' }}>{note}</div>}
     </>
   );
 }
