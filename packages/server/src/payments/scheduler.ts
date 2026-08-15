@@ -15,6 +15,7 @@ import { refreshSiteInfo } from '../fabric/platform';
 import { writeSnapshot } from '../db/snapshot';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { runPastDue } from '../billing/pastDue';
+import { pruneWhatsappLog, refreshWhatsAppStatus } from '../whatsapp';
 
 const log = makeLog('scheduler');
 let started = false;
@@ -97,6 +98,23 @@ export function startSchedulers(): void {
   // minted with a stale base is a dead link in someone's inbox. Cheap, fail-soft, no PII.
   new Cron('*/15 * * * *', async () => {
     await refreshSiteInfo();
+  });
+  // Every 15 minutes — re-ask whether WhatsApp can send (0.50.0). The gateway is a linked PHONE: it
+  // goes offline when the handset does, it can be unlinked, and the number can be restricted, none of
+  // which produces an event we would hear about. Keeping the answer warm means a send never pays for a
+  // status hop and the settings screen tells the truth without an admin pressing anything.
+  new Cron('*/15 * * * *', async () => {
+    await refreshWhatsAppStatus();
+  });
+  // Weekly — trim the WhatsApp queue log. It is an operational trail, not a record anybody bills from
+  // (and it holds no message bodies), so an install running for years should not carry every line.
+  new Cron('0 3 * * 0', () => {
+    try {
+      const removed = pruneWhatsappLog();
+      if (removed) log.info('whatsapp log pruned', { removed });
+    } catch (e) {
+      log.warn('whatsapp log prune failed', { error: (e as Error).message });
+    }
   });
   log.info('schedulers started');
 }

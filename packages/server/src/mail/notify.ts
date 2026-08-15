@@ -5,12 +5,27 @@
  * right template + the transport, so routers stay thin. Every function is BEST-EFFORT and no-ops when
  * SMTP is unconfigured (returns false / 0) — callers degrade gracefully. Nothing here throws or logs
  * PII. The parent-portal link uses OPENMASJID_PUBLIC_URL when set (empty → no button, still valid).
+ *
+ * SINCE 0.50.0 THIS IS THE FAN-OUT FOR BOTH PARENT CHANNELS, not only email — the three parent-facing
+ * messages also go to WhatsApp from here (whatsapp/index.ts owns every gate on that side and never
+ * throws). The file is still called `mail` because that is what nine call sites import, and moving it
+ * would be churn rather than clarity; what matters is that there is exactly ONE place a receipt is
+ * sent from. That was already the point: receipts are triggered in five different places, so a check
+ * per caller is a check somebody forgets — and a SECOND channel per caller is a channel somebody
+ * forgets entirely.
+ *
+ * The two channels gate INDEPENDENTLY. The parent-email switches and the mail pause say nothing about
+ * WhatsApp, and the WhatsApp toggles and its own pause say nothing about email; an office that turned
+ * receipts off by email did not thereby ask for them by WhatsApp, or the reverse. Nothing
+ * auth-critical (invites, resets, verification) goes to WhatsApp at all — see whatsapp/index.ts.
  */
 import { getSchoolName, getSchoolLogo, getParentEmails, getParentMailPaused, getPastDue, getSchoolContact } from '../settings';
 import { guardianEmailsForFamily } from './recipients';
 import { inviteEmail, receiptEmail, autopayFailureEmail, pastDueEmail, resetEmail, testEmail, alertEmail, setEmailLogoUrl, setEmailContactLine } from './templates';
 import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
+import { notifyFamily } from '../whatsapp';
+import { waReceipt, waAutopayFailed, waPastDue } from '../whatsapp/templates';
 import { fabricConfigured } from '../config';
 
 function portalHome(): string {
@@ -117,6 +132,9 @@ export async function sendReset(email: string, url: string, audience: 'staff' | 
  * over the Fabric, and the office's own cash entry). A check per caller is a check somebody forgets.
  */
 export async function sendReceipt(familyId: string, amountFormatted: string): Promise<number> {
+  // WhatsApp first and unawaited: its gates are its own (0.50.0), so it must not sit behind the email
+  // switches — an office that turned email receipts off has said nothing about the other channel.
+  void notifyFamily('receipt', familyId, (r) => waReceipt(amountFormatted, { hasEmail: r.hasEmail }));
   if (getParentMailPaused() || !mailAvailable() || !getParentEmails().receipt) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
@@ -147,6 +165,7 @@ export async function sendTestEmail(to: string): Promise<boolean> {
 /** Email an autopay-failure notice to a family's guardians (§13.3). `final` = the third strike (autopay
  *  now off). Returns how many were sent. */
 export async function sendAutopayFailure(familyId: string, final: boolean): Promise<number> {
+  void notifyFamily('autopay-failed', familyId, (r) => waAutopayFailed({ final, portalUrl: portalHome(), hasEmail: r.hasEmail }));
   if (getParentMailPaused() || !mailAvailable() || !getParentEmails().autopayFailure) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
@@ -164,18 +183,26 @@ export async function sendAutopayFailure(familyId: string, final: boolean): Prom
  * grace period and the cadence, which are the other half of the same decision, and it defaults OFF
  * because this is a message the app never used to send (§ settings/getPastDue).
  *
- * Returning a COUNT rather than a boolean is what lets the caller tell "we reminded them" from "there is
+ * Returning COUNTS rather than a boolean is what lets the caller tell "we reminded them" from "there is
  * nobody to remind": a household with no address on file must not start a quiet cooldown (billing/pastDue.ts).
+ *
+ * Counted PER CHANNEL since 0.50.0, and awaited rather than fired off, unlike the other two senders here.
+ * The caller needs to know whether this household was actually reached before it starts a week-long
+ * cooldown on them — and a WhatsApp that was queued is a household that was reached, even when there is
+ * no email address on file. Getting that wrong in either direction is a real fault: a cooldown on a
+ * family nobody wrote to means they wait another week for nothing, and no cooldown on one we did write
+ * to means we chase them again tomorrow.
  */
-export async function sendPastDue(familyId: string, amountFormatted: string, sinceFormatted: string): Promise<number> {
-  if (getParentMailPaused() || !mailAvailable() || !getPastDue().parentEmails) return 0;
+export async function sendPastDue(familyId: string, amountFormatted: string, sinceFormatted: string): Promise<{ emails: number; whatsapp: number }> {
+  const wa = await notifyFamily('past-due', familyId, (r) => waPastDue(amountFormatted, sinceFormatted, { portalUrl: portalHome(), hasEmail: r.hasEmail }));
+  const out = { emails: 0, whatsapp: wa.queued };
+  if (getParentMailPaused() || !mailAvailable() || !getPastDue().parentEmails) return out;
   const emails = guardianEmailsForFamily(familyId);
-  if (!emails.length) return 0;
+  if (!emails.length) return out;
   refreshEmailLogo();
   const m = pastDueEmail(getSchoolName(), amountFormatted, sinceFormatted, portalHome());
-  let n = 0;
-  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
-  return n;
+  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) out.emails++;
+  return out;
 }
 
 /**

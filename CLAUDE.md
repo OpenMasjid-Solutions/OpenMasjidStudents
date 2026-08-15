@@ -134,7 +134,7 @@ portal, the kiosk, or the donation site."**
 | Repo | Role in this feature |
 | --- | --- |
 | **`OpenMasjidStudents`** (this repo) | The app: server, all three role UIs, database, direct Stripe payments (portal + autopay + refunds), the **provider** side of the `students/billing` Fabric capability. |
-| **`OpenMasjidOS`** | The platform. Fabric core APIs, per-app secret, app-to-app broker, Cloudflare tunnel uplink, HTTPS serving for Stripe apps, transactional email, admin alerts. Work order: `docs/FABRIC_APP_LINK_AND_TUNNEL.md`. |
+| **`OpenMasjidOS`** | The platform. Fabric core APIs, per-app secret, app-to-app broker, Cloudflare tunnel uplink, HTTPS serving for Stripe apps, transactional email, admin alerts, and (0.50.0) the **WhatsApp gateway + the one paced queue every app shares**. Work orders: `docs/FABRIC_APP_LINK_AND_TUNNEL.md`, `docs/WHATSAPP.md`. |
 | **`OpenMasjidAPPS`** | The catalog. This app ships as its own repo + manifest; new manifest keys (`fabric:`, `tunnel:`, `alerts:`, `email:`, `domain:`) must be validated there too. |
 | **`OpenMasjidDonations`** | **Consumer** of `students/billing`: its campaign system gains a **`tuition` campaign type** that is *fully managed by this container* — label from `info`, flow is **Student ID** → confirm the name → balance → pay. Brief: `docs/STUDENTS_INTEGRATION.md` there. |
 | **`OpenMasjidKiosk`** | **Consumer** of `students/billing`: same **`tuition` campaign type** as a kiosk tile (Stripe Reader M2), same Student ID flow. Brief: `docs/STUDENTS_INTEGRATION.md` there. |
@@ -271,7 +271,16 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   card-declined notices, past-due reminders; invites and resets always send), and **which addresses at the
   masjid** get told when something needs a person. A recipient is an address, not an account. See §9's alert
   rule for why this does not go through the platform's alert channel alone.
-- **A master parent-mail pause**, for an install being set up or a mistake about to become 200 emails.
+- **WhatsApp (0.50.0, `whatsapp: true`)** — the same three parent messages and the same staff alerts, on the
+  channel families actually read, through the masjid's own self-hosted OpenWA gateway. **The platform owns
+  the connection AND the single paced queue every app shares**, which is the entire defence for a number
+  WhatsApp does not officially permit; this app never goes near a gateway and never designs for volume.
+  Off by default, **paused by default**, every event off, with a **test student** whose household gets
+  through the pause so a real message can be tried on one family. Parents opt out from their own portal;
+  staff opt IN with a number and the alerts they want. One outreach button asks the households with no
+  email address for one. Nothing auth-critical ever goes this way. Full doctrine: `docs/WHATSAPP.md`.
+- **A master parent-mail pause**, for an install being set up or a mistake about to become 200 emails —
+  and a second, independent one for WhatsApp, which starts ON (§9).
 - **Installable on a phone** (0.48.0): a served web manifest carrying the masjid's own name and logo, an
   `apple-touch-icon` route for iOS, a deliberately near-empty service worker, and an install pop-up on every
   signed-in surface.
@@ -331,7 +340,10 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | --- | :-: | :-: | :-: |
 | Settings: school name, currency, logo, colour, date format, contact, sheet wording | ✅ | ❌ | ❌ |
 | Settings: Stripe account, email alerts, parent emails, past-due policy, self-registration | ✅ | ❌ | ❌ |
+| Settings: WhatsApp (on/off, pause, events, country codes, test student, outreach, queue log) | ✅ | ❌ | ❌ |
 | Staff accounts (create, role, disable, reset password, school limits) | ✅ | ❌ | ❌ |
+| Staff WhatsApp number + which alerts they get on it | ✅ | ❌ | ❌ |
+| **Opt out of WhatsApp** (and back in) | ❌ | ❌ | ✅ own number only |
 | Schools, school years, terms, courses, classes, rollover — write | ✅ | ❌ | ❌ |
 | Schools / years / courses / classes — read | ✅ | ✅ | ❌ |
 | Students / households / guardians / emergency contacts — write | ✅ | ❌ | ❌ |
@@ -387,11 +399,12 @@ wall, stop and ask.
    └───────────────▲──────────────────────────────────┬───────────────────────┘
                    │ core → app (brokered calls from   │ app → core: SSO check, notify,
                    │ Donations / Kiosk, authenticated  │ alert, email, site info,
-                   │ by THIS app's own APP_SECRET)     │ stripe keys, appearance
+                   │ by THIS app's own APP_SECRET)     │ stripe keys, appearance, WhatsApp
    ┌───────────────┴──────────────────────────────────▼───────────────────────┐
    │                          OpenMasjidOS core                                 │
    │  /api/auth/session  /api/fabric/notify  /api/fabric/alert                   │
    │  /api/fabric/email  /api/fabric/site    /api/fabric/stripe                  │
+   │  /api/fabric/whatsapp  ← the masjid's own OpenWA gateway + ONE paced queue   │
    │  /api/fabric/app/students/billing/*  ← the broker (OS work order)           │
    │  Cloudflare tunnel: exposes app paths ONLY; /api/fabric/* and the app's     │
    │  /fabric/* prefix are NEVER reachable through the tunnel                    │
@@ -477,6 +490,7 @@ OpenMasjidStudents/
 │   │       ├── schools/ structure/       # school scope resolution · year rollover
 │   │       ├── settings/                 # settings store · dates (the one date edge)
 │   │       ├── alerts/ mail/ audit/      # who hears about it · templates + senders · append-only trail
+│   │       ├── whatsapp/                 # index.ts (every gate) · numbers.ts (E.164) · templates.ts
 │   │       ├── security/                 # origin.ts (§12.4) · rateLimit.ts
 │   │       ├── auth/                     # passwords · sessions · invites · usernames
 │   │       └── http/                     # basePath · manifest (the PWA manifest builder)
@@ -491,6 +505,7 @@ OpenMasjidStudents/
 └── docs/
     ├── FABRIC_BILLING_CONTRACT.md       # §11 extracted verbatim (the cross-repo contract)
     ├── PAYMENTS.md                      # §13 flows, the no-webhook doctrine, the autopay ladder
+    ├── WHATSAPP.md                      # 0.50.0 — every gate, what never travels this way, numbers
     ├── DATA_MODEL.md                    # schema decisions, incl. the §12.4 reconciliation
     └── audit/                           # security audits: findings, remediation, what is still open
 ```
@@ -504,7 +519,7 @@ The tables, as they actually exist: `settings`, `users`, `sessions`, `invites`, 
 `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts`, `fee_plans`, `student_fees`,
 `invoices`, `invoice_items`, `charge_items`, `charges`, `payments`, `payment_allocations`, `carry_ins`,
 `past_due_reminders`, `payment_methods`, `autopay_enrollments`, `autopay_runs`, `alert_recipients`,
-`audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
+`whatsapp_log`, `audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
 printed on statements). That list is the whole schema: `stripe_events` was dropped in 0.48.0 (migration
 0037) because it deduped webhook deliveries and there is no webhook (§13.4) — a money schema with a table
 nobody writes is an invitation to wire the next thing to it. The DB file holds minors' PII and every
@@ -543,8 +558,29 @@ Non-negotiable rules:
   collation. So `Office` and `office` were both accepted and only one of them could ever be signed into. One
   helper now answers both questions; `findUserByUsername` tries an exact match first so an install that
   already has such a pair still works.
-- **Staff carry no phone number.** The app never contacts staff by phone, so `users.phone` was dropped; phone
-  numbers exist only on guardians and emergency contacts, where there is a reason to ring them.
+- **Staff carry a phone number again — because there is now a reason to (0.50.0).** `users.phone` was dropped
+  once, and the rule was right for the reason it gave: the app never contacted staff by phone, so a number
+  would have been personal data collected for no purpose. WhatsApp is that purpose — a declined card at nine
+  on a Sunday evening reaches a treasurer's phone and does not reach their inbox. So the column is back
+  **with** `phone_country` and `wa_events`, entirely opt-in per account, and clearing the number is the off
+  switch. Minimisation is satisfied by the purpose, not by the absence; a number with no purpose is what the
+  old rule forbade and still is.
+- **WhatsApp gates in ONE place, and three of its defaults are the feature** (0.50.0, `whatsapp/index.ts`).
+  `enabled` off, `paused` **ON** and every event off, on every install. The pause starting on is the one
+  asymmetry with email, and it is deliberate: parent email is a channel every install has been using for
+  releases, so pausing it by default would break working installs, whereas WhatsApp has never sent anything
+  and the safe starting state is *configured but silent*. The pause **narrows** rather than stops — the
+  **test student's household** still hears everything, which is the only way to try a real message without
+  letting it reach a real roster; it is resolved from the STUDENT on every send (a moved child takes it with
+  them, a withdrawn one fails closed) and it overrides the pause and nothing else. `guardians.wa_opt_out` is
+  the parent's own answer, set from their portal, stored on the PERSON rather than the household because it
+  is a decision about a phone — and **nothing overrides it**, not the pause exception and not an office
+  broadcast. `whatsapp_log` records event / recipient id / time / outcome and **never a message body**: a
+  tuition message names a child and their fees, and a log is the copy that outlives the conversation.
+  Nothing auth-critical (invite, reset, verification) is ever sent this way — a number can be banned
+  overnight, and that day must not be the day nobody can sign in. `whatsapp/numbers.ts` is the one place a
+  stored number becomes E.164; it refuses rather than guesses, because a number nobody can read is a fixable
+  problem and a number mangled into somebody else's is not. See `docs/WHATSAPP.md`.
 - **Allocation is DERIVED, not incremental.** An invoice's status comes from `payment_allocations`, so money
   paid before a bill existed has to be attached once that bill appears — `ledger.reallocateStudent` recomputes
   a student's whole mapping oldest-due-first whenever an invoice or charge changes. Payments themselves are
@@ -631,6 +667,7 @@ https: true              # REQUIRED: the parent portal embeds Stripe Elements (s
 tunnel: true             # public HTTPS uplink for parents + finance
 domain: true             # learn our own public address at runtime (GET /api/fabric/site)
 email: true              # transactional mail through the masjid's provider (POST /api/fabric/email)
+whatsapp: true           # 0.50.0 — send through the masjid's own OpenWA gateway (§9, docs/WHATSAPP.md)
 alerts:                  # declaring an id IS the authorization; the admin routes each one
   - id: autopay-disabled …
   - id: lookup-lockout …
@@ -931,6 +968,10 @@ invariant here is load-bearing:
   stolen DB row cannot be replayed as a cookie or a link.
 - **Card data never touches the server** (Elements only); the Stripe secret key lives in memory only; nothing
   else imports the SDK.
+- **WhatsApp is the weakest channel here and is treated as one** (0.50.0). Nothing auth-critical is sent on
+  it — no invite, no reset, no verification link, no one-time code — because the number can be banned
+  overnight and that day must not be the day nobody can sign in. No Student ID, no card details, and **no
+  message body is ever logged or stored**, on any path including failures. Both are tested, not assumed.
 - **No PII in logs** — ids, codes and counts only; never names+amounts together; Fabric bodies never logged.
 - Role checks server-side on every procedure; **parent household-scoping enforced in queries**.
 - **Printed documents are minors' records**: served only through the authed route that re-checks the role ×
@@ -998,7 +1039,8 @@ secrets). Additions:
   `alerts/index.ts` for who hears about an event. One `schools/index.ts` for school scope. One
   `settings/dates.ts` for every date edge. One `auth/usernames.ts` for how a username matches. One
   `payments/methods.ts` for what a saved method is and what order they are tried in. One `payments/stripe.ts`
-  that imports the SDK. Adding a second place is the bug.
+  that imports the SDK. One `whatsapp/index.ts` for whether a WhatsApp message goes out and to whom, and one
+  `whatsapp/numbers.ts` for what a number is on the wire. Adding a second place is the bug.
 - Unit tests for the ledger: exact pay, partial, overpay→credit, multi-invoice, replayed idempotency key,
   reversal, refund, and one per channel.
 - `/fabric/*`, the printable documents and the PWA files are plain Fastify routes registered before the SPA
@@ -1188,7 +1230,8 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | a balance being wrong | `billing/ledger.ts` (`reallocateStudent` first) |
   | a month showing the wrong state | `billing/yearCells.ts`, `billing/period.ts` |
   | a card, a refund or a saved method | `payments/*` — and only `payments/stripe.ts` imports the SDK |
-  | who gets told | `alerts/index.ts`, then `mail/notify.ts` |
+  | who gets told | `alerts/index.ts`, then `mail/notify.ts` (which fans out BOTH parent channels) |
+  | a WhatsApp message — whether it goes, to whom, or what it says | `whatsapp/index.ts`, `whatsapp/numbers.ts`, `whatsapp/templates.ts` |
   | a printed sheet | `billing/statements.ts`, `billing/invoiceDoc.ts`, `people/onboardingSheet.ts`, `people/idSheet.ts` |
   | a date | `settings/dates.ts` |
   | the calendar or the roster tree | `structure/*`, `schools/index.ts` |

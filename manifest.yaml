@@ -4,7 +4,7 @@ id: students
 name: OpenMasjid Students
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
-version: 0.50.0-dev.2
+version: 0.50.0-dev.3
 author: OpenMasjid-Solutions
 license: AGPL-3.0-only
 icon: icon.svg
@@ -42,6 +42,16 @@ domain: true
 # makes our own SMTP settings OPTIONAL rather than the only way to reach a parent; the OS owns the
 # credentials and the From address. Local SMTP is still tried first so a standalone install works.
 email: true
+# WhatsApp through the masjid's own OpenWA gateway (GET/POST /api/fabric/whatsapp). Declaring this is
+# what makes the platform issue the secret for it and allow the calls; without it every send is 403.
+#
+# The platform owns the connection AND the single paced queue every app shares — randomised gaps,
+# per-recipient cooldowns, rolling caps, quiet hours. That queue is the whole defence for a number
+# WhatsApp does not officially permit and can restrict at any time, so this app never goes near a
+# gateway and never designs for volume. Parent messages are OFF and PAUSED until an admin says
+# otherwise (Settings → WhatsApp), and nothing auth-critical — invites, resets, verification links —
+# is ever sent this way. Those stay on email, which has a real provider behind it.
+whatsapp: true
 # Admin alerts (POST /api/fabric/alert). Declaring an id here IS the authorization, and the admin
 # picks email / webhook / off per alert in OpenMasjidOS → Settings → Alerts. These are the events
 # where a dropped webhook actually costs money or hides an attack — routine payments stay on

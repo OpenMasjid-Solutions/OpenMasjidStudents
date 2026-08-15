@@ -184,6 +184,98 @@ export async function sendPlatformEmail(to: string, subject: string, text: strin
   }
 }
 
+// ── WhatsApp via the platform (manifest `whatsapp: true`) ────────────────────
+/**
+ * WhatsApp is the OS's connection, never ours (0.50.0).
+ *
+ * A masjid installs OpenWA — a SELF-HOSTED, reverse-engineered WhatsApp client — from the App Store
+ * and links a phone to it. Nothing goes through a third-party sending service, and nothing here holds
+ * a session. This app asks the platform to send; the platform owns the socket.
+ *
+ * WHY THAT SEPARATION IS LOAD-BEARING AND NOT PLUMBING. WhatsApp does not permit this, and a linked
+ * number can be restricted or banned — there is no way to make that risk zero. The platform runs ONE
+ * paced queue shared by every installed app: randomised gaps, typing indicators, per-recipient
+ * cooldowns, rolling hourly and daily caps, quiet hours. That single queue is the entire defence for
+ * the masjid's number, and it only works because no app goes around it. So: no direct gateway calls
+ * from here, ever, and no design that assumes a send happens now or that hundreds a day are available
+ * — the caps belong to the NUMBER, and every other installed app is drawing on the same allowance.
+ */
+export type WhatsAppReason = 'ready' | 'not-configured' | 'not-linked' | 'unreachable';
+
+export interface WhatsAppStatus {
+  available: boolean;
+  /** Exactly one of four words, each needing different copy from us — see whatsapp/index.ts. */
+  reason: WhatsAppReason;
+}
+
+/** Can this masjid send WhatsApp at all? Fail-soft: anything unexpected reads as `unreachable`, which
+ *  is the state that tells an admin to go and look rather than implying they never set it up. */
+export async function whatsappStatus(): Promise<WhatsAppStatus> {
+  if (!fabricConfigured()) return { available: false, reason: 'not-configured' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp`, {
+      headers: { 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    // 403 = we don't hold the `whatsapp` capability (the installed catalog entry predates it); on an
+    // older platform the route is a 404. Neither is "the masjid has no gateway", but both mean the
+    // same thing to an admin standing in front of the screen: it cannot send, go and check.
+    if (!res.ok) {
+      log.warn('whatsapp status rejected', { status: res.status });
+      return { available: false, reason: res.status === 403 || res.status === 404 ? 'not-configured' : 'unreachable' };
+    }
+    const j = (await res.json().catch(() => null)) as { available?: unknown; reason?: unknown } | null;
+    const reason = typeof j?.reason === 'string' && ['ready', 'not-configured', 'not-linked', 'unreachable'].includes(j.reason) ? (j.reason as WhatsAppReason) : 'unreachable';
+    return { available: j?.available === true, reason };
+  } catch {
+    return { available: false, reason: 'unreachable' };
+  }
+}
+
+/** What happened when we handed one message over. `queued` is NOT `sent` — see `sendPlatformWhatsApp`. */
+export type WhatsAppQueueResult = { queued: true } | { queued: false; reason: string };
+
+/**
+ * Hand ONE message for ONE recipient to the platform's queue.
+ *
+ * `to` must already be E.164 (`+15550101234`) — whatsapp/numbers.ts is the one place that gets a
+ * stored number into that shape. One recipient per call is the API's design, not a limitation to work
+ * around: the queue paces a loop correctly, and "one parent at a time" is the shape this whole feature
+ * is supposed to have.
+ *
+ * A 202 means QUEUED. Delivery is seconds to minutes away, and hours if it lands in the masjid's quiet
+ * hours. Nothing may block on this, and no screen may ever say "sent" on the strength of it.
+ *
+ * The BODY IS NEVER LOGGED, on any path including the failures — it routinely carries a child's name
+ * and a family's fees (§14). Status codes and counts only.
+ */
+export async function sendPlatformWhatsApp(to: string, text: string): Promise<WhatsAppQueueResult> {
+  if (!fabricConfigured()) return { queued: false, reason: 'no_fabric' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      body: JSON.stringify({ to, text }),
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (res.status === 202 || res.ok) return { queued: true };
+    // 400 bad number / empty text / no gateway / queue full · 403 we didn't declare `whatsapp: true`
+    // · 429 slow down. All four are the platform protecting the masjid's number; none is retried here.
+    log.warn('whatsapp queue rejected', { status: res.status });
+    return { queued: false, reason: `http_${res.status}` };
+  } catch {
+    return { queued: false, reason: 'unreachable' };
+  }
+}
+
 // ── Admin alerts (manifest `alerts:`) ────────────────────────────────────────
 /** The alert ids we declare in manifest.yaml. Declaring one IS the authorization — the platform
  *  refuses any id an app didn't declare — and the admin picks email/webhook/off per alert. */

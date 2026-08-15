@@ -57,7 +57,14 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const [mailNote, setMailNote] = useState<Record<string, string>>({});
   /** The guardian being edited. Editing matters beyond tidiness: a reset can only be emailed to a
    *  guardian who HAS an email, and without this there was no way to add one. */
-  const [guardianEdit, setGuardianEdit] = useState<{ id: string; name: string; phone: string; email: string; relation: string } | null>(null);
+  const [guardianEdit, setGuardianEdit] = useState<{ id: string; name: string; phone: string; email: string; relation: string; phoneCountry: string } | null>(null);
+  // Which country a guardian's number is in (0.50.0) — only offered when the masjid has actually
+  // switched WhatsApp on and listed more than one, since it means nothing otherwise.
+  //
+  // Not asked for at all in finance's view: the settings are admin-only (§5), so finance would get a
+  // 403 on every family they opened — and they cannot edit a guardian here anyway.
+  const waCfg = trpc.whatsapp.get.useQuery(undefined, { enabled: !readOnly });
+  const countries = waCfg.data?.enabled ? waCfg.data.countries : [];
   /** Why a delete was refused — shown as text, since it is the useful half of the interaction. */
   const [deleteErr, setDeleteErr] = useState('');
   /** The same, for the guardian and contact rows below. */
@@ -111,7 +118,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const billFrom = trpc.billing.billFromMonths.useQuery();
   const [billedMsg, setBilledMsg] = useState<string | null>(null);
   const [showGuardian, setShowGuardian] = useState(false);
-  const [grd, setGrd] = useState({ name: '', phone: '', email: '', relation: '' });
+  const [grd, setGrd] = useState({ name: '', phone: '', email: '', relation: '', phoneCountry: '' });
   const [showEC, setShowEC] = useState(false);
   const [ec, setEc] = useState({ name: '', phone: '', relation: '' });
 
@@ -134,8 +141,8 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   async function submitGuardian(e: FormEvent) {
     e.preventDefault();
     if (!grd.name.trim()) return;
-    await addGuardian.mutateAsync({ familyId, name: grd.name.trim(), phone: grd.phone || undefined, email: grd.email || undefined, relation: grd.relation || undefined });
-    setGrd({ name: '', phone: '', email: '', relation: '' });
+    await addGuardian.mutateAsync({ familyId, name: grd.name.trim(), phone: grd.phone || undefined, email: grd.email || undefined, relation: grd.relation || undefined, phoneCountry: grd.phoneCountry || undefined });
+    setGrd({ name: '', phone: '', email: '', relation: '', phoneCountry: '' });
     setShowGuardian(false);
     await refresh();
   }
@@ -223,6 +230,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
       // household — a guardian can be on more than one.
       familyId,
       relation: guardianEdit.relation,
+      phoneCountry: guardianEdit.phoneCountry,
     });
     setGuardianEdit(null);
     await refresh();
@@ -419,6 +427,10 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 {g.phone && <a className="muted" href={telHref(g.phone)}>· {formatUsPhone(g.phone)}</a>}
                 {g.email && <a className="muted" href={`mailto:${g.email}`}>· {g.email}</a>}
                 {g.isEmergencyContact && <span className="chip is-accent">{t('directory.emergency')}</span>}
+                {/* This person asked not to be messaged (0.50.0). Shown, never changed from here: it is
+                    their own answer, given in the parent portal. Without it, "why didn't they get the
+                    reminder?" has no visible answer on the screen the office is actually looking at. */}
+                {g.waOptOut && countries.length > 0 && <span className="chip is-muted">{t('directory.waOptedOut')}</span>}
                 {/* Whether they took up a portal account decides which action is useful: an invite for
                     someone who never signed up, a reset for someone who did and forgot. */}
                 {g.hasAccount ? (
@@ -433,7 +445,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     NOT — finance runs parent accounts (§5), so those stay available to them. */}
                 {!readOnly && (
                   <>
-                    <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGuardianEdit({ id: g.guardianId, name: g.name, phone: formatUsPhone(g.phone), email: g.email ?? '', relation: g.relation ?? '' })}>
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGuardianEdit({ id: g.guardianId, name: g.name, phone: formatUsPhone(g.phone), email: g.email ?? '', relation: g.relation ?? '', phoneCountry: g.phoneCountry ?? '' })}>
                       <Pencil size={13} /> {t('common.edit')}
                     </button>
                     <button type="button" className="btn btn--ghost btn--sm" onClick={() => void askRemoveGuardian(g.guardianId, g.name)} disabled={removeGuardian.isPending}>
@@ -481,6 +493,15 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               </select>
             </div>
             <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" type="tel" inputMode="tel" autoComplete="tel" value={guardianEdit.phone} onChange={(e) => setGuardianEdit({ ...guardianEdit, phone: formatUsPhone(e.target.value) })} /></div>
+            {countries.length > 1 && (
+              <div className="field" style={{ flex: '0 1 7rem' }}>
+                <label className="label">{t('settings.waCountry')}</label>
+                <select className="input glass-inset" value={guardianEdit.phoneCountry} onChange={(e) => setGuardianEdit({ ...guardianEdit, phoneCountry: e.target.value })}>
+                  <option value="">{t('settings.waCountryDefault', { code: waCfg.data!.defaultCountry })}</option>
+                  {countries.map((x) => <option key={x} value={x}>{x}</option>)}
+                </select>
+              </div>
+            )}
             <div className="field"><label className="label">{t('directory.email')}</label><input className="input glass-inset" type="email" value={guardianEdit.email} onChange={(e) => setGuardianEdit({ ...guardianEdit, email: e.target.value })} /></div>
             <button type="submit" className="btn btn--primary" disabled={updateGuardian.isPending}>{t('common.save')}</button>
             <button type="button" className="btn btn--ghost" onClick={() => setGuardianEdit(null)}>{t('common.cancel')}</button>
@@ -498,6 +519,15 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
               </select>
             </div>
             <div className="field"><label className="label">{t('directory.phone')}</label><input className="input glass-inset" type="tel" inputMode="tel" autoComplete="tel" value={grd.phone} onChange={(e) => setGrd({ ...grd, phone: formatUsPhone(e.target.value) })} /></div>
+            {countries.length > 1 && (
+              <div className="field" style={{ flex: '0 1 7rem' }}>
+                <label className="label">{t('settings.waCountry')}</label>
+                <select className="input glass-inset" value={grd.phoneCountry} onChange={(e) => setGrd({ ...grd, phoneCountry: e.target.value })}>
+                  <option value="">{t('settings.waCountryDefault', { code: waCfg.data!.defaultCountry })}</option>
+                  {countries.map((x) => <option key={x} value={x}>{x}</option>)}
+                </select>
+              </div>
+            )}
             <div className="field"><label className="label">{t('directory.email')}</label><input className="input glass-inset" value={grd.email} onChange={(e) => setGrd({ ...grd, email: e.target.value })} /></div>
             {/* No "emergency contact" tick here any more: there is a whole Emergency contacts section
                 directly below, and two ways to say the same thing meant an office ticking the box then

@@ -10,6 +10,7 @@ import { fadeRise } from '../../lib/motion';
 import { formatUsPhone, telHref } from '../../lib/phone';
 import { formatMoney } from '../../lib/money';
 import { trpc, type RouterOutputs } from '../../lib/trpc';
+import { WhatsAppSettings } from '../../components/WhatsAppSettings';
 
 /** The alert catalogue comes from the server (alerts/index.ts owns it), so the UI never hard-codes the
  *  event list — adding an event there makes a new checkbox appear here with no change on this side. */
@@ -226,7 +227,7 @@ export function Settings() {
     setPastDueMsg(null);
     try {
       const r = await runPastDue.mutateAsync();
-      setPastDueMsg(t('settings.pastDueRan', { emailed: r.emailed, overdue: r.overdue, unreachable: r.unreachable }));
+      setPastDueMsg(t('settings.pastDueRan', { emailed: r.emailed, messaged: r.messaged, overdue: r.overdue, unreachable: r.unreachable }));
       await utils.settings.pastDueGet.invalidate();
     } catch (e) {
       setPastDueMsg((e as Error).message);
@@ -737,6 +738,12 @@ export function Settings() {
           <p className="hint">{t('settings.alertAddHint')}</p>
         </div>
       </section>
+
+      {/* ── WhatsApp (0.50.0) ───────────────────────────────────────────────────
+          Directly after the email section, because the two answer the same question — how a madrasah
+          reaches a family — and the office should read them together. Its own component: it is six
+          decisions, a preview and a log, and it is the panel where a mistake messages everybody. */}
+      <WhatsAppSettings />
 
       {/* Payments — choose which OpenMasjidOS Stripe account tuition (portal, donations, kiosk) uses. */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>

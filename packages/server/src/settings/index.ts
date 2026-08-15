@@ -62,6 +62,12 @@ export const SETTING_KEYS = {
   sheetText: 'sheet_text',
   // The colour the printed artifacts are ruled in (0.47.0). One hex value; see `getAccentColor`.
   accentColor: 'accent_color',
+  // JSON — WhatsApp (0.50.0): the master switch, the parent pause, the per-event toggles, the country
+  // codes and the test student. See `getWhatsApp`; the event CATALOGUE lives in whatsapp/index.ts.
+  whatsapp: 'whatsapp',
+  // The office's own wording for the "we don't have your email address" message (0.50.0). One string;
+  // blank means the shipped sentence. See whatsapp/templates.ts.
+  whatsappEmailRequest: 'whatsapp_email_request',
 } as const;
 
 /** Image types a logo may be. Kept to the three that every browser, print path and mail client
@@ -568,6 +574,101 @@ export function setAccentColor(hex: string | null): void {
  */
 export function accentWash(accent: string = getAccentColor()): string {
   return `color-mix(in srgb, ${accent} 7%, #ffffff)`;
+}
+
+/**
+ * WhatsApp (0.50.0) — everything an office decides about it, in one row.
+ *
+ * THREE DEFAULTS HERE ARE THE FEATURE, not preferences:
+ *
+ *  • `enabled: false`. A masjid that updates on a Tuesday must not start messaging families on the
+ *    Wednesday. Nothing is offered until an admin turns it on, and the switch is beside the sentence
+ *    explaining that the linked number carries real risk.
+ *  • `paused: true` — ON by default, unlike the email pause which is off by default. That asymmetry is
+ *    deliberate: parent EMAIL is a channel every install has been using for releases, so pausing it by
+ *    default would break working installs. WhatsApp has never sent anything, so the safe starting
+ *    state is "configured but silent" — set it up, look at it, send a test to the test student, and
+ *    only then let it reach two hundred families.
+ *  • every event off. Same reason, one level down.
+ *
+ * `events` is stored OPAQUELY (a plain string→bool map) so this module knows nothing about which
+ * events exist — whatsapp/index.ts owns that catalogue, exactly as alerts/index.ts owns the alert one.
+ * Adding an event needs no change here.
+ */
+export interface WhatsAppConfig {
+  /** The master switch. Off = the feature does not exist for this masjid. */
+  enabled: boolean;
+  /** Send nothing to parents. On by default; the test student's household is the one exception. */
+  paused: boolean;
+  /** Per-event, by our own event id. Absent = off. */
+  events: Record<string, boolean>;
+  /** The country code a number is assumed to be in when nothing more specific is recorded. */
+  defaultCountry: string;
+  /** The codes the office can pick from, per guardian and per staff member. Always includes the default. */
+  countries: string[];
+  /**
+   * A real student whose household receives messages EVEN WHILE PAUSED (0.50.0).
+   *
+   * For notification purposes only — it changes nothing about billing, invoices or the ledger, and the
+   * child is an ordinary student in every other respect. It exists because the alternative way to test
+   * a message is to unpause and hope, and the office's own child is the right person to send a test
+   * receipt to. It overrides the PAUSE and nothing else: not the master switch, not an event that is
+   * off, and never an opt-out (whatsapp/index.ts).
+   */
+  testStudentId: string;
+}
+
+/** `+1` unless the office says otherwise — this app's first madāris are North American, and a wrong
+ *  default is visible and one click to fix, whereas no default means every number fails silently. */
+const WA_DEFAULTS: WhatsAppConfig = { enabled: false, paused: true, events: {}, defaultCountry: '+1', countries: ['+1'], testStudentId: '' };
+
+/** A country code as we store it: `+` and 1–3 digits. Anything else is dropped rather than stored, since
+ *  it is glued onto the front of a real phone number and a bad one silently messages a stranger. */
+export function isCountryCode(v: unknown): v is string {
+  return typeof v === 'string' && /^\+\d{1,3}$/.test(v.trim());
+}
+
+export function getWhatsApp(): WhatsAppConfig {
+  const raw = getSetting(SETTING_KEYS.whatsapp);
+  if (!raw) return { ...WA_DEFAULTS, events: {}, countries: [...WA_DEFAULTS.countries] };
+  try {
+    const p = JSON.parse(raw) as Partial<WhatsAppConfig>;
+    const defaultCountry = isCountryCode(p.defaultCountry) ? p.defaultCountry.trim() : WA_DEFAULTS.defaultCountry;
+    const countries = [...new Set([defaultCountry, ...(Array.isArray(p.countries) ? p.countries.filter(isCountryCode).map((c) => c.trim()) : [])])];
+    const events: Record<string, boolean> = {};
+    if (p.events && typeof p.events === 'object' && !Array.isArray(p.events)) {
+      for (const [k, v] of Object.entries(p.events as Record<string, unknown>)) if (v === true) events[k] = true;
+    }
+    return {
+      enabled: p.enabled === true,
+      // Absent reads as PAUSED, which is the safe direction: a half-written row must not start sending.
+      paused: p.paused !== false,
+      events,
+      defaultCountry,
+      countries,
+      testStudentId: typeof p.testStudentId === 'string' ? p.testStudentId.trim() : '',
+    };
+  } catch {
+    return { ...WA_DEFAULTS, events: {}, countries: [...WA_DEFAULTS.countries] };
+  }
+}
+
+export function setWhatsApp(patch: Partial<WhatsAppConfig>): void {
+  const next = { ...getWhatsApp(), ...patch };
+  // Merged rather than replaced, so a screen that only knows about three events cannot clear a fourth.
+  if (patch.events) next.events = { ...getWhatsApp().events, ...patch.events };
+  setSetting(SETTING_KEYS.whatsapp, JSON.stringify(next));
+}
+
+/** The office's own wording for the missing-email message, or '' for the shipped sentence. Capped for
+ *  the same reason the sheet text is: it is prose typed into a box, not a document store. */
+export const WA_TEXT_MAX = 900;
+
+export function getWhatsAppEmailRequest(): string {
+  return (getSetting(SETTING_KEYS.whatsappEmailRequest) ?? '').trim().slice(0, WA_TEXT_MAX);
+}
+export function setWhatsAppEmailRequest(text: string | null): void {
+  setSetting(SETTING_KEYS.whatsappEmailRequest, (text ?? '').trim().slice(0, WA_TEXT_MAX));
 }
 
 /** When the mid-year go-live step was committed, or null. Only used to stop nagging about it. */

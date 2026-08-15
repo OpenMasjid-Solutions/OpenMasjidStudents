@@ -11,10 +11,13 @@ import { useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { fadeRise } from '../../lib/motion';
-import { trpc } from '../../lib/trpc';
+import { trpc, type RouterOutputs } from '../../lib/trpc';
 
 const MIN_PW = 12;
 type StaffRole = 'admin' | 'finance';
+/** The alert catalogue comes from the server (alerts/index.ts owns it), exactly as it does on the
+ *  Settings screen — adding an event there adds a tick box here with no change on this side. */
+type AlertEvent = RouterOutputs['whatsapp']['get']['staffEvents'][number];
 
 export function Staff() {
   const { t } = useTranslation();
@@ -46,6 +49,37 @@ export function Staff() {
   const [err, setErr] = useState('');
   /** The account having its password reset, with the new temporary one. */
   const [pwFor, setPwFor] = useState<{ id: string; username: string; tempPassword: string } | null>(null);
+
+  // ── Alerts to a phone (0.50.0) ──────────────────────────────────────────────
+  // Staff carried no phone number until now, and the schema comment said why: nothing contacted them
+  // that way, so it would have been personal data held for no purpose. WhatsApp is the purpose — a
+  // declined card on a Sunday evening reaches a treasurer's phone and does not reach their inbox.
+  //
+  // Its own editor rather than more columns: it is four fields and a grid of alert ticks, and the
+  // table is already at the width a laptop can hold. Opened per person, from the row.
+  const wa = trpc.whatsapp.get.useQuery();
+  const setContact = trpc.staff.setContact.useMutation();
+  const [waFor, setWaFor] = useState<{ id: string; username: string; phone: string; phoneCountry: string; events: AlertEvent[] } | null>(null);
+  /** The feature is off (or this install has no platform): the button would open an editor for
+   *  messages nobody will ever receive, so it isn't drawn. */
+  const waOn = !!wa.data?.enabled && !!wa.data?.fabric;
+
+  async function saveContact() {
+    setErr('');
+    if (!waFor) return;
+    try {
+      await setContact.mutateAsync({
+        userId: waFor.id,
+        phone: waFor.phone.trim(),
+        phoneCountry: waFor.phoneCountry,
+        waEvents: waFor.events,
+      });
+      setWaFor(null);
+      await utils.staff.list.invalidate();
+    } catch (e2) {
+      setErr((e2 as Error).message);
+    }
+  }
 
   async function add(e: FormEvent) {
     e.preventDefault();
@@ -146,6 +180,18 @@ export function Staff() {
                     <td className="actions">
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggle(u.id, u.status, u.username)} disabled={setStatus.isPending}>{u.status === 'active' ? t('staff.disable') : t('staff.enable')}</button>
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPwFor({ id: u.id, username: u.username, tempPassword: '' })}>{t('staff.resetPw')}</button>
+                      {waOn && (
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--sm"
+                          onClick={() => setWaFor({ id: u.id, username: u.username, phone: u.phone ?? '', phoneCountry: u.phoneCountry ?? '', events: u.waEvents })}
+                        >
+                          {/* The count is the state of it at a glance — an admin should not have to open
+                              five editors to find who is actually subscribed. */}
+                          {t('staff.waEdit')}
+                          {u.waEvents.length > 0 && u.phone ? <span className="chip is-accent" style={{ marginInlineStart: '0.35rem' }}>{u.waEvents.length}</span> : null}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -163,6 +209,49 @@ export function Staff() {
             <button type="button" className="btn btn--ghost" onClick={() => setPwFor(null)}>{t('common.cancel')}</button>
             <p className="hint">{t('staff.resetPwHint')}</p>
           </form>
+        )}
+
+        {/* Alerts to a phone, for one person. Entirely opt-in: no number and no ticks by default, and
+            clearing the number is the off switch. */}
+        {waFor && wa.data && (
+          <div className="inline-form glass-inset" style={{ flexWrap: 'wrap' }}>
+            <div className="field" style={{ flexBasis: '100%' }}>
+              <span className="label">{t('staff.waFor', { username: waFor.username })}</span>
+              <span className="hint">{t('staff.waHint')}</span>
+            </div>
+            <div className="field" style={{ flex: '0 1 7rem' }}>
+              <label className="label" htmlFor="wa-country">{t('settings.waCountry')}</label>
+              <select id="wa-country" className="input glass-inset" value={waFor.phoneCountry} onChange={(e) => setWaFor({ ...waFor, phoneCountry: e.target.value })}>
+                {/* '' means "use the install's default", which is what almost every row wants. */}
+                <option value="">{t('settings.waCountryDefault', { code: wa.data.defaultCountry })}</option>
+                {wa.data.countries.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="field" style={{ flex: '1 1 12rem' }}>
+              <label className="label" htmlFor="wa-phone">{t('staff.waPhone')}</label>
+              <input id="wa-phone" className="input glass-inset" type="tel" inputMode="tel" value={waFor.phone} onChange={(e) => setWaFor({ ...waFor, phone: e.target.value })} maxLength={40} />
+            </div>
+            <div className="field" style={{ flexBasis: '100%' }}>
+              <span className="label">{t('staff.waEvents')}</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                {wa.data.staffEvents.map((e) => {
+                  const on = waFor.events.includes(e);
+                  return (
+                    <label key={e} className={`chip ${on ? '' : 'is-muted'}`} style={{ cursor: 'pointer', display: 'inline-flex', gap: '0.3rem', alignItems: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={(ev) => setWaFor({ ...waFor, events: ev.target.checked ? [...waFor.events, e] : waFor.events.filter((x) => x !== e) })}
+                      />
+                      {t(`settings.ev_${e}`)}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            <button type="button" className="btn btn--primary" onClick={() => void saveContact()} disabled={setContact.isPending}>{t('common.save')}</button>
+            <button type="button" className="btn btn--ghost" onClick={() => setWaFor(null)}>{t('common.cancel')}</button>
+          </div>
         )}
 
         <form className="inline-form glass-inset" onSubmit={add}>

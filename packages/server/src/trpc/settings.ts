@@ -405,7 +405,7 @@ export const settingsRouter = router({
    */
   pastDueRunNow: adminProcedure.mutation(async ({ ctx }) => {
     const r = await runPastDue(new Date().toISOString().slice(0, 10), { force: true });
-    audit(auditActor(ctx), 'settings.pastDueRun', { entity: 'settings', detail: { overdue: r.overdue, emailed: r.emailed } });
+    audit(auditActor(ctx), 'settings.pastDueRun', { entity: 'settings', detail: { overdue: r.overdue, emailed: r.emailed, messaged: r.messaged } });
     return r;
   }),
 

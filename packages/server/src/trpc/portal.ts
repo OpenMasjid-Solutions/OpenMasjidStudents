@@ -12,7 +12,7 @@ import { TRPCError } from '@trpc/server';
 import { and, asc, eq, desc, inArray } from 'drizzle-orm';
 import { router, parentProcedure } from './trpc';
 import { db } from '../db';
-import { families, students, invoices, invoiceItems, payments, paymentMethods, autopayEnrollments, schoolYears } from '../db/schema';
+import { families, students, invoices, invoiceItems, payments, paymentMethods, autopayEnrollments, schoolYears, guardians, guardianUsers } from '../db/schema';
 import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit, type SplitShare } from '../billing/ledger';
 import { invoiceLines, type LineKind } from '../billing/lines';
 import { paidForByPayment, type PaidFor } from '../billing/paidFor';
@@ -20,7 +20,8 @@ import { schoolYearMonths } from '../billing/schoolYear';
 import { yearCellsFor, type YearCell } from '../billing/yearCells';
 import { listSchools } from '../schools';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
-import { getCurrency } from '../settings';
+import { getCurrency, getWhatsApp } from '../settings';
+import { maskNumber, toE164 } from '../whatsapp/numbers';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
 import { stripeClient, stripeReady, publishableKey } from '../payments/stripe';
 import { describePaymentMethod, repairPaymentMethods, resequenceMethods } from '../payments/methods';
@@ -475,7 +476,54 @@ export const portalRouter = router({
     }
     return { ok: true as const };
   }),
+
+  // ── WhatsApp, from the parent's side (0.50.0) ─────────────────────────────
+  /**
+   * Whether this parent hears from the madrasa on WhatsApp.
+   *
+   * Scoped to the caller's OWN guardian record — the one their portal account is linked to — and not
+   * to the household. The choice is about a phone and the phone belongs to a person: a mother opting
+   * out must not silence her husband's number, and vice versa (§9).
+   *
+   * `available` is deliberately about the INSTALL, not the person: with the feature off there is
+   * nothing to opt out of, and the portal shows nothing at all rather than a dead switch.
+   */
+  messagingGet: parentProcedure.query(({ ctx }) => {
+    const cfg = getWhatsApp();
+    const me = myGuardian(ctx);
+    return {
+      available: cfg.enabled && !!me,
+      optedOut: !!me?.waOptOut,
+      /** So the screen can say WHICH number, without printing it. Empty when we can't read theirs —
+       *  which the portal turns into "we don't have a WhatsApp number for you", the honest version. */
+      mask: maskNumber(me ? toE164(me.phone, me.phoneCountry || cfg.defaultCountry) : null),
+    };
+  }),
+
+  /** Turn messages off, or back on. Immediate, and nothing in the app overrides it — not the office's
+   *  broadcast, not the test student, not an admin screen. */
+  messagingSet: parentProcedure.input(z.object({ optOut: z.boolean() })).mutation(({ ctx, input }) => {
+    const me = myGuardian(ctx);
+    if (!me) throw new TRPCError({ code: 'FORBIDDEN', message: 'You don’t have access to that.' });
+    db.update(guardians).set({ waOptOut: input.optOut, updatedAt: new Date() }).where(eq(guardians.id, me.id)).run();
+    return { ok: true as const };
+  }),
 });
+
+/** The guardian record behind this parent session, or null. The portal's scoping wall is
+ *  `guardian_users`, and this is the same link read one step earlier (§14 — in the query). */
+function myGuardian(ctx: { session?: { userId?: string | null } | null }) {
+  const userId = ctx.session?.userId;
+  if (!userId) return null;
+  return (
+    db
+      .select({ id: guardians.id, phone: guardians.phone, phoneCountry: guardians.phoneCountry, waOptOut: guardians.waOptOut })
+      .from(guardianUsers)
+      .innerJoin(guardians, eq(guardians.id, guardianUsers.guardianId))
+      .where(eq(guardianUsers.userId, userId))
+      .get() ?? null
+  );
+}
 
 type FamilyView = {
   id: string;

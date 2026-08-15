@@ -267,6 +267,13 @@
       "when": 1786023831462,
       "tag": "0037_drop_stripe_events",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1786110231462,
+      "tag": "0038_whatsapp",
+      "breakpoints": true
     }
   ]
 }

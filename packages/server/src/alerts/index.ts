@@ -9,11 +9,13 @@
  * the masjid installed from, so a newly-declared id answers 400 until a release lands. Neither reaches
  * the person a madrasa actually wants told: the treasurer, the imām, whoever chases a failed card.
  *
- * So an alert now fans out to THREE places, each best-effort and independent:
+ * So an alert now fans out to FOUR places, each best-effort and independent:
  *   1. the addresses the office listed in Settings → Email alerts (this app's own email, always works
  *      once OpenMasjidOS can send mail at all);
  *   2. the OpenMasjidOS alert channel, when the event maps to a declared id;
- *   3. the masjid webhook, for the routine ones that would flood an alert channel.
+ *   3. the masjid webhook, for the routine ones that would flood an alert channel;
+ *   4. the WhatsApp numbers of staff who asked for this alert (0.50.0) — the one channel that finds a
+ *      treasurer who is nowhere near an inbox, which is most evenings and every Sunday.
  *
  * WHAT AN ALERT MAY SAY. These emails go to addresses an ADMIN typed, so they may name a household
  * ("the Ismail family") and an amount — without that they are unactionable, which is the state the old
@@ -26,6 +28,8 @@ import { db } from '../db';
 import { alertRecipients, families } from '../db/schema';
 import { raiseAlert, notifyPlatform, type AlertId, type AlertLevel } from '../fabric/platform';
 import { sendAlert } from '../mail/notify';
+import { notifyStaff } from '../whatsapp';
+import { waStaffAlert } from '../whatsapp/templates';
 import { makeLog } from '../logger';
 
 const log = makeLog('alerts');
@@ -185,6 +189,13 @@ export async function alertStaff(event: AlertEvent, msg: AlertMessage): Promise<
     // Both platform channels get the de-identified text (§14) — only our own email may name a family.
     if (spec.platform) void raiseAlert(spec.platform, msg.publicText, { title: msg.title, level: spec.level });
     if (spec.webhook) void notifyPlatform(msg.publicText, { title: msg.title, level: spec.level === 'error' ? 'error' : spec.level === 'warning' ? 'warn' : 'info' });
+
+    // WhatsApp to the staff who subscribed (0.50.0). It carries `text`, the same wording the alert
+    // EMAIL carries — see whatsapp/templates.ts `waStaffAlert` for why that is not a §14 regression:
+    // the recipients are numbers an admin typed, on a gateway the masjid runs itself, and an alert
+    // that cannot name the family is not actionable. Not awaited, for the same reason as the two
+    // above — the queue paces sends, and none of this belongs in a caller's critical path.
+    void notifyStaff(event, waStaffAlert(msg.title, msg.text));
 
     const to = recipientsFor(event);
     if (!to.length) return;

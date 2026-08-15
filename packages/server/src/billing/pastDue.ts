@@ -35,6 +35,7 @@ import { getCurrency, getPastDue, getPastDueStaffLast, setPastDueStaffLast, type
 import { formatDate } from '../settings/dates';
 import { alertStaff } from '../alerts';
 import { sendPastDue } from '../mail/notify';
+import { parentEventOn } from '../whatsapp';
 import { makeLog } from '../logger';
 
 const log = makeLog('pastDue');
@@ -142,9 +143,12 @@ export interface PastDueRunResult {
   totalCents: number;
   /** Households a parent email actually reached. */
   emailed: number;
+  /** Households a WhatsApp message was queued for (0.50.0). Counted separately from `emailed` because
+   *  they are separate channels with separate switches, and a household can be reached by either. */
+  messaged: number;
   /** Past the grace period but silent this run — too soon since the last reminder. */
   waiting: number;
-  /** Past the grace period with no guardian address on file. The office has to ring these. */
+  /** Past the grace period that NEITHER channel could reach. The office has to ring these. */
   unreachable: number;
   /** Did the office digest go out this run? */
   staffAlerted: boolean;
@@ -166,12 +170,15 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
     overdue: all.length,
     totalCents: all.reduce((s, f) => s + f.amountCents, 0),
     emailed: 0,
+    messaged: 0,
     waiting: 0,
     unreachable: 0,
     staffAlerted: false,
   };
 
-  if (cfg.parentEmails) {
+  // EITHER channel wanting to chase is enough to walk the list (0.50.0). Gated on the email switch
+  // alone, a madrasah that turned reminders on for WhatsApp only had a job that quietly never ran.
+  if (cfg.parentEmails || parentEventOn('past-due')) {
     const lastSent = lastSentByFamily();
     const ts = new Date();
     for (const fam of chase) {
@@ -183,8 +190,9 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
         continue;
       }
       const sent = await sendPastDue(fam.familyId, formatMoney(fam.amountCents, currency), formatDate(fam.oldestDue));
-      if (sent > 0) {
-        result.emailed++;
+      if (sent.emails > 0) result.emailed++;
+      if (sent.whatsapp > 0) result.messaged++;
+      if (sent.emails > 0 || sent.whatsapp > 0) {
         // Written only on a real send. A family nobody could reach must not start a quiet cooldown —
         // otherwise the day an address is finally added, they wait another week for no reason.
         db.insert(pastDueReminders)
@@ -231,6 +239,6 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
   }
 
   // Counts only — never a household, never an address (§14).
-  log.info('past due run', { overdue: result.overdue, emailed: result.emailed, waiting: result.waiting, unreachable: result.unreachable });
+  log.info('past due run', { overdue: result.overdue, emailed: result.emailed, messaged: result.messaged, waiting: result.waiting, unreachable: result.unreachable });
   return result;
 }

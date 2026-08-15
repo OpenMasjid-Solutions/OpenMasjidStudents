@@ -29,9 +29,78 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [0.50.0]
 
-- **Nothing for the office in this build yet.** It carries one change to the project's own writing rules —
-  how these notes are split between a stable update and a development one — and nothing that changes the
-  app. Development builds show this section as it fills up.
+- **You can now message parents on WhatsApp.** Receipts, card-declined notices and past-due reminders can go
+  to a parent's phone as well as their inbox — through your masjid's own server, with nothing passing
+  through an outside company. Everything with detail in it still goes by email; a WhatsApp is the short
+  note that tells a family to look.
+- **It starts switched off, paused, with nothing selected.** Turning it on sends nobody anything. You choose
+  which messages, set a **test student** whose household receives them while everyone else stays quiet, see
+  a real message arrive, and only then lift the pause.
+- **Before you turn it on, the screen tells you who you could actually reach** — how many parents have a
+  number that works, how many have asked not to be messaged, and which numbers it cannot read, with a
+  country box beside each one to fix it.
+- **One button asks the families with no email address for one.** It names their children, explains why the
+  school needs it, and you can rewrite the wording and read exactly what each family will get before it
+  goes.
+- **Parents can turn it off themselves**, from their own portal, and back on again. Nobody in the office can
+  override that.
+- **Staff can get alerts on their phone.** A declined card on a Sunday evening reaches whoever chases it,
+  rather than sitting in an inbox until Monday. Each person adds their own number and picks what they want
+  to hear about.
+- **Nothing about signing in is ever sent by WhatsApp.** Invites, password resets and confirmation links
+  stay on email, which always works.
+
+### Also in this release
+
+**WhatsApp — how it is put together**
+
+- OpenMasjidOS owns the connection (a self-hosted OpenWA install linked to the masjid's own phone) and runs
+  **one paced queue shared by every app** — spaced sends, per-recipient cooldowns, hourly and daily caps,
+  quiet hours. That queue is the whole defence for a number WhatsApp does not officially permit and can
+  restrict at any time, so this app never talks to a gateway, never retries a refusal, and never designs
+  anything as a broadcast. The daily allowance belongs to the number and is shared with every other app on
+  the server.
+- **"Queued" is never reported as "sent."** Delivery is minutes away, and hours if it lands in quiet hours.
+  No screen claims otherwise and nothing waits for a message to arrive.
+- One place decides whether a message goes out and to whom (`whatsapp/index.ts`), with the gates in a fixed
+  order: the master switch, the gateway, the event, the pause, the person's own opt-out, the number. The
+  first three are checked once per event rather than per family, so a switch that is off cannot write two
+  hundred log rows.
+- The pause **narrows** rather than stops — the test student's household still hears everything. That
+  household is resolved from the student on every send, so a child moved between households takes the
+  setting with them and a withdrawn one fails closed (and the settings screen says so, rather than looking
+  configured while nothing gets through).
+- The opt-out lives on the **person**, not the household: one parent silencing their phone does not silence
+  the other's. Nothing overrides it — not the pause exception, not the outreach button, not an admin screen.
+- The queue log records the event, who it was for, when, and what happened. **Never the message itself** — a
+  tuition message names a child and their family's fees. Pruned weekly.
+- Country codes are configured for the install and then per parent or staff member, because a madrasa's
+  families are not all in one country. One place turns a stored number into the form WhatsApp accepts, and
+  it refuses rather than guesses: a national trunk zero is dropped before the country code goes on, a number
+  containing a letter is refused outright (an extension typed into the field would otherwise be dialled as
+  somebody else's number), and a ten-digit number is read as national even when it starts with the country
+  code.
+- The outreach sends to the first adult it can reach per household rather than to both parents, and is
+  capped at 50 households per press with the remainder reported — asking one question should not cost the
+  masjid's number twice, and handing the queue two hundred messages at once is what gets a number
+  restricted.
+- A staff WhatsApp carries the same wording as the alert email, which may name a household and an amount.
+  The de-identified version is for third-party sinks (a Slack webhook, the platform's own alert channel); a
+  number an admin typed, on the masjid's own gateway, is the same audience as their inbox — and an alert
+  that cannot say which family is not worth sending.
+- Staff phone numbers came back to the database with a purpose. They had been deliberately removed on the
+  grounds that nothing ever contacted staff by phone; that is what changed, and the column is opt-in per
+  account with clearing the number as the off switch.
+
+**Elsewhere**
+
+- Past-due reminders now run when **either** channel wants to chase. Gated on the email switch alone, a
+  madrasah that wanted reminders by WhatsApp only had a nightly job that quietly never ran — and a household
+  reached by either channel now starts its cooldown, so it is not chased again tomorrow.
+- The family record shows when a parent has asked not to be messaged, so "why didn't they get the reminder?"
+  has a visible answer on the screen the office is already looking at.
+- `docs/WHATSAPP.md` records the whole contract: every gate, what never travels this channel, how a number
+  is read, and how much goes in a message versus the email it points at.
 
 ## [0.49.0]
 

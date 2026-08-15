@@ -14,6 +14,7 @@ import { settingsRouter } from './settings';
 import { billingRouter } from './billing';
 import { portalRouter } from './portal';
 import { structureRouter } from './structure';
+import { whatsappRouter } from './whatsapp';
 import { config, fabricConfigured } from '../config';
 
 export const appRouter = router({
@@ -33,6 +34,8 @@ export const appRouter = router({
   portal: portalRouter,
   /** School year + terms and the course → class grouping (organisational only, no academics). */
   structure: structureRouter,
+  /** WhatsApp through OpenMasjidOS (0.50.0) — the masjid's policy, not the gateway. */
+  whatsapp: whatsappRouter,
 });
 
 export type AppRouter = typeof appRouter;

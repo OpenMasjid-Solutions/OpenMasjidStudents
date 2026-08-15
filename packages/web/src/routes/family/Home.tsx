@@ -237,6 +237,55 @@ export function FamilyHome({ onManageAutopay }: { onManageAutopay: () => void })
           </motion.div>
         );
       })}
+
+      {/* One switch, not one per household: it is about this parent's own phone, and a person has one
+          of those however many households they are linked to. Last on the page on purpose — it is a
+          preference, and nobody opens the portal to find it. */}
+      <WhatsAppOptOut />
     </motion.div>
+  );
+}
+
+/**
+ * "Message me on WhatsApp" — the parent's own switch (0.50.0).
+ *
+ * Off means off, and nothing in the app overrides it: not the office's outreach button, not the test
+ * student, not an admin screen (whatsapp/index.ts). It is stored on the GUARDIAN rather than the
+ * household, because it is a decision about a phone and a phone belongs to a person — one parent
+ * opting out must not silence the other's.
+ *
+ * Renders nothing at all when the madrasah has not switched WhatsApp on, rather than showing a dead
+ * toggle for a channel that does not exist here.
+ */
+function WhatsAppOptOut() {
+  const { t } = useTranslation();
+  const utils = trpc.useUtils();
+  const q = trpc.portal.messagingGet.useQuery();
+  const save = trpc.portal.messagingSet.useMutation();
+  if (!q.data?.available) return null;
+  const on = !q.data.optedOut;
+
+  return (
+    <section className="fam-section">
+      <h2>{t('family.messages')}</h2>
+      <label className="list-row glass" style={{ cursor: 'pointer', alignItems: 'flex-start', gap: '0.6rem' }}>
+        <input
+          type="checkbox"
+          style={{ marginBlockStart: '0.25rem' }}
+          checked={on}
+          disabled={save.isPending}
+          onChange={async () => {
+            await save.mutateAsync({ optOut: on });
+            await utils.portal.messagingGet.invalidate();
+          }}
+        />
+        <span className="row-main">
+          <span className="row-title">{t('family.waOptIn')}</span>
+          {/* Says WHICH number without printing it — and says plainly when there isn't one, which is
+              otherwise indistinguishable from "switched on and silently never arriving". */}
+          <span className="row-sub">{q.data.mask ? t('family.waOptInHint', { mask: q.data.mask }) : t('family.waNoNumber')}</span>
+        </span>
+      </label>
+    </section>
   );
 }
