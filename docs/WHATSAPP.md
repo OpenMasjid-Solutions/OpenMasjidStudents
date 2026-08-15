@@ -73,18 +73,27 @@ involved are innocent:
 2. OpenMasjidOS gates `/api/fabric/whatsapp` on `app.whatsapp`, read from the installed catalog entry
    (`packages/core/src/apps/manager.ts`) — **correct**, and its own docs say "the admin can turn you
    off; WhatsApp being configured does not mean it is enabled for your messages";
-3. `OpenMasjidAPPS/scripts/build-catalog.mjs` copies capabilities into `catalog.json` by an explicit
-   **allow-list** — `sso`, `notifications`, `stripe`, `domain`, `https`, `tunnel`, `email`, `alerts`,
-   `fabric` — and had **no `whatsapp` line**. The key was dropped in the middle.
+3. `OpenMasjidAPPS/scripts/build-catalog.mjs` copied capabilities into `catalog.json` through a
+   hand-maintained **allow-list** — `sso`, `notifications`, `stripe`, `domain`, `https`, `tunnel`,
+   `email`, `alerts`, `fabric` — with **no `whatsapp` line**. The key was dropped in the middle.
 
 So `catalog.json` carried `students` at `0.50.0-dev.6` with `email: true`, `stripe: true`,
-`domain: true` and **no `whatsapp` key at all**, the platform stored `whatsapp: false`, and every call
-was refused. The fix is one line in the catalog builder (plus the type check its neighbours have);
-nothing in this repo or in OpenMasjidOS can work around it, and no amount of updating this app helps
-until the catalogue carries the key.
+`domain: true` and **no `whatsapp` key at all** — not even `false` — the platform stored
+`whatsapp: false`, and every call was refused. `email` surviving while `whatsapp` vanished was the
+whole diagnosis. The worst shape a bug can take: manifest right, build green, failure surfacing as a
+403 in a different repository from the mistake.
+
+**Fixed in the catalog repo (`364f91b`), and fixed as a class rather than an instance.**
+`scripts/capabilities.mjs` is now the one list the builder both type-checks and copies from, so
+"validated here but forgotten in the entry" cannot be expressed; a test scrapes the documented manifest
+template in `docs/BUILDING_AN_APP.md` and asserts every capability it offers survives into a built
+entry, and the reverse, so one cannot be wired without being documented. The built entry now reads
+`whatsapp: true` for `students`, with no other app losing a key.
 
 **Check the built entry, not the manifest.** `git show origin/dev:catalog.json` in the catalog repo is
-the only place that answers "did the capability actually ship?".
+the only place that answers "did the capability actually ship?" — and an install only picks the change
+up when the app is next updated, since the platform reads capabilities from the entry at install and
+update time.
 
 `WhatsAppStatus` therefore also carries **`source`** (`platform` = the OS said this in a 200,
 `http` = we inferred it from a status code, `local` = we never got as far as asking) and the raw

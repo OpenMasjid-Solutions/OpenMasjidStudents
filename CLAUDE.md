@@ -700,15 +700,21 @@ ports:
     label: Web interface
 ```
 
-**A capability declared here is necessary and NEVER sufficient** — the same trap as an alert id (§9), one
-layer further out. OpenMasjidOS reads capabilities from the entry the masjid installed from, and
-`OpenMasjidAPPS/scripts/build-catalog.mjs` copies them into `catalog.json` by an explicit ALLOW-LIST
-(`sso`, `notifications`, `stripe`, `domain`, `https`, `tunnel`, `email`, `alerts`, `fabric`). A key with no
-line there is silently dropped in the middle, and the platform then refuses an app that as far as it can
-see never asked. That is exactly what happened to `whatsapp: true` in 0.50.0: manifest correct, platform
-correct, `403` on every call. **Adding a capability to this file means adding a line to that builder in the
-same breath** — and the fastest way to prove it landed is to read the built entry, not the manifest:
-`git show origin/dev:catalog.json` in the catalog repo.
+**A capability declared here is necessary and never sufficient — check the BUILT entry, not this file.**
+OpenMasjidOS reads capabilities from the catalog entry the masjid installed from, so a key that does not
+survive the catalog build does not exist as far as the platform is concerned. `whatsapp: true` hit exactly
+that in 0.50.0: the manifest was right, the build was green, and every call was answered `403` because
+`OpenMasjidAPPS/scripts/build-catalog.mjs` copied capabilities through a hand-maintained allow-list with no
+`whatsapp` line — `email` survived, `whatsapp` vanished, and the failure surfaced in a different repo from
+the mistake.
+
+The catalog repo has since killed the class rather than the instance (`364f91b`): `scripts/capabilities.mjs`
+is now the ONE list the builder both type-checks and copies from, so "validated here but forgotten in the
+entry" is no longer expressible, and a test scrapes the documented manifest template in
+`docs/BUILDING_AN_APP.md` and asserts every capability it offers survives into a built entry — in both
+directions, so one cannot be wired without being documented. **So a new capability should now carry through
+on its own.** Verify it anyway, because the cost of not verifying is a 403 nobody can diagnose from here:
+`git show origin/dev:catalog.json` in the catalog repo is the only thing that answers "did it actually ship?".
 
 **No install-time `settings:` on purpose** — installation is one-click, and everything a masjid needs (school
 name, currency, logo, which OpenMasjidOS Stripe account to charge, email alert recipients) is collected

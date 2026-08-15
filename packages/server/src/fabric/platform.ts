@@ -212,14 +212,18 @@ export async function sendPlatformEmail(to: string, subject: string, text: strin
  *     the platform checks `app.whatsapp` on the entry the masjid installed from, exactly as it does
  *     for alert ids (§9). Nothing in OpenMasjidOS → Settings will fix that.
  *
- * That third case turned out to be REAL on the first install, and it is worth recording where the
- * chain actually breaks, because two of the three repos involved are innocent: this app declares
- * `whatsapp: true` in `manifest.yaml`, OpenMasjidOS reads `app.whatsapp` from the catalog entry — and
- * `OpenMasjidAPPS/scripts/build-catalog.mjs` copies capabilities into `catalog.json` by an explicit
- * ALLOW-LIST (`sso`, `notifications`, `stripe`, `domain`, `https`, `tunnel`, `email`, `alerts`,
- * `fabric`) that had no `whatsapp` line. So the key was dropped in the middle and the platform
- * correctly refused an app that, as far as it could see, had never asked. Declaring a capability here
- * is necessary and never sufficient; the catalog builder needs a line for every new one.
+ * That third case turned out to be REAL on the first install, and it is worth recording because two of
+ * the three repos involved were innocent: this app declared `whatsapp: true` correctly, OpenMasjidOS
+ * gated on `app.whatsapp` correctly — and `OpenMasjidAPPS`'s catalog builder copied capabilities
+ * through a hand-maintained allow-list with no `whatsapp` line, so the key never reached
+ * `catalog.json` and the platform correctly refused an app that, as far as it could see, had never
+ * asked. `email` surviving while `whatsapp` vanished was the entire diagnosis, and the `source` +
+ * `httpStatus` fields below are what made it findable from here at all.
+ *
+ * Fixed at the source (catalog `364f91b`): one shared capability list the builder type-checks and
+ * copies from, plus a test that holds the documented manifest template against a built entry in both
+ * directions. Declaring a capability is still necessary and never sufficient — verify against the
+ * BUILT entry, never against our own manifest.
  *   • `unsupported` (404/405) means the platform predates the endpoint.
  *
  * A masjid with a working, linked gateway was told their server had no WhatsApp set up, and went and
