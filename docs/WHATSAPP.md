@@ -48,12 +48,27 @@ GET {OPENMASJID_BASE_URL}/api/fabric/whatsapp
 `reason` is one of exactly four words, and each needs different copy from us — which is why the
 settings screen keys its sentence off the word rather than off `available`:
 
-| `reason` | What Settings says |
-| --- | --- |
-| `ready` | WhatsApp is set up and a phone is linked. |
-| `not-configured` | WhatsApp isn't set up on this server yet. An admin can add it in OpenMasjidOS → Settings → WhatsApp. |
-| `not-linked` | WhatsApp is set up, but no phone is linked yet. |
-| `unreachable` | The WhatsApp gateway isn't responding. |
+| `reason` | Source | What Settings says |
+| --- | --- | --- |
+| `ready` | platform | WhatsApp is set up and a phone is linked. |
+| `not-configured` | platform | WhatsApp isn't set up on this server yet. An admin can add it in OpenMasjidOS → Settings → WhatsApp. |
+| `not-linked` | platform | WhatsApp is set up, but no phone is linked yet. |
+| `unreachable` | platform / local | The WhatsApp gateway isn't responding. |
+| `not-permitted` | **ours**, from a 403 | The gateway is fine; **this app** hasn't been granted WhatsApp yet. |
+| `unsupported` | **ours**, from a 404/405 | This version of OpenMasjidOS doesn't have the endpoint. |
+
+**The last two are not cosmetic.** They were collapsed into `not-configured` at first, under a comment
+claiming both "mean the same thing to an admin standing in front of the screen". They do not: a masjid
+with a working, linked gateway was told their server had no WhatsApp set up, and went and checked a
+setting that was already correct. A 403 means the capability grant is missing — the platform checks it
+against the **catalog entry the masjid installed from**, exactly the trap that swallowed `payment-short`
+for a whole release (§9) — and nothing in OpenMasjidOS → Settings can fix that.
+
+`WhatsAppStatus` therefore also carries **`source`** (`platform` = the OS said this in a 200,
+`http` = we inferred it from a status code, `local` = we never got as far as asking) and the raw
+**`httpStatus`**. Both are printed under the status chip when the gateway is not ready, because a
+screen that says "not set up" while the gateway is plainly working cannot be argued with in prose —
+only with the actual signal.
 
 The answer is cached for five minutes (`whatsapp/index.ts`) so a send never pays for a status hop, and
 refreshed every 15 minutes by the scheduler — the gateway is a linked *phone*, so it goes offline when

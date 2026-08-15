@@ -200,18 +200,47 @@ export async function sendPlatformEmail(to: string, subject: string, text: strin
  * from here, ever, and no design that assumes a send happens now or that hundreds a day are available
  * — the caps belong to the NUMBER, and every other installed app is drawing on the same allowance.
  */
-export type WhatsAppReason = 'ready' | 'not-configured' | 'not-linked' | 'unreachable';
+/**
+ * The four words the PLATFORM answers with, plus two of our own for the ways the call itself fails.
+ *
+ * `not-permitted` and `unsupported` exist because collapsing them into `not-configured` was a real
+ * defect, not a simplification (fixed 0.50.0-dev.6). The code did exactly that, under a comment
+ * claiming both "mean the same thing to an admin standing in front of the screen" — and they do not:
+ *
+ *   • `not-configured` sends an admin to OpenMasjidOS → Settings → WhatsApp to set the gateway up.
+ *   • `not-permitted` (403) means the gateway is fine and THIS APP is not allowed to use it yet —
+ *     the platform checks the capability on the catalog entry the masjid installed from, exactly as
+ *     it does for alert ids (§9). Nothing in OpenMasjidOS → Settings will fix that.
+ *   • `unsupported` (404/405) means the platform predates the endpoint.
+ *
+ * A masjid with a working, linked gateway was told their server had no WhatsApp set up, and went and
+ * checked a setting that was already correct. Guessing wrong in an error message costs somebody an
+ * evening; the fix is to stop guessing and say which signal actually came back.
+ */
+export type WhatsAppReason = 'ready' | 'not-configured' | 'not-linked' | 'unreachable' | 'not-permitted' | 'unsupported';
+
+/** The words the platform itself may send. Anything else on the wire is not trusted as a reason. */
+const PLATFORM_REASONS = ['ready', 'not-configured', 'not-linked', 'unreachable'] as const;
 
 export interface WhatsAppStatus {
   available: boolean;
-  /** Exactly one of four words, each needing different copy from us — see whatsapp/index.ts. */
+  /** Each one needs different copy from us — see whatsapp/index.ts and the settings screen. */
   reason: WhatsAppReason;
+  /**
+   * WHERE the reason came from, which is the diagnostic that matters when a screen and a server
+   * disagree: `platform` means OpenMasjidOS said this in a 200 response, `http` means we inferred it
+   * from a status code, `local` means we never got as far as asking.
+   */
+  source: 'platform' | 'http' | 'local';
+  /** The HTTP status, when there was one. Shown to an admin verbatim — it is the difference between
+   *  "your gateway is off" and "this app was refused", and no amount of prose substitutes for it. */
+  httpStatus?: number;
 }
 
 /** Can this masjid send WhatsApp at all? Fail-soft: anything unexpected reads as `unreachable`, which
  *  is the state that tells an admin to go and look rather than implying they never set it up. */
 export async function whatsappStatus(): Promise<WhatsAppStatus> {
-  if (!fabricConfigured()) return { available: false, reason: 'not-configured' };
+  if (!fabricConfigured()) return { available: false, reason: 'not-configured', source: 'local' };
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 5000);
@@ -221,18 +250,18 @@ export async function whatsappStatus(): Promise<WhatsAppStatus> {
       redirect: 'error',
     });
     clearTimeout(timer);
-    // 403 = we don't hold the `whatsapp` capability (the installed catalog entry predates it); on an
-    // older platform the route is a 404. Neither is "the masjid has no gateway", but both mean the
-    // same thing to an admin standing in front of the screen: it cannot send, go and check.
     if (!res.ok) {
       log.warn('whatsapp status rejected', { status: res.status });
-      return { available: false, reason: res.status === 403 || res.status === 404 ? 'not-configured' : 'unreachable' };
+      const reason: WhatsAppReason = res.status === 403 ? 'not-permitted' : res.status === 404 || res.status === 405 ? 'unsupported' : 'unreachable';
+      return { available: false, reason, source: 'http', httpStatus: res.status };
     }
     const j = (await res.json().catch(() => null)) as { available?: unknown; reason?: unknown } | null;
-    const reason = typeof j?.reason === 'string' && ['ready', 'not-configured', 'not-linked', 'unreachable'].includes(j.reason) ? (j.reason as WhatsAppReason) : 'unreachable';
-    return { available: j?.available === true, reason };
+    const said = typeof j?.reason === 'string' && (PLATFORM_REASONS as readonly string[]).includes(j.reason) ? (j.reason as WhatsAppReason) : null;
+    // A 200 with a reason we don't recognise is the platform talking to a client that is out of date,
+    // not a gateway problem — `unreachable` is the honest fallback and never claims "not set up".
+    return { available: j?.available === true, reason: said ?? 'unreachable', source: 'platform', httpStatus: res.status };
   } catch {
-    return { available: false, reason: 'unreachable' };
+    return { available: false, reason: 'unreachable', source: 'local' };
   }
 }
 

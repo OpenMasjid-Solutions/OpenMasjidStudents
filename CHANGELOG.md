@@ -110,6 +110,11 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **"Send a test" works before WhatsApp does.** It now sends an email as well, so an office setting this
   up on a server that has no WhatsApp gateway yet can still prove the test student is working — and it
   says what happened on each channel rather than just failing.
+- **"WhatsApp isn't set up on this server" no longer appears when it plainly is.** Two different
+  problems were being reported with that one sentence, and one of them sent an admin to check a setting
+  that was already correct: a server can have WhatsApp working perfectly while *this app* has not been
+  granted permission to use it, which comes from the app catalogue and not from your settings. Each now
+  says what it actually is, and the panel prints exactly what the server answered underneath.
 
 - **The test student now lifts the email pause as well.** It only ever lifted the WhatsApp one, so on a
   fresh install — where parent email starts paused too — an office could set a test student, take a

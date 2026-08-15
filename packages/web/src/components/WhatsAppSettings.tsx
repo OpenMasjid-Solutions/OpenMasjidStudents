@@ -124,6 +124,15 @@ export function WhatsAppSettings() {
       <p style={{ margin: '0 0 0.75rem' }}>
         <span className={`chip ${canSend ? '' : 'is-muted'}`}>{canSend ? t('settings.waReady') : t('settings.waNotReady')}</span>
         <span className="hint" style={{ display: 'block', marginBlockStart: '0.3rem' }}>{t(`settings.waReason_${reason}`)}</span>
+        {/* THE RAW SIGNAL, verbatim. A screen that says "not set up" while the gateway is plainly
+            working in OpenMasjidOS is unarguable-with, and prose cannot settle it — the HTTP status
+            and where the answer came from can. `platform` means the OS itself said this; `http` means
+            we inferred it from a status code; `local` means we never got as far as asking. */}
+        {!canSend && c.status && (
+          <span className="hint" style={{ display: 'block', marginBlockStart: '0.2rem', opacity: 0.75 }}>
+            {t('settings.waDiag', { source: c.status.source, reason: c.status.reason, status: c.status.httpStatus ?? '—' })}
+          </span>
+        )}
       </p>
 
       {/* WHY NOTHING IS SENDING — the line this screen should always have had.

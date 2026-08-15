@@ -43,7 +43,9 @@ interface Call {
 }
 let calls: Call[] = [];
 /** What the platform's `GET /api/fabric/whatsapp` says. `ready` unless a test says otherwise. */
-let waAvailable = { available: true, reason: 'ready' };
+let waAvailable: { available: boolean; reason: string } = { available: true, reason: 'ready' };
+/** The HTTP status the STATUS probe answers with. 200 unless a test is exercising a refusal. */
+let statusHttp = 200;
 /** The status the queue answers with. 202 is the real one; the others are the four documented refusals. */
 let queueStatus = 202;
 const realFetch = globalThis.fetch;
@@ -54,7 +56,7 @@ function installFetch(): void {
     const url = String(input);
     calls.push({ url, body: i.body ? (JSON.parse(i.body) as Record<string, unknown>) : { _method: i.method ?? 'GET' } });
     if (url.endsWith('/api/fabric/whatsapp')) {
-      if ((i.method ?? 'GET') === 'GET') return { ok: true, status: 200, json: async () => waAvailable } as unknown as Response;
+      if ((i.method ?? 'GET') === 'GET') return { ok: statusHttp < 300, status: statusHttp, json: async () => waAvailable } as unknown as Response;
       return { ok: queueStatus < 300, status: queueStatus, json: async () => ({ queued: queueStatus === 202 }) } as unknown as Response;
     }
     if (url.endsWith('/api/fabric/email')) return { ok: true, status: 200, json: async () => ({ sent: true }) } as unknown as Response;
@@ -96,6 +98,7 @@ beforeEach(() => {
   db.delete(users).run();
   calls = [];
   waAvailable = { available: true, reason: 'ready' };
+  statusHttp = 200;
   queueStatus = 202;
   // The availability answer is cached for five minutes so a send never pays for a status hop; a test
   // that changed it would otherwise be reading the previous test's answer.
@@ -609,7 +612,7 @@ describe('reported by an office setting this up', () => {
     const admin = caller('admin');
     whatsapp.resetWhatsAppStatusCache(); // exactly the state a freshly-booted container is in
     const got = await admin.whatsapp.get();
-    expect(got.status).toEqual({ available: true, reason: 'ready' });
+    expect(got.status).toMatchObject({ available: true, reason: 'ready', source: 'platform' });
   });
 
   /**
@@ -1000,10 +1003,64 @@ describe('the manifest and the screen agree with the code', () => {
   });
 
   /** One sentence per reason, because each needs something different done about it. */
-  it('has a sentence for each of the four gateway states', () => {
+  it('has a sentence for each gateway state, including the two we infer ourselves', () => {
     const en = JSON.parse(readFileSync(path.resolve(__dirname, '..', '..', 'web', 'src', 'lib', 'i18n', 'en.json'), 'utf8')) as { settings: Record<string, string> };
-    for (const r of ['ready', 'not-configured', 'not-linked', 'unreachable']) {
+    for (const r of ['ready', 'not-configured', 'not-linked', 'unreachable', 'not-permitted', 'unsupported']) {
       expect(en.settings[`waReason_${r}`], `missing i18n key settings.waReason_${r}`).toBeTruthy();
+      // …and the blocker banner names it too, for the ones that stop a send.
+      if (r !== 'ready') expect(en.settings[`waBlock_gateway_${r}`], `missing i18n key settings.waBlock_gateway_${r}`).toBeTruthy();
     }
+  });
+});
+
+/**
+ * Telling apart "the masjid has no WhatsApp" from "this app is not allowed to use it".
+ *
+ * A masjid with a working, linked gateway was told their server had no WhatsApp set up, and went and
+ * checked a setting that was already correct — because a 403 was reported as `not-configured`. The
+ * two need opposite actions: one is an OpenMasjidOS setting, the other is this app's own capability
+ * grant, which comes from the catalog entry the masjid installed from (§9, the same trap as alert ids).
+ */
+describe('what the gateway actually said', () => {
+  async function probe() {
+    whatsapp.resetWhatsAppStatusCache();
+    return caller('admin').whatsapp.statusCheck();
+  }
+
+  it('reports a refusal as not-permitted, never as "not set up"', async () => {
+    statusHttp = 403;
+    const s = await probe();
+    expect(s.reason).toBe('not-permitted');
+    expect(s.source).toBe('http');
+    expect(s.httpStatus).toBe(403);
+  });
+
+  it('reports a missing endpoint as unsupported', async () => {
+    statusHttp = 404;
+    expect((await probe()).reason).toBe('unsupported');
+    statusHttp = 405;
+    expect((await probe()).reason).toBe('unsupported');
+  });
+
+  it('keeps the platform’s own word when it answers properly, and says the word came from there', async () => {
+    waAvailable = { available: false, reason: 'not-linked' };
+    const s = await probe();
+    expect(s.reason).toBe('not-linked');
+    expect(s.source).toBe('platform');
+  });
+
+  /** A 200 with a word we don't know is a client that is out of date, not a gateway that is off — so
+   *  it must not claim "not set up" either. */
+  it('does not invent "not-configured" for an answer it cannot read', async () => {
+    waAvailable = { available: false, reason: 'something-new' };
+    expect((await probe()).reason).toBe('unreachable');
+  });
+
+  it('carries the distinction all the way to the blocker list', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    statusHttp = 403;
+    whatsapp.resetWhatsAppStatusCache();
+    expect((await admin.whatsapp.get()).blockers).toContain('gateway_not-permitted');
   });
 });
