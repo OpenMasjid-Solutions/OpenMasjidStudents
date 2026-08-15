@@ -150,6 +150,11 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - All four are off on both channels until an office turns them on, and each carries the card by brand
   and last four only.
 
+- **The app now says what "queued" actually means.** OpenMasjidOS spaces messages out and holds them
+  through the masjid’s quiet hours — 9pm to 7am unless your admin changed it — so a receipt from three
+  in the morning arrives at seven, not at three. The screen used to say "give it a minute", which made
+  a working set-up look broken.
+
 **Alerts to a group**
 
 - You only ever see the groups an admin approved for this app; the platform never shows the masjid's

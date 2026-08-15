@@ -117,9 +117,24 @@ Also possible: `400` (bad number, empty text, WhatsApp not set up, queue full), 
 declare `whatsapp: true`), `429` (slow down). None is retried here — all four are the platform
 protecting the masjid's number, and a retry loop is the opposite of what they are asking for.
 
-**`queued` is not `sent`.** Delivery is seconds to minutes away, and hours if it lands in the masjid's
-quiet hours. Nothing blocks on a send, no screen says "sent", and no flow waits for one to arrive. The
-settings screen says *handed to the queue*, and the log column reads **Queued**.
+**`queued` is not `sent`**, and the gap is bigger than "a moment". The platform serialises every
+sender — OS alerts and every app — behind one queue and applies, in this order:
+
+| | Default |
+| --- | --- |
+| **Quiet hours** — checked FIRST, queued never dropped | **21:00–07:00** |
+| Warm-up ramp on a freshly linked number | 7 days, scaling the caps |
+| Rate caps | 12/hour, 60/day · groups 4/hour, 10/day |
+| Per-recipient cooldown | 60s (per group: its own) |
+| Gap between messages | 6–20s, randomised |
+
+So **a receipt queued at 03:00 arrives at 07:00**, not at 03:05 — which looks exactly like "it doesn't
+send" if a screen has implied minutes. That is why the settings copy names quiet hours explicitly
+rather than saying "give it a minute", and why the log's hint spells out what *Queued* means. Nothing
+blocks on a send, no screen says "sent", and no flow waits for one to arrive.
+
+The status endpoint returns only `{available, reason}` — the limits are not exposed to apps, so this
+app cannot show the masjid's actual window and says "9pm–7am unless your admin changed it".
 
 **One recipient per call**, by the API's design. We loop where we must and the queue paces it — but
 the shape of every feature here is "one parent at a time", never a broadcast.

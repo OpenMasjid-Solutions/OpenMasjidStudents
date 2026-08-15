@@ -620,6 +620,11 @@ function QueueLog() {
         </button>
       </h3>
       <p className="hint">{t('settings.waLogHint')}</p>
+      {/* WHAT "QUEUED" ACTUALLY MEANS, where somebody reads the word and starts wondering. A receipt
+          queued at three in the morning does not arrive at three in the morning — the platform holds
+          everything through the masjid's quiet hours — and a screen that leaves that to be discovered
+          reads as "it doesn't work". */}
+      {open && <p className="hint">{t('settings.waQueuedMeaning')}</p>}
       {open && q.data && (q.data.length === 0 ? (
         <p className="muted" style={{ fontSize: '0.9rem' }}>{t('settings.waLogEmpty')}</p>
       ) : (

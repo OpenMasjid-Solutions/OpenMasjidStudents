@@ -366,8 +366,12 @@ export async function sendPlatformWhatsAppGroup(groupId: string, text: string): 
  * around: the queue paces a loop correctly, and "one parent at a time" is the shape this whole feature
  * is supposed to have.
  *
- * A 202 means QUEUED. Delivery is seconds to minutes away, and hours if it lands in the masjid's quiet
- * hours. Nothing may block on this, and no screen may ever say "sent" on the strength of it.
+ * A 202 means QUEUED, and the gap between that and delivery is larger than it sounds. The platform
+ * serialises every sender behind one queue with a randomised 6–20s gap, a 60s per-recipient cooldown,
+ * caps of 12/hour and 60/day (4/hour and 10/day for groups), a seven-day warm-up ramp on a freshly
+ * linked number — and **quiet hours, 21:00–07:00 by default, checked FIRST**. A receipt queued at
+ * 03:00 is held until 07:00. It is never dropped, but nothing may block on this, and no screen may
+ * ever say "sent" on the strength of a 202 (see the settings copy, which says so in plain words).
  *
  * The BODY IS NEVER LOGGED, on any path including the failures — it routinely carries a child's name
  * and a family's fees (§14). Status codes and counts only.
