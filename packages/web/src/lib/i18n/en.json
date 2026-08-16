@@ -787,6 +787,14 @@
     "waGroupDetailOn": "Messages to this group will name the household and the amount — right for a small staff group, wrong for anything wider.",
     "waGroupDetailOff": "Messages to this group say what happened and how much, but never who. Turn this on only for a group of staff.",
     "waGroupsParentsHint": "Never subscribe a group of parents to these. A family’s balance is their own business, and this app can’t see who is in a group — only you can.",
+    "waGroupsUnreachable": "Couldn’t ask OpenMasjidOS which groups are approved just now, so this list may be out of date. Nothing has changed — try again in a moment.",
+    "waGroupsBudget": "A group can carry about 10 posts a day, and one every half hour at most — a budget shared with every other app on the masjid’s number. Alerts past that aren’t lost, they wait, so a busy Sunday can push Monday’s alert back. Tick the ones worth interrupting people for; “A payment came in” on a busy day will fill it on its own.",
+    "waGroupsStaleHint": "No longer approved in OpenMasjidOS. Nothing is being sent to these, but the settings are kept in case approval comes back — forget them if you’re done.",
+    "waGroupsStaleWhat_one": "{{count}} alert, {{what}}",
+    "waGroupsStaleWhat_other": "{{count}} alerts, {{what}}",
+    "waGroupsStaleDetailed": "naming families",
+    "waGroupsStaleBrief": "naming nobody",
+    "waGroupsForget": "Forget",
     "waQueuedMeaning": "Messages are paced by OpenMasjidOS to protect the masjid’s number: a gap of a few seconds between each, a cooldown per person, hourly and daily caps, and nothing at all during quiet hours (9pm–7am by default). Anything sent overnight waits until morning."
   },
   "relation": {

@@ -49,7 +49,7 @@ import { rid } from '../db/ids';
 import { getCurrency, getSchoolName, getWhatsApp } from '../settings';
 import { pausedFor, testFamilyId } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
-import { sendPlatformWhatsApp, sendPlatformWhatsAppGroup, whatsappGroups, whatsappStatus, type WhatsAppGroup, type WhatsAppStatus } from '../fabric/platform';
+import { sendPlatformWhatsApp, sendPlatformWhatsAppGroup, whatsappGroups, whatsappStatus, type WhatsAppGroupList, type WhatsAppStatus } from '../fabric/platform';
 import { toE164 } from './numbers';
 import { renderText, waStaffAlert, type WaTextKey, type WaVars } from './templates';
 import { familyBalance } from '../billing/ledger';
@@ -136,14 +136,37 @@ export function resetWhatsAppStatusCache(): void {
 }
 
 /**
- * The groups this app may post into, or [] when there are none (or the feature is off).
+ * The groups this app may post into — a confirmed list, or a reason we could not get one.
  *
  * Not cached: approval is the admin's to withdraw at any moment, this is only ever read by an admin
  * settings screen, and a stale "yes you may" is the one answer worth paying a network hop to avoid.
+ *
+ * The switch being off is `ok: true` with nothing in it, not a failure: we know the answer without
+ * asking, and it is "none". That distinction is the whole point of the type — see `WhatsAppGroupList`.
  */
-export async function approvedGroups(): Promise<WhatsAppGroup[]> {
-  if (!getWhatsApp().enabled || !fabricConfigured()) return [];
+export async function approvedGroups(): Promise<WhatsAppGroupList> {
+  if (!getWhatsApp().enabled) return { ok: true, groups: [] };
+  if (!fabricConfigured()) return { ok: false, reason: 'no_platform' };
   return whatsappGroups();
+}
+
+/**
+ * Is this id one the admin has approved RIGHT NOW? The one place that question is answered.
+ *
+ * It was answered in three places that disagreed: `groupSet` checked, `testGroup` did not, and the
+ * send path did not either. Two of those were defensible on their own — the platform refuses an
+ * unapproved id with 403 before it queues anything, so nothing could actually leak — but "the rule
+ * lives in one place" is what stops the next caller getting it wrong, and a check that exists in one
+ * of three sibling functions reads like an oversight in the other two (CLAUDE.md §20).
+ *
+ * `null` means we could not ask. Callers must not read that as "no" and must not read it as "yes":
+ * `groupSet` refuses with a different sentence, because telling an admin their group is unapproved
+ * when the truth is that OpenMasjidOS did not answer sends them to fix the wrong thing.
+ */
+export async function groupIsApproved(groupId: string): Promise<boolean | null> {
+  const list = await approvedGroups();
+  if (!list.ok) return null;
+  return list.groups.some((g) => g.id === groupId);
 }
 
 // ── The log ─────────────────────────────────────────────────────────────────
@@ -441,12 +464,17 @@ export async function notifyGroups(event: string, msg: { title: string; text: st
  * subscriptions on purpose — an admin who has just approved a group wants to confirm the plumbing
  * before deciding what should flow through it.
  */
-export async function testGroup(groupId: string): Promise<'queued' | 'off' | 'unavailable' | 'failed'> {
+export async function testGroup(groupId: string): Promise<'queued' | 'off' | 'unavailable' | 'unapproved' | 'failed'> {
   try {
     const cfg = getWhatsApp();
     if (!cfg.enabled || !fabricConfigured()) return 'off';
     const status = await currentWhatsAppStatus();
     if (!status.available) return 'unavailable';
+    // The same check `groupSet` makes, from the same helper. This used to be the one group path with
+    // no approval check at all: harmless in effect (the platform 403s an unapproved id before it
+    // queues anything) but it meant an admin-supplied id went out to the platform unexamined, and it
+    // made the three group paths disagree about a rule that has exactly one answer.
+    if ((await groupIsApproved(groupId)) === false) return 'unapproved';
     // Terse, like the alerts it is standing in for — and it must READ like one, or it is not a test of
     // anything. No salam, no letterhead.
     const res = await sendPlatformWhatsAppGroup(groupId, waStaffAlert('Test', 'Staff alerts will reach this group. No reply is needed.'));

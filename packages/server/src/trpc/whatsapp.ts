@@ -21,6 +21,7 @@ import { testFamilyId } from '../settings/testStudent';
 import {
   WA_PARENT_EVENTS,
   approvedGroups,
+  groupIsApproved,
   testGroup,
   currentWhatsAppStatus,
   familyRecipients,
@@ -465,26 +466,50 @@ export const whatsappRouter = router({
    * a way to reach parents: the events are the same `ALERT_EVENTS` a staff account can subscribe to,
    * and no parent event or free-typed message can be sent to a group at all.
    *
-   * An empty list HIDES the feature rather than showing it broken (the platform's own guidance): the
-   * approval is somebody else's to give and to withdraw, so "no groups" is a normal state and not an
-   * error. Read live on every call — a stale "yes you may" is the one answer worth a network hop.
+   * A confirmed-empty list HIDES the feature rather than showing it broken (the platform's own
+   * guidance): the approval is somebody else's to give and to withdraw, so "no groups" is a normal
+   * state and not an error. Read live on every call — a stale "yes you may" is worth a network hop.
+   *
+   * `reachable: false` is NOT that state and must not look like it. It means OpenMasjidOS did not
+   * answer, and hiding the section on a hiccup is how a feature disappears with nothing said.
+   *
+   * `stale` is the other half of the same distinction, and it exists because of what happens when a
+   * group comes BACK. Withdrawing approval does not delete what an admin ticked here — deleting it
+   * would mean a five-minute platform outage silently wiped a configuration, which is far worse than
+   * keeping it. But an un-approved group used to vanish from this screen while its stored
+   * subscription lived on, so re-approving it — perhaps months later, perhaps for a different
+   * purpose — silently resumed alerts nobody had re-ticked, `detail` and all. Showing the row is what
+   * defuses that: an admin can see exactly what a group would resume with, and clear it if they meant
+   * to. We only ever call a row stale when the platform positively answered without it.
    */
   groups: adminProcedure.query(async () => {
     const cfg = getWhatsApp();
     const status = await currentWhatsAppStatus();
-    const groups = await approvedGroups();
+    const list = await approvedGroups();
+    const approved = list.ok ? list.groups : [];
+    const subs = (id: string) => {
+      const sub = cfg.groupAlerts[id];
+      return {
+        // Filtered against the catalogue so a stale or hand-edited row cannot widen what a group hears.
+        events: (sub?.events ?? []).filter((e): e is (typeof ALERT_EVENTS)[number] => (ALERT_EVENTS as readonly string[]).includes(e)),
+        detail: sub?.detail === true,
+      };
+    };
     return {
       /** The catalogue, so the UI never hard-codes the event list (same rule as every other screen). */
       events: ALERT_EVENTS,
-      groups: groups.map((g) => {
-        const sub = cfg.groupAlerts[g.id];
-        return {
-          ...g,
-          // Filtered against the catalogue so a stale or hand-edited row cannot widen what a group hears.
-          events: (sub?.events ?? []).filter((e): e is (typeof ALERT_EVENTS)[number] => (ALERT_EVENTS as readonly string[]).includes(e)),
-          detail: sub?.detail === true,
-        };
-      }),
+      /** Did OpenMasjidOS actually answer? False means "could not ask", never "you have none". */
+      reachable: list.ok,
+      groups: approved.map((g) => ({ ...g, ...subs(g.id) })),
+      /**
+       * Subscriptions we hold for groups the platform no longer lists. Only computed from a confirmed
+       * answer, so an unreachable platform never accuses a live group of being withdrawn.
+       */
+      stale: list.ok
+        ? Object.keys(cfg.groupAlerts)
+            .filter((id) => !approved.some((g) => g.id === id))
+            .map((id) => ({ id, label: id.replace(/@g\.us$/, ''), ...subs(id) }))
+        : [],
       ready: cfg.enabled && status.available,
     };
   }),
@@ -509,8 +534,23 @@ export const whatsappRouter = router({
     .mutation(async ({ ctx, input }) => {
       // Only a group the admin has actually approved. The platform would refuse the send anyway, but a
       // setting stored against an id we were never given is a setting nobody can explain later.
-      const approved = await approvedGroups();
-      if (!approved.some((g) => g.id === input.groupId)) {
+      //
+      // The two failures are told apart deliberately. "Not approved" sends an admin to OpenMasjidOS to
+      // approve it; saying that when the truth is "we could not reach OpenMasjidOS" sends them to fix
+      // something that is not broken, and they find the group already approved and no way forward.
+      //
+      // Three distinct causes, three distinct sentences. This one is ours: with the master switch off
+      // there are no approved groups by definition, and the id check below would blame OpenMasjidOS
+      // for a setting on this very screen — which a stale tab, or a second admin who just switched it
+      // off, can reach. An admin sent to the platform finds the group approved and no way forward.
+      if (!getWhatsApp().enabled) {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'WhatsApp is switched off for this madrasah — turn it on first.' });
+      }
+      const approved = await groupIsApproved(input.groupId);
+      if (approved === null) {
+        throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Couldn’t check with OpenMasjidOS just now. Try again in a moment.' });
+      }
+      if (!approved) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'That group isn’t approved for this app in OpenMasjidOS.' });
       }
       const cur = getWhatsApp().groupAlerts[input.groupId];
@@ -518,6 +558,21 @@ export const whatsappRouter = router({
       audit(auditActor(ctx), 'whatsapp.groupAlerts', { entity: 'settings', detail: { groupId: input.groupId, events: input.events.length, detail: input.detail ?? cur?.detail === true } });
       return { ok: true as const };
     }),
+
+  /**
+   * Drop what we remember about a group the platform no longer lists.
+   *
+   * Deliberately NOT gated on the group being approved — it is the one group mutation that must work
+   * for an id the platform has stopped offering, since that is the only situation it exists for. It
+   * can only ever delete, so the widest thing it can do is forget something.
+   */
+  groupForget: adminProcedure.input(z.object({ groupId: z.string().trim().min(1).max(200) })).mutation(async ({ ctx, input }) => {
+    // An empty event list is how `setWhatsApp` deletes a group row (settings/index.ts) — one rule for
+    // "a group with nothing ticked is not a subscription", rather than a second removal path here.
+    setWhatsApp({ groupAlerts: { [input.groupId]: { events: [], detail: false } } });
+    audit(auditActor(ctx), 'whatsapp.groupForget', { entity: 'settings', detail: { groupId: input.groupId } });
+    return { ok: true as const };
+  }),
 
   /** "Does this group actually receive?" — a FIXED test message, never anything typed. This is not a
    *  composer, and a box that posts arbitrary text to a group is the misuse the design rules out. */
@@ -532,7 +587,9 @@ export const whatsappRouter = router({
             ? 'WhatsApp is switched off for this madrasah.'
             : outcome === 'unavailable'
               ? 'WhatsApp isn’t ready on this server yet.'
-              : 'That didn’t reach the queue. The group may no longer be approved in OpenMasjidOS — check there, then try again.',
+              : outcome === 'unapproved'
+                ? 'That group isn’t approved for this app in OpenMasjidOS any more.'
+                : 'That didn’t reach the queue. The group may no longer be approved in OpenMasjidOS — check there, then try again.',
       });
     }
     return { ok: true as const };
@@ -559,7 +616,8 @@ export const whatsappRouter = router({
     // and only when there is actually a group row to name, so the common case pays nothing. A group
     // whose approval has since been withdrawn falls through to the id, which is still true history.
     if (rows.some((r) => r.recipientKind === 'group')) {
-      for (const g of await approvedGroups()) names.set(g.id, g.label);
+      const list = await approvedGroups();
+      if (list.ok) for (const g of list.groups) names.set(g.id, g.label);
     }
     const famIds = [...new Set(rows.map((r) => r.familyId).filter((v): v is string => !!v))];
     const labels = new Map<string, string>();

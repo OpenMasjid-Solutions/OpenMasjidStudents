@@ -289,17 +289,37 @@ export interface WhatsAppGroup {
 }
 
 /**
+ * The answer to "which groups may I post into?", with "I could not ask" kept SEPARATE from "none".
+ *
+ * Those two used to be the same empty array, and three things went wrong downstream, all of them the
+ * kind that only shows up on a bad day:
+ *
+ *   • the screen hid the Groups section entirely, so a momentary platform hiccup looked exactly like
+ *     an admin who had approved nothing — no error, no retry, just a feature that was there yesterday;
+ *   • `groupSet` told an admin "that group isn't approved in OpenMasjidOS", sending them off to fix
+ *     something that was not broken;
+ *   • and nothing could ever say "you are still subscribed to a group that is no longer approved",
+ *     because a withdrawn group and an unreachable platform were indistinguishable — see
+ *     `trpc/whatsapp.ts` `groups`, where that distinction is what makes a stale row safe to show.
+ *
+ * A 429 makes this more than theoretical: the platform's Fabric limiter is per-IP across ALL of
+ * `/api/fabric/*` (status, groups, send, Stripe keys, record-payment share one 120/min bucket), and it
+ * answers `{ groups: [] }` with no error field at all. "Empty" is genuinely ambiguous on the wire.
+ */
+export type WhatsAppGroupList = { ok: true; groups: WhatsAppGroup[] } | { ok: false; reason: string };
+
+/**
  * The groups an admin has approved for THIS app.
  *
  * The list is authorisation, not decoration: an id we did not get from here is refused with 403, and
- * approval can be withdrawn at any moment. An empty list therefore means "no groups available" and the
+ * approval can be withdrawn at any moment. A confirmed-empty list means "no groups available" and the
  * feature is hidden rather than shown broken — the platform's own guidance, and the right shape for a
  * permission that is somebody else's to give.
  *
- * Fail-soft to `[]`, like every other platform call here.
+ * Still fail-soft — it never throws — but the failure is now reported rather than disguised as "none".
  */
-export async function whatsappGroups(): Promise<WhatsAppGroup[]> {
-  if (!fabricConfigured()) return [];
+export async function whatsappGroups(): Promise<WhatsAppGroupList> {
+  if (!fabricConfigured()) return { ok: false, reason: 'no_platform' };
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 5000);
@@ -310,16 +330,21 @@ export async function whatsappGroups(): Promise<WhatsAppGroup[]> {
     });
     clearTimeout(timer);
     if (!res.ok) {
+      // Status only — the body carries the masjid's own group nicknames (§14).
       log.warn('whatsapp groups rejected', { status: res.status });
-      return [];
+      return { ok: false, reason: `http_${res.status}` };
     }
     const j = (await res.json().catch(() => null)) as { groups?: unknown } | null;
-    const list = Array.isArray(j?.groups) ? j!.groups : [];
-    return list
+    // A 200 whose body is not the documented shape is a failure, not an empty list. Reading a
+    // malformed answer as "no groups approved" is how a stale subscription would silently look
+    // withdrawn — the one reading this code must not make.
+    if (!j || !Array.isArray(j.groups)) return { ok: false, reason: 'bad_shape' };
+    const groups = j.groups
       .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object' && typeof (g as { id?: unknown }).id === 'string')
       .map((g) => ({ id: String(g.id), label: typeof g.label === 'string' && g.label ? g.label.slice(0, 120) : String(g.id) }));
+    return { ok: true, groups };
   } catch {
-    return [];
+    return { ok: false, reason: 'unreachable' };
   }
 }
 

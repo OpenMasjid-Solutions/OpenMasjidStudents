@@ -170,6 +170,20 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **Staff alerts get straight to the point** — no salam, no letterhead, just what happened. They arrive
   on the masjid’s own number for someone who has to act on them, so a line of greeting is a line to
   scroll past first. Messages to parents still greet properly; that is the madrasah speaking to a family.
+- The screen now says **what a group post costs**: about ten a day, one every half hour to the same
+  group, and that budget is shared with every other app on the masjid’s number. Alerts past it are not
+  lost — they wait — so a busy Sunday can push Monday’s alert back, which looks like nothing at all
+  until you go looking. “A payment came in” will fill a day on its own, and the screen says so.
+- **“No groups approved” and “couldn’t ask OpenMasjidOS” are no longer the same answer.** They looked
+  identical before, so a moment’s hiccup made the whole section vanish as if nothing were approved, and
+  ticking a box could report that a group wasn’t approved when the platform simply hadn’t replied —
+  sending you to fix something that was already right.
+- **A group that loses its approval keeps its settings, and now shows them.** It used to disappear from
+  the screen while still switched on underneath, so approving that group again — months later, perhaps
+  with different people in it — quietly resumed the old alerts, family names and all. It is now listed
+  as no longer approved, spelling out exactly what it would resume with, with a Forget button.
+- Sending a test to a group checks it is still approved first, the same as ticking an alert does, and
+  says so plainly instead of “that didn’t reach the queue”.
 
 **Elsewhere**
 

@@ -414,6 +414,8 @@ function MessageWording() {
  *
  * Renders nothing when no groups are approved. That is a normal state — approval is the admin's to
  * give and withdraw in OpenMasjidOS — and a feature with nowhere to send is better hidden than broken.
+ * "Could not ask OpenMasjidOS" is NOT that state and says so instead: hiding on a hiccup is how a
+ * feature vanishes with no explanation, and the admin's next move (wait, or go look) differs.
  */
 function Groups() {
   const { t } = useTranslation();
@@ -421,10 +423,13 @@ function Groups() {
   const q = trpc.whatsapp.groups.useQuery();
   const save = trpc.whatsapp.groupSet.useMutation();
   const test = trpc.whatsapp.groupTest.useMutation();
+  const forget = trpc.whatsapp.groupForget.useMutation();
   const [note, setNote] = useState<string | null>(null);
 
-  if (!q.data || q.data.groups.length === 0) return null;
+  if (!q.data) return null;
   const d = q.data;
+  // Nothing approved AND nothing left over AND the platform actually answered: the normal empty state.
+  if (d.reachable && d.groups.length === 0 && d.stale.length === 0) return null;
   type Group = (typeof d.groups)[number];
 
   async function set(g: Group, patch: { events?: Group['events']; detail?: boolean }) {
@@ -448,12 +453,31 @@ function Groups() {
     }
   }
 
+  async function runForget(id: string) {
+    setNote(null);
+    try {
+      await forget.mutateAsync({ groupId: id });
+      await utils.whatsapp.groups.invalidate();
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
   return (
     <>
       <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.waGroups')}</h3>
       <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>{t('settings.waGroupsHint')}</p>
       {note && <div className="notice" style={{ marginBlockEnd: '0.6rem' }}>{note}</div>}
 
+      {/* Not the same as "you have no groups", and the admin's next move differs: wait, or go look. */}
+      {!d.reachable && <div className="notice" style={{ marginBlockEnd: '0.6rem' }}>{t('settings.waGroupsUnreachable')}</div>}
+
+      {/* What a group post actually costs. The caps are the platform's and they DELAY rather than drop,
+          so the failure an admin needs warning about is not "the alert vanished" but "Tuesday's alert
+          arrived on Thursday, behind Sunday's receipts" — which looks like nothing at all. */}
+      {d.groups.length > 0 && <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>{t('settings.waGroupsBudget')}</p>}
+
+      {d.groups.length > 0 && (
       <div style={{ overflowX: 'auto' }}>
         <table className="data-table">
           <thead>
@@ -488,6 +512,32 @@ function Groups() {
           </tbody>
         </table>
       </div>
+      )}
+
+      {/* A group we still hold settings for that OpenMasjidOS no longer offers. Shown rather than
+          deleted: withdrawing approval must not silently wipe what an admin ticked, and a five-minute
+          outage certainly must not. But it must not be INVISIBLE either — a hidden row is what let a
+          re-approved group resume alerts, `detail` and all, that nobody had re-ticked. Seeing exactly
+          what it would resume with is what makes that safe. */}
+      {d.stale.length > 0 && (
+        <div style={{ marginBlockStart: '0.8rem' }}>
+          <p className="hint" style={{ marginBlockEnd: '0.4rem' }}>{t('settings.waGroupsStaleHint')}</p>
+          {d.stale.map((g) => (
+            <div key={`s-${g.id}`} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', marginBlockStart: '0.35rem' }}>
+              <span style={{ opacity: 0.75 }}>{g.label}</span>
+              <span className="hint">
+                {t('settings.waGroupsStaleWhat', {
+                  count: g.events.length,
+                  what: g.detail ? t('settings.waGroupsStaleDetailed') : t('settings.waGroupsStaleBrief'),
+                })}
+              </span>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => void runForget(g.id)} disabled={forget.isPending}>
+                {t('settings.waGroupsForget')}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* The consequence, per group, next to the switch that causes it. */}
       {d.groups.map((g) => (

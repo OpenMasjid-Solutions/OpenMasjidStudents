@@ -267,7 +267,40 @@ POST /api/fabric/whatsapp          → { "group": "…@g.us", "text": "…" }   
 ```
 
 The list **is** the authorisation: an id we did not get from it is refused `403`, approval can be
-withdrawn at any moment, and an empty list means the feature is hidden rather than shown broken.
+withdrawn at any moment, and a *confirmed* empty list means the feature is hidden rather than shown
+broken.
+
+**"You have none" and "I could not ask" are different answers, and the wire makes them easy to
+confuse.** A 403 answers `{ groups: [], error }`; a 429 — from a per-IP limiter of 120/min that
+*every* Fabric call shares, Stripe keys and `record-payment` included — answers `{ groups: [] }` with
+no error field at all. `whatsappGroups()` therefore returns `{ ok: true, groups } | { ok: false,
+reason }` and never collapses the two, because collapsing them broke three things at once, all
+silently: the Groups section vanished on a hiccup exactly as if nothing were approved; `groupSet` told
+an admin their group was not approved in OpenMasjidOS when OpenMasjidOS simply had not answered,
+sending them to fix something that was fine; and no screen could ever say "you are still subscribed to
+a group that is no longer approved". A 200 whose body is not the documented shape counts as a failure
+too — reading a malformed answer as "none approved" is the same mistake wearing a different hat.
+
+**Withdrawn approval keeps the setting and shows it.** Deleting a subscription when the platform stops
+listing a group would mean a five-minute outage wiped what an admin configured. But the row used to be
+invisible while it lived on — the screen iterated the *approved* list — so re-approving that group
+later silently resumed its old events **and its old `detail` flag**, naming households to a group
+nobody had re-ticked. Both halves are now wrong to do: the row is shown, marked no longer approved,
+with everything it would resume with spelled out and a **Forget** button. We only ever call a row stale
+on a positive answer, so an unreachable platform never accuses a live group.
+
+**The send path does not re-check, deliberately.** `notifyGroups` posts to its stored ids and lets the
+platform's 403 be the authority — it checks before it queues anything, so nothing can leak, and a
+per-alert round trip would draw on that same shared 120/min budget. A refusal lands in the queue log as
+`failed` with the status. `groupIsApproved()` is the one place the question is answered for the paths
+that *do* ask (`groupSet`, and the per-group test, which used to skip it).
+
+**What a group post costs.** Groups have their own budget — **4 an hour and 10 a day**, one post to the
+same group every **30 minutes**, shared with every other app on the masjid's number — and the platform
+**delays** rather than drops. So the failure to warn an office about is not "the alert vanished" but
+"Monday's alert arrived Wednesday, behind Sunday's receipts", which looks like nothing at all. The
+screen says so next to the matrix, and names `payment-received` as the one event that will fill a day's
+budget by itself.
 
 **A group is a STAFF channel in this app** — a masjid's finance group getting every payment alert. It
 is the fifth fan-out of `alertStaff` (alerts/index.ts), beside the office's email addresses, the
@@ -301,8 +334,33 @@ other 199 members'.*
   to a group is precisely the misuse the design rules out.
 - The queue log records the group and the outcome, never the text, like every other row.
 
-Media (a base64 poster) is part of the platform's contract and deliberately unused here: a tuition
-desk has no poster to send, and the smallest surface is the right one for the highest blast radius.
+### Two parts of the platform's contract this app deliberately does not use
+
+**Images.** `POST /api/fabric/whatsapp` takes an optional `media` (base64 PNG/JPEG/WebP, 2 MB, the
+`text` becoming a ≤1024-character caption), and `GET /api/fabric/whatsapp` advertises it as
+`media: true` with `maxMediaBytes`. We send none, and the reason is not squeamishness — there is
+nothing honest to send:
+
+- §14 forbids photos outright, so no child's face.
+- The academics went in the 0.35.0 pivot, so there is no timetable and no permission slip.
+- §7 forbids a PDF renderer and headless Chromium (this runs on a Pi), so the statements, invoices and
+  ID sheets — the only documents we have — **cannot be rasterised**. They are print-CSS HTML by design.
+- What is left is a bill, and a bill as an image is worse than a bill as a sentence: it names a child
+  and their fees inside a 2 MB blob that sits in the platform's memory through quiet hours, on a queue
+  capped at four images **platform-wide**, and **a failed image is never downgraded to its caption** —
+  so the notice simply does not arrive, and we were told `202` and cannot know.
+
+The link in an invoice-ready message goes to the portal, which is authenticated, always legible, and
+already the place the bill lives.
+
+**Admin commands** (`commands:` in the manifest, served at `POST /fabric/commands/run`). The platform
+side is real and wired — OpenMasjidOS `0.51.0-dev.1`, and the catalog validates and emits the key as of
+`807c5d6` — but **we declare none yet, on purpose**: which commands a tuition desk should expose to a
+WhatsApp message is a decision about money and about who is holding the phone, and it is Hasan's to
+make. Two things to know before it is: the floor is OpenMasjidOS **0.51.0**, not the 0.50.4 the
+catalog's author docs claim (stable has none of the code, and drops the key silently), and a command's
+answer lands in a chat that keeps a copy forever — which is the platform's own stated reason for
+refusing to expose app logs, and applies just as much to a list of families who are behind.
 
 ## 6. The two things an office presses
 

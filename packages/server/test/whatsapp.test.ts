@@ -48,6 +48,13 @@ let waAvailable: { available: boolean; reason: string } = { available: true, rea
 let statusHttp = 200;
 /** The groups the platform says this app may post into. Only what an ADMIN approved ever appears. */
 let groupList: { id: string; label: string }[] = [{ id: '1203630001@g.us', label: 'Parents' }];
+/**
+ * The HTTP status the GROUPS endpoint answers with, and whether the body is the documented shape.
+ * 200 unless a test is exercising the difference between "you have no groups" and "I could not ask" —
+ * which the platform itself makes ambiguous: its own 429 answers `{ groups: [] }` with no error field.
+ */
+let groupsHttp = 200;
+let groupsBodyOk = true;
 /** The status the queue answers with. 202 is the real one; the others are the four documented refusals. */
 let queueStatus = 202;
 const realFetch = globalThis.fetch;
@@ -57,7 +64,13 @@ function installFetch(): void {
     const i = (init ?? {}) as { body?: string; method?: string };
     const url = String(input);
     calls.push({ url, body: i.body ? (JSON.parse(i.body) as Record<string, unknown>) : { _method: i.method ?? 'GET' } });
-    if (url.endsWith('/api/fabric/whatsapp/groups')) return { ok: true, status: 200, json: async () => ({ groups: groupList }) } as unknown as Response;
+    if (url.endsWith('/api/fabric/whatsapp/groups')) {
+      return {
+        ok: groupsHttp < 300,
+        status: groupsHttp,
+        json: async () => (groupsBodyOk ? { groups: groupList } : {}),
+      } as unknown as Response;
+    }
     if (url.endsWith('/api/fabric/whatsapp')) {
       if ((i.method ?? 'GET') === 'GET') return { ok: statusHttp < 300, status: statusHttp, json: async () => waAvailable } as unknown as Response;
       return { ok: queueStatus < 300, status: queueStatus, json: async () => ({ queued: queueStatus === 202 }) } as unknown as Response;
@@ -104,6 +117,8 @@ beforeEach(() => {
   statusHttp = 200;
   queueStatus = 202;
   groupList = [{ id: '1203630001@g.us', label: 'Parents' }];
+  groupsHttp = 200;
+  groupsBodyOk = true;
   // The availability answer is cached for five minutes so a send never pays for a status hop; a test
   // that changed it would otherwise be reading the previous test's answer.
   whatsapp.resetWhatsAppStatusCache();
@@ -1033,6 +1048,94 @@ describe('staff alerts to a group', () => {
     expect(got.groups[0].detail).toBe(true);
     groupList = [];
     expect((await admin.whatsapp.groups()).groups).toEqual([]);
+  });
+
+  /**
+   * "NO GROUPS" AND "COULDN'T ASK" ARE DIFFERENT ANSWERS, and the platform makes it easy to conflate
+   * them: its own rate-limited reply is `{ groups: [] }` with no error field, on a shared per-IP
+   * bucket that every other Fabric call also draws from. Collapsing both to an empty list made a
+   * momentary hiccup look exactly like an admin who had approved nothing — the section vanished with
+   * nothing said, and `groupSet` told them their group was unapproved when it was not.
+   */
+  it('says it could not ask, rather than pretending there are none', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    groupsHttp = 429; // the platform's own shape for "too many requests": an empty list, no error
+    const got = await admin.whatsapp.groups();
+    expect(got.reachable).toBe(false);
+    expect(got.groups).toEqual([]);
+  });
+
+  it('treats a 200 that is not the documented shape as a failure, not as an empty list', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    groupsBodyOk = false;
+    expect((await admin.whatsapp.groups()).reachable).toBe(false);
+  });
+
+  it('refuses to subscribe with a DIFFERENT sentence when it could not check', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    groupsHttp = 503;
+    // Not /approved/ — that sentence sends an admin to OpenMasjidOS to fix a group that is fine.
+    await expect(admin.whatsapp.groupSet({ groupId: '1203630001@g.us', events: ['autopay-disabled'] })).rejects.toThrow(/couldn’t check/i);
+  });
+
+  /**
+   * WHAT HAPPENS WHEN A GROUP COMES BACK.
+   *
+   * Withdrawing approval must not delete what an admin ticked — a five-minute outage would then wipe a
+   * configuration. But the row used to be invisible while it lived on, so re-approving a group months
+   * later silently resumed alerts nobody had re-ticked, `detail` and all. Showing it is what makes
+   * keeping it safe.
+   */
+  it('shows a subscription whose group is no longer approved, instead of hiding it', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    await subscribe(['autopay-disabled'], true);
+    groupList = [];
+    const got = await admin.whatsapp.groups();
+    expect(got.groups).toEqual([]);
+    expect(got.stale).toHaveLength(1);
+    // Everything it would resume with, so re-approval can never be a surprise.
+    expect(got.stale[0]).toMatchObject({ id: '1203630001@g.us', events: ['autopay-disabled'], detail: true });
+  });
+
+  it('never calls a subscription stale on the word of a platform that did not answer', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    await subscribe(['autopay-disabled']);
+    groupsHttp = 500;
+    expect((await admin.whatsapp.groups()).stale).toEqual([]);
+  });
+
+  it('can forget a group the platform no longer offers', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    await subscribe(['autopay-disabled'], true);
+    groupList = [];
+    await admin.whatsapp.groupForget({ groupId: '1203630001@g.us' });
+    expect((await admin.whatsapp.groups()).stale).toEqual([]);
+    // And it does not come back with its old ticks when the group is approved again.
+    groupList = [{ id: '1203630001@g.us', label: 'Parents' }];
+    const back = await admin.whatsapp.groups();
+    expect(back.groups[0].events).toEqual([]);
+    expect(back.groups[0].detail).toBe(false);
+  });
+
+  it('blames the right thing when WhatsApp is simply switched off here', async () => {
+    const admin = caller('admin');
+    // Deliberately NOT turnOn(). The id is genuinely approved; the master switch is what is off.
+    await expect(admin.whatsapp.groupSet({ groupId: '1203630001@g.us', events: ['autopay-disabled'] })).rejects.toThrow(/switched off/i);
+  });
+
+  /** The check `groupSet` makes, made in the same place by the path that used to skip it entirely. */
+  it('refuses a test to a group that is not approved', async () => {
+    const admin = caller('admin');
+    await turnOn();
+    calls = [];
+    await expect(admin.whatsapp.groupTest({ groupId: 'never-approved@g.us' })).rejects.toThrow(/approved/i);
+    expect(posts()).toHaveLength(0);
   });
 
   it('unticking the last alert leaves no setting behind', async () => {
