@@ -21,6 +21,7 @@
  * parentMailPause.test.ts. If an address reaches that call, a real parent got mail.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { freshApp } from './harness';
 import {
   alertRecipients, families, guardians, guardianFamilies, invoiceItems, invoices,
@@ -214,17 +215,82 @@ describe('reminding parents', () => {
     expect((await pastDue.runPastDue('2026-04-01')).emailed).toBe(0);
   });
 
-  it('reads as a reminder, and names no child', async () => {
-    const stu = household('fam_1', 'Ismail family');
+  /**
+   * READS AS A REMINDER, AND NAMES THE CHILD IT IS ABOUT (0.50.0-dev.15).
+   *
+   * This used to assert the opposite — "names no child" — on the reasoning that one adult pays for the
+   * household so the amount is the household's. True about who pays, wrong about what a parent can act
+   * on: with three children, "$430 is past due" does not say whether that is one child's two missed
+   * months or three children owing a little each. The office's digest has named children since dev.14,
+   * so the two copies of one fact disagreed.
+   *
+   * Note what the old assertion was worth: it checked for the string "Ismail family child", and the
+   * message carries FIRST names, so it would have passed even after the change. The child's name here
+   * shares no word with the household label, which is the only way this can tell them apart.
+   */
+  it('reads as a reminder, and names the child it is about', async () => {
+    const stu = household('fam_1', 'Ismail family', 'parent@example.org', 'Yusuf Siddiq');
     bill('inv_1', stu, 20000, '2026-03-01');
     await pastDue.runPastDue('2026-04-01');
     const m = sent.find((x) => x.to === 'parent@example.org')!;
     expect(m.subject).toContain('reminder');
     expect(m.text).toContain('$200.00');
     expect(m.text).toContain('speak to the office');
-    // One adult pays for the household, so the message is the household's — and a Student ID is a
-    // payment credential that never goes in an email (§14).
-    expect(m.text).not.toContain('Ismail family child');
+    // First name only — this is a message to their own parent (people/names.ts).
+    expect(m.text).toContain('Yusuf');
+    expect(m.text).not.toContain('Siddiq');
+    // A single child reads as one sentence, not a one-item list.
+    expect(m.text).not.toContain('• Yusuf');
+  });
+
+  /** Several children behind: the sentence keeps the household total and the lines carry the split,
+   *  which is the whole reason a parent needed the names. */
+  it('breaks the total down when more than one child is behind', async () => {
+    const { db } = app.dbmod;
+    const stu = household('fam_1', 'Ismail family', 'parent@example.org', 'Yusuf Siddiq');
+    db.insert(students).values({ id: 'stu_sib', familyId: 'fam_1', fullName: 'Maryam Siddiq', status: 'active', studentCode: null, createdAt: TS, updatedAt: TS }).run();
+    bill('inv_1', stu, 20000, '2026-03-01');
+    bill('inv_2', 'stu_sib', 5000, '2026-03-01');
+    await pastDue.runPastDue('2026-04-01');
+    const m = sent.find((x) => x.to === 'parent@example.org')!;
+    expect(m.text).toContain('$250.00 of your tuition balance');
+    expect(m.text).toContain('• Yusuf — $200.00');
+    expect(m.text).toContain('• Maryam — $50.00');
+  });
+
+  /**
+   * A PARENT HEARS ABOUT THEIR OWN CHILDREN AND NOBODY ELSE'S.
+   *
+   * Naming children in this email put a household-scoping question where there wasn't one before, and
+   * the mistake is a one-word edit: the office digest derives its list from every household being
+   * chased, and the parent's reminder from exactly one. Passing the wrong list compiles, sends, and
+   * tells every family who else at the madrasah is behind. Nothing else in the file would have caught
+   * it — the other tests use a single household, so both lists are identical there.
+   */
+  it('never names another household’s children', async () => {
+    const a = household('fam_a', 'Ahmed family', 'a@example.org', 'Yusuf Siddiq');
+    const b = household('fam_b', 'Rahman family', 'b@example.org', 'Bilal Karim');
+    bill('inv_a', a, 20000, '2026-03-01');
+    bill('inv_b', b, 30000, '2026-03-01');
+    await pastDue.runPastDue('2026-04-01');
+    const toA = sent.find((x) => x.to === 'a@example.org')!;
+    const toB = sent.find((x) => x.to === 'b@example.org')!;
+    expect(toA.text).toContain('Yusuf');
+    expect(toA.text).not.toContain('Bilal');
+    expect(toA.text).not.toContain('$300.00');
+    expect(toB.text).toContain('Bilal');
+    expect(toB.text).not.toContain('Yusuf');
+    expect(toB.text).not.toContain('$200.00');
+  });
+
+  /** A Student ID is a payment credential and never travels by email (§14) — unchanged by any of this. */
+  it('still carries no Student ID', async () => {
+    const { db } = app.dbmod;
+    const stu = household('fam_1', 'Ismail family', 'parent@example.org', 'Yusuf Siddiq');
+    db.update(students).set({ studentCode: 'YUS1234' }).where(eq(students.id, stu)).run();
+    bill('inv_1', stu, 20000, '2026-03-01');
+    await pastDue.runPastDue('2026-04-01');
+    expect(sent.find((x) => x.to === 'parent@example.org')!.text).not.toContain('YUS1234');
   });
 });
 

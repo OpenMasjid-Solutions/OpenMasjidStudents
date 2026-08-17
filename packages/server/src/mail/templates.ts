@@ -168,16 +168,36 @@ export function receiptEmail(schoolName: string, amountFormatted: string, portal
  * owed, since when, where to pay, and an explicit line inviting them to talk to the office — which is
  * also the honest route for a family who genuinely cannot pay right now.
  *
- * No child's name and no Student ID: one adult pays for the household, the amount is the household's,
- * and an ID in an email is a payment credential (§14).
+ * WHICH CHILD, AND FOR HOW MUCH (0.50.0-dev.15). This said only "$430 of your tuition balance", on the
+ * reasoning that one adult pays for the household so the amount is the household's. That is true about
+ * who PAYS and wrong about what a parent can act on: a household with three children cannot tell from
+ * a total whether it is one child's two missed months or three children owing a little each — and the
+ * office's own digest has named the children since dev.14, so the two copies of the same fact
+ * disagreed. A single-child household still reads as one sentence; the breakdown only appears when
+ * there is something to break down.
+ *
+ * Still no Student ID — that is a payment credential, and an email is not the place for it (§14).
+ * First names only, because this goes to their own parent (people/names.ts).
  */
-export function pastDueEmail(schoolName: string, amountFormatted: string, sinceFormatted: string, portalUrl: string): Email {
+export function pastDueEmail(
+  schoolName: string,
+  amountFormatted: string,
+  sinceFormatted: string,
+  portalUrl: string,
+  behind: { name: string; amount: string }[] = [],
+): Email {
   const subject = `A reminder about your ${schoolName} balance`;
   const since = sinceFormatted ? ` It has been outstanding since ${sinceFormatted}.` : '';
+  // One child: name them in the sentence, because a list of one is not a list. Several: the sentence
+  // keeps the total and the lines carry the split.
+  const one = behind.length === 1 ? `${behind[0].name}’s ` : '';
+  const opening = `This is a friendly reminder that ${amountFormatted} of ${one ? `${one}tuition` : 'your tuition balance'} is now past its due date.${since}`;
+  const breakdown = behind.length > 1 ? behind.map((b) => `• ${b.name} — ${b.amount}`) : [];
   const text = [
     'Assalāmu ʿalaykum,',
     '',
-    `This is a friendly reminder that ${amountFormatted} of your tuition balance is now past its due date.${since}`,
+    opening,
+    ...(breakdown.length ? ['', ...breakdown] : []),
     '',
     portalUrl ? `You can see the details and pay in the parent portal:\n${portalUrl}` : 'You can see the details and pay in the parent portal.',
     '',
@@ -189,7 +209,8 @@ export function pastDueEmail(schoolName: string, amountFormatted: string, sinceF
   const html = shell(
     'A reminder about your balance',
     [
-      `This is a friendly reminder that <strong>${esc(amountFormatted)}</strong> of your tuition balance is now past its due date.${esc(since)}`,
+      `This is a friendly reminder that <strong>${esc(amountFormatted)}</strong> of ${one ? `${esc(one)}tuition` : 'your tuition balance'} is now past its due date.${esc(since)}`,
+      ...(breakdown.length ? [breakdown.map((b) => esc(b)).join('<br>')] : []),
       'If you have already paid, thank you — please ignore this. And if now is a difficult time, please speak to the office; we would rather hear from you than not.',
     ],
     portalUrl ? { label: 'See the details & pay', url: portalUrl } : undefined,

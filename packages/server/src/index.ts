@@ -22,6 +22,7 @@ import { appRouter, type AppRouter } from './trpc/router';
 import { createContext } from './trpc/trpc';
 import { registerStatementRoutes } from './billing/statementRoutes';
 import { registerFabricProvider } from './fabric/provider';
+import { registerFabricCommands } from './fabric/commands';
 import { refreshSiteInfo } from './fabric/platform';
 import { backfillStudentCodes } from './billing/studentCodes';
 import { ensureDefaultSchool } from './schools';
@@ -106,6 +107,11 @@ async function main(): Promise<void> {
 
   // Fabric provider /fabric/billing/* (§11): secret-gated, tunnel-blocked; the students/billing capability.
   registerFabricProvider(app);
+
+  // Fabric admin commands /fabric/commands/run (0.50.0-dev.15): same gate, plus the platform-only
+  // caller header. NOT a Fabric capability — `commands` is reserved precisely so no other app can
+  // reach this handler through the broker.
+  registerFabricCommands(app);
 
   /**
    * The school logo, as an image. Deliberately UNAUTHENTICATED, like the appearance relay: a

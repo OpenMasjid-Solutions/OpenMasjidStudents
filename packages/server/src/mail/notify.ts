@@ -211,14 +211,25 @@ export async function sendAutopayFailure(familyId: string, final: boolean): Prom
  * family nobody wrote to means they wait another week for nothing, and no cooldown on one we did write
  * to means we chase them again tomorrow.
  */
-export async function sendPastDue(familyId: string, amountFormatted: string, sinceFormatted: string): Promise<{ emails: number; whatsapp: number }> {
-  const wa = await notifyFamily('past-due', familyId, 'past-due', { amount: amountFormatted, due: sinceFormatted });
+export async function sendPastDue(
+  familyId: string,
+  amountFormatted: string,
+  sinceFormatted: string,
+  behind: { name: string; amount: string }[] = [],
+): Promise<{ emails: number; whatsapp: number }> {
+  // `behind` reaches BOTH channels, at each one's depth: the email carries the per-child amounts, the
+  // WhatsApp just the names, because that channel is the short note that says to go and look (§9).
+  const wa = await notifyFamily('past-due', familyId, 'past-due', {
+    amount: amountFormatted,
+    due: sinceFormatted,
+    behind: behind.map((b) => b.name),
+  });
   const out = { emails: 0, whatsapp: wa.queued };
   if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getPastDue().parentEmails) return out;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return out;
   refreshEmailLogo();
-  const m = pastDueEmail(getSchoolName(), amountFormatted, sinceFormatted, portalHome());
+  const m = pastDueEmail(getSchoolName(), amountFormatted, sinceFormatted, portalHome(), behind);
   for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) out.emails++;
   return out;
 }

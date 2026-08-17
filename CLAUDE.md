@@ -482,11 +482,12 @@ OpenMasjidStudents/
 │   │       │   ├── portal.ts             # parent-scoped reads + pay-now + saved methods + autopay
 │   │       │   └── settings.ts           # settings, alerts, past-due policy, Stripe account, diagnostics
 │   │       ├── billing/                  # ledger · invoices · lines · paidFor · period · schoolYear ·
-│   │       │                             # yearCells · carryIn · joinMidYear · autoInvoice · pastDue ·
+│   │       │                             # yearCells · carryIn · joinMidYear · autoInvoice · pastDue · stats ·
 │   │       │                             # statements · invoiceDoc · statementRoutes · studentCodes · csv
 │   │       ├── payments/                 # stripe (the ONLY SDK importer) · autopay · refunds ·
 │   │       │                             # reconcile · methods · scheduler
-│   │       ├── fabric/                   # provider.ts (/fabric/billing/*) · platform.ts (calls to the OS)
+│   │       ├── fabric/                   # provider.ts (/fabric/billing/*) · commands.ts (/fabric/commands/run) ·
+│   │       │                             # platform.ts (calls to the OS)
 │   │       ├── people/                   # names · household · relations · import · siblingSuggest ·
 │   │       │                             # onboardingSheet · idSheet · sheetText
 │   │       ├── schools/ structure/       # school scope resolution · year rollover
@@ -494,7 +495,7 @@ OpenMasjidStudents/
 │   │       ├── alerts/ mail/ audit/      # who hears about it · templates + senders · append-only trail
 │   │       ├── whatsapp/                 # index.ts (every gate) · numbers.ts (E.164) · templates.ts
 │   │       ├── security/                 # origin.ts (§12.4) · rateLimit.ts
-│   │       ├── auth/                     # passwords · sessions · invites · usernames
+│   │       ├── auth/                     # passwords · sessions · invites · usernames · firstRun
 │   │       └── http/                     # basePath · manifest (the PWA manifest builder)
 │   │   └── test/                         # vitest: 800+ tests, incl. the security matrix
 │   └── web/
@@ -675,7 +676,23 @@ Non-negotiable rules:
   move**: all of this is the `text` variant, where a name beside an amount was always allowed; `publicText`
   still names nobody, and `test/pastDue.test.ts` now asserts the child's name is absent from it too. Watch
   for vacuous assertions here — that test's helper used to name the child "<household label> child", so
-  "the household name is gone" passed on a substring of the student's name.
+  "the household name is gone" passed on a substring of the student's name. **The PARENT's own past-due
+  reminder names the children too** (0.50.0-dev.15, first names, both channels): it said only "$430 of your
+  tuition balance", which is true about who PAYS and useless to act on, and it disagreed with the office's
+  copy of the same fact. `billing/pastDue.ts` `studentsBehind()` is the ONE derivation both use — pass it
+  `[fam]` for a parent and the whole chase list for the digest, and note that confusing the two mails every
+  family the names of everybody else's children, which `test/pastDue.test.ts` now proves it does not.
+- **A WhatsApp COMMAND reply is the one place that goes the other way, and says only counts and totals**
+  (0.50.0-dev.15, `fabric/commands.ts` + `billing/stats.ts`). An alert reaches addresses and numbers an
+  admin configured, one event at a time; a command reply lands in a chat that keeps a copy forever, on
+  whichever phone is authorised today — the platform's own reason for refusing to expose app logs. So
+  `stats` reports how many and how much and points at a screen behind a login for who, and a test asserts
+  no child's name can appear in it. Two arithmetic rules there are load-bearing: owed and credit are summed
+  PER STUDENT and never netted install-wide (one child $100 behind and another $100 ahead is $100
+  outstanding, not zero), and a WITHDRAWN child's unpaid bill still counts (the roster line drops, the money
+  line does not — the same rule `familyStudentIds` states). `commands` is a RESERVED capability and must
+  never appear in `fabric.provides`; the route additionally requires `X-OpenMasjid-Caller-App:
+  omos:platform`, which no app id can hold because the colon is outside the app-id charset.
 - **`payments.recorded_by_name` is the person; `audit_log.actor_name` is the account** (0.44.0).
   `recordingActor(ctx)` stamps a money row with the staff member's display name, because the office reads it
   back asking "who took this cash?"; `auditActor(ctx)` keeps the username, because a forensic trail wants the
@@ -718,6 +735,8 @@ alerts:                  # declaring an id IS the authorization; the admin route
 fabric:
   provides:
     - capability: billing
+commands:                # 0.50.0-dev.15 — what an admin runs by messaging the masjid's number
+  - id: stats …          # ONE command, and it only READS (§5b of docs/WHATSAPP.md)
 ports:
   - container: 8080
     label: Web interface

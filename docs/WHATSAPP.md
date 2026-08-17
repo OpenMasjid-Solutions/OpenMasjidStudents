@@ -353,16 +353,68 @@ nothing honest to send:
 The link in an invoice-ready message goes to the portal, which is authenticated, always legible, and
 already the place the bill lives.
 
-**Admin commands** (`commands:` in the manifest, served at `POST /fabric/commands/run`). The platform
-side is real and wired — OpenMasjidOS `0.51.0-dev.1`, and the catalog validates and emits the key as of
-`807c5d6` — but **we declare none yet, on purpose**: which commands a tuition desk should expose to a
-WhatsApp message is a decision about money and about who is holding the phone, and it is Hasan's to
-make. Two things to know before it is: the floor is OpenMasjidOS **0.51.0**, not the 0.50.4 the
-catalog's author docs claim (stable has none of the code, and drops the key silently), and a command's
-answer lands in a chat that keeps a copy forever — which is the platform's own stated reason for
-refusing to expose app logs, and applies just as much to a list of families who are behind.
+## 5b. Admin commands — one command, and it only reads (0.50.0-dev.15)
 
-#### When we do build them: the contract, and the one thing that will bite
+An authorised admin messages the masjid's own number with `!students` and OpenMasjidOS runs a command we
+declared. **The platform owns everything except the doing**: who may run what, the numbered menu, the
+confirmation step, the formatting. We are handed a command id and asked to answer in plain text.
+
+```
+!students          →  Tuition numbers
+!students 1        →  runs it
+```
+
+We declare exactly one, `stats`, served at `POST /fabric/commands/run` (`fabric/commands.ts`), answered
+from `billing/stats.ts`:
+
+```
+An-Noor Weekend School — tuition, 17 Aug 2026
+
+In this month: $4,320.00 from 18 payments
+Billed for August: $6,500.00
+
+Outstanding: $2,140.00
+Past due: 4 students, $860.00
+
+Students: 132 active in 71 households
+Autopay: 21 households
+Checked with Stripe: 17 Aug 2026
+
+Open the app to see who is behind.
+```
+
+**EVERY LINE IS A COUNT OR A TOTAL, and that is the invariant rather than a style choice.** Alerts name
+children now (§5a, §9) because they go to addresses and numbers an admin configured, one event at a
+time. A command reply is a different animal: it lands in a WhatsApp thread that keeps a copy forever, on
+whichever phone is authorised *today*. That is the platform's own stated reason for refusing to expose
+app logs, and it applies just as well to a roster of families who are behind — so the reply says how
+many and how much, and points at a screen behind a login for who. `test/commands.test.ts` asserts a
+child's name never appears in it, however overdue they are.
+
+**Nothing here writes.** A command that moved money would need `confirm: true` and would still be the
+wrong shape for this channel: a number can be banned overnight (§14), so nothing important may depend on
+one.
+
+Two things about the arithmetic, since a wrong total here is worse than no total:
+
+- **Owed and credit are summed per student, never netted install-wide.** One child $100 behind while
+  another sits on $100 of credit is a madrasah with $100 outstanding, not a square one — the cheap
+  install-wide subtraction reports the second thing and hides real arrears.
+- **A withdrawn child's unpaid bill still counts.** Scoping the money to active students would write real
+  debt off silently; the roster line drops, the outstanding line does not.
+
+Gated exactly like the billing provider (§11.1) — tunnel refused first, our own secret compared in
+constant time — **plus** a check the provider does not need: `X-OpenMasjid-Caller-App` must be exactly
+`omos:platform`. Without it, any other app holding a broker path could reach an admin-only handler; that
+is also why the platform makes `commands` a RESERVED capability that cannot appear in `fabric.provides`.
+`not_ready` (503) before an admin account exists, because "0 students, $0.00" reads as a broken install
+rather than an unfinished one.
+
+The floor is OpenMasjidOS **0.51.0**, not the 0.50.4 the catalog's author docs claim — stable has none of
+the code and drops the key silently, so declaring it is safe on both channels and simply does nothing
+until a masjid is on a platform that knows about it.
+
+### The contract, and the one thing that will bite
 
 Recorded here so the design starts from it rather than discovering it. Verify against OpenMasjidOS
 `docs/APP_MANIFEST_SPEC.md` at the time — this is a summary, not the source of truth.

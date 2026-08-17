@@ -34,6 +34,7 @@ import { formatMoney } from '../db/money';
 import { getCurrency, getPastDue, getPastDueStaffLast, setPastDueStaffLast, type PastDueConfig } from '../settings';
 import { formatDate } from '../settings/dates';
 import { alertStaff } from '../alerts';
+import { givenName } from '../people/names';
 import { sendPastDue } from '../mail/notify';
 import { parentEventOn } from '../whatsapp';
 import { makeLog } from '../logger';
@@ -127,6 +128,39 @@ export function pastDueFamilies(asOf: string): PastDueFamily[] {
     .sort((a, b) => b.amountCents - a.amountCents || a.oldestDue.localeCompare(b.oldestDue));
 }
 
+/** A child who is behind: their own total, and their own oldest unpaid due date. */
+export interface PastDueStudent {
+  studentId: string;
+  name: string;
+  amountCents: number;
+  oldestDue: string;
+}
+
+/**
+ * WHICH CHILDREN ARE BEHIND, and by how much — the ONE place that question is answered.
+ *
+ * Both things this module sends need exactly this list, and they must never disagree: the office
+ * digest lists every child across every household, and a parent's own reminder lists the children in
+ * theirs. Deriving it twice is how the email a parent reads ends up naming a child the office's copy
+ * does not (CLAUDE.md §16).
+ *
+ * A child can be behind on more than one invoice, so their invoices are SUMMED and their oldest due
+ * date kept — a household with two missed months for one child is one line, not two. Sorted by amount
+ * so the biggest problem is first, which is the order an office works in.
+ */
+export function studentsBehind(fams: PastDueFamily[]): PastDueStudent[] {
+  const byStudent = new Map<string, PastDueStudent>();
+  for (const f of fams) {
+    for (const inv of f.invoices) {
+      const cur = byStudent.get(inv.studentId) ?? { studentId: inv.studentId, name: inv.studentName, amountCents: 0, oldestDue: inv.dueDate };
+      cur.amountCents += inv.balanceCents;
+      if (inv.dueDate < cur.oldestDue) cur.oldestDue = inv.dueDate;
+      byStudent.set(inv.studentId, cur);
+    }
+  }
+  return [...byStudent.values()].sort((a, b) => b.amountCents - a.amountCents || a.oldestDue.localeCompare(b.oldestDue));
+}
+
 /** The households this run would actually consider — past the grace period and worth an email. */
 export function dueForChasing(asOf: string, cfg: PastDueConfig = getPastDue()): PastDueFamily[] {
   return pastDueFamilies(asOf).filter((f) => f.daysOverdue >= cfg.graceDays && f.amountCents >= cfg.minAmountCents);
@@ -189,7 +223,11 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
         result.waiting++;
         continue;
       }
-      const sent = await sendPastDue(fam.familyId, formatMoney(fam.amountCents, currency), formatDate(fam.oldestDue));
+      // WHICH of their children is behind, and for how much — same derivation the office digest uses.
+      // A parent with three children could not act on a household total: "$430 is past due" does not
+      // say whether that is one child's two missed months or three children owing a little each.
+      const theirs = studentsBehind([fam]).map((s) => ({ name: givenName(s.name) || s.name, amount: formatMoney(s.amountCents, currency) }));
+      const sent = await sendPastDue(fam.familyId, formatMoney(fam.amountCents, currency), formatDate(fam.oldestDue), theirs);
       if (sent.emails > 0) result.emailed++;
       if (sent.whatsapp > 0) result.messaged++;
       if (sent.emails > 0 || sent.whatsapp > 0) {
@@ -212,25 +250,7 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
     if (opts.force || !staffLast || daysBetween(staffLast, asOf) >= cfg.everyDays) {
       const total = chase.reduce((s, f) => s + f.amountCents, 0);
       const money = (c: number) => formatMoney(c, currency);
-      // PER STUDENT, not per household (0.50.0-dev.14). A bill belongs to a child (§9), and this
-      // digest exists to be worked through — so it lists the children and what each of them owes,
-      // rather than a household total that names nobody who is actually behind and hides the split.
-      // "The Ismail family — $430" makes an office open two records to find that $430 is Yusuf's two
-      // missed months and Maryam is square; and with the label derived from surnames, a madrasah with
-      // four Ismail households gets four identical lines.
-      //
-      // A child can be behind on more than one invoice, so their invoices are summed and their oldest
-      // due date kept — the same shape the household rollup had, one level down.
-      const byStudent = new Map<string, { name: string; amountCents: number; oldestDue: string }>();
-      for (const f of chase) {
-        for (const inv of f.invoices) {
-          const cur = byStudent.get(inv.studentId) ?? { name: inv.studentName, amountCents: 0, oldestDue: inv.dueDate };
-          cur.amountCents += inv.balanceCents;
-          if (inv.dueDate < cur.oldestDue) cur.oldestDue = inv.dueDate;
-          byStudent.set(inv.studentId, cur);
-        }
-      }
-      const behind = [...byStudent.values()].sort((a, b) => b.amountCents - a.amountCents || a.oldestDue.localeCompare(b.oldestDue));
+      const behind = studentsBehind(chase);
       const lines = behind.slice(0, 40).map((s) => `• ${s.name} — ${money(s.amountCents)}, since ${formatDate(s.oldestDue)}`);
       if (behind.length > lines.length) lines.push(`…and ${behind.length - lines.length} more.`);
       await alertStaff('past-due', {

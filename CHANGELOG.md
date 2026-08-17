@@ -185,6 +185,18 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - Sending a test to a group checks it is still approved first, the same as ticking an alert does, and
   says so plainly instead of “that didn’t reach the queue”.
 
+**Ask the app for your numbers by WhatsApp**
+
+- **Message the masjid’s number with `!students` and get this month’s tuition figures back** — what came
+  in, what was billed, what is outstanding, how many students are behind, and when Stripe was last
+  checked. Your admin decides in OpenMasjidOS who is allowed to; it is off until they do.
+- **It answers with numbers, never names.** A WhatsApp conversation keeps a copy forever and the phone
+  holding it can change hands, so “who is behind” stays behind a login — the reply tells you there are
+  four and points you at the app. Nothing it can do changes anything, either.
+- Two totals worth trusting: a child who has paid ahead never cancels out a child who is behind (that
+  would report a madrasah as square when somebody still has to be chased), and a withdrawn child’s
+  unpaid bill still counts as owed.
+
 **Alerts name the child, not the family**
 
 - **Past-due digests now list the students and what each of them owes**, instead of “the Ahmed family —
@@ -203,6 +215,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   a household with two surnames read “Farooqi / Ismail” — naming a child who might not be the one behind.
 - Nothing changed about what leaves the building: the webhook and the OpenMasjidOS alert channel still
   get a count and a figure and no names at all.
+- **A parent’s own reminder now says which of their children is behind**, by first name, and breaks the
+  total down when it is more than one — by email and by WhatsApp. “$430 is past due” is true but not
+  something a parent with three children can act on. Each family only ever sees their own children, and
+  a Student ID still never travels by email.
 
 **Elsewhere**
 

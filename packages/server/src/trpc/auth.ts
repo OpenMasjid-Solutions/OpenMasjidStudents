@@ -24,6 +24,7 @@ import { fabricConfigured, config } from '../config';
 import { clientIp } from '../security/origin';
 import { loginLimiter, loginAccountLimiter, inviteAcceptLimiter, resetRequestLimiter, resetConfirmLimiter, registerLimiter, codeLookupLimiter } from '../security/rateLimit';
 import { findUserByUsername, normalizeUsername, usernameTaken } from '../auth/usernames';
+import { hasAnyUser } from '../auth/firstRun';
 import { audit } from '../audit';
 import { mintInvite, portalBase } from '../auth/invites';
 import { normalizeStudentCode } from '../billing/studentCodes';
@@ -36,9 +37,7 @@ const ID = z.string().min(1).max(64);
 const TOKEN = z.string().min(1).max(200);
 const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour (§12) — matches the reset email copy
 
-function hasAnyUser(): boolean {
-  return !!db.select({ id: users.id }).from(users).limit(1).get();
-}
+// Moved to auth/firstRun.ts — the WhatsApp `stats` command asks the same question (see there).
 
 export const authRouter = router({
   /** Who am I? Also performs the LAN-only SSO upgrade when embedded in OpenMasjidOS. */

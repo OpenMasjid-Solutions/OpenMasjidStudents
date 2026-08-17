@@ -53,7 +53,10 @@ export type WaTextKey = (typeof WA_TEXT_KEYS)[number];
 export const WA_TEXT_TAGS: Record<WaTextKey, readonly string[]> = {
   'invoice-ready': ['school', 'family', 'children', 'amount', 'due', 'balance', 'portal', 'email'],
   receipt: ['school', 'family', 'children', 'amount', 'balance', 'portal', 'email'],
-  'past-due': ['school', 'family', 'children', 'amount', 'due', 'balance', 'portal', 'email'],
+  // `behind` is its own tag rather than a reuse of `children`, which means every active child in the
+  // household. On a past-due reminder those two lists are different — and quietly substituting one for
+  // the other would name a child who is perfectly up to date as being late.
+  'past-due': ['school', 'family', 'children', 'behind', 'amount', 'due', 'balance', 'portal', 'email'],
   'autopay-upcoming': ['school', 'family', 'amount', 'due', 'card', 'balance', 'portal', 'email'],
   'autopay-failed': ['school', 'family', 'children', 'card', 'balance', 'portal', 'email'],
   'autopay-stopped': ['school', 'family', 'children', 'card', 'balance', 'portal', 'email'],
@@ -67,6 +70,7 @@ export const WA_TAG_HELP: Record<string, string> = {
   school: 'the madrasah’s name',
   family: 'the household’s name, e.g. “Ismail family”',
   children: 'the children in that household, by name',
+  behind: 'only the children whose bills are past due, by name',
   amount: 'the amount this message is about',
   balance: 'what the household owes right now',
   due: 'the date it is due',
@@ -86,7 +90,7 @@ export const WA_TEXT_DEFAULTS: Record<WaTextKey, string> = {
   'invoice-ready': 'Assalamu alaykum. Your [school] tuition for [children] is ready — [amount], due [due].[portal][email]',
   receipt: 'Assalamu alaykum. [school] has received your payment of [amount]. JazakumAllahu khayran.[email]',
   'past-due':
-    'Assalamu alaykum. This is a reminder from [school] that [amount] has been due since [due]. If you’ve already paid, please ignore this message.[portal][email]',
+    'Assalamu alaykum. This is a reminder from [school] that [amount] for [behind] has been due since [due]. If you’ve already paid, please ignore this message.[portal][email]',
   'autopay-upcoming': 'Assalamu alaykum. [school] will charge your [card] [amount] on [due]. Nothing to do — this is just so it isn’t a surprise.[email]',
   'autopay-failed':
     'Assalamu alaykum. We couldn’t charge your saved card for this month’s tuition. We’ll try again in a couple of days. This is [school].[portal][email]',
@@ -101,6 +105,9 @@ export interface WaVars {
   family: string;
   /** Active children in that household, by name. */
   children: string[];
+  /** Only the children this message is CHASING — a subset of `children`, and never a substitute for
+   *  it. Set on a past-due reminder; absent everywhere else, where it falls back to `children`. */
+  behind?: string[];
   /** The amount this message is about — a receipt's payment, a reminder's overdue figure. */
   amount?: string;
   due?: string;
@@ -132,6 +139,9 @@ export function renderText(key: WaTextKey, vars: WaVars, opts: { hasEmail: boole
     .replaceAll('[school]', getSchoolName())
     .replaceAll('[family]', vars.family)
     .replaceAll('[children]', vars.children.length ? listNames(vars.children) : 'your children')
+    // Falls back to the household's own children rather than to empty: a reminder that read "$430 for
+    // has been due" would be worse than one that named everybody. Only `past-due` offers this tag.
+    .replaceAll('[behind]', (vars.behind?.length ? listNames(vars.behind) : null) ?? (vars.children.length ? listNames(vars.children) : 'your children'))
     .replaceAll('[amount]', vars.amount ?? '')
     .replaceAll('[due]', vars.due ?? '')
     .replaceAll('[balance]', vars.balance ?? '')

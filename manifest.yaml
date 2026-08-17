@@ -4,7 +4,7 @@ id: students
 name: OpenMasjid Students
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
-version: 0.50.0-dev.14
+version: 0.50.0-dev.15
 author: OpenMasjid-Solutions
 license: AGPL-3.0-only
 icon: icon.svg
@@ -87,6 +87,22 @@ alerts:
 fabric:                  # app-to-app broker: we PROVIDE students/billing (Donations/Kiosk consume it)
   provides:
     - capability: billing
+# What an authorised admin can run by messaging the masjid's own WhatsApp number (`!students`).
+# NOT a fabric capability — `commands` is reserved, and putting it under `provides:` is refused at
+# install and by the catalog build, because that would expose the same handler to every other app
+# through the broker. Served at POST /fabric/commands/run (fabric/commands.ts).
+#
+# ONE COMMAND, AND IT ONLY READS. The reply lands in a WhatsApp thread that keeps a copy forever, on
+# whichever phone is authorised today — the platform's own reason for refusing to expose app logs. So
+# the answer is counts and totals and never a list of who is behind, and nothing here writes.
+#
+# Requires OpenMasjidOS 0.51.0+ (the catalog's author docs say 0.50.4, which has none of the code).
+# Older platforms and the stable catalog drop this key silently, so declaring it is safe either way —
+# it simply does nothing until a masjid is on a platform that knows about it.
+commands:
+  - id: stats
+    label: Tuition numbers
+    description: What came in this month, what is outstanding, and how many are behind.
 # No install-time `settings:` on purpose — installation is one-click. Everything a
 # masjid needs (school name, currency, which OpenMasjidOS Stripe account to charge)
 # is collected INSIDE the app: the first-run setup and the in-app admin settings,
