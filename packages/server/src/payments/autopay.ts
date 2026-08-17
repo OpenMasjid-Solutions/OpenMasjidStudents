@@ -16,7 +16,7 @@ import { formatMoney } from '../db/money';
 import { getCurrency } from '../settings';
 import { rid } from '../db/ids';
 import { makeLog } from '../logger';
-import { alertStaff, householdName } from '../alerts';
+import { alertStaff, childrenOf, studentAmounts } from '../alerts';
 import { sendReceipt, sendAutopayFailure, sendAutopayUpcoming, sendCardExpiring } from '../mail/notify';
 import { formatDate } from '../settings/dates';
 import { stripeClient } from './stripe';
@@ -201,6 +201,9 @@ export async function chargeFamily(familyId: string, amountCents: number, today:
       // One card charge, one ledger row PER CHILD. The split walks the family's open invoices
       // oldest-due-first — the same order every other payment path uses, so a lost webhook that
       // reconciliation later replays lands on exactly the same children in the same amounts (§11.4).
+      // Held in a variable so the alert can report the very split that was recorded, rather than
+      // re-deriving one that a concurrent invoice change could make disagree with the ledger.
+      const shares = splitAcrossFamily(familyId, amountCents);
       const res = recordSplit(
         {
           channel: 'autopay',
@@ -209,13 +212,15 @@ export async function chargeFamily(familyId: string, amountCents: number, today:
           memo: null,
           externalRef: { stripePaymentIntentId: pi.id, stripeChargeId: (pi.latest_charge as string) ?? null },
         },
-        splitAcrossFamily(familyId, amountCents),
+        shares,
         { userId: null, role: 'autopay', name: 'autopay' },
       );
       if (!res.duplicate) {
         void alertStaff('payment-received', {
           title: 'Tuition payment received',
-          text: `${householdName(familyId)} was charged ${formatMoney(amountCents, getCurrency())} by autopay.`,
+          // Per child, because that is how the charge was recorded (§9) — a household total would hide
+          // which of them it actually cleared.
+          text: `${formatMoney(amountCents, getCurrency())} charged by autopay: ${studentAmounts(shares, getCurrency())}.`,
           publicText: `A tuition payment of ${formatMoney(amountCents, getCurrency())} was received (autopay).`,
         });
         void sendReceipt(familyId, formatMoney(amountCents, getCurrency())); // parent receipt (§13.2.5); !duplicate avoids a double with the webhook
@@ -383,10 +388,14 @@ function markRunFailed(runId: string, runDate: string): void {
     db.update(autopayEnrollments).set({ enabled: false, failureCount, nextAttemptAt: null, updatedAt: ts }).where(eq(autopayEnrollments.familyId, run.familyId)).run();
     // An ALERT, not a notification: this family stops being charged until a human intervenes, so it
     // must reach a person — the office's own alert list, and the admin's email via OpenMasjidOS —
-    // rather than only a webhook nobody configured. Named, because "a family" is not actionable.
+    // rather than only a webhook nobody configured.
+    //
+    // The children, not a household label. A card and an autopay enrolment DO belong to the household
+    // — one adult holds the card for all of them — so this names the children it pays FOR rather than
+    // claiming a child owns the card. Either way the office gets the names their records are keyed by.
     void alertStaff('autopay-disabled', {
       title: 'Autopay switched off',
-      text: `${householdName(run.familyId)} had three failed card charges, so autopay has been turned off. They will not be charged again until someone follows up.`,
+      text: `Autopay for ${childrenOf(run.familyId)} has been turned off after three failed card charges. They will not be charged again until someone follows up.`,
       publicText: 'Autopay was turned off for a family after three failed charge attempts.',
     });
     void sendAutopayFailure(run.familyId, true); // parent: autopay is now off — pay now + update card (§13.3)
@@ -395,7 +404,7 @@ function markRunFailed(runId: string, runDate: string): void {
     db.update(autopayEnrollments).set({ failureCount, nextAttemptAt: addDays(runDate, failureCount === 1 ? 2 : 3), updatedAt: ts }).where(eq(autopayEnrollments.familyId, run.familyId)).run();
     void alertStaff('autopay-failed', {
       title: 'An autopay charge failed',
-      text: `${householdName(run.familyId)}'s card was declined (attempt ${failureCount} of 3). We will try again in a few days; they have been emailed.`,
+      text: `The card paying for ${childrenOf(run.familyId)} was declined (attempt ${failureCount} of 3). We will try again in a few days; they have been emailed.`,
       publicText: `An autopay charge was declined (attempt ${failureCount} of 3). A retry is scheduled.`,
     });
     void sendAutopayFailure(run.familyId, false); // parent: charge failed, we'll retry — or pay now (§13.3)

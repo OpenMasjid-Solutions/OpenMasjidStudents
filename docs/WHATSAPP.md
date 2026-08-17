@@ -362,6 +362,34 @@ catalog's author docs claim (stable has none of the code, and drops the key sile
 answer lands in a chat that keeps a copy forever — which is the platform's own stated reason for
 refusing to expose app logs, and applies just as much to a list of families who are behind.
 
+#### When we do build them: the contract, and the one thing that will bite
+
+Recorded here so the design starts from it rather than discovering it. Verify against OpenMasjidOS
+`docs/APP_MANIFEST_SPEC.md` at the time — this is a summary, not the source of truth.
+
+- **Declaring**: ≤12 commands; `id` kebab-case, not all digits, not `help|yes|no|cancel|stop`; `label`
+  required; `argument` must be an **object with a `label`** (`argument: true` is rejected, not coerced);
+  `confirm: true` for anything that changes something, which also puts it in the admin's audit alert.
+  `commands` is a RESERVED capability — putting it in `fabric.provides` fails the build, because that
+  would expose the same handler to other apps through the broker.
+- **Serving**: `POST /fabric/commands/run`, verifying **both** headers — our own `OPENMASJID_APP_SECRET`
+  and `X-OpenMasjid-Caller-App: omos:platform` (a value no app id can hold, since the colon is outside
+  the app-id charset). LAN-only like every other `/fabric/*` route. **10 second timeout, 16 KB cap**:
+  anything real gets kicked off with "started it", never awaited.
+- **Follow-up questions** (platform 0.51.0-dev.11): return `followUp: { token }` beside `text` and the
+  sender's next message comes back as `{ command, text, followUpToken, … }` — so a multi-step flow does
+  not make an admin prefix every answer with `!`. The token is ours (`A-Za-z0-9._:-`, ≤128); put a row
+  id or a step name in it. Omit `followUp` to finish. One question per turn — these are WhatsApp
+  messages, not a form — and any `ok: false` ends the exchange.
+- **THE THING THAT WILL BITE, and it lands hardest on an app that moves money.** The exchange can end
+  **without us and with no notification**: three minutes idle, fifteen minutes total, twelve turns, the
+  sender typing exit/cancel/done, or starting any new `!` command. The answers simply stop arriving. So
+  **nothing half-applied may ever wait on a reply** — apply on the last answer, or keep our own draft
+  with our own expiry. For this app that is not a nicety: a flow like "record a payment → which student?
+  → how much?" that wrote a row at step two and then went silent would leave money attributed to
+  nobody, and the ledger's whole design is that a payment is immutable once written (§9). The sender is
+  also re-authorised every turn, so a permission removed mid-conversation takes effect at once.
+
 ## 6. The two things an office presses
 
 **Send a test** — goes to the test student's household, which is the one household that gets through

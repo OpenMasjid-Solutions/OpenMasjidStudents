@@ -48,7 +48,7 @@ import {
 } from '../settings';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { relationKind, dedupeNumbers, type RelationKind } from '../people/relations';
-import { alertStaff, householdName } from '../alerts';
+import { alertStaff, studentName } from '../alerts';
 import { resolveSchoolScope } from '../schools';
 import { sendReceipt, sendRefund } from '../mail/notify';
 import { formatMoney } from '../db/money';
@@ -1218,7 +1218,9 @@ export const billingRouter = router({
         void sendReceipt(stu.familyId, formatMoney(input.amountCents, getCurrency()));
         void alertStaff('payment-received', {
           title: 'Tuition payment received',
-          text: `${householdName(stu.familyId)} paid ${formatMoney(input.amountCents, getCurrency())} (${input.channel}), recorded by ${recordingActor(ctx).name ?? 'the office'}.`,
+          // The child, not the household: this payment is recorded against ONE student (§9), and that
+          // is the record an office opens next.
+          text: `${formatMoney(input.amountCents, getCurrency())} paid for ${studentName(input.studentId)} (${input.channel}), recorded by ${recordingActor(ctx).name ?? 'the office'}.`,
           publicText: `A tuition payment of ${formatMoney(input.amountCents, getCurrency())} was received (${input.channel}).`,
         });
       }
@@ -1288,9 +1290,10 @@ export const billingRouter = router({
       // shape as `payment-received` above, which has always included its amount for the same reason.
       const amount = formatMoney(r.amountCents, getCurrency());
       const how = r.route === 'stripe' ? ' back to the card or bank account it came from' : ' on the ledger — the money still has to be handed back';
-      // WHO it was for and WHAT it paid go in the office's own email only. `text` may name a household —
-      // without it the alert is unactionable, which is exactly why that channel exists — while `publicText`
-      // reaches third-party sinks and so carries the figure and nothing that identifies anybody (§9/§14).
+      // WHO it was for and WHAT it paid go in the office's own email only. `text` names the CHILDREN the
+      // money was for — without that the alert is unactionable, which is exactly why that channel exists —
+      // while `publicText` reaches third-party sinks and carries the figure and nothing that identifies
+      // anybody (§9/§14). This path already named students; the rest of the alerts caught up in dev.14.
       const who = r.students.length ? ` for ${r.students.join(', ')}` : '';
       const what = r.labels.length ? ` It covered ${r.labels.join(', ')}.` : '';
       void alertStaff('payment-refunded', {

@@ -655,11 +655,27 @@ Non-negotiable rules:
   `test/alerts.test.ts` fails the build when the code can raise an id the manifest does not declare — **or
   when an event has no label in the web app's `en.json`**, which is how `settings.ev_payment-refunded` reached
   a masjid's screen as a raw key. Every alert carries TWO texts and both are required: `text` (our email, to
-  addresses an admin typed) MAY name the household and the amount, because without that it is unactionable;
-  `publicText` (the webhook + the platform alert channel — third-party sinks) carries no household and no
+  addresses an admin typed) MAY name a person and the amount, because without that it is unactionable;
+  `publicText` (the webhook + the platform alert channel — third-party sinks) carries no name and no
   name-beside-an-amount, which is where §14's line has always been. Neither may carry a Student ID or card
   details. Parent-facing emails are gated inside `mail/notify.ts` (never per call site: receipts are sent from
   five places).
+- **An alert names the STUDENT, never the household** (0.50.0-dev.14). It said "the Ismail family paid $250"
+  for six releases, and that is one indirection away from what this app bills: **invoices and payments are
+  per student**, so a household label makes an office do a lookup the alert could have done, and it hides the
+  only number that matters — a family total of $430 does not say that it is Yusuf's two missed months and
+  Maryam is square. It is also a label that identifies nothing on its own, being DERIVED from the children's
+  surnames (`people/household.ts`): four Ismail households produce four identical alerts, and a mixed
+  household reads "Farooqi / Ismail", naming a child who may not be the one who is behind. So
+  `alerts/index.ts` exports `studentName`, `studentAmounts` (per-child, since one card charge is recorded as
+  one row per child) and `childrenOf` — the last for the two facts that genuinely belong to the household, a
+  CARD and an AUTOPAY enrolment, which name the children they pay FOR rather than pretending a child owns the
+  card. The past-due digest counts and lists STUDENTS while still chasing one household once, and says both
+  numbers, because otherwise an office wonders why 9 students produced 5 emails. **The privacy line does not
+  move**: all of this is the `text` variant, where a name beside an amount was always allowed; `publicText`
+  still names nobody, and `test/pastDue.test.ts` now asserts the child's name is absent from it too. Watch
+  for vacuous assertions here — that test's helper used to name the child "<household label> child", so
+  "the household name is gone" passed on a substring of the student's name.
 - **`payments.recorded_by_name` is the person; `audit_log.actor_name` is the account** (0.44.0).
   `recordingActor(ctx)` stamps a money row with the staff member's display name, because the office reads it
   back asking "who took this cash?"; `auditActor(ctx)` keeps the username, because a forensic trail wants the

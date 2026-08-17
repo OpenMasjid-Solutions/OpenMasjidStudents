@@ -25,7 +25,7 @@ import { maskNumber, toE164 } from '../whatsapp/numbers';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
 import { stripeClient, stripeReady, publishableKey } from '../payments/stripe';
 import { describePaymentMethod, repairPaymentMethods, resequenceMethods } from '../payments/methods';
-import { alertStaff, householdName } from '../alerts';
+import { alertStaff, studentAmounts } from '../alerts';
 import { sendReceipt } from '../mail/notify';
 import { makeLog } from '../logger';
 
@@ -288,15 +288,18 @@ export const portalRouter = router({
       // differ, and it is the right way round: the parent's choice wins when we have it, and the backstop
       // still lands the money correctly if this call never happens.
       const chosen = lineShares(input.familyId, input.lines ?? [], amount);
+      const shares = chosen ?? splitAcrossFamily(input.familyId, amount);
       const res = recordSplit(
         { channel: 'portal', occurredAt: new Date(), idempotencyKey: pi.id, memo: null, externalRef: { stripePaymentIntentId: pi.id, stripeChargeId: (pi.latest_charge as string) ?? null } },
-        chosen ?? splitAcrossFamily(input.familyId, amount),
+        shares,
         { userId: ctx.session.userId ?? null, role: 'portal', name: 'portal' },
       );
       if (!res.duplicate) {
         void alertStaff('payment-received', {
           title: 'Tuition payment received',
-          text: `${householdName(input.familyId)} paid ${formatMoney(amount, getCurrency())} by card in the parent portal.`,
+          // One card charge, but one ledger row per child — so the alert says which child got what,
+          // rather than a household total that hides the split it was actually recorded as (§9).
+          text: `${formatMoney(amount, getCurrency())} paid by card in the parent portal: ${studentAmounts(shares, getCurrency())}.`,
           publicText: `A tuition payment of ${formatMoney(amount, getCurrency())} was received (portal).`,
         });
         void sendReceipt(input.familyId, formatMoney(amount, getCurrency())); // §13.2.5 — "payment", never "donation"

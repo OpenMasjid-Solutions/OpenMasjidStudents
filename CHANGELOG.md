@@ -185,6 +185,25 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - Sending a test to a group checks it is still approved first, the same as ticking an alert does, and
   says so plainly instead of “that didn’t reach the queue”.
 
+**Alerts name the child, not the family**
+
+- **Past-due digests now list the students and what each of them owes**, instead of “the Ahmed family —
+  $430”. A bill belongs to a child, so a family total made you open two records to find that $430 was
+  one child’s two missed months and the other was square. It still sends one reminder per household —
+  one parent pays for all their children — and now says both numbers, so nine students producing five
+  emails isn’t a mystery.
+- **Payment alerts say who the money was for.** “$250.00 paid for Yusuf Ismail” rather than “the Ismail
+  family paid $250.00” — and where one card charge covered several children, it names each of them and
+  their share, which is how the payment was actually recorded.
+- The same for a recovered payment, a part-recorded one, and a declined card. A card and an autopay
+  setting do belong to the household, so those name the children they pay **for** rather than pretending
+  a child owns the card.
+- Worth saying why, beyond it being clearer: the family label is **made up from the children’s
+  surnames**, so a madrasah with four Ismail households got four alerts that read exactly the same, and
+  a household with two surnames read “Farooqi / Ismail” — naming a child who might not be the one behind.
+- Nothing changed about what leaves the building: the webhook and the OpenMasjidOS alert channel still
+  get a count and a figure and no names at all.
+
 **Elsewhere**
 
 - Past-due reminders now run when **either** channel wants to chase. Gated on the email switch alone, a

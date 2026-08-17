@@ -212,26 +212,44 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
     if (opts.force || !staffLast || daysBetween(staffLast, asOf) >= cfg.everyDays) {
       const total = chase.reduce((s, f) => s + f.amountCents, 0);
       const money = (c: number) => formatMoney(c, currency);
-      // Named households and amounts — these are addresses an admin typed, and a digest that cannot say
-      // WHO is behind is not actionable (§9's alert rule).
-      const lines = chase
-        .slice(0, 40)
-        .map((f) => `• ${f.label} — ${money(f.amountCents)}, since ${formatDate(f.oldestDue)}`);
-      if (chase.length > lines.length) lines.push(`…and ${chase.length - lines.length} more.`);
+      // PER STUDENT, not per household (0.50.0-dev.14). A bill belongs to a child (§9), and this
+      // digest exists to be worked through — so it lists the children and what each of them owes,
+      // rather than a household total that names nobody who is actually behind and hides the split.
+      // "The Ismail family — $430" makes an office open two records to find that $430 is Yusuf's two
+      // missed months and Maryam is square; and with the label derived from surnames, a madrasah with
+      // four Ismail households gets four identical lines.
+      //
+      // A child can be behind on more than one invoice, so their invoices are summed and their oldest
+      // due date kept — the same shape the household rollup had, one level down.
+      const byStudent = new Map<string, { name: string; amountCents: number; oldestDue: string }>();
+      for (const f of chase) {
+        for (const inv of f.invoices) {
+          const cur = byStudent.get(inv.studentId) ?? { name: inv.studentName, amountCents: 0, oldestDue: inv.dueDate };
+          cur.amountCents += inv.balanceCents;
+          if (inv.dueDate < cur.oldestDue) cur.oldestDue = inv.dueDate;
+          byStudent.set(inv.studentId, cur);
+        }
+      }
+      const behind = [...byStudent.values()].sort((a, b) => b.amountCents - a.amountCents || a.oldestDue.localeCompare(b.oldestDue));
+      const lines = behind.slice(0, 40).map((s) => `• ${s.name} — ${money(s.amountCents)}, since ${formatDate(s.oldestDue)}`);
+      if (behind.length > lines.length) lines.push(`…and ${behind.length - lines.length} more.`);
       await alertStaff('past-due', {
-        title: `${chase.length} ${chase.length === 1 ? 'family is' : 'families are'} past due`,
+        title: `${behind.length} ${behind.length === 1 ? 'student is' : 'students are'} past due`,
         text: [
-          `${chase.length} ${chase.length === 1 ? 'household has' : 'households have'} a bill whose due date has passed — ${money(total)} in total.`,
+          `${behind.length} ${behind.length === 1 ? 'student has' : 'students have'} a bill whose due date has passed — ${money(total)} in total.`,
           '',
           ...lines,
           '',
+          // The households are still what gets CHASED — one adult pays for all their children, so one
+          // reminder goes per household however many of them are behind. Said plainly, because the two
+          // counts differ and an office would otherwise wonder why 9 students produced 5 emails.
           cfg.parentEmails
-            ? `Parents are being reminded automatically, at most once every ${cfg.everyDays} days.`
+            ? `Parents are being reminded automatically — one message per household (${chase.length} ${chase.length === 1 ? 'household' : 'households'}), at most once every ${cfg.everyDays} days.`
             : 'Parent reminders are switched off, so nobody has been told but you (Settings → Email alerts).',
         ].join('\n'),
         // No household, no child, no name beside an amount (§14) — this copy goes to the masjid webhook
         // and the OpenMasjidOS alert channel, which are third-party sinks.
-        publicText: `${chase.length} ${chase.length === 1 ? 'household is' : 'households are'} past due, ${money(total)} in total. Open the tuition app to see who.`,
+        publicText: `${behind.length} ${behind.length === 1 ? 'student is' : 'students are'} past due, ${money(total)} in total. Open the tuition app to see who.`,
       });
       setPastDueStaffLast(asOf);
       result.staffAlerted = true;

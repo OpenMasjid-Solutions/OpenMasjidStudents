@@ -202,12 +202,55 @@ describe('dispatch', () => {
     await expect(alerts.alertStaff('autopay-disabled', { title: 'T', text: 'B' })).resolves.toBeUndefined();
   });
 
-  it('names the household, because "a family" is not actionable', async () => {
-    const admin = caller('admin');
-    const fam = await admin.people.familyCreate({ name: 'Ismail' });
-    expect(alerts.householdName(fam.id)).toBe('Ismail');
-    // An id that no longer resolves must not produce "undefined paid $50".
-    expect(alerts.householdName('fam_nope')).toBe('A family');
+  /**
+   * NAMES THE CHILD, NOT THE HOUSEHOLD (0.50.0-dev.14).
+   *
+   * These alerts said "the Ismail family paid $250" for six releases, which is one indirection away
+   * from what the app bills: invoices and payments are per STUDENT (§9). Worse, the household label is
+   * DERIVED from the children's surnames, so a madrasah with four Ismail households gets four alerts
+   * that read identically — the one thing a name is for.
+   */
+  describe('who an alert is about', () => {
+    async function kids() {
+      const admin = caller('admin');
+      const fam = await admin.people.familyCreate({ name: 'Ismail' });
+      const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 5000, cadence: 'monthly' });
+      const a = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
+      const b = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Maryam Ismail', feePlanId: plan.id });
+      return { admin, familyId: fam.id, a: a.id, b: b.id };
+    }
+
+    it('names one child', async () => {
+      const { a } = await kids();
+      expect(alerts.studentName(a)).toBe('Yusuf Ismail');
+      // An id that no longer resolves must not produce "undefined paid $50".
+      expect(alerts.studentName('stu_nope')).toBe('A student');
+    });
+
+    it('breaks a split charge down per child, because that is how it was recorded', async () => {
+      const { a, b } = await kids();
+      const said = alerts.studentAmounts(
+        [
+          { studentId: a, amountCents: 15000 },
+          { studentId: b, amountCents: 10000 },
+        ],
+        'usd',
+      );
+      expect(said).toBe('Yusuf Ismail $150.00 and Maryam Ismail $100.00');
+    });
+
+    it('names the children a card pays for, without claiming the card is theirs', async () => {
+      const { familyId } = await kids();
+      // Alphabetical, so the sentence does not depend on who was added first.
+      expect(alerts.childrenOf(familyId)).toBe('Maryam Ismail and Yusuf Ismail');
+    });
+
+    it('does not let six children fill a page', async () => {
+      const { admin, familyId } = await kids();
+      const plan = await admin.billing.feePlanCreate({ name: 'Second', amountCents: 100, cadence: 'monthly' });
+      for (const n of ['Ali Ismail', 'Bilal Ismail', 'Zayd Ismail']) await admin.people.studentCreate({ familyId, fullName: n, feePlanId: plan.id });
+      expect(alerts.childrenOf(familyId)).toMatch(/and 1 other$/);
+    });
   });
 });
 

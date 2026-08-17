@@ -70,11 +70,18 @@ beforeEach(() => {
   }) as unknown as typeof fetch;
 });
 
-/** A household with one child, one guardian, and an optional email address. */
-function household(id: string, label: string, email: string | null = 'parent@example.org') {
+/**
+ * A household with one child, one guardian, and an optional email address.
+ *
+ * `childName` defaults to "<label> child", which is convenient and was quietly DANGEROUS: the office
+ * digest now names students rather than households, and a child called "Ahmed family child" contains
+ * the household label — so an assertion meant to prove the household name is gone would have passed
+ * on the substring. Tests about which of the two is printed must pass a name that shares no words.
+ */
+function household(id: string, label: string, email: string | null = 'parent@example.org', childName = `${label} child`) {
   const { db } = app.dbmod;
   db.insert(families).values({ id, name: label, status: 'active', createdAt: TS, updatedAt: TS }).run();
-  db.insert(students).values({ id: `stu_${id}`, familyId: id, fullName: `${label} child`, status: 'active', studentCode: null, createdAt: TS, updatedAt: TS }).run();
+  db.insert(students).values({ id: `stu_${id}`, familyId: id, fullName: childName, status: 'active', studentCode: null, createdAt: TS, updatedAt: TS }).run();
   db.insert(guardians).values({ id: `grd_${id}`, name: `Parent of ${label}`, email, phone: '5550100', createdAt: TS, updatedAt: TS }).run();
   db.insert(guardianFamilies).values({ guardianId: `grd_${id}`, familyId: id, relation: 'father', isEmergencyContact: false, createdAt: TS }).run();
   return `stu_${id}`;
@@ -227,16 +234,63 @@ describe('telling the office', () => {
     db.insert(alertRecipients)
       .values({ id: 'alr_1', email: 'office@masjid.test', label: 'Office', events: ['past-due'], createdAt: TS, updatedAt: TS })
       .run();
+    // Back to the shipped default explicitly. The outer beforeEach empties the settings TABLE, but the
+    // settings module keeps its own in-memory copy — so the test below that switches parent reminders
+    // off used to leak into every test after it, and one of them would have quietly stopped asserting
+    // anything about the parent path at all.
+    settings.setPastDue({ parentEmails: true });
   });
 
-  it('names the households and the amounts — that is what makes it actionable', async () => {
-    const a = household('fam_a', 'Ahmed family');
+  /**
+   * THE STUDENTS AND WHAT EACH OWES — not "the Ahmed family, $430" (0.50.0-dev.14).
+   *
+   * A bill belongs to a child (§9), and this digest exists to be worked through. A household total
+   * makes an office open two records to find which child is actually behind, and the household label
+   * is derived from surnames, so several Ahmed households produce several identical lines.
+   *
+   * The child's name deliberately shares no word with the household label, or the assertion that the
+   * label is gone would pass on a substring of the name.
+   */
+  it('names the students and what each of them owes', async () => {
+    const a = household('fam_a', 'Ahmed family', 'parent@example.org', 'Yusuf Siddiq');
     bill('inv_a', a, 25000, '2026-03-01');
     await pastDue.runPastDue('2026-04-01');
     const digest = sent.find((m) => m.to === 'office@masjid.test')!;
     expect(digest.subject).toContain('past due');
-    expect(digest.text).toContain('Ahmed family');
+    expect(digest.text).toContain('Yusuf Siddiq');
     expect(digest.text).toContain('$250.00');
+    expect(digest.text).not.toContain('Ahmed family');
+    // It counts students now, so the sentence has to agree with the list under it.
+    expect(digest.text).toContain('1 student has');
+  });
+
+  /** Two children behind in one household: two lines and two amounts, but still ONE parent reminder,
+   *  because one adult pays for both. The digest says so, or an office wonders where the emails went. */
+  it('lists each child separately while still chasing the household once', async () => {
+    const { db } = app.dbmod;
+    const a = household('fam_a', 'Ahmed family', 'parent@example.org', 'Yusuf Siddiq');
+    db.insert(students).values({ id: 'stu_sib', familyId: 'fam_a', fullName: 'Maryam Siddiq', status: 'active', studentCode: null, createdAt: TS, updatedAt: TS }).run();
+    bill('inv_a', a, 25000, '2026-03-01');
+    bill('inv_b', 'stu_sib', 10000, '2026-03-01');
+    await pastDue.runPastDue('2026-04-01');
+    const digest = sent.find((m) => m.to === 'office@masjid.test')!;
+    expect(digest.text).toContain('Yusuf Siddiq — $250.00');
+    expect(digest.text).toContain('Maryam Siddiq — $100.00');
+    expect(digest.text).toContain('2 students have');
+    expect(digest.text).toContain('1 household');
+    // One reminder to the parent, not two.
+    expect(sent.filter((m) => m.to === 'parent@example.org')).toHaveLength(1);
+  });
+
+  /** One child, two missed months: one line carrying the total and the OLDEST date, not two lines. */
+  it('sums a child’s own overdue bills into one line', async () => {
+    const a = household('fam_a', 'Ahmed family', 'parent@example.org', 'Yusuf Siddiq');
+    bill('inv_a', a, 25000, '2026-02-01');
+    bill('inv_b', a, 15000, '2026-03-01');
+    await pastDue.runPastDue('2026-04-01');
+    const digest = sent.find((m) => m.to === 'office@masjid.test')!;
+    expect(digest.text).toContain('Yusuf Siddiq — $400.00');
+    expect(digest.text).toContain('1 student has');
   });
 
   it('tells the office even when parent reminders are off — and says so', async () => {
@@ -247,14 +301,18 @@ describe('telling the office', () => {
     expect(sent.find((m) => m.to === 'office@masjid.test')!.text).toContain('Parent reminders are switched off');
   });
 
-  it('puts NO household name on the webhook or the platform channel (§14)', async () => {
-    const a = household('fam_a', 'Ahmed family');
+  /** The line §14 draws does not move because the office's own copy got more specific: a third-party
+   *  sink still gets a count and a figure. Now checked for the CHILD's name too, which is the name
+   *  that would leak if the two texts were ever accidentally merged. */
+  it('puts NO household or student name on the webhook or the platform channel (§14)', async () => {
+    const a = household('fam_a', 'Ahmed family', 'parent@example.org', 'Yusuf Siddiq');
     bill('inv_a', a, 25000, '2026-03-01');
     await pastDue.runPastDue('2026-04-01');
     // Something was pushed — otherwise this assertion is vacuous.
     expect(publicPushes.length).toBeGreaterThan(0);
     for (const body of publicPushes) {
       expect(body).not.toContain('Ahmed family');
+      expect(body).not.toContain('Yusuf Siddiq');
       expect(body).toContain('past due');
     }
   });

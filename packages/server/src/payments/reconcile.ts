@@ -21,7 +21,7 @@ import { stripeClient, loadStripeKeys } from './stripe';
 import { getSetting, setSetting, SETTING_KEYS, getCurrency } from '../settings';
 import { formatMoney } from '../db/money';
 import { audit, type AuditActor } from '../audit';
-import { alertStaff, householdName } from '../alerts';
+import { alertStaff, studentAmounts } from '../alerts';
 import { makeLog } from '../logger';
 
 const log = makeLog('reconcile');
@@ -219,7 +219,7 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
             // push path needs looking at — not something going wrong right now.
             void alertStaff('payment-recovered', {
               title: 'A missed payment was recovered',
-              text: `${householdName(familyId)}'s ${formatMoney(amount, getCurrency())} payment (${channel}) reached Stripe but not the ledger, so the daily check recorded it. The money is safe; the push path is worth a look.`,
+              text: `A ${formatMoney(amount, getCurrency())} payment (${channel}) reached Stripe but not the ledger, so the daily check recorded it: ${studentAmounts(shares, getCurrency())}. The money is safe; the push path is worth a look.`,
               publicText: `A previously-missed tuition payment of ${formatMoney(amount, getCurrency())} was recorded (${channel}).`,
             });
           }
