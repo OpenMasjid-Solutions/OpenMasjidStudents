@@ -1267,8 +1267,19 @@ How to write one, every time:
    code under the new version number, while the release looks entirely successful. **This has already
    happened twice in the org.** Check it before you push: `git tag --points-at HEAD` on the pin commit, and
    `git rev-list -n 1 v<version>` must be that same SHA — the one you then put in the catalog PR's `commit:`.
-   (`docker-compose.yml` is in the workflow's `paths-ignore`, so neither the pin nor the tag rebuilds the
-   image; the digest stays the one you pinned.)
+   **This sentence used to say that `docker-compose.yml` being in the workflow's `paths-ignore` meant
+   "neither the pin nor the tag rebuilds the image". Half of that was false, and v0.50.0 paid for it.**
+   Path filters apply to a BRANCH push; GitHub ignores them entirely on a TAG push. So the pin commit
+   correctly did not rebuild, and then pushing the tag DID — re-publishing `:X.Y.Z` as a different index
+   (fresh attestations, plus any layer that missed the cache), which moved the tag off the digest step 4
+   had just pinned. Nothing broke, because the compose pins by digest and the digest wins, but a masjid
+   installed a build the release tag did not name.
+   `build-image.yml` now makes a `v*` tag run the GUARD ONLY — it skips qemu, buildx, the GHCR login and
+   the build — so the tag trigger still enforces "a stable compose must be digest-pinned and must not be a
+   prerelease" (main's equivalent can only warn, since step 3 deliberately leaves main unpinned for one
+   commit) while touching no registry. **After tagging, verify what the tag actually resolves to:**
+   `docker buildx imagetools inspect …:<version>` must print the digest in your compose. If it does not,
+   something rebuilt.
 6. **Open a PR against `OpenMasjid-Solutions/OpenMasjidAPPS` — base branch `dev`, NEVER `main`.** Change only
    this app's own entry in `registry.yaml`, nothing else in the file:
 
