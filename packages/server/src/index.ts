@@ -22,6 +22,7 @@ import { appRouter, type AppRouter } from './trpc/router';
 import { createContext } from './trpc/trpc';
 import { registerStatementRoutes } from './billing/statementRoutes';
 import { registerFabricProvider } from './fabric/provider';
+import { registerFabricCommands } from './fabric/commands';
 import { refreshSiteInfo } from './fabric/platform';
 import { backfillStudentCodes } from './billing/studentCodes';
 import { ensureDefaultSchool } from './schools';
@@ -34,7 +35,16 @@ import { buildManifest } from './http/manifest';
 const log = makeLog('main');
 
 // Paths served/handled outside the SPA (the web app is a client-side router).
-const NON_SPA_PREFIXES = ['/trpc', '/api', '/fabric', '/statements', '/healthz'];
+/**
+ * Prefixes the SPA fallback must NOT answer for — anything here 404s instead of serving the shell.
+ *
+ * All FOUR printable-document prefixes belong here, not just `/statements`. `billing/statementRoutes.ts`
+ * serves `/statements/family/:id`, `/sheets/family/:id`, `/sheets/ids/:id` and `/invoices/:id`; only
+ * the first was listed, so a mistyped or stale link to one of the other three answered `200` with the
+ * app shell. Nothing leaks (the shell is `no-store` and carries no data) but the office sees the app
+ * appear in a print dialog instead of an error, which is a worse thing to debug than a 404.
+ */
+const NON_SPA_PREFIXES = ['/trpc', '/api', '/fabric', '/statements', '/sheets', '/invoices', '/healthz'];
 
 async function main(): Promise<void> {
   // Apply committed migrations before accepting traffic, then clear stale sessions.
@@ -106,6 +116,11 @@ async function main(): Promise<void> {
 
   // Fabric provider /fabric/billing/* (§11): secret-gated, tunnel-blocked; the students/billing capability.
   registerFabricProvider(app);
+
+  // Fabric admin commands /fabric/commands/run (0.50.0-dev.15): same gate, plus the platform-only
+  // caller header. NOT a Fabric capability — `commands` is reserved precisely so no other app can
+  // reach this handler through the broker.
+  registerFabricCommands(app);
 
   /**
    * The school logo, as an image. Deliberately UNAUTHENTICATED, like the appearance relay: a

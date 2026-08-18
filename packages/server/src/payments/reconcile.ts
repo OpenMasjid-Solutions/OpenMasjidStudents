@@ -5,11 +5,12 @@
  * now" button (finance) list every SUCCEEDED PaymentIntent tagged `metadata.purpose ==
  * "students-billing"` since the last cursor and record any whose PI id isn't already an idempotency
  * key, flagged `via: reconciliation`. This covers BOTH a missed broker call from Donations/Kiosk
- * AND a missed webhook for our own portal/autopay intents — so money is never lost, only delayed.
+ * AND our own portal/autopay intents whose confirm-on-return never happened (a browser closed
+ * mid-payment, a dropped tunnel) — so money is never lost, only delayed. There is no webhook (§13.4).
  *
  * Recording goes through the ONE ledger path (idempotency key = the PI id), so a reconcile that
- * overlaps a late webhook, or a re-run over the same window, is a harmless no-op. Recording an
- * autopay PI here also resolves a stuck-'pending' autopay run (a success whose webhook was lost).
+ * overlaps a late broker call, or a re-run over the same window, is a harmless no-op. Recording an
+ * autopay PI here also resolves a stuck-'pending' autopay run (a success whose confirm never landed).
  */
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
@@ -21,7 +22,7 @@ import { stripeClient, loadStripeKeys } from './stripe';
 import { getSetting, setSetting, SETTING_KEYS, getCurrency } from '../settings';
 import { formatMoney } from '../db/money';
 import { audit, type AuditActor } from '../audit';
-import { alertStaff, householdName } from '../alerts';
+import { alertStaff, studentAmounts } from '../alerts';
 import { makeLog } from '../logger';
 
 const log = makeLog('reconcile');
@@ -126,7 +127,7 @@ function alreadyRecorded(piId: string): boolean {
   return recordedSplit(piId).length > 0;
 }
 
-/** Run one reconciliation pass. Safe to call concurrently with the webhook and to re-run. */
+/** Run one reconciliation pass. Safe to run concurrently with a broker call and safe to re-run. */
 export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
   const ranAt = new Date().toISOString();
   let stripe = stripeClient();
@@ -165,10 +166,10 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
         if (pi.created > maxCreated) maxCreated = pi.created;
         const md = (pi.metadata ?? {}) as Record<string, string>;
         if (alreadyRecorded(pi.id)) {
-          // Already captured (a broker call or the webhook) — but an autopay run can still be stuck
+          // Already captured (a broker call, or the synchronous confirm) — but a run can still be stuck
           // 'pending' if the success path crashed after the ledger write but before resolving the run
-          // and the webhook was also lost. Heal it here (idempotent) so chargeFamily's pending-run
-          // guard doesn't silently block the family's future charges. Mirrors the webhook (§13.4).
+          // and the confirm was lost too. Heal it here (idempotent) so chargeFamily's pending-run
+          // guard doesn't silently block the family's future charges.
           if (channelFor(md) === 'autopay') onAutopaySucceeded(pi.id, md.students_autopay_run_id);
           continue;
         }
@@ -186,7 +187,7 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
           // Payments are per student, but a PI only carries a family (and optionally the one student
           // it was matched to). `splitAcrossFamily` walks that family's open invoices oldest-due-first
           // — the same deterministic order the original push path used — so the split we reproduce
-          // here is the one that charge would have produced had its webhook arrived.
+          // here is the one that charge would have produced had its confirm landed.
           const shares = splitAcrossFamily(familyId, amount, md.students_student_id || null);
           if (!shares.length) {
             // The family has no student to attribute to — because the family row does not exist yet,
@@ -219,7 +220,7 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
             // push path needs looking at — not something going wrong right now.
             void alertStaff('payment-recovered', {
               title: 'A missed payment was recovered',
-              text: `${householdName(familyId)}'s ${formatMoney(amount, getCurrency())} payment (${channel}) reached Stripe but not the ledger, so the daily check recorded it. The money is safe; the push path is worth a look.`,
+              text: `A ${formatMoney(amount, getCurrency())} payment (${channel}) reached Stripe but not the ledger, so the daily check recorded it: ${studentAmounts(shares, getCurrency())}. The money is safe; the push path is worth a look.`,
               publicText: `A previously-missed tuition payment of ${formatMoney(amount, getCurrency())} was recorded (${channel}).`,
             });
           }
@@ -242,7 +243,7 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
 
   // Also hold the cursor below any tuition PI still PENDING (async settling / SCA) in this window:
   // otherwise a later-created SUCCEEDED PI advances the cursor past it, and its eventual success would
-  // never be re-scanned — money silently unbooked. This is load-bearing now the webhook is gone
+  // never be re-scanned — money silently unbooked. This is load-bearing because there is no webhook
   // (reconcile is the sole backstop for a portal pay-now the browser didn't confirm). Best-effort: a
   // failed pending scan just leaves the cursor at maxCreated (the rare async case → a manual reconcile).
   let earliestPending = Infinity;

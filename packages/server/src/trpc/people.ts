@@ -58,6 +58,10 @@ const NOTES = z.string().max(4000).optional();
  *  touched. Emergency contacts stay genuinely free text — "neighbour", "aunt on the next street" is
  *  the useful answer there, not one of four. */
 const RELATION = z.string().trim().max(60).optional();
+/** `+1`, `+44`, `+92` — which country this guardian's number is in, when it isn't the install's
+ *  default (0.50.0). '' clears it back to the default. Shape-checked, then whatsapp/numbers.ts is the
+ *  one place that decides what it means. */
+const COUNTRY = z.string().trim().max(5).optional();
 const DOB = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -282,6 +286,10 @@ export const peopleRouter = router({
         name: guardians.name,
         phone: guardians.phone,
         email: guardians.email,
+        /** WhatsApp (0.50.0): which country the number is in, and whether this person asked not to be
+         *  messaged. The opt-out is shown to the office but never changed by it — a parent's answer. */
+        phoneCountry: guardians.phoneCountry,
+        waOptOut: guardians.waOptOut,
         relation: guardianFamilies.relation,
         isEmergencyContact: guardianFamilies.isEmergencyContact,
       })
@@ -791,13 +799,13 @@ export const peopleRouter = router({
 
   // ── Guardians + emergency contacts (admin write) ───────────────────────────
   guardianCreate: adminProcedure
-    .input(z.object({ familyId: ID, name: REQ_NAME, phone: PHONE, email: EMAIL, relation: RELATION, isEmergencyContact: z.boolean().optional() }))
+    .input(z.object({ familyId: ID, name: REQ_NAME, phone: PHONE, email: EMAIL, relation: RELATION, phoneCountry: COUNTRY, isEmergencyContact: z.boolean().optional() }))
     .mutation(({ ctx, input }) => {
       requireFamily(input.familyId);
       const id = rid('grd');
       const ts = now();
       db.transaction((tx) => {
-        tx.insert(guardians).values({ id, name: input.name, phone: blankToNull(input.phone), email: blankToNull(input.email), createdAt: ts, updatedAt: ts }).run();
+        tx.insert(guardians).values({ id, name: input.name, phone: blankToNull(input.phone), email: blankToNull(input.email), phoneCountry: blankToNull(input.phoneCountry), createdAt: ts, updatedAt: ts }).run();
         tx.insert(guardianFamilies)
           .values({ guardianId: id, familyId: input.familyId, relation: blankToNull(input.relation), isEmergencyContact: input.isEmergencyContact ?? false, createdAt: ts })
           .run();
@@ -810,7 +818,7 @@ export const peopleRouter = router({
    *  (a father of children in two families after a remarriage), so the relationship is a property of
    *  the LINK, not of the person — updating it without saying which household would be guesswork. */
   guardianUpdate: adminProcedure
-    .input(z.object({ id: ID, name: OPT_NAME, phone: PHONE, email: EMAIL, familyId: ID.optional(), relation: RELATION }))
+    .input(z.object({ id: ID, name: OPT_NAME, phone: PHONE, email: EMAIL, familyId: ID.optional(), relation: RELATION, phoneCountry: COUNTRY }))
     .mutation(({ ctx, input }) => {
       const g = db.select().from(guardians).where(eq(guardians.id, input.id)).get();
       if (!g) throw new TRPCError({ code: 'NOT_FOUND', message: 'Guardian not found.' });
@@ -818,6 +826,9 @@ export const peopleRouter = router({
       if (input.name !== undefined) patch.name = input.name;
       if (input.phone !== undefined) patch.phone = blankToNull(input.phone);
       if (input.email !== undefined) patch.email = blankToNull(input.email);
+      // Which country this number belongs to (0.50.0). Deliberately NOT `waOptOut`: that is the
+      // guardian's own answer, given in the parent portal, and no office screen overrides it.
+      if (input.phoneCountry !== undefined) patch.phoneCountry = blankToNull(input.phoneCountry);
       db.update(guardians).set(patch).where(eq(guardians.id, g.id)).run();
       if (input.relation !== undefined) {
         if (!input.familyId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Say which household the relationship is in.' });

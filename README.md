@@ -64,13 +64,23 @@ The complete feature set, by area.
 - One guardian can span **several households** (blended families), and each household can carry
   several guardians. Link, unlink, update, and remove — with a removability pre-check.
 - **Emergency contacts** per household: flag a guardian, or add extra contacts.
-- **CSV import** — download a template, run a **preview** that shows precisely what will happen,
-  then commit as a separate step. Siblings can be linked as part of the import.
+- **Spreadsheet import** — the office's own **.xlsx or CSV**, with the columns mapped on screen
+  rather than forced into a template, guardians and siblings merged from continuation rows, dates
+  read in the format you configured, and a **preview that names every row it would refuse** before
+  anything is written. Committing is a separate step. (The .xlsx is read without a spreadsheet
+  library — it is a ZIP of XML and the browser has both halves.)
 
 ### School structure (grouping only)
 
+- **Schools**, for a masjid running more than one programme on different calendars — a weekend
+  maktab beside a full-time hifz school. A school scopes the **calendar and the class tree, and
+  never the household or the money**: a family with a child in each is still one household, one
+  balance, one portal login and one printed sheet. A staff account can optionally be limited to some
+  schools, which narrows what they see and never widens what they may do.
 - **School years** with a start and end month, so a year running Apr → Mar wraps into the next
   calendar year correctly. Set the current year, archive an old one, or delete an unused one.
+- **A real year rollover** — promote classes and carry children forward into the new year, rather
+  than a flag flip that leaves last year's roster in place.
 - **Optional terms** within a year, so a `per-term` fee cadence means something concrete.
 - **Courses → classes** as a two-level grouping, with archive, delete and a deletability check.
 - **Assign a student to a class**, individually or in bulk, and list students by class.
@@ -148,6 +158,14 @@ The complete feature set, by area.
   else can verify — no card, no Stripe record, nothing to reconcile against — so the office can
   answer "who took this?". Card payments say "Automatic". It shows on reversals and in the CSV too.
 - **Reverse a payment** — a new row, fully audited, never a rewrite of history.
+- **Refund a transaction**, grouped the way the parent actually paid. A card payment is refunded at
+  Stripe *and* reversed on the ledger, in that order; cash is reversed on the ledger with the screen
+  saying plainly that a person still has to hand the money over. Full refunds only — a partial goes
+  back as a credit on the next bill — and a carried-forward balance is refused outright.
+- **Past due, chased on a policy you set** — a grace period, a minimum worth chasing, and a cadence.
+  A reminder goes to the parent naming which of their children is behind and for how much, and a
+  digest goes to the office listing the students and their amounts. Reminders never restart a
+  cooldown for a family nobody could actually reach.
 - **Every channel goes through one ledger function**: cash, Zelle, check, other, the parent portal,
   autopay, the donation site, the kiosk, and a mid-year carry-in. The office *sees* the channel and
   the Stripe reference without doing anything to get them.
@@ -159,7 +177,9 @@ The complete feature set, by area.
   floored at a $1 minimum, and the surplus shows as credit.
 - **Card details never touch this app's server.** Elements handles them in the browser; the server
   only ever sees Stripe ids. Saved cards store brand, last four and expiry — never a card number.
-- **Saved cards** — add, remove, and pick a default, set up so they can be charged later.
+- **Saved cards** — add, remove, and **put them in order**: first choice, second, third. That order
+  is the ladder autopay walks down on a decline, so a retry tries the *next* card rather than
+  presenting the same declining one three times.
 - **Autopay** per household: switch it on and the default card is charged when tuition comes due.
   Clear consent copy, and the consent timestamp is stored.
 - **Decline handling** — a retry ladder rather than one attempt, an email to the parent on each
@@ -186,6 +206,8 @@ The complete feature set, by area.
 - Lines already paid say so; a bursary shows as the deduction it is — both for information, neither
   payable.
 - **Credit is shown** instead of a bare zero, so "paid ahead" never looks like "square".
+- **The year at a glance** — the same grid of months the office sees, for their own children.
+- **Turn WhatsApp messages off** for anyone on the household, and back on again.
 - **Receipts by email**, worded as a *payment* rather than a donation — tuition is generally not
   tax-deductible.
 - Own profile basics, and a password change that **signs out your other devices**.
@@ -204,10 +226,17 @@ The complete feature set, by area.
 
 ### Statements, exports &amp; records
 
-- **Printable household statements** (HTML with a print stylesheet): the balance, open bills,
-  recent payments, **each child's Student ID**, a **QR code to the portal sign-up**, and a line
-  telling parents they can pay with a Student ID at the kiosk or on the donation site. Carries the
-  school's logo. Served locked down, since it contains Student IDs and a payment history.
+- **Four printable documents**, all HTML with a print stylesheet — no PDF renderer and no headless
+  Chromium, so they stay Pi-friendly and print from the browser dialog an office already knows, and
+  all of them read legibly in black and white on a masjid photocopier:
+  - the **household statement** — balance, open bills, recent payments, **each child's Student ID**,
+    a **QR code to the portal sign-up**, and a line telling parents they can pay with a Student ID at
+    the kiosk or on the donation site;
+  - the **household information sheet**, whose wording the office can rewrite in Settings;
+  - the **per-child invoice**;
+  - the **Student ID sheet by class**, for handing out at the start of a year.
+  All carry the school's logo and colour, and all are served locked down, since they contain Student
+  IDs and payment history.
 - **CSV export** of billing data, with spreadsheet **formula-injection escaping**.
 - **An append-only audit trail** on every sensitive write — fee assignment, invoices, payments,
   reversals, autopay changes, role and account changes, settings, structure — recording who, when,
@@ -233,14 +262,20 @@ The complete feature set, by area.
 
 ### Settings
 
-- **School name**, and a **logo** that appears on statements and on every email.
-- **Currency** per install (USD / CAD / GBP / EUR).
+- **School name**, **contact details**, an **accent colour**, and a **logo** that appears on
+  statements, on every email, and as the app's icon when it is installed on a phone.
+- **Currency** per install (USD / CAD / GBP / EUR), and the **date format** the whole app displays
+  and reads spreadsheet columns in.
+- **The wording on a family's printed sheet**, so the office can say it their own way.
 - **Which OpenMasjidOS Stripe account** to charge through, picked from the accounts the platform
   offers.
 - **External payments** on or off — whether the kiosk and donation site may take tuition at all.
 - **Parent self-registration** on or off.
 - **Nightly invoicing** — on/off, the day of the month, and the due day.
 - **Mid-year billing floor** — the period before which nothing may be generated.
+- **Past-due policy** — the grace period, the smallest amount worth chasing, and how often.
+- **WhatsApp** — on/off, the pause, which messages, country codes, the test student, the message
+  wording, staff numbers, approved groups, and a log of what was queued.
 - **Year-view columns**.
 - **Send a test email** and **send a test alert**, so you can prove the plumbing works before you
   need it.
@@ -248,24 +283,60 @@ The complete feature set, by area.
 
 ### Email &amp; alerts
 
-- **Transactional email** through the masjid's OpenMasjidOS mail provider, with the app's own SMTP
-  tried first so a standalone install still sends. Templates for invites, receipts, autopay
-  failures, password resets, alerts, and tests.
-- **What parents are emailed** is a setting: a receipt every time they pay — *however* the money
-  arrived, including cash, a check or Zelle recorded by the office, and payments made at the kiosk
-  or on the donation site — and a notice when their card is declined. Invites and password resets
-  are not switchable and always send: they are the only way a parent can reach their account.
+- **Transactional email through the masjid's OpenMasjidOS mail provider.** This app has **no SMTP of
+  its own and holds no mail credentials** — the platform owns the provider and the From address. A
+  standalone install therefore sends nothing and degrades to links you can copy or print, which is a
+  supported mode rather than a fault. Templates for invites, receipts, bills, autopay notices, card
+  expiry, refunds, past-due reminders, password resets, alerts, and tests.
+- **What parents are emailed** is a setting, per message: a receipt every time they pay — *however*
+  the money arrived, including cash, a check or Zelle recorded by the office, and payments made at
+  the kiosk or on the donation site — a bill when it is ready, a heads-up three days before an
+  autopay charge, a warning when a saved card is about to expire, a refund notice, a past-due
+  reminder, and a notice when a card is declined. Invites and password resets are not switchable and
+  always send: they are the only way a parent can reach their account.
+- **A master pause for all parent mail**, for an install being set up or a mistake about to become
+  200 emails.
 - **Who at the masjid gets told.** Add any address — the treasurer, the imām, a trustee — and tick
-  which events it receives: autopay switching itself off, a Student ID being locked after repeated
-  failed lookups, a payment recovered by reconciliation, a payment only partly recorded, the
-  nightly invoice run, or every single payment. **An address is not an account and grants no
-  access.** New addresses start on the events that cost money or hide a problem, because one email
-  per payment is how somebody ends up muting the lot.
-- **An alert can reach a person without the platform's help.** Alerts fan out three ways — the
-  addresses the office listed (the app's own email), the OpenMasjidOS alert channel, and the masjid
-  webhook for routine events — because either of the latter two can be silently dead.
-- Alerts **name the household and the amount** in the office's own email, because without that
-  they are unactionable — and deliberately **do not** in anything sent to a third-party sink.
+  which events it receives: autopay switching itself off, a declined card, a Student ID locked after
+  repeated failed lookups, a payment recovered by reconciliation, a payment only partly recorded, a
+  refund, the past-due digest, an account being ground by login attempts, the nightly invoice run, or
+  every single payment. **An address is not an account and grants no access.** New addresses start on
+  the events that cost money or hide a problem, because one email per payment is how somebody ends up
+  muting the lot.
+- **An alert can reach a person without the platform's help.** Alerts fan out five ways — the
+  addresses the office listed (the app's own email), the OpenMasjidOS alert channel, the masjid
+  webhook for routine events, a staff member's own WhatsApp number, and a staff WhatsApp group —
+  because any one of them can be silently dead.
+- Alerts **name the child and the amount** in the office's own copy, because a bill belongs to a
+  child and a household total makes you go and look it up — and deliberately name **nobody** in
+  anything sent to a third-party sink.
+
+### WhatsApp (0.50.0)
+
+- **Message parents on WhatsApp**, through the masjid's own self-hosted gateway in OpenMasjidOS —
+  nothing passes through an outside company. The platform owns the connection and one paced queue
+  shared by every app; this app never touches a gateway.
+- **Seven parent messages**, each with its own switch on **both** channels: a bill is ready, a
+  receipt, a past-due reminder, an autopay charge coming up, an autopay failure, a card about to
+  expire, and a refund. Everything with detail in it still goes by email; a WhatsApp is the short
+  note that says to look.
+- **It starts switched off, paused, with nothing selected.** Set a **test student** whose household
+  receives messages — by email as well as WhatsApp — while everyone else stays quiet, watch a real
+  one arrive, then lift the pause.
+- **Rewrite what every message says**, with the family, the children, the amount, the balance and a
+  payment link available as tags, and a preview of exactly what a real family will read.
+- **Staff alerts on a phone**, per account, and to a **WhatsApp group** an admin approved for this
+  app — a finance group that gets every payment. A group is a staff channel: no parent message can
+  reach one, and by default a group's alerts name nobody.
+- **Parents opt out themselves** from the portal, for either parent on the household, and nobody in
+  the office can override it.
+- **One button asks the families with no email address for one**, naming their children and
+  explaining why, with the wording editable and a preview.
+- **Nothing about signing in ever goes this way** — invites, resets and verification links stay on
+  email, which always works.
+- **Ask the app for the numbers by WhatsApp**: an authorised admin messages `!students` and gets this
+  month's takings, what is outstanding and how many students are behind. It answers with **counts and
+  totals, never names** — a chat keeps its copy forever — and it cannot change anything.
 
 ### Running &amp; upkeep
 
@@ -280,6 +351,9 @@ The complete feature set, by area.
   wallpaper and accent, relayed same-origin so a browser never has to reach the platform directly.
 - **What's new** in the account menu after an update, built from the shipped changelog, so it works
   with no internet.
+- **Installable on a phone** — a web manifest carrying the masjid's own name and logo, an iOS
+  touch icon, and an install prompt on every signed-in surface. Parents get a home-screen icon;
+  the office gets one too.
 - Light and dark, RTL-aware layouts, reduced-motion honoured, every string through i18next.
 
 ---
@@ -322,13 +396,20 @@ Stripe ids.
 
 ### Update channels
 
-| Channel | Branch | Image |
-| --- | --- | --- |
-| **Stable** | `main` | `…/openmasjidstudents:<version>`, digest-pinned in the compose |
-| **Development** | `dev` | `…/openmasjidstudents:dev` — a moving tag, rebuilt on every push |
+| Channel | Branch | Version | Image |
+| --- | --- | --- | --- |
+| **Stable** | `main` | `X.Y.Z` | `…/openmasjidstudents:X.Y.Z`, **digest-pinned** in the compose |
+| **Development** | `dev` | `X.Y.Z-dev.N` | `…/openmasjidstudents:X.Y.Z-dev.N` — the exact build |
 
-Pick the channel in OpenMasjidOS. Stable installs resolve an immutable `@sha256` digest, so a
-moved tag can never reach them.
+Pick the channel in OpenMasjidOS. Stable installs resolve an immutable `@sha256` digest, so a moved
+tag can never reach them.
+
+**Every dev build gets its own version and its own immutable tag**, which is what makes the
+development channel a channel at all: the platform detects an update by comparing versions, so an
+entry that declared the same version as stable and pointed at a floating `:dev` tag left nothing to
+detect and nothing to update to. One caveat worth knowing if you run the dev channel: a prerelease
+sorts *above* its own final release, so `0.50.0-dev.3 → 0.50.0` is not detected as an update and a
+host coming off the dev channel stays put until the next patch.
 
 ---
 
@@ -347,9 +428,15 @@ money. The invariants that hold it together —
 - **The Fabric provider routes are secret-gated** with a constant-time compare, validate before
   they do anything, and are **never served to internet-origin requests**.
 - **No PII in logs** — ids and event names only, never a name beside an amount.
-- **Alerts carry two texts**: the office's own email may name the household and amount, because
-  without that it is unactionable; anything going to a third-party sink (a webhook, the platform
-  alert channel) carries neither.
+- **Alerts carry two texts**: the office's own copy names the child and the amount, because without
+  that it is unactionable; anything going to a third-party sink (a webhook, the platform alert
+  channel) names nobody.
+- **WhatsApp is treated as the weakest channel it is.** Nothing auth-critical is ever sent on it —
+  no invite, no reset, no one-time code — because the number can be banned overnight and that day
+  must not be the day nobody can sign in. No Student ID, no card details, and **no message body is
+  ever logged or stored**, on any path including failures. A WhatsApp **command** reply answers with
+  counts and totals and never a name, because a chat keeps its copy forever and the phone holding it
+  can change hands.
 - **Money is append-only**: payments immutable, balances derived, reversals instead of edits, and
   foreign keys that refuse to delete anything money references.
 - Invite / reset / verification tokens are CSPRNG, single-use, expiring, and **stored hashed**.

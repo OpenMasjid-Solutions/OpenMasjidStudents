@@ -52,8 +52,9 @@ one branch per channel:
    the next push to `dev` gets the same question again. Silence, a new task, or an unrelated reply all
    mean **stay on `dev`**; only the explicit words move `main`.
 4. **That merge IS the release.** It carries the whole §19 runbook with it: bump the version in all six
-   places, FF-merge, let CI build, **re-pin the `@sha256` digest in `docker-compose.yml`**, tag, then
-   bump `OpenMasjidAPPS/registry.yaml`. Nothing is released until the registry bump lands.
+   places, merge `dev` into `main` (not a fast-forward — §19 step 3), let CI build, **re-pin the `@sha256`
+   digest in `docker-compose.yml`**, tag THAT commit, then open a PR against **`OpenMasjidAPPS`'s `dev`
+   branch** — never its `main`, which only a catalog maintainer moves. Nothing is released until that lands.
 5. **Re-pinning the digest at step 4 is not optional bookkeeping.** `dev`'s compose names a *prerelease*
    tag. Merging that to `main` unchanged would ship a stable release pointing at a dev build's tag.
    `build-image.yml` refuses to publish a `v*` tag whose compose is not digest-pinned, or whose manifest
@@ -93,9 +94,13 @@ to. Distinct versions and immutable per-build tags are the fix. Two consequences
   channel is where a Pi-only regression should surface.
 - `ci.yml` (lint + test + build) runs on `dev` as well as `main`. `dev` is the branch that most needs it.
 - The catalog needs **`dev_ref: dev`** alongside the stable `ref:` in this app's `OpenMasjidAPPS/registry.yaml`
-  entry. That edit belongs to the catalog repo, not here.
+  entry. That edit belongs to the catalog repo, not here — and once it is there the dev channel is
+  self-serving: `dev_ref` follows this branch and the catalog rebuilds hourly, so **a dev build never needs a
+  catalog change**. Only a STABLE release does, and that goes through a PR to the catalog's `dev` (§19 step 6).
 - The CHANGELOG is filed under the **release** (`## [0.48.0]`), not per dev build; `version.test.ts`
   checks the base version, so `0.48.0-dev.3` is satisfied by the `0.48.0` heading.
+- **The two channels read the SAME entry at different depths** — headlines on stable, everything on dev.
+  That is a writing rule, not a build one; see §19's "One changelog, two audiences".
 
 ---
 
@@ -129,7 +134,7 @@ portal, the kiosk, or the donation site."**
 | Repo | Role in this feature |
 | --- | --- |
 | **`OpenMasjidStudents`** (this repo) | The app: server, all three role UIs, database, direct Stripe payments (portal + autopay + refunds), the **provider** side of the `students/billing` Fabric capability. |
-| **`OpenMasjidOS`** | The platform. Fabric core APIs, per-app secret, app-to-app broker, Cloudflare tunnel uplink, HTTPS serving for Stripe apps, transactional email, admin alerts. Work order: `docs/FABRIC_APP_LINK_AND_TUNNEL.md`. |
+| **`OpenMasjidOS`** | The platform. Fabric core APIs, per-app secret, app-to-app broker, Cloudflare tunnel uplink, HTTPS serving for Stripe apps, transactional email, admin alerts, and (0.50.0) the **WhatsApp gateway + the one paced queue every app shares**. Work orders: `docs/FABRIC_APP_LINK_AND_TUNNEL.md`, `docs/WHATSAPP.md`. |
 | **`OpenMasjidAPPS`** | The catalog. This app ships as its own repo + manifest; new manifest keys (`fabric:`, `tunnel:`, `alerts:`, `email:`, `domain:`) must be validated there too. |
 | **`OpenMasjidDonations`** | **Consumer** of `students/billing`: its campaign system gains a **`tuition` campaign type** that is *fully managed by this container* — label from `info`, flow is **Student ID** → confirm the name → balance → pay. Brief: `docs/STUDENTS_INTEGRATION.md` there. |
 | **`OpenMasjidKiosk`** | **Consumer** of `students/billing`: same **`tuition` campaign type** as a kiosk tile (Stripe Reader M2), same Student ID flow. Brief: `docs/STUDENTS_INTEGRATION.md` there. |
@@ -266,7 +271,18 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   card-declined notices, past-due reminders; invites and resets always send), and **which addresses at the
   masjid** get told when something needs a person. A recipient is an address, not an account. See §9's alert
   rule for why this does not go through the platform's alert channel alone.
-- **A master parent-mail pause**, for an install being set up or a mistake about to become 200 emails.
+- **WhatsApp (0.50.0, `whatsapp: true`)** — **seven** parent messages and the same staff alerts, on the
+  channel families actually read, through the masjid's own self-hosted OpenWA gateway. Every one of the
+  seven exists on EMAIL too, with its own switch on each channel: `invoice-ready`, `receipt`, `past-due`,
+  `autopay-upcoming`, `autopay-failed`, `card-expiring`, `payment-refunded`. **The platform owns
+  the connection AND the single paced queue every app shares**, which is the entire defence for a number
+  WhatsApp does not officially permit; this app never goes near a gateway and never designs for volume.
+  Off by default, **paused by default**, every event off, with a **test student** whose household gets
+  through the pause so a real message can be tried on one family. Parents opt out from their own portal;
+  staff opt IN with a number and the alerts they want. One outreach button asks the households with no
+  email address for one. Nothing auth-critical ever goes this way. Full doctrine: `docs/WHATSAPP.md`.
+- **A master parent-mail pause**, for an install being set up or a mistake about to become 200 emails —
+  and a second, independent one for WhatsApp, which starts ON (§9).
 - **Installable on a phone** (0.48.0): a served web manifest carrying the masjid's own name and logo, an
   `apple-touch-icon` route for iOS, a deliberately near-empty service worker, and an install pop-up on every
   signed-in surface.
@@ -326,7 +342,10 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | --- | :-: | :-: | :-: |
 | Settings: school name, currency, logo, colour, date format, contact, sheet wording | ✅ | ❌ | ❌ |
 | Settings: Stripe account, email alerts, parent emails, past-due policy, self-registration | ✅ | ❌ | ❌ |
+| Settings: WhatsApp (on/off, pause, events, country codes, test student, outreach, queue log) | ✅ | ❌ | ❌ |
 | Staff accounts (create, role, disable, reset password, school limits) | ✅ | ❌ | ❌ |
+| Staff WhatsApp number + which alerts they get on it | ✅ | ❌ | ❌ |
+| **Opt out of WhatsApp** (and back in) | ❌ | ❌ | ✅ anyone on their own household |
 | Schools, school years, terms, courses, classes, rollover — write | ✅ | ❌ | ❌ |
 | Schools / years / courses / classes — read | ✅ | ✅ | ❌ |
 | Students / households / guardians / emergency contacts — write | ✅ | ❌ | ❌ |
@@ -339,18 +358,35 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | Invoices: generate, void; the year view; CSV export | ✅ | ✅ | ❌ (own bills only) |
 | Ledger / all payments — read | ✅ | ✅ | own household only |
 | Record manual payment | ✅ | ✅ | ❌ |
-| Reverse a payment / **refund a transaction** | ✅ | ✅ | ❌ |
+| Reverse a CASH payment / **refund any transaction** | ✅ | ✅ | ❌ |
 | Mid-year go-live: preview / commit | ✅ / ✅ | ✅ / ❌ | ❌ |
 | Reconcile with Stripe | ✅ | ✅ | ❌ |
 | Printable statements / sheets / invoices / ID sheets | ✅ | ✅ | ❌ (own kids' IDs shown in the portal) |
 | **Pay by card (Elements)** | ❌ (no reason) | ❌ | ✅ own household |
-| **Saved methods / order / autopay manage** | ✅ (see + force-disable) | view status | ✅ own household |
+| **Saved methods / order / autopay manage** | see status only | see status only | ✅ own household |
 | Parent invites / resets / account admin | ✅ | ✅ | ❌ |
-| Audit log — read | ✅ | ❌ | ❌ |
+| Audit log — read | ❌ *(nothing reads it yet — see below)* | ❌ | ❌ |
 
 Clean walls, on purpose: **finance never sees settings or staff accounts; parents never see another
 household, and never see the audit log or another child's record.** If a feature seems to need to cross a
 wall, stop and ask.
+
+**Two gaps in that table are real and are recorded rather than rounded up** (found in the 0.50.0
+pre-release audit, where both rows claimed a capability that has never existed):
+
+- **Nothing reads the audit log.** Every sensitive write appends to `audit_log` and always has, but
+  there is no procedure and no screen that reads it back — so today it is a forensic record you reach
+  with `sqlite3`, not a feature. Worth building; not worth claiming until it is.
+- **Nobody but a parent can switch autopay off** (§13.3). Staff see which card will be charged and
+  cannot stop it, so an office asked to halt a charge has to talk to the household.
+
+**A LEDGER REVERSAL AND A REFUND ARE NOT THE SAME ACTION**, which is why that row now says CASH.
+Reversing writes mirror rows: the bill re-opens and the family owes it again. That is the whole story
+for cash, because a person hands the notes back — and only half of one for a card, where Stripe still
+holds the money. So anything carrying a Stripe PaymentIntent is refused by `billing.reversePayment`
+and has to go through Refunds, which does both halves in the right order. `payments/refunds.ts`
+`isStripePayment` is the one predicate deciding that, shared with the refund router so a second list
+of "card-ish channels" cannot disagree with it.
 
 ---
 
@@ -382,11 +418,12 @@ wall, stop and ask.
    └───────────────▲──────────────────────────────────┬───────────────────────┘
                    │ core → app (brokered calls from   │ app → core: SSO check, notify,
                    │ Donations / Kiosk, authenticated  │ alert, email, site info,
-                   │ by THIS app's own APP_SECRET)     │ stripe keys, appearance
+                   │ by THIS app's own APP_SECRET)     │ stripe keys, appearance, WhatsApp
    ┌───────────────┴──────────────────────────────────▼───────────────────────┐
    │                          OpenMasjidOS core                                 │
    │  /api/auth/session  /api/fabric/notify  /api/fabric/alert                   │
    │  /api/fabric/email  /api/fabric/site    /api/fabric/stripe                  │
+   │  /api/fabric/whatsapp  ← the masjid's own OpenWA gateway + ONE paced queue   │
    │  /api/fabric/app/students/billing/*  ← the broker (OS work order)           │
    │  Cloudflare tunnel: exposes app paths ONLY; /api/fabric/* and the app's     │
    │  /fabric/* prefix are NEVER reachable through the tunnel                    │
@@ -422,7 +459,7 @@ wall, stop and ask.
 | Email | **the platform's provider** (`POST /api/fabric/email`) | No `nodemailer` — removed in the 2026-08-04 audit; nothing here holds mail credentials. |
 | Frontend | **React 18 + Vite 6** | Relative asset base, so one build works at the root and under a path prefix. |
 | Styling | **Tailwind CSS v4** + CSS custom properties | Tokens only; ported files stay structurally identical to upstream (§15). |
-| Components | **shadcn/ui** (copied-in Radix) | |
+| Components | **The org's ported "liquid glass" CSS system** + hand-rolled inline-SVG primitives | **NOT shadcn/ui, and not Radix** — this line said so until 0.50.0 and was never true. OpenMasjidOS/Display/Kiosk share `styles/{tokens,glass,app}.css` and none of them pull in shadcn/Radix/tailwind-merge, so matching them (§15 parity, the harder constraint) means not adding it here either. Nothing in `packages/web` imports Radix. Decision recorded in `docs/DATA_MODEL.md`. |
 | Animation | **Motion** | Reduced-motion, always. |
 | Data/state | **TanStack Query** via tRPC React integration | |
 | Icons | **lucide-react** + org masjid glyphs | |
@@ -462,18 +499,20 @@ OpenMasjidStudents/
 │   │       │   ├── portal.ts             # parent-scoped reads + pay-now + saved methods + autopay
 │   │       │   └── settings.ts           # settings, alerts, past-due policy, Stripe account, diagnostics
 │   │       ├── billing/                  # ledger · invoices · lines · paidFor · period · schoolYear ·
-│   │       │                             # yearCells · carryIn · joinMidYear · autoInvoice · pastDue ·
+│   │       │                             # yearCells · carryIn · joinMidYear · autoInvoice · pastDue · stats ·
 │   │       │                             # statements · invoiceDoc · statementRoutes · studentCodes · csv
 │   │       ├── payments/                 # stripe (the ONLY SDK importer) · autopay · refunds ·
 │   │       │                             # reconcile · methods · scheduler
-│   │       ├── fabric/                   # provider.ts (/fabric/billing/*) · platform.ts (calls to the OS)
+│   │       ├── fabric/                   # provider.ts (/fabric/billing/*) · commands.ts (/fabric/commands/run) ·
+│   │       │                             # platform.ts (calls to the OS)
 │   │       ├── people/                   # names · household · relations · import · siblingSuggest ·
 │   │       │                             # onboardingSheet · idSheet · sheetText
 │   │       ├── schools/ structure/       # school scope resolution · year rollover
 │   │       ├── settings/                 # settings store · dates (the one date edge)
 │   │       ├── alerts/ mail/ audit/      # who hears about it · templates + senders · append-only trail
+│   │       ├── whatsapp/                 # index.ts (every gate) · numbers.ts (E.164) · templates.ts
 │   │       ├── security/                 # origin.ts (§12.4) · rateLimit.ts
-│   │       ├── auth/                     # passwords · sessions · invites · usernames
+│   │       ├── auth/                     # passwords · sessions · invites · usernames · firstRun
 │   │       └── http/                     # basePath · manifest (the PWA manifest builder)
 │   │   └── test/                         # vitest: 800+ tests, incl. the security matrix
 │   └── web/
@@ -486,6 +525,7 @@ OpenMasjidStudents/
 └── docs/
     ├── FABRIC_BILLING_CONTRACT.md       # §11 extracted verbatim (the cross-repo contract)
     ├── PAYMENTS.md                      # §13 flows, the no-webhook doctrine, the autopay ladder
+    ├── WHATSAPP.md                      # 0.50.0 — every gate, what never travels this way, numbers
     ├── DATA_MODEL.md                    # schema decisions, incl. the §12.4 reconciliation
     └── audit/                           # security audits: findings, remediation, what is still open
 ```
@@ -499,7 +539,7 @@ The tables, as they actually exist: `settings`, `users`, `sessions`, `invites`, 
 `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts`, `fee_plans`, `student_fees`,
 `invoices`, `invoice_items`, `charge_items`, `charges`, `payments`, `payment_allocations`, `carry_ins`,
 `past_due_reminders`, `payment_methods`, `autopay_enrollments`, `autopay_runs`, `alert_recipients`,
-`audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
+`whatsapp_log`, `audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
 printed on statements). That list is the whole schema: `stripe_events` was dropped in 0.48.0 (migration
 0037) because it deduped webhook deliveries and there is no webhook (§13.4) — a money schema with a table
 nobody writes is an invitation to wire the next thing to it. The DB file holds minors' PII and every
@@ -538,8 +578,50 @@ Non-negotiable rules:
   collation. So `Office` and `office` were both accepted and only one of them could ever be signed into. One
   helper now answers both questions; `findUserByUsername` tries an exact match first so an install that
   already has such a pair still works.
-- **Staff carry no phone number.** The app never contacts staff by phone, so `users.phone` was dropped; phone
-  numbers exist only on guardians and emergency contacts, where there is a reason to ring them.
+- **Staff carry a phone number again — because there is now a reason to (0.50.0).** `users.phone` was dropped
+  once, and the rule was right for the reason it gave: the app never contacted staff by phone, so a number
+  would have been personal data collected for no purpose. WhatsApp is that purpose — a declined card at nine
+  on a Sunday evening reaches a treasurer's phone and does not reach their inbox. So the column is back
+  **with** `phone_country` and `wa_events`, entirely opt-in per account, and clearing the number is the off
+  switch. Minimisation is satisfied by the purpose, not by the absence; a number with no purpose is what the
+  old rule forbade and still is.
+- **WhatsApp gates in ONE place, and three of its defaults are the feature** (0.50.0, `whatsapp/index.ts`).
+  `enabled` off, `paused` **ON** and every event off, on every install. The pause starting on is the one
+  asymmetry with email, and it is deliberate: parent email is a channel every install has been using for
+  releases, so pausing it by default would break working installs, whereas WhatsApp has never sent anything
+  and the safe starting state is *configured but silent*. The pause **narrows** rather than stops — the
+  **test student's household** still hears everything, which is the only way to try a real message without
+  letting it reach a real roster; it is resolved from the STUDENT on every send (a moved child takes it with
+  them, a withdrawn one fails closed) and it overrides a pause and nothing else. **It covers BOTH channels**
+  (`settings/testStudent.ts`, which is why it lives in settings and not in `whatsapp/`): it lifted only the
+  WhatsApp pause at first, so an office that set a test student and took a payment got nothing at all —
+  the parent-EMAIL pause is a separate switch and held the receipt back silently. The email side honours it
+  twice, at the sender AND in `guardianEmailsForFamily`, because that second line would otherwise cancel the
+  exception the first one granted. `guardians.wa_opt_out` is the parent's own answer, stored on the PERSON
+  rather than the household because it is a decision about a phone — and **nothing overrides it**, not the
+  pause exception and not an office broadcast — but **any adult on a household may set it for anyone on that
+  household**, because the portal IS the household (§5) and two parents sharing one balance and one set of
+  cards should not need the office to switch a spouse's number on. Every parent message is an office-editable
+  TEMPLATE with a fixed tag list per message (`whatsapp/templates.ts`); there is no tag for a Student ID or a
+  card, which is the enforcement rather than a rule in a document. **A WhatsApp GROUP is a STAFF channel**
+  (0.50.0) — a finance group subscribing to the same `ALERT_EVENTS` a staff account can, and the fifth
+  fan-out of `alertStaff`. No parent event can reach one and nothing free-typed can either, because the
+  platform's rule is that a group never carries a family's own business; per-family sends and group alerts
+  use two functions with no shared parameter, so it is not expressible rather than merely forbidden. Which
+  of an alert's two texts a group gets is the admin's `detail` switch, defaulting to the one that names
+  NOBODY — this app cannot see who is in a group, and the wrong group is one mis-click away. **The three
+  GLOBAL gates write no log
+  row** — a switch that is off would fill the trail every invoice run — so `whatsapp.get` returns a
+  `blockers` list instead and the screen prints it: without that an office turned the feature on, took a
+  real payment and got no message AND no log entry, with nothing anywhere saying which gate did it. A new
+  notification type is added to BOTH channels and defaults OFF on both; the two that ship ON by email
+  (`receipt`, `autopayFailure`) do so only because an upgraded install was already sending them.
+  `whatsapp_log` records event / recipient id / time / outcome and **never a message body**: a
+  tuition message names a child and their fees, and a log is the copy that outlives the conversation.
+  Nothing auth-critical (invite, reset, verification) is ever sent this way — a number can be banned
+  overnight, and that day must not be the day nobody can sign in. `whatsapp/numbers.ts` is the one place a
+  stored number becomes E.164; it refuses rather than guesses, because a number nobody can read is a fixable
+  problem and a number mangled into somebody else's is not. See `docs/WHATSAPP.md`.
 - **Allocation is DERIVED, not incremental.** An invoice's status comes from `payment_allocations`, so money
   paid before a bill existed has to be attached once that bill appears — `ledger.reallocateStudent` recomputes
   a student's whole mapping oldest-due-first whenever an invoice or charge changes. Payments themselves are
@@ -591,11 +673,43 @@ Non-negotiable rules:
   `test/alerts.test.ts` fails the build when the code can raise an id the manifest does not declare — **or
   when an event has no label in the web app's `en.json`**, which is how `settings.ev_payment-refunded` reached
   a masjid's screen as a raw key. Every alert carries TWO texts and both are required: `text` (our email, to
-  addresses an admin typed) MAY name the household and the amount, because without that it is unactionable;
-  `publicText` (the webhook + the platform alert channel — third-party sinks) carries no household and no
+  addresses an admin typed) MAY name a person and the amount, because without that it is unactionable;
+  `publicText` (the webhook + the platform alert channel — third-party sinks) carries no name and no
   name-beside-an-amount, which is where §14's line has always been. Neither may carry a Student ID or card
   details. Parent-facing emails are gated inside `mail/notify.ts` (never per call site: receipts are sent from
   five places).
+- **An alert names the STUDENT, never the household** (0.50.0-dev.14). It said "the Ismail family paid $250"
+  for six releases, and that is one indirection away from what this app bills: **invoices and payments are
+  per student**, so a household label makes an office do a lookup the alert could have done, and it hides the
+  only number that matters — a family total of $430 does not say that it is Yusuf's two missed months and
+  Maryam is square. It is also a label that identifies nothing on its own, being DERIVED from the children's
+  surnames (`people/household.ts`): four Ismail households produce four identical alerts, and a mixed
+  household reads "Farooqi / Ismail", naming a child who may not be the one who is behind. So
+  `alerts/index.ts` exports `studentName`, `studentAmounts` (per-child, since one card charge is recorded as
+  one row per child) and `childrenOf` — the last for the two facts that genuinely belong to the household, a
+  CARD and an AUTOPAY enrolment, which name the children they pay FOR rather than pretending a child owns the
+  card. The past-due digest counts and lists STUDENTS while still chasing one household once, and says both
+  numbers, because otherwise an office wonders why 9 students produced 5 emails. **The privacy line does not
+  move**: all of this is the `text` variant, where a name beside an amount was always allowed; `publicText`
+  still names nobody, and `test/pastDue.test.ts` now asserts the child's name is absent from it too. Watch
+  for vacuous assertions here — that test's helper used to name the child "<household label> child", so
+  "the household name is gone" passed on a substring of the student's name. **The PARENT's own past-due
+  reminder names the children too** (0.50.0-dev.15, first names, both channels): it said only "$430 of your
+  tuition balance", which is true about who PAYS and useless to act on, and it disagreed with the office's
+  copy of the same fact. `billing/pastDue.ts` `studentsBehind()` is the ONE derivation both use — pass it
+  `[fam]` for a parent and the whole chase list for the digest, and note that confusing the two mails every
+  family the names of everybody else's children, which `test/pastDue.test.ts` now proves it does not.
+- **A WhatsApp COMMAND reply is the one place that goes the other way, and says only counts and totals**
+  (0.50.0-dev.15, `fabric/commands.ts` + `billing/stats.ts`). An alert reaches addresses and numbers an
+  admin configured, one event at a time; a command reply lands in a chat that keeps a copy forever, on
+  whichever phone is authorised today — the platform's own reason for refusing to expose app logs. So
+  `stats` reports how many and how much and points at a screen behind a login for who, and a test asserts
+  no child's name can appear in it. Two arithmetic rules there are load-bearing: owed and credit are summed
+  PER STUDENT and never netted install-wide (one child $100 behind and another $100 ahead is $100
+  outstanding, not zero), and a WITHDRAWN child's unpaid bill still counts (the roster line drops, the money
+  line does not — the same rule `familyStudentIds` states). `commands` is a RESERVED capability and must
+  never appear in `fabric.provides`; the route additionally requires `X-OpenMasjid-Caller-App:
+  omos:platform`, which no app id can hold because the colon is outside the app-id charset.
 - **`payments.recorded_by_name` is the person; `audit_log.actor_name` is the account** (0.44.0).
   `recordingActor(ctx)` stamps a money row with the staff member's display name, because the office reads it
   back asking "who took this cash?"; `auditActor(ctx)` keeps the username, because a forensic trail wants the
@@ -626,6 +740,7 @@ https: true              # REQUIRED: the parent portal embeds Stripe Elements (s
 tunnel: true             # public HTTPS uplink for parents + finance
 domain: true             # learn our own public address at runtime (GET /api/fabric/site)
 email: true              # transactional mail through the masjid's provider (POST /api/fabric/email)
+whatsapp: true           # 0.50.0 — send through the masjid's own OpenWA gateway (§9, docs/WHATSAPP.md)
 alerts:                  # declaring an id IS the authorization; the admin routes each one
   - id: autopay-disabled …
   - id: lookup-lockout …
@@ -637,10 +752,28 @@ alerts:                  # declaring an id IS the authorization; the admin route
 fabric:
   provides:
     - capability: billing
+commands:                # 0.50.0-dev.15 — what an admin runs by messaging the masjid's number
+  - id: stats …          # ONE command, and it only READS (§5b of docs/WHATSAPP.md)
 ports:
   - container: 8080
     label: Web interface
 ```
+
+**A capability declared here is necessary and never sufficient — check the BUILT entry, not this file.**
+OpenMasjidOS reads capabilities from the catalog entry the masjid installed from, so a key that does not
+survive the catalog build does not exist as far as the platform is concerned. `whatsapp: true` hit exactly
+that in 0.50.0: the manifest was right, the build was green, and every call was answered `403` because
+`OpenMasjidAPPS/scripts/build-catalog.mjs` copied capabilities through a hand-maintained allow-list with no
+`whatsapp` line — `email` survived, `whatsapp` vanished, and the failure surfaced in a different repo from
+the mistake.
+
+The catalog repo has since killed the class rather than the instance (`364f91b`): `scripts/capabilities.mjs`
+is now the ONE list the builder both type-checks and copies from, so "validated here but forgotten in the
+entry" is no longer expressible, and a test scrapes the documented manifest template in
+`docs/BUILDING_AN_APP.md` and asserts every capability it offers survives into a built entry — in both
+directions, so one cannot be wired without being documented. **So a new capability should now carry through
+on its own.** Verify it anyway, because the cost of not verifying is a 403 nobody can diagnose from here:
+`git show origin/dev:catalog.json` in the catalog repo is the only thing that answers "did it actually ship?".
 
 **No install-time `settings:` on purpose** — installation is one-click, and everything a masjid needs (school
 name, currency, logo, which OpenMasjidOS Stripe account to charge, email alert recipients) is collected
@@ -880,7 +1013,10 @@ skipped. The push paths are optimizations; **money is never lost**, only delayed
   parent, alert the office. An indeterminate outcome (network error) is left `pending` and never counted as a
   strike — reconciliation resolves it, and the pending-run guard blocks a re-charge meanwhile.
 - Finance sees autopay status on a household's billing record, including which method will be charged; admin
-  can force-disable. Parents can cancel any time (effective immediately; audited).
+  can SEE which method will be charged. **Nobody but the parent can switch it off** — `portal.setAutopay`
+  is `parentProcedure` and there is no staff equivalent, so an office asked to stop a charge has to talk
+  to the household. (§5 and this line both claimed an admin force-disable until 0.50.0; it was never
+  built. Left as a gap rather than papered over: the consent is the household's and so is the card.)
 
 ### 13.4 There is NO Stripe webhook
 This is a deliberate architecture choice and the docs used to say the opposite. Every payment reaches the
@@ -926,6 +1062,10 @@ invariant here is load-bearing:
   stolen DB row cannot be replayed as a cookie or a link.
 - **Card data never touches the server** (Elements only); the Stripe secret key lives in memory only; nothing
   else imports the SDK.
+- **WhatsApp is the weakest channel here and is treated as one** (0.50.0). Nothing auth-critical is sent on
+  it — no invite, no reset, no verification link, no one-time code — because the number can be banned
+  overnight and that day must not be the day nobody can sign in. No Student ID, no card details, and **no
+  message body is ever logged or stored**, on any path including failures. Both are tested, not assumed.
 - **No PII in logs** — ids, codes and counts only; never names+amounts together; Fabric bodies never logged.
 - Role checks server-side on every procedure; **parent household-scoping enforced in queries**.
 - **Printed documents are minors' records**: served only through the authed route that re-checks the role ×
@@ -959,7 +1099,7 @@ look in step at runtime.
 **Platform-family UI parity is a requirement, not a vibe.** A masjid admin opening this app from the
 OpenMasjidOS dashboard should not be able to tell they left it — and that includes the **`/admin` route
 tree**, not just the parent portal. Concretely: the same Tailwind v4 token architecture (`tokens.css`,
-`data-theme="dark|light"` flip — no hardcoded hex anywhere), the same shadcn/ui component set, the same
+`data-theme="dark|light"` flip — no hardcoded hex anywhere), the same ported glass component set, the same
 Motion spring presets, the same typography stack, the same emerald/gold palette, arch-topped-card motifs,
 skeleton shimmer loaders, staggered grid entrances. The ported files (`tokens.css`, `app.css`, `glass.css`,
 `Glyphs.tsx`) are kept **structurally identical to upstream** so theme fixes re-sync cleanly — every
@@ -993,7 +1133,8 @@ secrets). Additions:
   `alerts/index.ts` for who hears about an event. One `schools/index.ts` for school scope. One
   `settings/dates.ts` for every date edge. One `auth/usernames.ts` for how a username matches. One
   `payments/methods.ts` for what a saved method is and what order they are tried in. One `payments/stripe.ts`
-  that imports the SDK. Adding a second place is the bug.
+  that imports the SDK. One `whatsapp/index.ts` for whether a WhatsApp message goes out and to whom, and one
+  `whatsapp/numbers.ts` for what a number is on the wire. Adding a second place is the bug.
 - Unit tests for the ledger: exact pay, partial, overpay→credit, multi-invoice, replayed idempotency key,
   reversal, refund, and one per channel.
 - `/fabric/*`, the printable documents and the PWA files are plain Fastify routes registered before the SPA
@@ -1011,7 +1152,7 @@ secrets). Additions:
 npm install         # all workspaces
 npm run dev         # server + web, hot reload (server :8080; Vite :5173 proxying /trpc, /api, /fabric, /statements)
 npm run build       # typecheck + build web and server
-npm run lint        # eslint + tsc --noEmit
+npm run lint        # tsc --noEmit across both workspaces (there is no eslint in this repo)
 npm run test        # vitest — both workspaces
 npm run image       # build & tag ghcr.io/openmasjid-solutions/openmasjidstudents:local
 ```
@@ -1033,7 +1174,7 @@ payment paths (there is no webhook to forward — see §13.4); a small mock of `
 
 ## 18. Definition of done (any feature)
 
-Builds via `npm run build`; `tsc` + eslint clean; the ledger / Fabric-contract / origin-policy tests pass;
+Builds via `npm run build`; `npm run lint` (`tsc --noEmit`) clean; the ledger / Fabric-contract / origin-policy tests pass;
 **role × origin matrix verified for touched routes** (an admin session over simulated tunnel gets 403; a
 parent token literally cannot fetch another household — tested, not assumed); works light+dark, LTR+RTL,
 reduced-motion honoured; new/changed screens reviewed side-by-side with the OpenMasjidOS dashboard for
@@ -1042,48 +1183,120 @@ absent (standalone) and present; payment features tested against Stripe test mod
 printed documents checked in a real print preview, in black and white; every new date/money boundary validated
 (§9); no raw error reaches the user; all strings in i18next — including generated keys; SPDX on every new
 file; audit entries for every sensitive write touched; and the CHANGELOG entry written in the voice a masjid
-reads, under the release heading.
+reads, under the release heading — a **headline** if a masjid would notice it, under `### Also in this
+release` if they would not (§19, "One changelog, two audiences").
 
 ---
 
 ## 19. Version control & release policy — how a version actually ships
 
 `VERSION` file at repo root, single source of truth, `MAJOR.MINOR.PATCH`; `1.0.0` reserved for launch.
-**Current series: `0.48.x`** (`dev` carries `0.48.0-dev.N`). Default branch: **`main`**; all work on **`dev`**
-(see Branching policy).
+**`main` is at the last release; `dev` carries `X.Y.Z-dev.N` for the NEXT one** — so once `v0.49.0` ships,
+`dev`'s next build is `0.50.0-dev.1`, not another `0.49.0-dev.N` (that release exists now; a prerelease of it
+would be a lie about which way round they are). Default branch: **`main`**; all work on **`dev`** (see
+Branching policy).
 
 **The key idea (two repos):** this repo builds and **digest-pins** the Docker image; the catalog repo
-(`OpenMasjidAPPS`) is what makes a version downloadable — bumping this app's entry in
-`OpenMasjidAPPS/registry.yaml` triggers its "Build catalog" CI, which regenerates `catalog.json`, which is
-what every OpenMasjidOS install fetches. **Nothing is "released" until the registry bump lands.**
+(`OpenMasjidAPPS`) is what makes a version downloadable — this app's entry in `OpenMasjidAPPS/registry.yaml`
+names the tag and commit its "Build catalog" CI reads, and the `catalog.json` that produces is what every
+OpenMasjidOS install fetches. **Nothing is "released" until that lands** — and on the STABLE channel, landing
+it is not ours to do: we open a PR against the catalog's `dev` branch and a catalog maintainer runs the
+release (step 6).
 
 **Auth pieces (none typed per release):**
-1. `gh` CLI's stored token — authenticates pushes and the registry edit.
+1. `gh` CLI's stored token — authenticates pushes to this repo and opening the catalog PR. It can also write
+   to the catalog directly; that it *can* is not permission to (step 6).
 2. GHCR push = CI's built-in `GITHUB_TOKEN` — the image is pushed by this repo's **"Build image" GitHub
    Action** (`.github/workflows/build-image.yml`), **never from a laptop**. One-time setup after the first
    build: set the GHCR package to **Public**.
 3. ~~APK signing keystore~~ — **N/A here.** This is a web-only app; the keystore secrets are Kiosk-specific.
    Do not add Android/APK steps to this repo.
 
+### One changelog, two audiences (0.49.0)
+
+**A stable release shows its HEADLINES. A dev build shows everything.** Same file, same entry, read at two
+depths — because the two channels want opposite things. A masjid updating on the stable channel wants the
+few things that changed for them; 0.48.0 ran to fifty bullets, which makes the first line as easy to skip
+as the last. Whoever is running the dev channel is testing the build and wants all of it, including the
+fixes too small to announce.
+
+How to write one, every time:
+
+- Open the release with its **headlines** — the major changes, additions and fixes, and nothing else.
+  **Six to eight**, in the voice a masjid reads (§15), each one a thing they will notice.
+- Then `### Also in this release`, and everything else under it: the refinements, the small fixes, the
+  detail behind the headlines. That heading is the marker; **everything from it onward is dev-only**,
+  including any further `###` sub-headings inside it.
+- `lib/changelog.ts` decides which half to show from **the version the app is running** — a `-dev.N` build
+  shows all of it, a release build shows the headlines, and an unknown version shows the headlines (the
+  safe direction). On GitHub, where the whole history belongs, both halves always show.
+- `changelog.test.ts` holds the newest entry to a short headline list, so a forgotten marker fails in CI
+  rather than in front of a madrasah.
+- **Never rewrite a shipped release's notes** to fit this. Entries written before the convention have no
+  marker and correctly still show in full; they are what those masajid already read.
+
 **The release runbook (every release, in order):**
 1. Bump the version **everywhere**: `VERSION`, `manifest.yaml`'s `version:`, root + both workspace
-   `package.json`s, `docker-compose.yml`'s image tag, and a `CHANGELOG.md` entry. **The server does NOT need
-   editing** — `config.version` reads `packages/server/package.json` at runtime (it was a hand-typed literal
-   until 0.42.1 and drifted two releases, telling every masjid they were on 0.40.0).
-   `packages/server/test/version.test.ts` asserts all of these agree, so a half-finished bump fails CI instead
-   of shipping; the CHANGELOG entry is checked there too, since **What's new** in the app is built from that
-   file.
+   `package.json`s, `docker-compose.yml`'s image tag, and a `CHANGELOG.md` entry (headlines + marker, above).
+   **The server does NOT need editing** — `config.version` reads `packages/server/package.json` at runtime
+   (it was a hand-typed literal until 0.42.1 and drifted two releases, telling every masjid they were on
+   0.40.0). `packages/server/test/version.test.ts` asserts all of these agree, so a half-finished bump fails
+   CI instead of shipping; the CHANGELOG entry is checked there too, since **What's new** in the app is built
+   from that file.
 2. Commit on `dev`; validate the build is green (CI on the branch).
-3. FF-merge to `main` and push → triggers **"Build image"** → pushes the **multi-arch** (amd64+arm64) image to
-   GHCR.
-4. Grab the **`@sha256` digest** from that build and pin it in `docker-compose.yml`'s `image:` line.
-5. Commit the pin, `git tag v<version>`, push `main` + the tag. (The tag lands on the **pin commit**, so the
-   catalog serves the pinned compose — that's the point.)
-6. Bump `OpenMasjidAPPS/registry.yaml` for `students`: `ref: v<version>` **plus the immutable `commit:` SHA**
-   of that tag, keeping `dev_ref: dev`. Via PR, or — house standard, since we own the org — a direct commit to
-   its `main` with `gh api -X PUT …/registry.yaml`.
-7. That commit runs **"Build catalog"** → `catalog.json` regenerates → the update is live; installs offer
-   **Update**.
+3. **Merge `dev` into `main`, carrying the stable version bump in the merge commit**, and push → triggers
+   **"Build image"** → pushes the **multi-arch** (amd64+arm64) image to GHCR.
+
+   Concretely: `git checkout main && git merge --no-ff --no-commit dev`, resolve the version conflicts to the
+   plain `X.Y.Z` (they conflict every time, by design — `dev` says `X.Y.Z-dev.N` and `main` says the previous
+   release), **leave `docker-compose.yml` naming the PREVIOUS release's digest**, then commit as
+   `release: vX.Y.Z — <headline>`.
+
+   It is **not** a fast-forward and cannot be: `main` carries every release and pin commit, which `dev` never
+   receives, so the two have diverged permanently by design. (This step said "FF-merge" until 0.49.0, which
+   would fail on the first `git merge --ff-only`.) Keeping the previous digest for this one commit is also
+   deliberate and is what `version.test.ts` enforces: a stable version must name a digest-pinned image, and
+   the new digest does not exist until step 3 has run.
+4. Grab the **`@sha256` digest** from that build and pin it in `docker-compose.yml`'s `image:` line. Confirm
+   it with `docker buildx imagetools inspect …:<version>` before trusting the log line.
+5. Commit the pin, then `git tag v<version>` and push `main` + the tag.
+
+   **TAG THE DIGEST-PIN COMMIT, NOT THE COMMIT BEFORE IT.** Do not tag until step 4's pin is committed. The
+   catalog fetches a COMMIT and serves the `docker-compose.yml` it finds there, so a tag placed one commit
+   early carries the PREVIOUS release's digest — and every masjid installing that version then runs the wrong
+   code under the new version number, while the release looks entirely successful. **This has already
+   happened twice in the org.** Check it before you push: `git tag --points-at HEAD` on the pin commit, and
+   `git rev-list -n 1 v<version>` must be that same SHA — the one you then put in the catalog PR's `commit:`.
+   (`docker-compose.yml` is in the workflow's `paths-ignore`, so neither the pin nor the tag rebuilds the
+   image; the digest stays the one you pinned.)
+6. **Open a PR against `OpenMasjid-Solutions/OpenMasjidAPPS` — base branch `dev`, NEVER `main`.** Change only
+   this app's own entry in `registry.yaml`, nothing else in the file:
+
+   ```yaml
+     - id: students
+       ref: v0.49.0        # the tag you just published — the human label
+       commit: 222f0640…   # the 40-char SHA of that tagged commit — what actually gets FETCHED
+   ```
+
+   `git rev-list -n 1 v0.49.0` gives the SHA. If you followed steps 1–5 the tag and the pin commit are the
+   same commit; **if they ever differ, pin the commit that carries the correct digest** — `commit:` is what
+   the catalog fetches and `ref:` is only the label beside it. Leave `dev_ref: dev` alone.
+7. **Stop there.** A catalog maintainer runs the release that moves the catalog's `main`. Do **not** commit to
+   the catalog's `main`, and do **not** merge the catalog's `dev` into its `main`: those branches legitimately
+   hold different builds of `catalog.json` — the dev channel's and the stable channel's — so merging either
+   way publishes one channel's column to the other's masajid.
+
+> **This section told you to do the opposite until 0.50.0, and I did.** It called a direct commit to the
+> catalog's `main` (`gh api -X PUT …/registry.yaml`) "house standard, since we own the org". It is not:
+> stable moves only through a catalog release, run by a maintainer. **v0.48.0 and v0.49.0 were both pushed
+> straight to the catalog's `main` on 2026-08-13** under that instruction, and a maintainer had to reconcile
+> the stable column afterwards. Open the PR against `dev` and wait for it.
+
+**The dev channel needs none of steps 6–7.** `dev_ref: dev` tracks this repo's `dev` branch by itself and the
+catalog rebuilds hourly, so a dev build never needs a catalog change at all. What the dev channel does ask is
+that the prerelease version (`X.Y.Z-dev.N`) and the version-tagged image stay current — and that **the image
+is published before the version bump is pushed**, since the catalog pins the exact tag and an entry that
+arrives first hands a masjid a pull failure.
 
 The `version:` in the registry entry, `manifest.yaml`, and `VERSION` must agree; the digest pin and the tag
 must point at the same commit lineage. Commit messages per house style (`chore: bump version to x.y.z`,
@@ -1111,7 +1324,9 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | a balance being wrong | `billing/ledger.ts` (`reallocateStudent` first) |
   | a month showing the wrong state | `billing/yearCells.ts`, `billing/period.ts` |
   | a card, a refund or a saved method | `payments/*` — and only `payments/stripe.ts` imports the SDK |
-  | who gets told | `alerts/index.ts`, then `mail/notify.ts` |
+  | who gets told | `alerts/index.ts`, then `mail/notify.ts` (which fans out BOTH parent channels) |
+  | a WhatsApp message — whether it goes, to whom, or what it says | `whatsapp/index.ts`, `whatsapp/numbers.ts`, `whatsapp/templates.ts` |
+  | which household a pause does NOT apply to (either channel) | `settings/testStudent.ts` |
   | a printed sheet | `billing/statements.ts`, `billing/invoiceDoc.ts`, `people/onboardingSheet.ts`, `people/idSheet.ts` |
   | a date | `settings/dates.ts` |
   | the calendar or the roster tree | `structure/*`, `schools/index.ts` |

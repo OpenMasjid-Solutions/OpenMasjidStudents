@@ -3,14 +3,45 @@
 /**
  * High-level transactional senders (CLAUDE.md §4/§13). One place that composes the school name + the
  * right template + the transport, so routers stay thin. Every function is BEST-EFFORT and no-ops when
- * SMTP is unconfigured (returns false / 0) — callers degrade gracefully. Nothing here throws or logs
+ * the platform cannot send mail (returns false / 0) — this app has no SMTP of its own and holds no
+ * mail credentials, so a standalone install sends nothing and degrades to copy/print links, which is
+ * a supported mode rather than a fault (§4/§7). Nothing here throws or logs
  * PII. The parent-portal link uses OPENMASJID_PUBLIC_URL when set (empty → no button, still valid).
+ *
+ * SINCE 0.50.0 THIS IS THE FAN-OUT FOR BOTH PARENT CHANNELS, not only email — the three parent-facing
+ * messages also go to WhatsApp from here (whatsapp/index.ts owns every gate on that side and never
+ * throws). The file is still called `mail` because that is what nine call sites import, and moving it
+ * would be churn rather than clarity; what matters is that there is exactly ONE place a receipt is
+ * sent from. That was already the point: receipts are triggered in five different places, so a check
+ * per caller is a check somebody forgets — and a SECOND channel per caller is a channel somebody
+ * forgets entirely.
+ *
+ * The two channels gate INDEPENDENTLY. The parent-email switches and the mail pause say nothing about
+ * WhatsApp, and the WhatsApp toggles and its own pause say nothing about email; an office that turned
+ * receipts off by email did not thereby ask for them by WhatsApp, or the reverse. Nothing
+ * auth-critical (invites, resets, verification) goes to WhatsApp at all — see whatsapp/index.ts.
  */
 import { getSchoolName, getSchoolLogo, getParentEmails, getParentMailPaused, getPastDue, getSchoolContact } from '../settings';
 import { guardianEmailsForFamily } from './recipients';
-import { inviteEmail, receiptEmail, autopayFailureEmail, pastDueEmail, resetEmail, testEmail, alertEmail, setEmailLogoUrl, setEmailContactLine } from './templates';
+import {
+  inviteEmail,
+  receiptEmail,
+  autopayFailureEmail,
+  pastDueEmail,
+  invoiceReadyEmail,
+  autopayUpcomingEmail,
+  cardExpiringEmail,
+  refundEmail,
+  resetEmail,
+  testEmail,
+  alertEmail,
+  setEmailLogoUrl,
+  setEmailContactLine,
+} from './templates';
 import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
+import { notifyFamily } from '../whatsapp';
+import { pausedFor } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
 
 function portalHome(): string {
@@ -117,7 +148,12 @@ export async function sendReset(email: string, url: string, audience: 'staff' | 
  * over the Fabric, and the office's own cash entry). A check per caller is a check somebody forgets.
  */
 export async function sendReceipt(familyId: string, amountFormatted: string): Promise<number> {
-  if (getParentMailPaused() || !mailAvailable() || !getParentEmails().receipt) return 0;
+  // WhatsApp first and unawaited: its gates are its own (0.50.0), so it must not sit behind the email
+  // switches — an office that turned email receipts off has said nothing about the other channel.
+  void notifyFamily('receipt', familyId, 'receipt', { amount: amountFormatted });
+  // `pausedFor` rather than the raw switch: the test student's household is the one that gets through,
+  // on BOTH channels (settings/testStudent.ts).
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getParentEmails().receipt) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   refreshEmailLogo();
@@ -147,7 +183,10 @@ export async function sendTestEmail(to: string): Promise<boolean> {
 /** Email an autopay-failure notice to a family's guardians (§13.3). `final` = the third strike (autopay
  *  now off). Returns how many were sent. */
 export async function sendAutopayFailure(familyId: string, final: boolean): Promise<number> {
-  if (getParentMailPaused() || !mailAvailable() || !getParentEmails().autopayFailure) return 0;
+  // Two texts behind one switch: the third strike reads differently from the first two, and an office
+  // rewriting one wants to rewrite the other differently (whatsapp/templates.ts).
+  void notifyFamily('autopay-failed', familyId, final ? 'autopay-stopped' : 'autopay-failed');
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getParentEmails().autopayFailure) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   refreshEmailLogo();
@@ -164,18 +203,126 @@ export async function sendAutopayFailure(familyId: string, final: boolean): Prom
  * grace period and the cadence, which are the other half of the same decision, and it defaults OFF
  * because this is a message the app never used to send (§ settings/getPastDue).
  *
- * Returning a COUNT rather than a boolean is what lets the caller tell "we reminded them" from "there is
+ * Returning COUNTS rather than a boolean is what lets the caller tell "we reminded them" from "there is
  * nobody to remind": a household with no address on file must not start a quiet cooldown (billing/pastDue.ts).
+ *
+ * Counted PER CHANNEL since 0.50.0, and awaited rather than fired off, unlike the other two senders here.
+ * The caller needs to know whether this household was actually reached before it starts a week-long
+ * cooldown on them — and a WhatsApp that was queued is a household that was reached, even when there is
+ * no email address on file. Getting that wrong in either direction is a real fault: a cooldown on a
+ * family nobody wrote to means they wait another week for nothing, and no cooldown on one we did write
+ * to means we chase them again tomorrow.
  */
-export async function sendPastDue(familyId: string, amountFormatted: string, sinceFormatted: string): Promise<number> {
-  if (getParentMailPaused() || !mailAvailable() || !getPastDue().parentEmails) return 0;
+export async function sendPastDue(
+  familyId: string,
+  amountFormatted: string,
+  sinceFormatted: string,
+  behind: { name: string; amount: string }[] = [],
+): Promise<{ emails: number; whatsapp: number }> {
+  // `behind` reaches BOTH channels, at each one's depth: the email carries the per-child amounts, the
+  // WhatsApp just the names, because that channel is the short note that says to go and look (§9).
+  const wa = await notifyFamily('past-due', familyId, 'past-due', {
+    amount: amountFormatted,
+    due: sinceFormatted,
+    behind: behind.map((b) => b.name),
+  });
+  const out = { emails: 0, whatsapp: wa.queued };
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getPastDue().parentEmails) return out;
+  const emails = guardianEmailsForFamily(familyId);
+  if (!emails.length) return out;
+  refreshEmailLogo();
+  const m = pastDueEmail(getSchoolName(), amountFormatted, sinceFormatted, portalHome(), behind);
+  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) out.emails++;
+  return out;
+}
+
+/**
+ * This period's bill is ready (0.50.0). Returns how many were emailed.
+ *
+ * The biggest gap the app had: a parent heard nothing between one receipt and the past-due reminder
+ * that followed a bill they were never told about. `children` is named here and nowhere else, because
+ * "what is this for?" is the question this message answers and a household with three children on
+ * different plans cannot answer it from a total.
+ */
+export async function sendInvoiceReady(familyId: string, amountFormatted: string, dueFormatted: string, children: string[]): Promise<number> {
+  void notifyFamily('invoice-ready', familyId, 'invoice-ready', { amount: amountFormatted, due: dueFormatted });
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getParentEmails().invoiceReady) return 0;
   const emails = guardianEmailsForFamily(familyId);
   if (!emails.length) return 0;
   refreshEmailLogo();
-  const m = pastDueEmail(getSchoolName(), amountFormatted, sinceFormatted, portalHome());
+  const m = invoiceReadyEmail(getSchoolName(), amountFormatted, dueFormatted, listNames(children), portalHome());
   let n = 0;
   for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
   return n;
+}
+
+/** "We'll charge your saved card on Tuesday" (0.50.0) — the note that stops a card charge being a
+ *  surprise, and gives a family time to move money or switch autopay off for the month. */
+export async function sendAutopayUpcoming(familyId: string, amountFormatted: string, whenFormatted: string, cardLabel: string): Promise<number> {
+  void notifyFamily('autopay-upcoming', familyId, 'autopay-upcoming', { amount: amountFormatted, due: whenFormatted, card: cardLabel });
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getParentEmails().autopayUpcoming) return 0;
+  const emails = guardianEmailsForFamily(familyId);
+  if (!emails.length) return 0;
+  refreshEmailLogo();
+  const m = autopayUpcomingEmail(getSchoolName(), amountFormatted, whenFormatted, cardLabel, portalHome());
+  let n = 0;
+  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
+  return n;
+}
+
+/** A saved card is about to expire (0.50.0) — which is how autopay stops working without anybody
+ *  noticing until a family is three months behind. */
+export async function sendCardExpiring(familyId: string, cardLabel: string, whenFormatted: string): Promise<number> {
+  void notifyFamily('card-expiring', familyId, 'card-expiring', { card: cardLabel, due: whenFormatted });
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getParentEmails().cardExpiring) return 0;
+  const emails = guardianEmailsForFamily(familyId);
+  if (!emails.length) return 0;
+  refreshEmailLogo();
+  const m = cardExpiringEmail(getSchoolName(), cardLabel, whenFormatted, portalHome());
+  let n = 0;
+  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
+  return n;
+}
+
+/** Money has gone back to the family (0.50.0). */
+export async function sendRefund(familyId: string, amountFormatted: string): Promise<number> {
+  void notifyFamily('payment-refunded', familyId, 'payment-refunded', { amount: amountFormatted });
+  if (pausedFor(getParentMailPaused(), familyId) || !mailAvailable() || !getParentEmails().refund) return 0;
+  const emails = guardianEmailsForFamily(familyId);
+  if (!emails.length) return 0;
+  refreshEmailLogo();
+  const m = refundEmail(getSchoolName(), amountFormatted, portalHome());
+  let n = 0;
+  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
+  return n;
+}
+
+/**
+ * The "does this actually reach us?" probe, sent to the TEST HOUSEHOLD (0.50.0-dev.5).
+ *
+ * Deliberately a test message rather than a fake receipt: a family who gets a realistic-looking
+ * receipt for a payment nobody made will ring the office, which is the opposite of helpful.
+ *
+ * It goes through `guardianEmailsForFamily`, which honours the test-household exception — so this
+ * proves the whole pause-exception path an office is trying to verify, not just the transport.
+ */
+export async function sendTestToHousehold(familyId: string): Promise<number> {
+  if (!mailAvailable()) return 0;
+  const emails = guardianEmailsForFamily(familyId);
+  if (!emails.length) return 0;
+  refreshEmailLogo();
+  const m = testEmail(getSchoolName());
+  let n = 0;
+  for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
+  return n;
+}
+
+/** "Yusuf", "Yusuf and Maryam", "Yusuf, Maryam and Bilal" — a sentence, not a list dump. Mirrors the
+ *  WhatsApp side so a household reads the same phrasing on both channels. */
+function listNames(names: string[]): string {
+  if (!names.length) return '';
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
 /**

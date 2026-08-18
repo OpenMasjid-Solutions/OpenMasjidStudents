@@ -9,12 +9,13 @@
 import { Cron } from 'croner';
 import { fabricConfigured } from '../config';
 import { makeLog } from '../logger';
-import { runAutopay } from './autopay';
+import { runAutopay, runAutopayNotice, runCardExpiryNotice } from './autopay';
 import { reconcile } from './reconcile';
 import { refreshSiteInfo } from '../fabric/platform';
 import { writeSnapshot } from '../db/snapshot';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { runPastDue } from '../billing/pastDue';
+import { pruneWhatsappLog, refreshWhatsAppStatus } from '../whatsapp';
 
 const log = makeLog('scheduler');
 let started = false;
@@ -82,6 +83,21 @@ export function startSchedulers(): void {
       log.error('autopay run failed', { error: (e as Error).message });
     }
   });
+  // Daily at 09:00 — "we'll charge your card on Tuesday" (0.50.0). AFTER the 06:00 run, deliberately:
+  // a household charged this morning must not then be told a charge is coming, and the notice looks
+  // three days ahead so the two never describe the same invoice. Stateless — see `autopayUpcoming`.
+  //
+  // On the FIRST of the month it also warns about a card that is about to expire, which is the whole
+  // of that job's idempotency: at most two notices per card, never a daily nag.
+  new Cron('0 9 * * *', async () => {
+    const today = todayIso();
+    try {
+      await runAutopayNotice(today);
+      if (today.endsWith('-01')) await runCardExpiryNotice(today);
+    } catch (e) {
+      log.error('autopay notices failed', { error: (e as Error).message });
+    }
+  });
   // Daily at 07:00 — reconcile against Stripe: record any succeeded tuition PI a broker call or a
   // webhook missed (incl. this morning's autopay charges), so money is never lost, only delayed (§11.4).
   new Cron('0 7 * * *', async () => {
@@ -97,6 +113,27 @@ export function startSchedulers(): void {
   // minted with a stale base is a dead link in someone's inbox. Cheap, fail-soft, no PII.
   new Cron('*/15 * * * *', async () => {
     await refreshSiteInfo();
+  });
+  // Every 15 minutes — re-ask whether WhatsApp can send (0.50.0). The gateway is a linked PHONE: it
+  // goes offline when the handset does, it can be unlinked, and the number can be restricted, none of
+  // which produces an event we would hear about. Keeping the answer warm means a send never pays for a
+  // status hop and the settings screen tells the truth without an admin pressing anything.
+  new Cron('*/15 * * * *', async () => {
+    await refreshWhatsAppStatus();
+  });
+  // …and once at boot. A cron's first tick is a quarter of an hour away, and until it came the cache
+  // was cold — which the settings screen read as "not ready" and used to grey out the Send-a-test
+  // button on an install that was working perfectly (0.50.0-dev.4).
+  void refreshWhatsAppStatus();
+  // Weekly — trim the WhatsApp queue log. It is an operational trail, not a record anybody bills from
+  // (and it holds no message bodies), so an install running for years should not carry every line.
+  new Cron('0 3 * * 0', () => {
+    try {
+      const removed = pruneWhatsappLog();
+      if (removed) log.info('whatsapp log pruned', { removed });
+    } catch (e) {
+      log.warn('whatsapp log prune failed', { error: (e as Error).message });
+    }
   });
   log.info('schedulers started');
 }

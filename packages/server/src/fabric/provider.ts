@@ -32,7 +32,7 @@ import { invoiceLines } from '../billing/lines';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../settings';
 import { audit } from '../audit';
-import { alertStaff, householdName } from '../alerts';
+import { alertStaff, studentAmounts } from '../alerts';
 import { sendReceipt } from '../mail/notify';
 import { normalizeStudentCode } from '../billing/studentCodes';
 import { givenName, lastInitial } from '../people/names';
@@ -401,7 +401,9 @@ export function registerFabricProvider(app: FastifyInstance): void {
       if (recordedCents < d.amountCents) {
         void alertStaff('payment-short', {
           title: 'A payment was only partly recorded',
-          text: `${householdName(d.familyId)} paid ${formatMoney(d.amountCents, getCurrency())} but only ${formatMoney(recordedCents, getCurrency())} reached the ledger. Check their record and enter the difference by hand.`,
+          // What DID land, per child — which is the whole point of this alert: somebody has to work out
+          // which sibling's money is missing, and the alert already knows.
+          text: `A payment of ${formatMoney(d.amountCents, getCurrency())} was made but only ${formatMoney(recordedCents, getCurrency())} reached the ledger — recorded so far: ${studentAmounts(already, getCurrency())}. Check those records and enter the difference by hand.`,
           publicText: `A tuition payment of ${formatMoney(d.amountCents, getCurrency())} was only partly recorded (${formatMoney(recordedCents, getCurrency())}). Check the family's record and enter the difference by hand.`,
         });
       }
@@ -514,7 +516,7 @@ export function registerFabricProvider(app: FastifyInstance): void {
       audit({ userId: null, role: 'fabric', name: d.channel }, 'payment.record', { entity: 'family', entityId: d.familyId, detail: { channel: d.channel, amountCents: d.amountCents, students: res.parts.length } });
       void alertStaff('payment-received', {
         title: 'Tuition payment received',
-        text: `${householdName(d.familyId)} paid ${formatMoney(d.amountCents, getCurrency())} (${d.channel === 'kiosk' ? 'at the kiosk' : 'on the donation site'}).`,
+        text: `${formatMoney(d.amountCents, getCurrency())} paid ${d.channel === 'kiosk' ? 'at the kiosk' : 'on the donation site'}: ${studentAmounts(shares, getCurrency())}.`,
         // Amount + channel only — never a family/student name (§14: no name+amount together).
         publicText: `A tuition payment of ${formatMoney(d.amountCents, getCurrency())} was received (${d.channel}).`,
       });

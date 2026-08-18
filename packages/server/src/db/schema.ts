@@ -19,8 +19,10 @@ import { sqliteTable, text, integer, primaryKey, index, unique } from 'drizzle-o
  *  parents get the portal. (Teacher/student roles were removed with the SIS.) */
 export type Role = 'admin' | 'finance' | 'parent';
 
-/** App-owned settings (SMTP, Stripe choice, policies, etc. — added over time).
- *  This is NOT a masjid profile; each app owns its own config (org rule). */
+/** App-owned settings (the school profile, the Stripe account, notification policies, etc. — added
+ *  over time). There is deliberately NO mail configuration here: the platform owns the provider and
+ *  this app holds no mail credentials (§7). This is NOT a masjid profile; each app owns its own
+ *  config (org rule). */
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
@@ -38,10 +40,26 @@ export const users = sqliteTable('users', {
   role: text('role').$type<Role>().notNull(),
   status: text('status').$type<'active' | 'disabled'>().notNull().default('active'),
   displayName: text('display_name'),
-  /** Admin-only notes. Staff carry NO phone number: the app never contacts staff by phone, so
-   *  holding one would be personal data collected for no purpose. Phone numbers live only on
-   *  guardians and emergency contacts, where there is a reason to ring them (§14 minimisation). */
+  /** Admin-only notes. */
   staffNotes: text('staff_notes'),
+  /**
+   * A staff member's WhatsApp number (0.50.0).
+   *
+   * This column was deliberately ABSENT until now, and the comment here said so: "the app never
+   * contacts staff by phone, so holding one would be personal data collected for no purpose". That
+   * reasoning was right and it is what changed — the app now CAN reach a person on WhatsApp, and the
+   * whole point of a staff alert is that it finds the treasurer while they are away from an inbox. A
+   * number with a purpose is minimisation satisfied, not broken (§14); a number without one is what
+   * the old rule forbade, and still is. Optional, always — an account with no number simply never
+   * gets a message.
+   */
+  phone: text('phone'),
+  /** Which country this staff number belongs to (`+1`, `+44`…), when it isn't the install's default.
+   *  See whatsapp/numbers.ts — a number is useless to the gateway until it is E.164. */
+  phoneCountry: text('phone_country'),
+  /** Which staff alerts this person gets on WhatsApp — ids from `ALERT_EVENTS` (alerts/index.ts).
+   *  Null/empty = none, which is the default for every existing and every new account. */
+  waEvents: text('wa_events', { mode: 'json' }).$type<string[]>(),
   /** Staff are forced to set a new password on first login (CLAUDE.md §12). */
   mustChangePassword: integer('must_change_password', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
@@ -314,6 +332,24 @@ export const guardians = sqliteTable('guardians', {
   name: text('name').notNull(),
   phone: text('phone'),
   email: text('email'),
+  /**
+   * Which country this number belongs to — `+1`, `+44`, `+92` (0.50.0). Null = the install's default.
+   *
+   * Per guardian rather than per install alone because a madrasa's families are not all in one country:
+   * a grandparent abroad, a father working overseas, a household that moved. The stored `phone` is
+   * whatever the office typed and is not touched by this — see whatsapp/numbers.ts, which is the one
+   * place that combines the two into the E.164 form the gateway needs.
+   */
+  phoneCountry: text('phone_country'),
+  /**
+   * This person asked not to be messaged on WhatsApp (0.50.0), from the parent portal.
+   *
+   * On the GUARDIAN, not the household and not the user account: it is a decision about a phone, and
+   * the phone belongs to a person. A mother who opts out does not opt her husband out, and the choice
+   * survives them losing and re-making a portal login. Nothing overrides it — not the pause, not the
+   * test student, not an office broadcast (whatsapp/index.ts).
+   */
+  waOptOut: integer('wa_opt_out', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
@@ -508,6 +544,47 @@ export const alertRecipients = sqliteTable('alert_recipients', {
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
 export type AlertRecipient = typeof alertRecipients.$inferSelect;
+
+/**
+ * What we handed to the OpenMasjidOS WhatsApp queue, and what we deliberately didn't (0.50.0).
+ *
+ * THE BODY IS NEVER STORED. That is the platform's rule and it is the right one: a tuition message
+ * routinely carries a child's name and a family's fees, and a log is the copy of it that outlives the
+ * conversation. What is here is the shape of an audit trail — which event, to whom, when, and what
+ * happened — which answers the questions an office actually asks ("did Fatima get the reminder?",
+ * "why didn't the Ahmeds?") without keeping a second copy of the message itself.
+ *
+ * `status` is the honest part. `queued` means the platform ACCEPTED it, never that WhatsApp delivered
+ * it: the queue paces sends by minutes and holds them through quiet hours, and no delivery receipt
+ * ever comes back to us. `skipped` is the row that stops a support call — an opted-out parent, a
+ * number we could not read, a household held back by the pause — and it is written only where a send
+ * was individually intended or individually possible, never once per family for a switch that is off.
+ *
+ * Recipients are stored as an id + a kind rather than a name or a number, so the log adds no personal
+ * data that is not already on the guardian or staff row it points at. Pruned on a schedule.
+ */
+export const whatsappLog = sqliteTable(
+  'whatsapp_log',
+  {
+    id: text('id').primaryKey(),
+    /** Our own event id — a parent event (`receipt`…) or a staff alert id. See whatsapp/index.ts. */
+    event: text('event').notNull(),
+    /** `group` (0.50.0) is an ANNOUNCEMENT to an admin-approved WhatsApp group, never a family's own
+     *  business — see whatsapp/index.ts for why the two paths are kept apart in the type system. */
+    recipientKind: text('recipient_kind').$type<'guardian' | 'staff' | 'group'>().notNull(),
+    /** `guardians.id`, `users.id`, or the opaque group id. Not an FK: the log outlives the row, like
+     *  `audit_log`'s actor — and a group id belongs to the platform, not to us at all. */
+    recipientId: text('recipient_id').notNull(),
+    /** The household this was about, when it was about one. */
+    familyId: text('family_id'),
+    status: text('status').$type<'queued' | 'failed' | 'skipped'>().notNull(),
+    /** Why, for the two statuses that need one: `opted_out`, `no_number`, `paused`, `http_429`… */
+    reason: text('reason'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ atIdx: index('whatsapp_log_at_idx').on(t.createdAt), recipientIdx: index('whatsapp_log_recipient_idx').on(t.recipientKind, t.recipientId) }),
+);
+export type WhatsappLogEntry = typeof whatsappLog.$inferSelect;
 
 // ── Billing (fee plans, invoices, ledger, payments) ──────────────────────────
 

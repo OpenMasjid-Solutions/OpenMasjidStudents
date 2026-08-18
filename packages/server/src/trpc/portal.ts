@@ -12,7 +12,7 @@ import { TRPCError } from '@trpc/server';
 import { and, asc, eq, desc, inArray } from 'drizzle-orm';
 import { router, parentProcedure } from './trpc';
 import { db } from '../db';
-import { families, students, invoices, invoiceItems, payments, paymentMethods, autopayEnrollments, schoolYears } from '../db/schema';
+import { families, students, invoices, invoiceItems, payments, paymentMethods, autopayEnrollments, schoolYears, guardians, guardianUsers, guardianFamilies } from '../db/schema';
 import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, recordedSplit, invoiceTotal, invoicePaid, recordSplit, type SplitShare } from '../billing/ledger';
 import { invoiceLines, type LineKind } from '../billing/lines';
 import { paidForByPayment, type PaidFor } from '../billing/paidFor';
@@ -20,11 +20,12 @@ import { schoolYearMonths } from '../billing/schoolYear';
 import { yearCellsFor, type YearCell } from '../billing/yearCells';
 import { listSchools } from '../schools';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
-import { getCurrency } from '../settings';
+import { getCurrency, getWhatsApp } from '../settings';
+import { maskNumber, toE164 } from '../whatsapp/numbers';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
 import { stripeClient, stripeReady, publishableKey } from '../payments/stripe';
 import { describePaymentMethod, repairPaymentMethods, resequenceMethods } from '../payments/methods';
-import { alertStaff, householdName } from '../alerts';
+import { alertStaff, studentAmounts } from '../alerts';
 import { sendReceipt } from '../mail/notify';
 import { makeLog } from '../logger';
 
@@ -287,15 +288,18 @@ export const portalRouter = router({
       // differ, and it is the right way round: the parent's choice wins when we have it, and the backstop
       // still lands the money correctly if this call never happens.
       const chosen = lineShares(input.familyId, input.lines ?? [], amount);
+      const shares = chosen ?? splitAcrossFamily(input.familyId, amount);
       const res = recordSplit(
         { channel: 'portal', occurredAt: new Date(), idempotencyKey: pi.id, memo: null, externalRef: { stripePaymentIntentId: pi.id, stripeChargeId: (pi.latest_charge as string) ?? null } },
-        chosen ?? splitAcrossFamily(input.familyId, amount),
+        shares,
         { userId: ctx.session.userId ?? null, role: 'portal', name: 'portal' },
       );
       if (!res.duplicate) {
         void alertStaff('payment-received', {
           title: 'Tuition payment received',
-          text: `${householdName(input.familyId)} paid ${formatMoney(amount, getCurrency())} by card in the parent portal.`,
+          // One card charge, but one ledger row per child — so the alert says which child got what,
+          // rather than a household total that hides the split it was actually recorded as (§9).
+          text: `${formatMoney(amount, getCurrency())} paid by card in the parent portal: ${studentAmounts(shares, getCurrency())}.`,
           publicText: `A tuition payment of ${formatMoney(amount, getCurrency())} was received (portal).`,
         });
         void sendReceipt(input.familyId, formatMoney(amount, getCurrency())); // §13.2.5 — "payment", never "donation"
@@ -475,7 +479,89 @@ export const portalRouter = router({
     }
     return { ok: true as const };
   }),
+
+  // ── WhatsApp, from the parent's side (0.50.0) ─────────────────────────────
+  /**
+   * Who on this household hears from the madrasa on WhatsApp.
+   *
+   * EVERY ADULT ON THE HOUSEHOLD, not just the one signed in (0.50.0-dev.4) — because the portal is a
+   * HOUSEHOLD, not a personal account. A father activates it, a mother activates it with her own
+   * email, and they are looking at the same balance, the same bills and the same saved cards; there
+   * is no "my half" of a household here. So a parent who sets up messages for the family sets them up
+   * for the family, and does not have to ring the office to get their spouse's number switched on.
+   *
+   * The VALUE is still stored per guardian, and that has not changed: it is a decision about a phone,
+   * and a household's two parents have two of them. What is shared is the ability to make the
+   * decision, which is exactly what sharing a portal already means for money.
+   *
+   * `available` is deliberately about the INSTALL, not the person: with the feature off there is
+   * nothing to opt out of, and the portal shows nothing at all rather than a dead switch.
+   */
+  messagingGet: parentProcedure.query(({ ctx }) => {
+    const cfg = getWhatsApp();
+    const famIds = parentFamilyIds(ctx);
+    const meId = myGuardianId(ctx);
+    const people = famIds.length
+      ? db
+          .selectDistinct({ id: guardians.id, name: guardians.name, phone: guardians.phone, phoneCountry: guardians.phoneCountry, waOptOut: guardians.waOptOut })
+          .from(guardianFamilies)
+          .innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId))
+          .where(inArray(guardianFamilies.familyId, famIds))
+          .orderBy(asc(guardians.name))
+          .all()
+      : [];
+    return {
+      available: cfg.enabled && people.length > 0,
+      people: people.map((g) => ({
+        guardianId: g.id,
+        name: g.name,
+        /** So the screen can say WHICH number, without printing it. Empty when we cannot read theirs —
+         *  which the portal turns into "we don't have a WhatsApp number for them", the honest version
+         *  and the one that sends somebody to the office instead of leaving a switch that does nothing. */
+        mask: maskNumber(toE164(g.phone, g.phoneCountry || cfg.defaultCountry)),
+        optedOut: !!g.waOptOut,
+        /** Which row is the signed-in parent, so the screen can say "you" rather than their own name. */
+        isYou: g.id === meId,
+      })),
+    };
+  }),
+
+  /**
+   * Turn messages off for somebody on this household, or back on.
+   *
+   * `guardianId` is optional and defaults to the caller — but any adult on a household the caller is
+   * linked to is allowed, which is the point of the change. The wall is the same one every other
+   * portal procedure uses: `parentFamilyIds`, checked in the QUERY (§14). A guardian id from another
+   * household simply is not in the set and is refused, so a parent still cannot name anybody they
+   * could not already see.
+   *
+   * Immediate, and nothing in the app overrides the result — not the office's outreach button, not
+   * the test student, not an admin screen.
+   */
+  messagingSet: parentProcedure.input(z.object({ guardianId: z.string().min(1).max(64).optional(), optOut: z.boolean() })).mutation(({ ctx, input }) => {
+    const target = input.guardianId ?? myGuardianId(ctx);
+    const famIds = parentFamilyIds(ctx);
+    const allowed =
+      !!target &&
+      famIds.length > 0 &&
+      !!db
+        .select({ guardianId: guardianFamilies.guardianId })
+        .from(guardianFamilies)
+        .where(and(eq(guardianFamilies.guardianId, target), inArray(guardianFamilies.familyId, famIds)))
+        .get();
+    if (!allowed) throw new TRPCError({ code: 'FORBIDDEN', message: 'You don’t have access to that.' });
+    db.update(guardians).set({ waOptOut: input.optOut, updatedAt: new Date() }).where(eq(guardians.id, target)).run();
+    return { ok: true as const };
+  }),
 });
+
+/** The guardian id behind this parent session, or null. The portal's scoping wall is `guardian_users`,
+ *  and this is the same link read one step earlier (§14 — in the query). */
+function myGuardianId(ctx: { session?: { userId?: string | null } | null }): string | null {
+  const userId = ctx.session?.userId;
+  if (!userId) return null;
+  return db.select({ guardianId: guardianUsers.guardianId }).from(guardianUsers).where(eq(guardianUsers.userId, userId)).get()?.guardianId ?? null;
+}
 
 type FamilyView = {
   id: string;

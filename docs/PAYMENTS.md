@@ -18,7 +18,7 @@
 ## There is no webhook
 
 Every payment reaches the ledger by a **pull** path. There is no `/api/stripe/webhook` route, no signature
-verification, no endpoint registration; `stripe_events` is a vestigial table nothing reads.
+verification, no endpoint registration; `stripe_events` was DROPPED in 0.48.0 (migration 0037) — a money schema carrying a table nobody writes is an invitation to wire the next thing to it.
 
 | Path | Who triggers it | Channel recorded | Backstop if it doesn't happen |
 | --- | --- | --- | --- |

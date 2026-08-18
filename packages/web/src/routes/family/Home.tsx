@@ -237,6 +237,67 @@ export function FamilyHome({ onManageAutopay }: { onManageAutopay: () => void })
           </motion.div>
         );
       })}
+
+      {/* One switch, not one per household: it is about this parent's own phone, and a person has one
+          of those however many households they are linked to. Last on the page on purpose — it is a
+          preference, and nobody opens the portal to find it. */}
+      <WhatsAppOptOut />
     </motion.div>
+  );
+}
+
+/**
+ * Who on this household hears from the madrasa on WhatsApp (0.50.0).
+ *
+ * EVERY ADULT ON THE HOUSEHOLD, not just whoever is signed in — because this portal IS the household.
+ * A father activates it, a mother activates it with her own email, and the two of them are looking at
+ * the same balance, the same bills and the same saved cards. There is no "my half" of a household
+ * here, so a parent setting messages up for the family should not have to ring the office to get
+ * their spouse's number switched on.
+ *
+ * The value is still stored per person, because it is a decision about a phone and a household has
+ * two of them. What is shared is the ability to make the decision — which is what sharing a portal
+ * already means for money.
+ *
+ * Renders nothing at all when the madrasah has not switched WhatsApp on, rather than showing a dead
+ * toggle for a channel that does not exist here.
+ */
+function WhatsAppOptOut() {
+  const { t } = useTranslation();
+  const utils = trpc.useUtils();
+  const q = trpc.portal.messagingGet.useQuery();
+  const save = trpc.portal.messagingSet.useMutation();
+  if (!q.data?.available) return null;
+
+  return (
+    <section className="fam-section">
+      <h2>{t('family.messages')}</h2>
+      {q.data.people.map((p) => {
+        const on = !p.optedOut;
+        return (
+          <label key={p.guardianId} className="list-row glass" style={{ cursor: p.mask ? 'pointer' : 'default', alignItems: 'flex-start', gap: '0.6rem' }}>
+            <input
+              type="checkbox"
+              style={{ marginBlockStart: '0.25rem' }}
+              checked={on}
+              // Nothing to switch when there is no number we can use: the row still appears, so the
+              // family can see who is missing one and tell the office.
+              disabled={save.isPending || !p.mask}
+              onChange={async () => {
+                await save.mutateAsync({ guardianId: p.guardianId, optOut: on });
+                await utils.portal.messagingGet.invalidate();
+              }}
+            />
+            <span className="row-main">
+              <span className="row-title">{p.isYou ? t('family.waOptInYou') : t('family.waOptInOther', { name: p.name })}</span>
+              {/* Says WHICH number without printing it — and says plainly when there isn't one, which
+                  is otherwise indistinguishable from "switched on and silently never arriving". */}
+              <span className="row-sub">{p.mask ? t('family.waOptInHint', { mask: p.mask }) : t('family.waNoNumber')}</span>
+            </span>
+          </label>
+        );
+      })}
+      <p className="hint" style={{ marginBlockStart: '0.4rem' }}>{t('family.waHouseholdHint')}</p>
+    </section>
   );
 }

@@ -9,11 +9,15 @@
  * the masjid installed from, so a newly-declared id answers 400 until a release lands. Neither reaches
  * the person a madrasa actually wants told: the treasurer, the imām, whoever chases a failed card.
  *
- * So an alert now fans out to THREE places, each best-effort and independent:
+ * So an alert now fans out to FIVE places, each best-effort and independent:
  *   1. the addresses the office listed in Settings → Email alerts (this app's own email, always works
  *      once OpenMasjidOS can send mail at all);
  *   2. the OpenMasjidOS alert channel, when the event maps to a declared id;
- *   3. the masjid webhook, for the routine ones that would flood an alert channel.
+ *   3. the masjid webhook, for the routine ones that would flood an alert channel;
+ *   4. the WhatsApp numbers of staff who asked for this alert (0.50.0) — the one channel that finds a
+ *      treasurer who is nowhere near an inbox, which is most evenings and every Sunday;
+ *   5. any WhatsApp GROUP an admin subscribed to this alert (0.50.0) — a masjid's finance group, where
+ *      the people who chase a failed card already talk to each other.
  *
  * WHAT AN ALERT MAY SAY. These emails go to addresses an ADMIN typed, so they may name a household
  * ("the Ismail family") and an amount — without that they are unactionable, which is the state the old
@@ -21,11 +25,14 @@
  * §14), card details, or anything from a payment proof. Nothing here is logged beyond the event id and
  * a count (§14: no PII in logs).
  */
-import { eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { db } from '../db';
-import { alertRecipients, families } from '../db/schema';
+import { alertRecipients, students } from '../db/schema';
+import { formatMoney } from '../db/money';
 import { raiseAlert, notifyPlatform, type AlertId, type AlertLevel } from '../fabric/platform';
 import { sendAlert } from '../mail/notify';
+import { notifyStaff, notifyGroups } from '../whatsapp';
+import { waStaffAlert } from '../whatsapp/templates';
 import { makeLog } from '../logger';
 
 const log = makeLog('alerts');
@@ -140,14 +147,68 @@ function recipientsFor(event: AlertEvent): string[] {
 }
 
 /**
- * The household's own label ("Ismail family") for an alert body, or 'A family' when it can't be read.
+ * WHO AN ALERT IS ABOUT: the CHILD, not the household (0.50.0-dev.14).
  *
- * Naming the household is what makes an alert actionable — "a family's card failed" tells nobody which
- * card to chase. It is a derived surname label, never a Student ID and never a child's full record
- * (§14), and it only ever goes to addresses an admin listed.
+ * Every one of these used to say "the Ismail family paid $250" or "3 families are past due", and that
+ * was one indirection away from the thing the app actually bills. **Invoices and payments are per
+ * STUDENT** (§9) — a household is the collecting unit, nothing more — so a household label makes an
+ * office do a lookup the alert could have done for them, and it makes the useful number disappear: a
+ * family total says a household owes $430 without saying that $430 is Yusuf's two missed months and
+ * Maryam is square.
+ *
+ * It is also a label that does not identify anything on its own. `families.name` is DERIVED from the
+ * children's surnames (`people/household.ts`), so a madrasah with four Ismail households has four
+ * alerts about "the Ismail family", and a mixed household reads "Farooqi / Ismail" — which names a
+ * child who may not be the one who is behind.
+ *
+ * The privacy line does not move: this is the `text` variant, which goes only to addresses an admin
+ * typed, to staff numbers an admin entered, and to a group an admin ticked `detail` for. A child's
+ * name beside an amount was already allowed there. `publicText` still names nobody, and neither may
+ * ever carry a Student ID (§14).
  */
-export function householdName(familyId: string): string {
-  return db.select({ name: families.name }).from(families).where(eq(families.id, familyId)).get()?.name || 'A family';
+
+/** One child, by name. 'A student' when the row cannot be read — an alert is still worth sending. */
+export function studentName(studentId: string): string {
+  return db.select({ n: students.fullName }).from(students).where(eq(students.id, studentId)).get()?.n || 'A student';
+}
+
+/**
+ * The children a household-level fact covers: "Yusuf Ismail", "Yusuf and Maryam Ismail".
+ *
+ * A CARD and an AUTOPAY enrolment genuinely belong to the household — one adult holds the card for all
+ * their children, and "Yusuf's card was declined" would be a lie about whose card it is. So those
+ * alerts name the children the card is FOR, which is what an office chases and what their records are
+ * keyed by, without claiming the child owns the payment method.
+ */
+export function childrenOf(familyId: string, max = 4): string {
+  const kids = db
+    .select({ n: students.fullName })
+    .from(students)
+    .where(and(eq(students.familyId, familyId), eq(students.status, 'active')))
+    .orderBy(asc(students.fullName))
+    .all()
+    .map((r) => r.n);
+  return joinNames(kids, max) || 'a family with no active students';
+}
+
+/**
+ * The per-child breakdown: "Yusuf Ismail $150.00 and Maryam Ismail $100.00".
+ *
+ * One card charge covering several children is recorded as one row per child (§9), so this is what
+ * actually happened rather than a total that hides it. A single child renders as just their name and
+ * amount, which is the common case and reads like a sentence.
+ */
+export function studentAmounts(shares: { studentId: string; amountCents: number }[], currency: string, max = 4): string {
+  const named = shares.map((s) => `${studentName(s.studentId)} ${formatMoney(s.amountCents, currency)}`);
+  return joinNames(named, max) || 'a student';
+}
+
+/** "a", "a and b", "a, b and c", "a, b and 3 others" — the last one so six children do not fill a page. */
+function joinNames(parts: string[], max: number): string {
+  if (!parts.length) return '';
+  if (parts.length === 1) return parts[0];
+  if (parts.length <= max) return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${parts.slice(0, max).join(', ')} and ${parts.length - max} ${parts.length - max === 1 ? 'other' : 'others'}`;
 }
 
 export interface AlertMessage {
@@ -155,8 +216,12 @@ export interface AlertMessage {
   title: string;
   /**
    * For the addresses the office listed, by email. One or two plain sentences: what happened, and what
-   * to do about it. MAY name the household and the amount — an alert that cannot say who it is about is
-   * not actionable, and these addresses were typed in by an admin.
+   * to do about it. MAY name a person and the amount — an alert that cannot say who it is about is not
+   * actionable, and these addresses were typed in by an admin.
+   *
+   * The person is the STUDENT: use `studentName` / `studentAmounts` / `childrenOf` above rather than a
+   * household label, which names four different households identically and hides the per-child split
+   * the money was actually recorded as.
    */
   text: string;
   /**
@@ -185,6 +250,18 @@ export async function alertStaff(event: AlertEvent, msg: AlertMessage): Promise<
     // Both platform channels get the de-identified text (§14) — only our own email may name a family.
     if (spec.platform) void raiseAlert(spec.platform, msg.publicText, { title: msg.title, level: spec.level });
     if (spec.webhook) void notifyPlatform(msg.publicText, { title: msg.title, level: spec.level === 'error' ? 'error' : spec.level === 'warning' ? 'warn' : 'info' });
+
+    // WhatsApp to the staff who subscribed (0.50.0). It carries `text`, the same wording the alert
+    // EMAIL carries — see whatsapp/templates.ts `waStaffAlert` for why that is not a §14 regression:
+    // the recipients are numbers an admin typed, on a gateway the masjid runs itself, and an alert
+    // that cannot name the family is not actionable. Not awaited, for the same reason as the two
+    // above — the queue paces sends, and none of this belongs in a caller's critical path.
+    void notifyStaff(event, waStaffAlert(msg.title, msg.text));
+    // …and to any WhatsApp GROUP an admin subscribed to this alert — a finance group that wants every
+    // payment. Handed BOTH texts rather than one: an admin can see who is in a group and this app
+    // cannot, so which of the two a group gets is their decision, defaulting to the one that names
+    // nobody (whatsapp/index.ts `notifyGroups`).
+    void notifyGroups(event, msg);
 
     const to = recipientsFor(event);
     if (!to.length) return;

@@ -83,6 +83,19 @@ const piOf = (externalRef: Record<string, unknown> | null): string | null => {
 };
 
 /**
+ * "Did this money come through Stripe?" — the ONE place that question is answered, for refunds AND for
+ * the plain ledger reversal that must refuse to touch such a payment (`trpc/billing.ts`).
+ *
+ * It is the PaymentIntent that decides, not the channel name: reconciliation records a kiosk payment
+ * with the same externalRef the kiosk would have sent, and a future channel could be either. Anything
+ * carrying a PI can only be given back at Stripe, because that is where the money is.
+ */
+export function isStripePayment(paymentId: string): boolean {
+  const row = db.select({ externalRef: payments.externalRef }).from(payments).where(eq(payments.id, paymentId)).get();
+  return !!row && piOf(row.externalRef as Record<string, unknown> | null) !== null;
+}
+
+/**
  * A CARRY-IN IS NOT A PAYMENT ANYBODY CAN GIVE BACK (0.48.0).
  *
  * `carry_in` rows are the mid-year go-live artifact: when a madrasah adopts this app in February, what each
@@ -248,6 +261,10 @@ export interface RefundResult {
    */
   students: string[];
   labels: string[];
+  /** The households the money went back to, so the caller can tell them (0.50.0). Usually one — a card
+   *  charge covering several children is still one adult's card. Read with the names above, and for the
+   *  same reason: before the reversal, while the allocations still describe what was given back. */
+  familyIds: string[];
 }
 
 /**
@@ -272,17 +289,18 @@ export async function refundTransaction(key: string, actor: Actor): Promise<Refu
   );
   const outstanding = rows.filter((r) => !alreadyReversed.has(r.id));
   if (!outstanding.length) {
-    return { route: pi ? 'stripe' : 'manual', amountCents: 0, reversed: 0, stripeRefundId: null, stripeStatus: null, alreadyDone: true, students: [], labels: [] };
+    return { route: pi ? 'stripe' : 'manual', amountCents: 0, reversed: 0, stripeRefundId: null, stripeStatus: null, alreadyDone: true, students: [], labels: [], familyIds: [] };
   }
 
   // Who and what, read BEFORE anything is reversed — see RefundResult. Best-effort: a missing name or an
   // unreadable allocation must not stop a refund, it only makes the alert less specific.
-  const students = db
-    .select({ fullName: students_.fullName })
+  const studentRows = db
+    .select({ fullName: students_.fullName, familyId: students_.familyId })
     .from(students_)
     .where(inArray(students_.id, [...new Set(outstanding.map((r) => r.studentId))]))
-    .all()
-    .map((s) => s.fullName);
+    .all();
+  const students = studentRows.map((s) => s.fullName);
+  const familyIds = [...new Set(studentRows.map((s) => s.familyId))];
   const forWhat = paidForByPayment(db, outstanding.map((r) => r.id));
   const labels = [...new Set([...forWhat.values()].flatMap((v) => v.labels))];
 
@@ -329,5 +347,5 @@ export async function refundTransaction(key: string, actor: Actor): Promise<Refu
   }
   // Ids and counts only — never the names or the bill labels gathered above (§14: no PII in logs).
   log.info('refund recorded', { key, route, reversed, stripeRefundId, stripeStatus });
-  return { route, amountCents, reversed, stripeRefundId, stripeStatus, alreadyDone: false, students, labels };
+  return { route, amountCents, reversed, stripeRefundId, stripeStatus, alreadyDone: false, students, labels, familyIds };
 }

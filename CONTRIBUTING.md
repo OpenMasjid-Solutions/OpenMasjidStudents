@@ -23,8 +23,8 @@ think that should change.
 ```bash
 npm install     # all workspaces
 npm run dev     # server on :8080, Vite on :5173 proxying /trpc, /api, /fabric, /statements
-npm run lint    # eslint + tsc --noEmit
-npm run test    # vitest, both workspaces (~950 tests)
+npm run lint    # tsc --noEmit across both workspaces — there is no eslint here
+npm run test    # vitest, both workspaces (~1,070 tests)
 npm run build   # typecheck + build both
 ```
 

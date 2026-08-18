@@ -27,7 +27,7 @@ import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { isIsoDay } from '../settings/dates';
 import { reconcile, reconcileStatus } from '../payments/reconcile';
 import { paidForByPayment } from '../billing/paidFor';
-import { refundTransaction, refundableTransactions } from '../payments/refunds';
+import { refundTransaction, refundableTransactions, isStripePayment } from '../payments/refunds';
 import { stripeReady } from '../payments/stripe';
 import {
   getCurrency,
@@ -48,9 +48,9 @@ import {
 } from '../settings';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { relationKind, dedupeNumbers, type RelationKind } from '../people/relations';
-import { alertStaff, householdName } from '../alerts';
+import { alertStaff, studentName } from '../alerts';
 import { resolveSchoolScope } from '../schools';
-import { sendReceipt } from '../mail/notify';
+import { sendReceipt, sendRefund } from '../mail/notify';
 import { formatMoney } from '../db/money';
 
 const payLog = makeLog('billing');
@@ -266,7 +266,15 @@ function paymentRowsFor(studentIds: string[]) {
    * than freezing whatever was true on the day.
    */
   const forWhat = paidForByPayment(db, rows.map((r) => r.id));
-  return rows.map((r) => ({ ...r, paidFor: forWhat.get(r.id) ?? { labels: [], more: 0, advance: true } }));
+  // `byCard` so the screen can stop offering a plain ledger reversal on money that lives at Stripe.
+  // Server-side is where it is ENFORCED (`reversePayment` refuses it); this is so the office is not
+  // offered a button that then refuses — a dialog on an action that cannot work is how people learn
+  // to distrust the ones that do (§15).
+  return rows.map((r) => ({
+    ...r,
+    byCard: isStripePayment(r.id),
+    paidFor: forWhat.get(r.id) ?? { labels: [], more: 0, advance: true },
+  }));
 }
 
 /** The mid-year go-live input — shared by preview and commit so they cannot drift (see below). */
@@ -1218,16 +1226,39 @@ export const billingRouter = router({
         void sendReceipt(stu.familyId, formatMoney(input.amountCents, getCurrency()));
         void alertStaff('payment-received', {
           title: 'Tuition payment received',
-          text: `${householdName(stu.familyId)} paid ${formatMoney(input.amountCents, getCurrency())} (${input.channel}), recorded by ${recordingActor(ctx).name ?? 'the office'}.`,
+          // The child, not the household: this payment is recorded against ONE student (§9), and that
+          // is the record an office opens next.
+          text: `${formatMoney(input.amountCents, getCurrency())} paid for ${studentName(input.studentId)} (${input.channel}), recorded by ${recordingActor(ctx).name ?? 'the office'}.`,
           publicText: `A tuition payment of ${formatMoney(input.amountCents, getCurrency())} was received (${input.channel}).`,
         });
       }
       return res;
     }),
 
+  /**
+   * Reverse a payment on the LEDGER ONLY — which is right for cash and wrong for a card.
+   *
+   * A ledger reversal writes mirror rows: the bill re-opens and the family owes it again. For cash
+   * that is the whole story, because a person hands the notes back. For a card it is only half of
+   * one, and the missing half is the money: Stripe still holds it. An office pressing this on a
+   * portal or autopay payment would believe they had given it back, while the family sat charged AND
+   * billed again — and `refundTransaction` would then find the row already reversed and refuse the
+   * real refund, so the mistake could not be undone from any screen.
+   *
+   * So anything carrying a Stripe PaymentIntent is refused here and sent to Refunds, which does both
+   * halves in the right order (Stripe first, then the mirror rows). The rule lives in
+   * `payments/refunds.ts` — the same predicate that decides a transaction's route — rather than being
+   * a second list of "card-ish channels" that could disagree with it.
+   */
   reversePayment: adminOrFinanceProcedure.input(z.object({ paymentId: ID })).mutation(({ ctx, input }) => {
     const p = db.select({ id: payments.id, studentId: payments.studentId }).from(payments).where(eq(payments.id, input.paymentId)).get();
     if (!p) throw new TRPCError({ code: 'NOT_FOUND', message: 'Payment not found.' });
+    if (isStripePayment(input.paymentId)) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'This one was paid by card, so it has to go back through Stripe. Use Refunds — reversing it here would leave the family charged.',
+      });
+    }
     const r = reversePayment(input.paymentId, recordingActor(ctx));
     audit(auditActor(ctx), 'payment.reverse', { entity: 'student', entityId: p.studentId, detail: { paymentId: input.paymentId } });
     return r;
@@ -1288,9 +1319,10 @@ export const billingRouter = router({
       // shape as `payment-received` above, which has always included its amount for the same reason.
       const amount = formatMoney(r.amountCents, getCurrency());
       const how = r.route === 'stripe' ? ' back to the card or bank account it came from' : ' on the ledger — the money still has to be handed back';
-      // WHO it was for and WHAT it paid go in the office's own email only. `text` may name a household —
-      // without it the alert is unactionable, which is exactly why that channel exists — while `publicText`
-      // reaches third-party sinks and so carries the figure and nothing that identifies anybody (§9/§14).
+      // WHO it was for and WHAT it paid go in the office's own email only. `text` names the CHILDREN the
+      // money was for — without that the alert is unactionable, which is exactly why that channel exists —
+      // while `publicText` reaches third-party sinks and carries the figure and nothing that identifies
+      // anybody (§9/§14). This path already named students; the rest of the alerts caught up in dev.14.
       const who = r.students.length ? ` for ${r.students.join(', ')}` : '';
       const what = r.labels.length ? ` It covered ${r.labels.join(', ')}.` : '';
       void alertStaff('payment-refunded', {
@@ -1298,6 +1330,9 @@ export const billingRouter = router({
         text: `A refund of ${amount}${who} was made${how}, by ${recordingActor(ctx).name ?? 'the office'}.${what}`,
         publicText: `A tuition refund of ${amount} was recorded (${r.route === 'stripe' ? 'card or bank' : 'by hand'}).`,
       });
+      // …and the family, who should not have to take the office's word for it (0.50.0). Off by
+      // default like every other message added since, and gated inside the sender, not here.
+      for (const familyId of r.familyIds) void sendRefund(familyId, amount);
     }
     return r;
   }),

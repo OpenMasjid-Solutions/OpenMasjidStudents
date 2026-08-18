@@ -184,6 +184,246 @@ export async function sendPlatformEmail(to: string, subject: string, text: strin
   }
 }
 
+// ── WhatsApp via the platform (manifest `whatsapp: true`) ────────────────────
+/**
+ * WhatsApp is the OS's connection, never ours (0.50.0).
+ *
+ * A masjid installs OpenWA — a SELF-HOSTED, reverse-engineered WhatsApp client — from the App Store
+ * and links a phone to it. Nothing goes through a third-party sending service, and nothing here holds
+ * a session. This app asks the platform to send; the platform owns the socket.
+ *
+ * WHY THAT SEPARATION IS LOAD-BEARING AND NOT PLUMBING. WhatsApp does not permit this, and a linked
+ * number can be restricted or banned — there is no way to make that risk zero. The platform runs ONE
+ * paced queue shared by every installed app: randomised gaps, typing indicators, per-recipient
+ * cooldowns, rolling hourly and daily caps, quiet hours. That single queue is the entire defence for
+ * the masjid's number, and it only works because no app goes around it. So: no direct gateway calls
+ * from here, ever, and no design that assumes a send happens now or that hundreds a day are available
+ * — the caps belong to the NUMBER, and every other installed app is drawing on the same allowance.
+ */
+/**
+ * The four words the PLATFORM answers with, plus two of our own for the ways the call itself fails.
+ *
+ * `not-permitted` and `unsupported` exist because collapsing them into `not-configured` was a real
+ * defect, not a simplification (fixed 0.50.0-dev.6). The code did exactly that, under a comment
+ * claiming both "mean the same thing to an admin standing in front of the screen" — and they do not:
+ *
+ *   • `not-configured` sends an admin to OpenMasjidOS → Settings → WhatsApp to set the gateway up.
+ *   • `not-permitted` (403) means the gateway is fine and THIS APP is not allowed to use it —
+ *     the platform checks `app.whatsapp` on the entry the masjid installed from, exactly as it does
+ *     for alert ids (§9). Nothing in OpenMasjidOS → Settings will fix that.
+ *
+ * That third case turned out to be REAL on the first install, and it is worth recording because two of
+ * the three repos involved were innocent: this app declared `whatsapp: true` correctly, OpenMasjidOS
+ * gated on `app.whatsapp` correctly — and `OpenMasjidAPPS`'s catalog builder copied capabilities
+ * through a hand-maintained allow-list with no `whatsapp` line, so the key never reached
+ * `catalog.json` and the platform correctly refused an app that, as far as it could see, had never
+ * asked. `email` surviving while `whatsapp` vanished was the entire diagnosis, and the `source` +
+ * `httpStatus` fields below are what made it findable from here at all.
+ *
+ * Fixed at the source (catalog `364f91b`): one shared capability list the builder type-checks and
+ * copies from, plus a test that holds the documented manifest template against a built entry in both
+ * directions. Declaring a capability is still necessary and never sufficient — verify against the
+ * BUILT entry, never against our own manifest.
+ *   • `unsupported` (404/405) means the platform predates the endpoint.
+ *
+ * A masjid with a working, linked gateway was told their server had no WhatsApp set up, and went and
+ * checked a setting that was already correct. Guessing wrong in an error message costs somebody an
+ * evening; the fix is to stop guessing and say which signal actually came back.
+ */
+export type WhatsAppReason = 'ready' | 'not-configured' | 'not-linked' | 'unreachable' | 'not-permitted' | 'unsupported';
+
+/** The words the platform itself may send. Anything else on the wire is not trusted as a reason. */
+const PLATFORM_REASONS = ['ready', 'not-configured', 'not-linked', 'unreachable'] as const;
+
+export interface WhatsAppStatus {
+  available: boolean;
+  /** Each one needs different copy from us — see whatsapp/index.ts and the settings screen. */
+  reason: WhatsAppReason;
+  /**
+   * WHERE the reason came from, which is the diagnostic that matters when a screen and a server
+   * disagree: `platform` means OpenMasjidOS said this in a 200 response, `http` means we inferred it
+   * from a status code, `local` means we never got as far as asking.
+   */
+  source: 'platform' | 'http' | 'local';
+  /** The HTTP status, when there was one. Shown to an admin verbatim — it is the difference between
+   *  "your gateway is off" and "this app was refused", and no amount of prose substitutes for it. */
+  httpStatus?: number;
+}
+
+/** Can this masjid send WhatsApp at all? Fail-soft: anything unexpected reads as `unreachable`, which
+ *  is the state that tells an admin to go and look rather than implying they never set it up. */
+export async function whatsappStatus(): Promise<WhatsAppStatus> {
+  if (!fabricConfigured()) return { available: false, reason: 'not-configured', source: 'local' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp`, {
+      headers: { 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      log.warn('whatsapp status rejected', { status: res.status });
+      const reason: WhatsAppReason = res.status === 403 ? 'not-permitted' : res.status === 404 || res.status === 405 ? 'unsupported' : 'unreachable';
+      return { available: false, reason, source: 'http', httpStatus: res.status };
+    }
+    const j = (await res.json().catch(() => null)) as { available?: unknown; reason?: unknown } | null;
+    const said = typeof j?.reason === 'string' && (PLATFORM_REASONS as readonly string[]).includes(j.reason) ? (j.reason as WhatsAppReason) : null;
+    // A 200 with a reason we don't recognise is the platform talking to a client that is out of date,
+    // not a gateway problem — `unreachable` is the honest fallback and never claims "not set up".
+    return { available: j?.available === true, reason: said ?? 'unreachable', source: 'platform', httpStatus: res.status };
+  } catch {
+    return { available: false, reason: 'unreachable', source: 'local' };
+  }
+}
+
+/** What happened when we handed one message over. `queued` is NOT `sent` — see `sendPlatformWhatsApp`. */
+export type WhatsAppQueueResult = { queued: true } | { queued: false; reason: string };
+
+/** A group the masjid's admin approved this app to post into. A label and an opaque id, nothing else —
+ *  the platform never exposes the masjid's other groups, and we never learn who is in one. */
+export interface WhatsAppGroup {
+  id: string;
+  label: string;
+}
+
+/**
+ * The answer to "which groups may I post into?", with "I could not ask" kept SEPARATE from "none".
+ *
+ * Those two used to be the same empty array, and three things went wrong downstream, all of them the
+ * kind that only shows up on a bad day:
+ *
+ *   • the screen hid the Groups section entirely, so a momentary platform hiccup looked exactly like
+ *     an admin who had approved nothing — no error, no retry, just a feature that was there yesterday;
+ *   • `groupSet` told an admin "that group isn't approved in OpenMasjidOS", sending them off to fix
+ *     something that was not broken;
+ *   • and nothing could ever say "you are still subscribed to a group that is no longer approved",
+ *     because a withdrawn group and an unreachable platform were indistinguishable — see
+ *     `trpc/whatsapp.ts` `groups`, where that distinction is what makes a stale row safe to show.
+ *
+ * A 429 makes this more than theoretical: the platform's Fabric limiter is per-IP across ALL of
+ * `/api/fabric/*` (status, groups, send, Stripe keys, record-payment share one 120/min bucket), and it
+ * answers `{ groups: [] }` with no error field at all. "Empty" is genuinely ambiguous on the wire.
+ */
+export type WhatsAppGroupList = { ok: true; groups: WhatsAppGroup[] } | { ok: false; reason: string };
+
+/**
+ * The groups an admin has approved for THIS app.
+ *
+ * The list is authorisation, not decoration: an id we did not get from here is refused with 403, and
+ * approval can be withdrawn at any moment. A confirmed-empty list means "no groups available" and the
+ * feature is hidden rather than shown broken — the platform's own guidance, and the right shape for a
+ * permission that is somebody else's to give.
+ *
+ * Still fail-soft — it never throws — but the failure is now reported rather than disguised as "none".
+ */
+export async function whatsappGroups(): Promise<WhatsAppGroupList> {
+  if (!fabricConfigured()) return { ok: false, reason: 'no_platform' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp/groups`, {
+      headers: { 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      // Status only — the body carries the masjid's own group nicknames (§14).
+      log.warn('whatsapp groups rejected', { status: res.status });
+      return { ok: false, reason: `http_${res.status}` };
+    }
+    const j = (await res.json().catch(() => null)) as { groups?: unknown } | null;
+    // A 200 whose body is not the documented shape is a failure, not an empty list. Reading a
+    // malformed answer as "no groups approved" is how a stale subscription would silently look
+    // withdrawn — the one reading this code must not make.
+    if (!j || !Array.isArray(j.groups)) return { ok: false, reason: 'bad_shape' };
+    const groups = j.groups
+      .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object' && typeof (g as { id?: unknown }).id === 'string')
+      .map((g) => ({ id: String(g.id), label: typeof g.label === 'string' && g.label ? g.label.slice(0, 120) : String(g.id) }));
+    return { ok: true, groups };
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+}
+
+/**
+ * Post ONE announcement into ONE approved group.
+ *
+ * A SEPARATE FUNCTION from `sendPlatformWhatsApp`, deliberately, and this is the enforcement rather
+ * than a note in a document: the platform's rule is that a group post is for genuine announcements and
+ * must never carry a family's own business, because their fees are not the other 199 members'. Every
+ * per-family path in this app calls `sendPlatformWhatsApp`, which has no parameter that could name a
+ * group — so a receipt cannot reach a group even by mistake, and the wall is in the type system.
+ *
+ * The wire shape is the same endpoint with `group` in place of `to`; sending both is a 400 by design,
+ * which is another reason these are two functions and not one with an optional field.
+ */
+export async function sendPlatformWhatsAppGroup(groupId: string, text: string): Promise<WhatsAppQueueResult> {
+  if (!fabricConfigured()) return { queued: false, reason: 'no_fabric' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      body: JSON.stringify({ group: groupId, text }),
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (res.status === 202 || res.ok) return { queued: true };
+    // 403 here is specifically "that group is not approved (any more)" — an authorisation answer, not
+    // a malformed request, and the screen should tell an admin to re-approve it rather than hunt a bug.
+    log.warn('whatsapp group post rejected', { status: res.status });
+    return { queued: false, reason: `http_${res.status}` };
+  } catch {
+    return { queued: false, reason: 'unreachable' };
+  }
+}
+
+/**
+ * Hand ONE message for ONE recipient to the platform's queue.
+ *
+ * `to` must already be E.164 (`+15550101234`) — whatsapp/numbers.ts is the one place that gets a
+ * stored number into that shape. One recipient per call is the API's design, not a limitation to work
+ * around: the queue paces a loop correctly, and "one parent at a time" is the shape this whole feature
+ * is supposed to have.
+ *
+ * A 202 means QUEUED, and the gap between that and delivery is larger than it sounds. The platform
+ * serialises every sender behind one queue with a randomised 6–20s gap, a 60s per-recipient cooldown,
+ * caps of 12/hour and 60/day (4/hour and 10/day for groups), a seven-day warm-up ramp on a freshly
+ * linked number — and **quiet hours, 21:00–07:00 by default, checked FIRST**. A receipt queued at
+ * 03:00 is held until 07:00. It is never dropped, but nothing may block on this, and no screen may
+ * ever say "sent" on the strength of a 202 (see the settings copy, which says so in plain words).
+ *
+ * The BODY IS NEVER LOGGED, on any path including the failures — it routinely carries a child's name
+ * and a family's fees (§14). Status codes and counts only.
+ */
+export async function sendPlatformWhatsApp(to: string, text: string): Promise<WhatsAppQueueResult> {
+  if (!fabricConfigured()) return { queued: false, reason: 'no_fabric' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      body: JSON.stringify({ to, text }),
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (res.status === 202 || res.ok) return { queued: true };
+    // 400 bad number / empty text / no gateway / queue full · 403 we didn't declare `whatsapp: true`
+    // · 429 slow down. All four are the platform protecting the masjid's number; none is retried here.
+    log.warn('whatsapp queue rejected', { status: res.status });
+    return { queued: false, reason: `http_${res.status}` };
+  } catch {
+    return { queued: false, reason: 'unreachable' };
+  }
+}
+
 // ── Admin alerts (manifest `alerts:`) ────────────────────────────────────────
 /** The alert ids we declare in manifest.yaml. Declaring one IS the authorization — the platform
  *  refuses any id an app didn't declare — and the admin picks email/webhook/off per alert. */

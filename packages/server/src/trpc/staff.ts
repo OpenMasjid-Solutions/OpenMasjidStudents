@@ -34,11 +34,17 @@ import { usernameTaken } from '../auth/usernames';
 import { fabricConfigured } from '../config';
 import { audit } from '../audit';
 import { setUserSchools } from '../schools';
+import { ALERT_EVENTS, isAlertEvent } from '../alerts';
+import { isCountryCode } from '../settings';
 
 const USERNAME = z.string().trim().min(1).max(64);
 const TEMP_PW = z.string().min(MIN_PASSWORD_LENGTH).max(200);
 /** The roles this screen may hand out. Not `parent` — see the note above. */
 const STAFF_ROLE = z.enum(['admin', 'finance']);
+/** Free text, like every other number in this app: a number typed by an office is not a form to
+ *  validate, and whatsapp/numbers.ts is the one place that decides whether it can be dialled. */
+const PHONE = z.string().trim().max(40);
+const COUNTRY = z.string().trim().max(5);
 const now = () => new Date();
 
 /** How many active admins exist besides `exceptUserId`. Guards the lockout cases. */
@@ -90,7 +96,17 @@ export const staffRouter = router({
    *  Parent accounts are excluded by role; they belong to a family, not to this screen. */
   list: adminProcedure.query(() => {
     const rows = db
-      .select({ id: users.id, username: users.username, displayName: users.displayName, role: users.role, status: users.status, mustChangePassword: users.mustChangePassword })
+      .select({
+        id: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        role: users.role,
+        status: users.status,
+        mustChangePassword: users.mustChangePassword,
+        phone: users.phone,
+        phoneCountry: users.phoneCountry,
+        waEvents: users.waEvents,
+      })
       .from(users)
       .where(inArray(users.role, ['admin', 'finance']))
       .orderBy(users.role, users.username)
@@ -102,8 +118,37 @@ export const staffRouter = router({
     for (const r of db.select({ userId: userSchools.userId, schoolId: userSchools.schoolId }).from(userSchools).all()) {
       limits.set(r.userId, [...(limits.get(r.userId) ?? []), r.schoolId]);
     }
-    return rows.map((u) => ({ ...u, schoolIds: limits.get(u.id) ?? [] }));
+    return rows.map((u) => ({ ...u, waEvents: (u.waEvents ?? []).filter(isAlertEvent), schoolIds: limits.get(u.id) ?? [] }));
   }),
+
+  /**
+   * A staff member's WhatsApp number, and which alerts they want on it (0.50.0).
+   *
+   * Staff carried no phone number until now, deliberately — "the app never contacts staff by phone, so
+   * holding one would be personal data collected for no purpose" (§9). The purpose now exists: a
+   * declined card at nine on a Sunday evening reaches a treasurer's phone and does not reach their
+   * inbox. It stays entirely opt-in per person: no number and no events by default, and clearing the
+   * number is the off switch.
+   *
+   * Admin-only, like the alert recipient list beside it and for the same reason — subscribing somebody
+   * is a standing grant of information about families.
+   */
+  setContact: adminProcedure
+    .input(z.object({ userId: z.string(), phone: PHONE.optional(), phoneCountry: COUNTRY.optional(), waEvents: z.array(z.enum(ALERT_EVENTS)).max(ALERT_EVENTS.length).optional() }))
+    .mutation(({ ctx, input }) => {
+      const u = requireStaffUser(input.userId);
+      const patch: Partial<typeof users.$inferInsert> = { updatedAt: now() };
+      if (input.phone !== undefined) patch.phone = input.phone || null;
+      if (input.phoneCountry !== undefined) {
+        if (input.phoneCountry && !isCountryCode(input.phoneCountry)) throw new TRPCError({ code: 'BAD_REQUEST', message: 'A country code looks like +1 or +44.' });
+        patch.phoneCountry = input.phoneCountry || null;
+      }
+      if (input.waEvents !== undefined) patch.waEvents = input.waEvents;
+      db.update(users).set(patch).where(eq(users.id, u.id)).run();
+      // Which fields changed and how many alerts — never the number itself (§14).
+      audit(auditActor(ctx), 'staff.setContact', { entity: 'user', entityId: u.id, detail: { keys: Object.keys(input).filter((k) => k !== 'userId'), events: input.waEvents?.length } });
+      return { ok: true as const };
+    }),
 
   /**
    * Limit an account to certain schools, or clear the limit by passing an empty list.

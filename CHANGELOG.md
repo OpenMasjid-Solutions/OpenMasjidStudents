@@ -27,6 +27,233 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
      manifest reads `X.Y.Z-dev.N`, and the version test checks the CHANGELOG for the base `X.Y.Z`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
 
+## [0.50.0]
+
+- **You can now message parents on WhatsApp** — through your masjid's own server, with nothing passing
+  through an outside company. Everything with detail in it still goes by email; a WhatsApp is the short
+  note that tells a family to look.
+- **Four new things you can tell a parent, by email as well as WhatsApp:** a new bill is ready, an
+  automatic payment is coming up in three days, a saved card is about to expire, and a refund has been
+  made. The first closes the biggest gap the app had — until now the first a family heard about a month's
+  tuition was the reminder that it was late — and the card one heads off the usual reason automatic
+  payments quietly stop working.
+- **It starts switched off, paused, with nothing selected.** Turning it on sends nobody anything. You choose
+  which messages, set a **test student** whose household receives them — **by email as well as WhatsApp** —
+  while everyone else stays quiet, see a real one arrive, and only then lift the pause.
+- **You can rewrite what every message says.** Ours are short on purpose, but if your madrasah says it
+  differently, or wants the balance in every message, write your own — with the family's name, the
+  children, the amount, the balance and a payment link available as tags, and a preview of exactly what a
+  real family will read.
+- **Before you turn it on, the screen tells you who you could actually reach** — how many parents have a
+  number that works, how many have asked not to be messaged, and which numbers it cannot read, with a
+  country box beside each one to fix it.
+- **One button asks the families with no email address for one.** It names their children, explains why the
+  school needs it, and you can rewrite the wording and read exactly what each family will get before it
+  goes.
+- **Staff alerts can go to a WhatsApp group** your admin approved for the app in OpenMasjidOS — a finance
+  group that gets every payment, a committee group that hears when autopay switches itself off. The same
+  alerts a staff member can get on their own phone, and by default they say what happened without naming
+  the family.
+- **Parents can turn it off themselves**, from the portal, and back on again — for either parent on the
+  account, since both of them sign in to the same household. Nobody in the office can override that.
+- **Staff can get alerts on their phone.** A declined card on a Sunday evening reaches whoever chases it,
+  rather than sitting in an inbox until Monday. Each person adds their own number and picks what they want
+  to hear about.
+- **Nothing about signing in is ever sent by WhatsApp.** Invites, password resets and confirmation links
+  stay on email, which always works.
+
+### Also in this release
+
+**WhatsApp — how it is put together**
+
+- OpenMasjidOS owns the connection (a self-hosted OpenWA install linked to the masjid's own phone) and runs
+  **one paced queue shared by every app** — spaced sends, per-recipient cooldowns, hourly and daily caps,
+  quiet hours. That queue is the whole defence for a number WhatsApp does not officially permit and can
+  restrict at any time, so this app never talks to a gateway, never retries a refusal, and never designs
+  anything as a broadcast. The daily allowance belongs to the number and is shared with every other app on
+  the server.
+- **"Queued" is never reported as "sent."** Delivery is minutes away, and hours if it lands in quiet hours.
+  No screen claims otherwise and nothing waits for a message to arrive.
+- One place decides whether a message goes out and to whom (`whatsapp/index.ts`), with the gates in a fixed
+  order: the master switch, the gateway, the event, the pause, the person's own opt-out, the number. The
+  first three are checked once per event rather than per family, so a switch that is off cannot write two
+  hundred log rows.
+- The pause **narrows** rather than stops — the test student's household still hears everything. That
+  household is resolved from the student on every send, so a child moved between households takes the
+  setting with them and a withdrawn one fails closed (and the settings screen says so, rather than looking
+  configured while nothing gets through).
+- The opt-out lives on the **person**, not the household: one parent silencing their phone does not silence
+  the other's. Nothing overrides it — not the pause exception, not the outreach button, not an admin screen.
+- The queue log records the event, who it was for, when, and what happened. **Never the message itself** — a
+  tuition message names a child and their family's fees. Pruned weekly.
+- Country codes are configured for the install and then per parent or staff member, because a madrasa's
+  families are not all in one country. One place turns a stored number into the form WhatsApp accepts, and
+  it refuses rather than guesses: a national trunk zero is dropped before the country code goes on, a number
+  containing a letter is refused outright (an extension typed into the field would otherwise be dialled as
+  somebody else's number), and a ten-digit number is read as national even when it starts with the country
+  code.
+- The outreach sends to the first adult it can reach per household rather than to both parents, and is
+  capped at 50 households per press with the remainder reported — asking one question should not cost the
+  masjid's number twice, and handing the queue two hundred messages at once is what gets a number
+  restricted.
+- A staff WhatsApp carries the same wording as the alert email, which may name a household and an amount.
+  The de-identified version is for third-party sinks (a Slack webhook, the platform's own alert channel); a
+  number an admin typed, on the masjid's own gateway, is the same audience as their inbox — and an alert
+  that cannot say which family is not worth sending.
+- Staff phone numbers came back to the database with a purpose. They had been deliberately removed on the
+  grounds that nothing ever contacted staff by phone; that is what changed, and the column is opt-in per
+  account with clearing the number as the off switch.
+
+**Fixed after the first madrasah set it up**
+
+- **Settings now says why nothing is being sent.** Turning WhatsApp on and stopping there is a working
+  set-up that sends nothing, because every message type starts switched off — and there was no sign of
+  that anywhere: no message, and no entry in the queue log either. The panel now lists exactly which
+  thing is stopping it, whether that is the master switch, the gateway, an empty message list, or a pause
+  with nobody excepted from it.
+- **"Send a test" works before WhatsApp does.** It now sends an email as well, so an office setting this
+  up on a server that has no WhatsApp gateway yet can still prove the test student is working — and it
+  says what happened on each channel rather than just failing.
+- **"WhatsApp isn't set up on this server" no longer appears when it plainly is.** Two different
+  problems were being reported with that one sentence, and one of them sent an admin to check a setting
+  that was already correct: a server can have WhatsApp working perfectly while *this app* has not been
+  granted permission to use it, which comes from the app catalogue and not from your settings. Each now
+  says what it actually is, and the panel prints exactly what the server answered underneath — which is
+  what identified the real cause on the first install, in a third repository entirely.
+
+- **The test student now lifts the email pause as well.** It only ever lifted the WhatsApp one, so on a
+  fresh install — where parent email starts paused too — an office could set a test student, take a
+  payment, and get nothing at all on either channel. Every send path honours it now, including the
+  address lookup that was quietly cancelling it.
+- **"Send a test" is no longer greyed out on a working install.** The screen read a gateway status that
+  nothing filled in until a quarter of an hour after the app started, so a perfectly good set-up reported
+  "not ready". It now asks when the screen is opened, and again as soon as the app starts.
+- **Staff phone numbers can be added before WhatsApp is switched on.** The editor was hidden until the
+  channel was live, which is the opposite of the order anyone works in — and looked exactly like the
+  feature not existing. Every staff row has it, with a phone column beside the name, and it says plainly
+  when the ticks will not do anything yet.
+- **The opt-out covers the household, not just whoever is signed in.** The portal is a household — both
+  parents log in to the same balance, bills and cards — so a parent can switch messages off for either
+  number without ringing the office. A guardian on somebody else's household is still refused.
+
+**The four new notification types**
+
+- A bill notice goes out **once per household**, not once per child, and only for invoices actually
+  created in that run — so re-generating a period (which is safe by design) does not message anybody a
+  second time. It names the children, because "what is this for?" is the question it answers.
+- The upcoming-payment notice fires only when a bill falls due **exactly three days out**. Anything
+  looser would message a family with an older overdue bill every single day until they paid, which is
+  not a courtesy.
+- The card-expiry notice runs on the 1st of the month and covers cards expiring this month or next, so a
+  card gets at most two notices ever. Only the card autopay would actually charge — warning about a
+  spare nobody is using is noise.
+- All four are off on both channels until an office turns them on, and each carries the card by brand
+  and last four only.
+
+- **The app now says what "queued" actually means.** OpenMasjidOS spaces messages out and holds them
+  through the masjid’s quiet hours — 9pm to 7am unless your admin changed it — so a receipt from three
+  in the morning arrives at seven, not at three. The screen used to say "give it a minute", which made
+  a working set-up look broken.
+
+**Alerts to a group**
+
+- You only ever see the groups an admin approved for this app; the platform never shows the masjid's
+  other groups, and approval can be withdrawn at any time. No approved groups means the section simply
+  isn't there, rather than a button that fails.
+- **A group is a staff channel, never a way to reach parents.** Nothing about a family's own bill can be
+  sent to one: there is no message box, and none of the parent notifications can be pointed at a group.
+- Each group has one switch for whether its alerts may name the household and the amount, and it starts
+  OFF. A small finance group usually wants the names; anything wider must not have them, and the app
+  cannot see who is in a group — only you can.
+- A per-group test sends a fixed message, so you can check a group receives before deciding what should
+  flow through it.
+- **Staff alerts get straight to the point** — no salam, no letterhead, just what happened. They arrive
+  on the masjid’s own number for someone who has to act on them, so a line of greeting is a line to
+  scroll past first. Messages to parents still greet properly; that is the madrasah speaking to a family.
+- The screen now says **what a group post costs**: about ten a day, one every half hour to the same
+  group, and that budget is shared with every other app on the masjid’s number. Alerts past it are not
+  lost — they wait — so a busy Sunday can push Monday’s alert back, which looks like nothing at all
+  until you go looking. “A payment came in” will fill a day on its own, and the screen says so.
+- **“No groups approved” and “couldn’t ask OpenMasjidOS” are no longer the same answer.** They looked
+  identical before, so a moment’s hiccup made the whole section vanish as if nothing were approved, and
+  ticking a box could report that a group wasn’t approved when the platform simply hadn’t replied —
+  sending you to fix something that was already right.
+- **A group that loses its approval keeps its settings, and now shows them.** It used to disappear from
+  the screen while still switched on underneath, so approving that group again — months later, perhaps
+  with different people in it — quietly resumed the old alerts, family names and all. It is now listed
+  as no longer approved, spelling out exactly what it would resume with, with a Forget button.
+- Sending a test to a group checks it is still approved first, the same as ticking an alert does, and
+  says so plainly instead of “that didn’t reach the queue”.
+
+**Ask the app for your numbers by WhatsApp**
+
+- **Message the masjid’s number with `!students` and get this month’s tuition figures back** — what came
+  in, what was billed, what is outstanding, how many students are behind, and when Stripe was last
+  checked. Your admin decides in OpenMasjidOS who is allowed to; it is off until they do.
+- **It answers with numbers, never names.** A WhatsApp conversation keeps a copy forever and the phone
+  holding it can change hands, so “who is behind” stays behind a login — the reply tells you there are
+  four and points you at the app. Nothing it can do changes anything, either.
+- Two totals worth trusting: a child who has paid ahead never cancels out a child who is behind (that
+  would report a madrasah as square when somebody still has to be chased), and a withdrawn child’s
+  unpaid bill still counts as owed.
+
+**Alerts name the child, not the family**
+
+- **Past-due digests now list the students and what each of them owes**, instead of “the Ahmed family —
+  $430”. A bill belongs to a child, so a family total made you open two records to find that $430 was
+  one child’s two missed months and the other was square. It still sends one reminder per household —
+  one parent pays for all their children — and now says both numbers, so nine students producing five
+  emails isn’t a mystery.
+- **Payment alerts say who the money was for.** “$250.00 paid for Yusuf Ismail” rather than “the Ismail
+  family paid $250.00” — and where one card charge covered several children, it names each of them and
+  their share, which is how the payment was actually recorded.
+- The same for a recovered payment, a part-recorded one, and a declined card. A card and an autopay
+  setting do belong to the household, so those name the children they pay **for** rather than pretending
+  a child owns the card.
+- Worth saying why, beyond it being clearer: the family label is **made up from the children’s
+  surnames**, so a madrasah with four Ismail households got four alerts that read exactly the same, and
+  a household with two surnames read “Farooqi / Ismail” — naming a child who might not be the one behind.
+- Nothing changed about what leaves the building: the webhook and the OpenMasjidOS alert channel still
+  get a count and a figure and no names at all.
+- **A parent’s own reminder now says which of their children is behind**, by first name, and breaks the
+  total down when it is more than one — by email and by WhatsApp. “$430 is past due” is true but not
+  something a parent with three children can act on. Each family only ever sees their own children, and
+  a Student ID still never travels by email.
+
+**Found in the pre-release audit**
+
+- **Reversing a card payment used to leave the family charged.** "Reverse" writes a ledger entry: the
+  bill re-opens and the family owes it again. For cash that is the whole story, because somebody hands
+  the notes back — for a card it was only half of one, because Stripe still had the money. Worse, the
+  real refund was then refused, so it could not be put right from any screen. Card payments now say
+  "use Refunds" instead, which gives the money back *and* re-opens the bill, in that order.
+- **Three of the four printable documents did not open for developers** running the app locally —
+  household sheets, per-child invoices and class ID sheets each showed the app instead of the page. A
+  masjid was unaffected.
+- **A mid-year go-live no longer reads as this month's takings.** Recording what each family already
+  owed on the day you start using the app is history, not money that arrived today; the new WhatsApp
+  numbers were counting it.
+- **Errors no longer show a masjid our internal plumbing.** An unexpected fault used to pass its raw
+  technical message — and, on a development server, a full stack trace — through to whoever was on the
+  screen. It now says one plain sentence and keeps the detail in the log.
+- **An autopay charge interrupted at exactly the wrong moment can no longer be recorded twice.**
+- Fifty-one leftover translation entries from features removed in v0.35.0 were deleted, along with a
+  stale copy of the App Store catalogue that still advertised this app at v0.33.0.
+- A pile of documentation was wrong and is now right — most of all the data-model reference, which had
+  been describing the pre-v0.35.0 schema for fifteen releases. Two claims about who may do what were
+  also removed rather than left: **nothing in the app reads the audit trail yet**, and **only a parent
+  can switch autopay off** — both were previously written as though they worked.
+
+**Elsewhere**
+
+- Past-due reminders now run when **either** channel wants to chase. Gated on the email switch alone, a
+  madrasah that wanted reminders by WhatsApp only had a nightly job that quietly never ran — and a household
+  reached by either channel now starts its cooldown, so it is not chased again tomorrow.
+- The family record shows when a parent has asked not to be messaged, so "why didn't they get the reminder?"
+  has a visible answer on the screen the office is already looking at.
+- `docs/WHATSAPP.md` records the whole contract: every gate, what never travels this channel, how a number
+  is read, and how much goes in a message versus the email it points at.
+
 ## [0.49.0]
 
 - **What's new says less on a release, and everything on a development build.** A masjid updating to a

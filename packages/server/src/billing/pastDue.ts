@@ -34,7 +34,9 @@ import { formatMoney } from '../db/money';
 import { getCurrency, getPastDue, getPastDueStaffLast, setPastDueStaffLast, type PastDueConfig } from '../settings';
 import { formatDate } from '../settings/dates';
 import { alertStaff } from '../alerts';
+import { givenName } from '../people/names';
 import { sendPastDue } from '../mail/notify';
+import { parentEventOn } from '../whatsapp';
 import { makeLog } from '../logger';
 
 const log = makeLog('pastDue');
@@ -126,6 +128,39 @@ export function pastDueFamilies(asOf: string): PastDueFamily[] {
     .sort((a, b) => b.amountCents - a.amountCents || a.oldestDue.localeCompare(b.oldestDue));
 }
 
+/** A child who is behind: their own total, and their own oldest unpaid due date. */
+export interface PastDueStudent {
+  studentId: string;
+  name: string;
+  amountCents: number;
+  oldestDue: string;
+}
+
+/**
+ * WHICH CHILDREN ARE BEHIND, and by how much — the ONE place that question is answered.
+ *
+ * Both things this module sends need exactly this list, and they must never disagree: the office
+ * digest lists every child across every household, and a parent's own reminder lists the children in
+ * theirs. Deriving it twice is how the email a parent reads ends up naming a child the office's copy
+ * does not (CLAUDE.md §16).
+ *
+ * A child can be behind on more than one invoice, so their invoices are SUMMED and their oldest due
+ * date kept — a household with two missed months for one child is one line, not two. Sorted by amount
+ * so the biggest problem is first, which is the order an office works in.
+ */
+export function studentsBehind(fams: PastDueFamily[]): PastDueStudent[] {
+  const byStudent = new Map<string, PastDueStudent>();
+  for (const f of fams) {
+    for (const inv of f.invoices) {
+      const cur = byStudent.get(inv.studentId) ?? { studentId: inv.studentId, name: inv.studentName, amountCents: 0, oldestDue: inv.dueDate };
+      cur.amountCents += inv.balanceCents;
+      if (inv.dueDate < cur.oldestDue) cur.oldestDue = inv.dueDate;
+      byStudent.set(inv.studentId, cur);
+    }
+  }
+  return [...byStudent.values()].sort((a, b) => b.amountCents - a.amountCents || a.oldestDue.localeCompare(b.oldestDue));
+}
+
 /** The households this run would actually consider — past the grace period and worth an email. */
 export function dueForChasing(asOf: string, cfg: PastDueConfig = getPastDue()): PastDueFamily[] {
   return pastDueFamilies(asOf).filter((f) => f.daysOverdue >= cfg.graceDays && f.amountCents >= cfg.minAmountCents);
@@ -142,9 +177,12 @@ export interface PastDueRunResult {
   totalCents: number;
   /** Households a parent email actually reached. */
   emailed: number;
+  /** Households a WhatsApp message was queued for (0.50.0). Counted separately from `emailed` because
+   *  they are separate channels with separate switches, and a household can be reached by either. */
+  messaged: number;
   /** Past the grace period but silent this run — too soon since the last reminder. */
   waiting: number;
-  /** Past the grace period with no guardian address on file. The office has to ring these. */
+  /** Past the grace period that NEITHER channel could reach. The office has to ring these. */
   unreachable: number;
   /** Did the office digest go out this run? */
   staffAlerted: boolean;
@@ -166,12 +204,15 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
     overdue: all.length,
     totalCents: all.reduce((s, f) => s + f.amountCents, 0),
     emailed: 0,
+    messaged: 0,
     waiting: 0,
     unreachable: 0,
     staffAlerted: false,
   };
 
-  if (cfg.parentEmails) {
+  // EITHER channel wanting to chase is enough to walk the list (0.50.0). Gated on the email switch
+  // alone, a madrasah that turned reminders on for WhatsApp only had a job that quietly never ran.
+  if (cfg.parentEmails || parentEventOn('past-due')) {
     const lastSent = lastSentByFamily();
     const ts = new Date();
     for (const fam of chase) {
@@ -182,9 +223,14 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
         result.waiting++;
         continue;
       }
-      const sent = await sendPastDue(fam.familyId, formatMoney(fam.amountCents, currency), formatDate(fam.oldestDue));
-      if (sent > 0) {
-        result.emailed++;
+      // WHICH of their children is behind, and for how much — same derivation the office digest uses.
+      // A parent with three children could not act on a household total: "$430 is past due" does not
+      // say whether that is one child's two missed months or three children owing a little each.
+      const theirs = studentsBehind([fam]).map((s) => ({ name: givenName(s.name) || s.name, amount: formatMoney(s.amountCents, currency) }));
+      const sent = await sendPastDue(fam.familyId, formatMoney(fam.amountCents, currency), formatDate(fam.oldestDue), theirs);
+      if (sent.emails > 0) result.emailed++;
+      if (sent.whatsapp > 0) result.messaged++;
+      if (sent.emails > 0 || sent.whatsapp > 0) {
         // Written only on a real send. A family nobody could reach must not start a quiet cooldown —
         // otherwise the day an address is finally added, they wait another week for no reason.
         db.insert(pastDueReminders)
@@ -204,26 +250,26 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
     if (opts.force || !staffLast || daysBetween(staffLast, asOf) >= cfg.everyDays) {
       const total = chase.reduce((s, f) => s + f.amountCents, 0);
       const money = (c: number) => formatMoney(c, currency);
-      // Named households and amounts — these are addresses an admin typed, and a digest that cannot say
-      // WHO is behind is not actionable (§9's alert rule).
-      const lines = chase
-        .slice(0, 40)
-        .map((f) => `• ${f.label} — ${money(f.amountCents)}, since ${formatDate(f.oldestDue)}`);
-      if (chase.length > lines.length) lines.push(`…and ${chase.length - lines.length} more.`);
+      const behind = studentsBehind(chase);
+      const lines = behind.slice(0, 40).map((s) => `• ${s.name} — ${money(s.amountCents)}, since ${formatDate(s.oldestDue)}`);
+      if (behind.length > lines.length) lines.push(`…and ${behind.length - lines.length} more.`);
       await alertStaff('past-due', {
-        title: `${chase.length} ${chase.length === 1 ? 'family is' : 'families are'} past due`,
+        title: `${behind.length} ${behind.length === 1 ? 'student is' : 'students are'} past due`,
         text: [
-          `${chase.length} ${chase.length === 1 ? 'household has' : 'households have'} a bill whose due date has passed — ${money(total)} in total.`,
+          `${behind.length} ${behind.length === 1 ? 'student has' : 'students have'} a bill whose due date has passed — ${money(total)} in total.`,
           '',
           ...lines,
           '',
+          // The households are still what gets CHASED — one adult pays for all their children, so one
+          // reminder goes per household however many of them are behind. Said plainly, because the two
+          // counts differ and an office would otherwise wonder why 9 students produced 5 emails.
           cfg.parentEmails
-            ? `Parents are being reminded automatically, at most once every ${cfg.everyDays} days.`
+            ? `Parents are being reminded automatically — one message per household (${chase.length} ${chase.length === 1 ? 'household' : 'households'}), at most once every ${cfg.everyDays} days.`
             : 'Parent reminders are switched off, so nobody has been told but you (Settings → Email alerts).',
         ].join('\n'),
         // No household, no child, no name beside an amount (§14) — this copy goes to the masjid webhook
         // and the OpenMasjidOS alert channel, which are third-party sinks.
-        publicText: `${chase.length} ${chase.length === 1 ? 'household is' : 'households are'} past due, ${money(total)} in total. Open the tuition app to see who.`,
+        publicText: `${behind.length} ${behind.length === 1 ? 'student is' : 'students are'} past due, ${money(total)} in total. Open the tuition app to see who.`,
       });
       setPastDueStaffLast(asOf);
       result.staffAlerted = true;
@@ -231,6 +277,6 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
   }
 
   // Counts only — never a household, never an address (§14).
-  log.info('past due run', { overdue: result.overdue, emailed: result.emailed, waiting: result.waiting, unreachable: result.unreachable });
+  log.info('past due run', { overdue: result.overdue, emailed: result.emailed, messaged: result.messaged, waiting: result.waiting, unreachable: result.unreachable });
   return result;
 }

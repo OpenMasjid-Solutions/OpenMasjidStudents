@@ -417,3 +417,59 @@ describe('autopay on the billing record', () => {
 it('made no HTTP calls of its own', () => {
   expect(vi.isMockFunction(globalThis.fetch)).toBe(false);
 });
+
+// -- Reverse is a LEDGER-ONLY action, and must refuse card money ---------------
+/**
+ * THE BUG THIS CLOSES (found in the 0.50.0 pre-release audit).
+ *
+ * The office's ledger has a "Reverse" button beside every payment, which writes mirror rows: the bill
+ * re-opens and the family owes it again. For cash that is the whole story, because a person hands the
+ * notes back. For a CARD it was only half of one, and the missing half was the money — Stripe kept it.
+ *
+ * So an office reversing a portal payment believed they had given it back, while the family sat
+ * charged AND billed again. Worse, it could not be put right from any screen: `refundTransaction`
+ * finds the row already reversed and answers `alreadyDone`, so the real refund was then refused
+ * forever.
+ *
+ * The rule lives in `payments/refunds.ts` (`isStripePayment` — the same predicate that decides a
+ * transaction's refund route), so this cannot drift from a second list of "card-ish channels".
+ */
+describe('reversing on the ledger alone', () => {
+  it('is refused for card money, and says where to go instead', async () => {
+    const { familyId } = await household();
+    cardCharge(familyId);
+    const paid = liveRows().filter((p) => !p.reversalOf);
+    expect(paid.length).toBeGreaterThan(0);
+
+    for (const p of paid) {
+      await expect(caller('finance').billing.reversePayment({ paymentId: p.id })).rejects.toThrow(/card/i);
+    }
+    // Nothing was written: no reversal rows, and the bills are still settled.
+    expect(liveRows().filter((p) => p.reversalOf)).toHaveLength(0);
+    expect(ledger.familyBalance(familyId).owedCents).toBe(0);
+    // Stripe was never asked either — being refused is not a half-done refund.
+    expect(refundCalls).toHaveLength(0);
+  });
+
+  it('still works for cash, which is the case it exists for', async () => {
+    const { admin, familyId, a } = await household();
+    await admin.billing.recordManualPayment({ studentId: a, amountCents: 5000, channel: 'cash', occurredAt: '2026-07-05' });
+    const cash = liveRows().find((p) => p.channel === 'cash')!;
+    await caller('finance').billing.reversePayment({ paymentId: cash.id });
+    expect(liveRows().filter((p) => p.reversalOf)).toHaveLength(1);
+    expect(ledger.familyBalance(familyId).owedCents).toBe(40000);
+  });
+
+  /** The screen must not offer what the server refuses — a button that fails is how people learn to
+   *  click through the dialogs that matter (§15). */
+  it('is flagged on the row the office reads', async () => {
+    const { admin, familyId, a } = await household();
+    cardCharge(familyId);
+    await admin.billing.recordManualPayment({ studentId: a, amountCents: 5000, channel: 'cash', occurredAt: '2026-07-06' });
+    const rows = (await caller('finance').billing.familyBilling({ familyId })).payments;
+    const card = rows.find((r) => r.channel === 'portal')!;
+    const cash = rows.find((r) => r.channel === 'cash')!;
+    expect(card.byCard).toBe(true);
+    expect(cash.byCard).toBe(false);
+  });
+});
