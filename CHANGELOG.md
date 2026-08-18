@@ -27,6 +27,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
      manifest reads `X.Y.Z-dev.N`, and the version test checks the CHANGELOG for the base `X.Y.Z`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
 
+## [0.51.0]
+
+<!-- Nothing yet. First entry of the next release goes here; see the two-audiences note above. -->
+
 ## [0.50.0]
 
 - **You can now message parents on WhatsApp** — through your masjid's own server, with nothing passing
