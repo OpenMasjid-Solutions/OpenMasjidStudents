@@ -4,7 +4,7 @@ id: students
 name: OpenMasjid Students
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
-version: 0.50.0-dev.15
+version: 0.50.0-dev.16
 author: OpenMasjid-Solutions
 license: AGPL-3.0-only
 icon: icon.svg
@@ -30,7 +30,7 @@ description: |
   the OpenMasjidOS internet uplink. (Admin stays on the masjid network by design.)
 # ── Fabric capability flags ──────────────────────────────────────────────────
 sso: true                # platform admin opens it signed-in on the LAN
-notifications: true      # payment / autopay / admissions alerts to the masjid webhook
+notifications: true      # routine payment / autopay notices to the masjid webhook
 stripe: true             # keys via GET /api/fabric/stripe — used for real charges (§13)
 https: true              # REQUIRED: the parent portal embeds Stripe Elements (secure context)
 tunnel: true             # request a public HTTPS uplink for parents + finance
@@ -38,9 +38,11 @@ tunnel: true             # request a public HTTPS uplink for parents + finance
 # mirror the platform writes at install, and it is EMPTY until an admin turns on Remote access — so
 # without this an invite or password-reset link has no absolute URL and cannot be emailed at all.
 domain: true
-# Send transactional mail through the masjid's OpenMasjidOS provider (POST /api/fabric/email). This
-# makes our own SMTP settings OPTIONAL rather than the only way to reach a parent; the OS owns the
-# credentials and the From address. Local SMTP is still tried first so a standalone install works.
+# Send transactional mail through the masjid's OpenMasjidOS provider (POST /api/fabric/email). The OS
+# owns the credentials and the From address; this app has NO SMTP of its own and holds no mail
+# secrets, so a standalone install sends nothing and degrades to links an office can copy or print —
+# a supported mode, not a fault (§4/§7). (This comment claimed the opposite until 0.50.0: nodemailer
+# was removed in the 2026-08-04 audit and there has been no local SMTP path since.)
 email: true
 # WhatsApp through the masjid's own OpenWA gateway (GET/POST /api/fabric/whatsapp). Declaring this is
 # what makes the platform issue the secret for it and allow the calls; without it every send is 403.

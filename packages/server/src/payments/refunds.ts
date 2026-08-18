@@ -83,6 +83,19 @@ const piOf = (externalRef: Record<string, unknown> | null): string | null => {
 };
 
 /**
+ * "Did this money come through Stripe?" — the ONE place that question is answered, for refunds AND for
+ * the plain ledger reversal that must refuse to touch such a payment (`trpc/billing.ts`).
+ *
+ * It is the PaymentIntent that decides, not the channel name: reconciliation records a kiosk payment
+ * with the same externalRef the kiosk would have sent, and a future channel could be either. Anything
+ * carrying a PI can only be given back at Stripe, because that is where the money is.
+ */
+export function isStripePayment(paymentId: string): boolean {
+  const row = db.select({ externalRef: payments.externalRef }).from(payments).where(eq(payments.id, paymentId)).get();
+  return !!row && piOf(row.externalRef as Record<string, unknown> | null) !== null;
+}
+
+/**
  * A CARRY-IN IS NOT A PAYMENT ANYBODY CAN GIVE BACK (0.48.0).
  *
  * `carry_in` rows are the mid-year go-live artifact: when a madrasah adopts this app in February, what each

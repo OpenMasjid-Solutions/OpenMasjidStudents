@@ -3,7 +3,9 @@
 /**
  * High-level transactional senders (CLAUDE.md §4/§13). One place that composes the school name + the
  * right template + the transport, so routers stay thin. Every function is BEST-EFFORT and no-ops when
- * SMTP is unconfigured (returns false / 0) — callers degrade gracefully. Nothing here throws or logs
+ * the platform cannot send mail (returns false / 0) — this app has no SMTP of its own and holds no
+ * mail credentials, so a standalone install sends nothing and degrades to copy/print links, which is
+ * a supported mode rather than a fault (§4/§7). Nothing here throws or logs
  * PII. The parent-portal link uses OPENMASJID_PUBLIC_URL when set (empty → no button, still valid).
  *
  * SINCE 0.50.0 THIS IS THE FAN-OUT FOR BOTH PARENT CHANNELS, not only email — the three parent-facing

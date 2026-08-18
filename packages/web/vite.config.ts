@@ -20,10 +20,13 @@ export default defineConfig({
       '/trpc': { target: 'http://localhost:8080', changeOrigin: true },
       '/api': { target: 'http://localhost:8080', changeOrigin: true },
       '/fabric': { target: 'http://localhost:8080', changeOrigin: true },
-      // POST /apply → the server route; GET /apply is the SPA page, so let it fall through to Vite.
-      '/apply': { target: 'http://localhost:8080', changeOrigin: true, bypass: (req) => (req.method === 'GET' ? '/index.html' : undefined) },
-      '/reports': { target: 'http://localhost:8080', changeOrigin: true },
+      // ALL FOUR printable-document prefixes (billing/statementRoutes.ts). Only `/statements` was
+      // forwarded, so in `npm run dev` the household sheet, the per-child invoice and the class ID
+      // sheet each opened the SPA shell instead of the document — three of the four, broken in the
+      // one environment where they are actually being worked on.
       '/statements': { target: 'http://localhost:8080', changeOrigin: true },
+      '/sheets': { target: 'http://localhost:8080', changeOrigin: true },
+      '/invoices': { target: 'http://localhost:8080', changeOrigin: true },
     },
   },
   build: {

@@ -45,7 +45,7 @@ GET {OPENMASJID_BASE_URL}/api/fabric/whatsapp
 → { "available": true, "reason": "ready" }
 ```
 
-`reason` is one of exactly four words, and each needs different copy from us — which is why the
+`reason` is one of four words on a 200, and each needs different copy from us — which is why the
 settings screen keys its sentence off the word rather than off `available`:
 
 | `reason` | Source | What Settings says |
@@ -152,7 +152,7 @@ the shape of every feature here is "one parent at a time", never a broadcast.
 | the parent's own opt-out | `trpc/portal.ts` (`messagingGet` / `messagingSet`) |
 | a staff member's number + subscriptions | `trpc/staff.ts` (`setContact`) |
 | who hears about a staff alert | `alerts/index.ts` — WhatsApp is its **fourth** fan-out |
-| the three parent messages | `mail/notify.ts` — same fan-out as the email, on purpose |
+| the seven parent messages | `mail/notify.ts` — same fan-out as the email, on purpose |
 
 `mail/notify.ts` firing WhatsApp is deliberate and is the same argument that put the parent-email
 switches there: a receipt is triggered from **five** places, so a check per caller is a check somebody
@@ -181,7 +181,7 @@ finishes.
 
 1. **The master switch** — `enabled`, off on every install until an admin turns it on.
 2. **The gateway says `ready`.**
-3. **This event is switched on** — each of the three starts off.
+3. **This event is switched on** — each of the seven starts off. (Two ship ON by EMAIL — `receipt` and `autopayFailure` — only because an upgraded install was already sending them; on WhatsApp every one starts off.)
 4. **The parent pause** — which **narrows** the recipients to the test student's household rather than
    stopping the send. See below.
 5. **This person has not opted out.** Never overridden, by anything.

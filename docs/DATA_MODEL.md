@@ -8,24 +8,43 @@
 > §20 open questions — per the working agreement, if a build step touches an open question we ask
 > Hasan first; otherwise we proceed with the documented assumption and record it here.
 
-## Tables (per §9 — built incrementally, one vertical slice at a time)
+## Tables
 
-`users`, `sessions`, `invites`, `families`, `students`, `guardians`, `guardian_families`,
-`guardian_users`, `emergency_contacts`, `student_field_defs`, `student_field_values`,
-`student_documents`, `student_notes`, `incidents`, `terms`, `classes` (+ `type`, `custom_label`),
-`class_subjects`, `class_teachers`, `class_sessions`, `enrollments`, `attendance`,
-`grading_scales` + `scale_bands`, `class_grade_config`, `grade_items`, `grades`,
-`gradebook_snapshots`, `merit_categories` + `merit_awards`, `comment_snippets`, `exams`,
-`exam_classes`, `exam_class_subjects`, `exam_scores`, `term_remarks`, `term_finals`,
-`report_cards`, `transcripts`, `admissions` (+ `admission_notes`), `saved_reports`, `fee_plans`,
-`enrollment_fees`, `invoices`, `invoice_items`, `payments`, `payment_allocations`,
-`payment_methods`, `autopay_enrollments`, `autopay_runs`, `stripe_events`, `attachments`,
-`audit_log`, `alert_recipients`, `fabric_inbox`, `settings`.
+> **This list described the PRE-0.35.0 academic schema until 0.50.0** — roughly thirty-four tables
+> that had not existed for fifteen releases (`attendance`, `grades`, `exams`, `report_cards`,
+> `transcripts`, `admissions`, `enrollments`, `student_field_defs`, `attachments`, `fabric_inbox`
+> …), while every table added since was missing. It is now generated from the real
+> `packages/server/src/db/schema.ts`. If you change the schema, change this.
 
-Non-negotiable rules live in §9 (Student IDs unique + always generated; exam subjects are a snapshot;
-term finals are frozen; report cards/transcripts immutable + versioned; gradebook snapshots
-append-only; money = integer cents; idempotency keys UNIQUE; balances derived; FKs RESTRICT on
-money paths). Every table: `id`, `created_at`, `updated_at`.
+The **33 tables** that exist, grouped by what they are for:
+
+| Area | Tables |
+| --- | --- |
+| Config | `settings` |
+| Accounts | `users`, `sessions`, `invites`, `password_resets` |
+| Structure | `schools`, `user_schools`, `school_years`, `terms`, `courses`, `classes` |
+| People | `families`, `students`, `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts` |
+| Fees | `fee_plans`, `student_fees`, `charge_items`, `charges` |
+| Billing | `invoices`, `invoice_items`, `payments`, `payment_allocations`, `carry_ins`, `past_due_reminders` |
+| Cards | `payment_methods`, `autopay_enrollments`, `autopay_runs` |
+| Notifications | `alert_recipients`, `whatsapp_log` |
+| Trail | `audit_log` |
+
+Notable absences, each deliberate:
+
+- **`stripe_events`** — dropped in 0.48.0 (migration 0037). It deduplicated webhook deliveries and
+  there is no webhook (§13.4); a money schema carrying a table nobody writes is an invitation to wire
+  the next thing to it.
+- **`attachments`** — payment-proof uploads were planned once and never built. There is no upload
+  path and no `/data/attachments` (§4).
+- **`enrollments`** — fees attach to the STUDENT (`student_fees`), not to a class enrolment, so each
+  child's bill is their own.
+
+Non-negotiable rules live in CLAUDE.md §9: Student IDs unique and always generated; money in integer
+cents; idempotency keys UNIQUE; **balances derived, never stored**; payments immutable (reversals, not
+edits); allocation derived and per line, with a payer's instruction re-honoured; dates stored ISO and
+compared as TEXT; FKs `ON DELETE RESTRICT` on money paths. Every table carries `id` and `created_at`,
+and `updated_at` wherever a row is ever updated.
 
 ## Non-trivial decisions
 

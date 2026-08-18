@@ -3,7 +3,8 @@
 /**
  * App-owned settings (CLAUDE.md §6 — NOT a masjid profile injected by the platform; this app
  * collects and owns its own config). Simple typed key/value over the `settings` table: school
- * name, currency, the external-tuition toggle, self-registration, SMTP, and the Stripe account.
+ * name, currency, the external-tuition toggle, self-registration, notification policy, and the
+ * Stripe account. NOT mail credentials — see the note on SETTING_KEYS below.
  */
 import { eq } from 'drizzle-orm';
 import { db } from '../db';

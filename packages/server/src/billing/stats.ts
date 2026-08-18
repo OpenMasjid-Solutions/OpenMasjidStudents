@@ -84,12 +84,22 @@ export function tuitionStats(asOf: string): TuitionStats {
   // `occurredAt` is a timestamp column, so the window is compared as one. The bounds are the first
   // instant of this month and the first of next — half-open, so a payment at 23:59 on the last day is
   // inside it and one at 00:00 on the 1st is not counted twice.
+  //
+  // `carry_in` is EXCLUDED, and that is the whole point of this filter. A mid-year go-live writes a
+  // dated `carry_in` payment for every child who arrives already paid up (billing/carryIn.ts), dated
+  // at the go-live day — which is *this month* for the madrasah doing the setup. Counting those would
+  // announce "$12,000 came in this month" on the day an office recorded history that had been paid
+  // months earlier, and the first number they ever saw from this app would be wrong. It still counts
+  // toward the balances below, where it belongs.
+  //
+  // Reversals are NOT excluded: a reversal is a negative row dated when it was reversed, so money
+  // taken and given back in the same month correctly nets to nothing.
   const from = new Date(`${monthStart(asOf)}T00:00:00.000Z`);
   const to = new Date(`${nextMonthStart(asOf)}T00:00:00.000Z`);
   const monthRows = db
     .select({ a: payments.amountCents })
     .from(payments)
-    .where(and(gte(payments.occurredAt, from), lt(payments.occurredAt, to)))
+    .where(and(gte(payments.occurredAt, from), lt(payments.occurredAt, to), ne(payments.channel, 'carry_in')))
     .all();
   const collectedThisMonthCents = monthRows.reduce((s, r) => s + r.a, 0);
 

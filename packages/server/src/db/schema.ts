@@ -19,8 +19,10 @@ import { sqliteTable, text, integer, primaryKey, index, unique } from 'drizzle-o
  *  parents get the portal. (Teacher/student roles were removed with the SIS.) */
 export type Role = 'admin' | 'finance' | 'parent';
 
-/** App-owned settings (SMTP, Stripe choice, policies, etc. — added over time).
- *  This is NOT a masjid profile; each app owns its own config (org rule). */
+/** App-owned settings (the school profile, the Stripe account, notification policies, etc. — added
+ *  over time). There is deliberately NO mail configuration here: the platform owns the provider and
+ *  this app holds no mail credentials (§7). This is NOT a masjid profile; each app owns its own
+ *  config (org rule). */
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),

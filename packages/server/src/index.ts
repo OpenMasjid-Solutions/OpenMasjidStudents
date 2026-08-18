@@ -35,7 +35,16 @@ import { buildManifest } from './http/manifest';
 const log = makeLog('main');
 
 // Paths served/handled outside the SPA (the web app is a client-side router).
-const NON_SPA_PREFIXES = ['/trpc', '/api', '/fabric', '/statements', '/healthz'];
+/**
+ * Prefixes the SPA fallback must NOT answer for — anything here 404s instead of serving the shell.
+ *
+ * All FOUR printable-document prefixes belong here, not just `/statements`. `billing/statementRoutes.ts`
+ * serves `/statements/family/:id`, `/sheets/family/:id`, `/sheets/ids/:id` and `/invoices/:id`; only
+ * the first was listed, so a mistyped or stale link to one of the other three answered `200` with the
+ * app shell. Nothing leaks (the shell is `no-store` and carries no data) but the office sees the app
+ * appear in a print dialog instead of an error, which is a worse thing to debug than a 404.
+ */
+const NON_SPA_PREFIXES = ['/trpc', '/api', '/fabric', '/statements', '/sheets', '/invoices', '/healthz'];
 
 async function main(): Promise<void> {
   // Apply committed migrations before accepting traffic, then clear stale sessions.

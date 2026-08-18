@@ -237,6 +237,30 @@ describe('the arithmetic behind it', () => {
     expect(tuitionStats(today).collectedThisMonthCents).toBe(0);
   });
 
+  /**
+   * A MID-YEAR GO-LIVE IS NOT THIS MONTH'S TAKINGS.
+   *
+   * `billing/carryIn.ts` writes a dated `carry_in` payment for every child who arrives already paid
+   * up, dated at the GO-LIVE day — which is this month for the office doing the setup. Counting those
+   * would announce "$120.00 came in this month" on the day somebody recorded history that was settled
+   * months ago, and it would be the first number this app ever showed them.
+   */
+  it('does not count a mid-year carry-in as money taken this month', async () => {
+    const { studentId } = await seed();
+    const today = new Date().toISOString().slice(0, 10);
+    const { recordPayment } = await import('../src/billing/ledger');
+    recordPayment(
+      { studentId, amountCents: 12000, channel: 'carry_in', occurredAt: new Date(), memo: null, idempotencyKey: `carry:${studentId}` },
+      { userId: null, role: 'admin', name: 'setup' },
+    );
+    const { tuitionStats } = await import('../src/billing/stats');
+    const s = tuitionStats(today);
+    expect(s.collectedThisMonthCents).toBe(0);
+    expect(s.paymentsThisMonth).toBe(0);
+    // …but it absolutely still counts against what the child owes.
+    expect(s.creditCents).toBe(12000);
+  });
+
   /** A withdrawn child's unpaid bill is still owed — scoping the totals to active students would write
    *  real debt off silently, which is the rule `familyStudentIds` already states for balances. */
   it('still counts what a withdrawn child owes', async () => {

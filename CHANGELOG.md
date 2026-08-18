@@ -220,6 +220,30 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   something a parent with three children can act on. Each family only ever sees their own children, and
   a Student ID still never travels by email.
 
+**Found in the pre-release audit**
+
+- **Reversing a card payment used to leave the family charged.** "Reverse" writes a ledger entry: the
+  bill re-opens and the family owes it again. For cash that is the whole story, because somebody hands
+  the notes back — for a card it was only half of one, because Stripe still had the money. Worse, the
+  real refund was then refused, so it could not be put right from any screen. Card payments now say
+  "use Refunds" instead, which gives the money back *and* re-opens the bill, in that order.
+- **Three of the four printable documents did not open for developers** running the app locally —
+  household sheets, per-child invoices and class ID sheets each showed the app instead of the page. A
+  masjid was unaffected.
+- **A mid-year go-live no longer reads as this month's takings.** Recording what each family already
+  owed on the day you start using the app is history, not money that arrived today; the new WhatsApp
+  numbers were counting it.
+- **Errors no longer show a masjid our internal plumbing.** An unexpected fault used to pass its raw
+  technical message — and, on a development server, a full stack trace — through to whoever was on the
+  screen. It now says one plain sentence and keeps the detail in the log.
+- **An autopay charge interrupted at exactly the wrong moment can no longer be recorded twice.**
+- Fifty-one leftover translation entries from features removed in v0.35.0 were deleted, along with a
+  stale copy of the App Store catalogue that still advertised this app at v0.33.0.
+- A pile of documentation was wrong and is now right — most of all the data-model reference, which had
+  been describing the pre-v0.35.0 schema for fifteen releases. Two claims about who may do what were
+  also removed rather than left: **nothing in the app reads the audit trail yet**, and **only a parent
+  can switch autopay off** — both were previously written as though they worked.
+
 **Elsewhere**
 
 - Past-due reminders now run when **either** channel wants to chase. Gated on the email switch alone, a

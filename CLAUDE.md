@@ -358,18 +358,35 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | Invoices: generate, void; the year view; CSV export | ✅ | ✅ | ❌ (own bills only) |
 | Ledger / all payments — read | ✅ | ✅ | own household only |
 | Record manual payment | ✅ | ✅ | ❌ |
-| Reverse a payment / **refund a transaction** | ✅ | ✅ | ❌ |
+| Reverse a CASH payment / **refund any transaction** | ✅ | ✅ | ❌ |
 | Mid-year go-live: preview / commit | ✅ / ✅ | ✅ / ❌ | ❌ |
 | Reconcile with Stripe | ✅ | ✅ | ❌ |
 | Printable statements / sheets / invoices / ID sheets | ✅ | ✅ | ❌ (own kids' IDs shown in the portal) |
 | **Pay by card (Elements)** | ❌ (no reason) | ❌ | ✅ own household |
-| **Saved methods / order / autopay manage** | ✅ (see + force-disable) | view status | ✅ own household |
+| **Saved methods / order / autopay manage** | see status only | see status only | ✅ own household |
 | Parent invites / resets / account admin | ✅ | ✅ | ❌ |
-| Audit log — read | ✅ | ❌ | ❌ |
+| Audit log — read | ❌ *(nothing reads it yet — see below)* | ❌ | ❌ |
 
 Clean walls, on purpose: **finance never sees settings or staff accounts; parents never see another
 household, and never see the audit log or another child's record.** If a feature seems to need to cross a
 wall, stop and ask.
+
+**Two gaps in that table are real and are recorded rather than rounded up** (found in the 0.50.0
+pre-release audit, where both rows claimed a capability that has never existed):
+
+- **Nothing reads the audit log.** Every sensitive write appends to `audit_log` and always has, but
+  there is no procedure and no screen that reads it back — so today it is a forensic record you reach
+  with `sqlite3`, not a feature. Worth building; not worth claiming until it is.
+- **Nobody but a parent can switch autopay off** (§13.3). Staff see which card will be charged and
+  cannot stop it, so an office asked to halt a charge has to talk to the household.
+
+**A LEDGER REVERSAL AND A REFUND ARE NOT THE SAME ACTION**, which is why that row now says CASH.
+Reversing writes mirror rows: the bill re-opens and the family owes it again. That is the whole story
+for cash, because a person hands the notes back — and only half of one for a card, where Stripe still
+holds the money. So anything carrying a Stripe PaymentIntent is refused by `billing.reversePayment`
+and has to go through Refunds, which does both halves in the right order. `payments/refunds.ts`
+`isStripePayment` is the one predicate deciding that, shared with the refund router so a second list
+of "card-ish channels" cannot disagree with it.
 
 ---
 
@@ -442,7 +459,7 @@ wall, stop and ask.
 | Email | **the platform's provider** (`POST /api/fabric/email`) | No `nodemailer` — removed in the 2026-08-04 audit; nothing here holds mail credentials. |
 | Frontend | **React 18 + Vite 6** | Relative asset base, so one build works at the root and under a path prefix. |
 | Styling | **Tailwind CSS v4** + CSS custom properties | Tokens only; ported files stay structurally identical to upstream (§15). |
-| Components | **shadcn/ui** (copied-in Radix) | |
+| Components | **The org's ported "liquid glass" CSS system** + hand-rolled inline-SVG primitives | **NOT shadcn/ui, and not Radix** — this line said so until 0.50.0 and was never true. OpenMasjidOS/Display/Kiosk share `styles/{tokens,glass,app}.css` and none of them pull in shadcn/Radix/tailwind-merge, so matching them (§15 parity, the harder constraint) means not adding it here either. Nothing in `packages/web` imports Radix. Decision recorded in `docs/DATA_MODEL.md`. |
 | Animation | **Motion** | Reduced-motion, always. |
 | Data/state | **TanStack Query** via tRPC React integration | |
 | Icons | **lucide-react** + org masjid glyphs | |
@@ -996,7 +1013,10 @@ skipped. The push paths are optimizations; **money is never lost**, only delayed
   parent, alert the office. An indeterminate outcome (network error) is left `pending` and never counted as a
   strike — reconciliation resolves it, and the pending-run guard blocks a re-charge meanwhile.
 - Finance sees autopay status on a household's billing record, including which method will be charged; admin
-  can force-disable. Parents can cancel any time (effective immediately; audited).
+  can SEE which method will be charged. **Nobody but the parent can switch it off** — `portal.setAutopay`
+  is `parentProcedure` and there is no staff equivalent, so an office asked to stop a charge has to talk
+  to the household. (§5 and this line both claimed an admin force-disable until 0.50.0; it was never
+  built. Left as a gap rather than papered over: the consent is the household's and so is the card.)
 
 ### 13.4 There is NO Stripe webhook
 This is a deliberate architecture choice and the docs used to say the opposite. Every payment reaches the
@@ -1079,7 +1099,7 @@ look in step at runtime.
 **Platform-family UI parity is a requirement, not a vibe.** A masjid admin opening this app from the
 OpenMasjidOS dashboard should not be able to tell they left it — and that includes the **`/admin` route
 tree**, not just the parent portal. Concretely: the same Tailwind v4 token architecture (`tokens.css`,
-`data-theme="dark|light"` flip — no hardcoded hex anywhere), the same shadcn/ui component set, the same
+`data-theme="dark|light"` flip — no hardcoded hex anywhere), the same ported glass component set, the same
 Motion spring presets, the same typography stack, the same emerald/gold palette, arch-topped-card motifs,
 skeleton shimmer loaders, staggered grid entrances. The ported files (`tokens.css`, `app.css`, `glass.css`,
 `Glyphs.tsx`) are kept **structurally identical to upstream** so theme fixes re-sync cleanly — every
@@ -1132,7 +1152,7 @@ secrets). Additions:
 npm install         # all workspaces
 npm run dev         # server + web, hot reload (server :8080; Vite :5173 proxying /trpc, /api, /fabric, /statements)
 npm run build       # typecheck + build web and server
-npm run lint        # eslint + tsc --noEmit
+npm run lint        # tsc --noEmit across both workspaces (there is no eslint in this repo)
 npm run test        # vitest — both workspaces
 npm run image       # build & tag ghcr.io/openmasjid-solutions/openmasjidstudents:local
 ```
@@ -1154,7 +1174,7 @@ payment paths (there is no webhook to forward — see §13.4); a small mock of `
 
 ## 18. Definition of done (any feature)
 
-Builds via `npm run build`; `tsc` + eslint clean; the ledger / Fabric-contract / origin-policy tests pass;
+Builds via `npm run build`; `npm run lint` (`tsc --noEmit`) clean; the ledger / Fabric-contract / origin-policy tests pass;
 **role × origin matrix verified for touched routes** (an admin session over simulated tunnel gets 403; a
 parent token literally cannot fetch another household — tested, not assumed); works light+dark, LTR+RTL,
 reduced-motion honoured; new/changed screens reviewed side-by-side with the OpenMasjidOS dashboard for

@@ -477,7 +477,13 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                     {/* A card payment records itself, so there is no person to name — say so rather
                         than leaving a blank cell that reads like missing data. */}
                     <td className="muted">{p.by ?? t('billing.recordedAuto')}</td>
-                    <td className="actions">{p.amountCents > 0 && !p.reversalOf && <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { if (!window.confirm(t('billing.confirmReverse'))) return; await reverse.mutateAsync({ paymentId: p.id }); await refresh(); }}>{t('billing.reverse')}</button>}</td>
+                    {/* Reverse is a LEDGER-ONLY action, so it is offered only where that is the whole
+                        story. A card payment's money is at Stripe: reversing it here would re-open the
+                        bill while the family stayed charged, and would then block the real refund. The
+                        server refuses it either way; this stops the office being offered it. */}
+                    <td className="actions">{p.amountCents > 0 && !p.reversalOf && (p.byCard
+                      ? <span className="hint">{t('billing.reverseCard')}</span>
+                      : <button type="button" className="btn btn--ghost btn--sm" onClick={async () => { if (!window.confirm(t('billing.confirmReverse'))) return; await reverse.mutateAsync({ paymentId: p.id }); await refresh(); }}>{t('billing.reverse')}</button>)}</td>
                   </tr>
                 ))}
               </tbody>
