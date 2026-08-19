@@ -1013,6 +1013,7 @@
     "continueToCard": "Continue to payment",
     "payCard": "Pay",
     "payMin": "Enter at least 1.00.",
+    "autopayFee": "Automatic payments include the card processing fee, shown on your receipt. It is not the madrasah’s — it is what the card networks charge to accept a card.",
     "payHow": "How are you paying?",
     "payMethod_card": "Card",
     "payMethod_bank": "US bank account",

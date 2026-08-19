@@ -55,6 +55,8 @@ export function PayMethods({ familyId }: { familyId: string }) {
   const removeCard = trpc.portal.removeCard.useMutation();
   const setAutopay = trpc.portal.setAutopay.useMutation();
   const reorder = trpc.portal.reorderMethods.useMutation();
+  /** The fee policy, for the disclosure below the autopay toggle (0.51.0). */
+  const payCfg = trpc.portal.payConfig.useQuery();
   const [adding, setAdding] = useState<{ clientSecret: string; stripe: Promise<Stripe | null> } | null>(null);
   /** Set when the method just added still needs the parent to confirm it with their bank. */
   const [pendingNote, setPendingNote] = useState(false);
@@ -181,6 +183,11 @@ export function PayMethods({ familyId }: { familyId: string }) {
       {/* Consent copy stays visible while it is ON as well: a parent should be able to see what they
           agreed to at the moment they are deciding whether to keep it (§13.3). */}
       {cards.length > 0 && <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('family.autopayConsent')}</p>}
+      {/* THE FEE HAS TO BE DISCLOSED HERE TOO (0.51.0). An autopay charge is off-session — nobody is
+          looking at a screen when it happens — so this toggle is the only moment a parent can be told
+          that the automatic charge will carry the processing fee. Pay-now itemises it; without this
+          line, agreeing to autopay would be agreeing to a figure they were never shown. */}
+      {cards.length > 0 && payCfg.data?.fee.enabled && <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('family.autopayFee')}</p>}
     </section>
   );
 }
