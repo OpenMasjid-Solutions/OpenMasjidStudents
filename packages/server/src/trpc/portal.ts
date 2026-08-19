@@ -20,10 +20,11 @@ import { schoolYearMonths } from '../billing/schoolYear';
 import { yearCellsFor, type YearCell } from '../billing/yearCells';
 import { listSchools } from '../schools';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
-import { getCurrency, getWhatsApp } from '../settings';
+import { getCurrency, getProcessingFee, getWhatsApp } from '../settings';
 import { maskNumber, toE164 } from '../whatsapp/numbers';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
 import { stripeClient, stripeReady, publishableKey } from '../payments/stripe';
+import { feeMetadata, feeQuote, netOfIntent } from '../payments/fees';
 import { describePaymentMethod, repairPaymentMethods, resequenceMethods } from '../payments/methods';
 import { alertStaff, studentAmounts } from '../alerts';
 import { sendReceipt } from '../mail/notify';
@@ -205,12 +206,54 @@ export const portalRouter = router({
   }),
 
   /** Whether card payments are available + the publishable key for Stripe Elements (§13.1/§13.2). */
-  payConfig: parentProcedure.query(() => ({ ready: stripeReady(), publishableKey: publishableKey(), currency: getCurrency() })),
+  payConfig: parentProcedure.query(() => {
+    const fee = getProcessingFee();
+    return {
+      ready: stripeReady(),
+      publishableKey: publishableKey(),
+      currency: getCurrency(),
+      /**
+       * The fee policy, so the portal can show the total BEFORE a parent commits to it (0.51.0).
+       *
+       * `chooseMethod` is the honest consequence of a PaymentIntent's amount being fixed at creation: a
+       * card and a bank account cost the masjid different amounts, so when both are on the table the
+       * parent has to say which before there is an amount to charge (payments/fees.ts). With fees off
+       * this is false and the flow is exactly what it always was — Stripe offers whatever the account
+       * has enabled.
+       */
+      fee: { enabled: fee.enabled, bank: fee.enabled && fee.bankEnabled },
+      chooseMethod: fee.enabled && fee.bankEnabled,
+    };
+  }),
+
+  /**
+   * "What will I actually be charged?" — computed on the SERVER, always (0.51.0).
+   *
+   * The browser could do this arithmetic, and that is precisely why it must not: the figure a parent
+   * agrees to has to be the figure the PaymentIntent is created for, and two implementations of a
+   * gross-up rounding rule will disagree by a cent the first time somebody changes one of them. So the
+   * portal asks, and `createPayment` recomputes from the same function rather than trusting what came
+   * back down the wire (§16 — one place decides).
+   */
+  feeQuote: parentProcedure
+    .input(z.object({ amountCents: z.number().int().min(1).max(100_000_000), method: z.enum(['card', 'bank']).optional() }))
+    .query(({ input }) => feeQuote(input.amountCents, input.method ?? 'card')),
 
   /** Create a PaymentIntent for a chosen amount against one of the parent's families (§13.2). Card
    *  data never touches our server — the browser confirms with Elements, then calls confirmPayment
    *  (below) which records it. This just mints the intent against the admin-chosen Stripe account. */
-  createPayment: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64), amountCents: z.number().int().min(MIN_PAYMENT_CENTS).max(100_000_000) })).mutation(async ({ ctx, input }) => {
+  createPayment: parentProcedure
+    .input(
+      z.object({
+        familyId: z.string().min(1).max(64),
+        /** The TUITION amount — what the family owes and what the ledger will record. Any processing
+         *  fee is added on top here, server-side, and never arrives from the browser. */
+        amountCents: z.number().int().min(MIN_PAYMENT_CENTS).max(100_000_000),
+        /** Which rate to quote (payments/fees.ts). Ignored entirely when fees are off. */
+        method: z.enum(['card', 'bank']).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
     assertFamilyAccess(ctx, input.familyId);
     const stripe = stripeClient();
     if (!stripe) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Card payments are temporarily unavailable.' });
@@ -224,16 +267,30 @@ export const portalRouter = router({
         customerId = c.id;
         db.update(families).set({ stripeCustomerId: customerId, updatedAt: new Date() }).where(eq(families.id, fam.id)).run();
       }
+      /**
+       * The gross-up, recomputed here from the same function the quote came from — never taken from the
+       * request. A client-supplied fee would be a client-supplied discount (§14: the browser is not
+       * trusted with money), and a client-supplied TOTAL would let a parent settle a $300 bill for $3.
+       */
+      const method = input.method ?? 'card';
+      const quote = feeQuote(input.amountCents, method);
       const pi = await stripe.paymentIntents.create({
-        amount: input.amountCents,
+        amount: quote.grossCents,
         currency: getCurrency(),
         customer: customerId,
         description: `School balance — ${fam.name}`,
-        // §11.3 metadata. NEVER a Student ID or a child's name.
-        metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: fam.id, students_channel: 'portal' },
-        automatic_payment_methods: { enabled: true },
+        // §11.3 metadata. NEVER a Student ID or a child's name. `students_fee_cents` rides along when
+        // there is a fee, and is what stops the confirm-on-return and the daily reconciliation from
+        // crediting Stripe's cut to the family as tuition (payments/fees.ts).
+        metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: fam.id, students_channel: 'portal', ...feeMetadata(quote) },
+        // With a fee on the payer's choice is already made — the amount was grossed up for THIS method,
+        // so the intent must not then be settled with a different one at a different cost. With no fee
+        // the account's own automatic methods apply, exactly as before.
+        ...(quote.feeCents > 0
+          ? { payment_method_types: [method === 'bank' ? 'us_bank_account' : 'card'] }
+          : { automatic_payment_methods: { enabled: true as const } }),
       });
-      return { clientSecret: pi.client_secret, publishableKey: publishableKey() };
+      return { clientSecret: pi.client_secret, publishableKey: publishableKey(), ...quote };
     } catch (e) {
       // Never surface a raw Stripe/DB message to the parent (§15/§18) — log ids only, return one warm line.
       payLog.error('createPayment failed', { familyId: fam.id, error: (e as Error).message });
@@ -277,7 +334,13 @@ export const portalRouter = router({
     // the invoices the first attempt already paid down and would otherwise derive a second, different
     // split under new per-student keys.
     if (succeeded && recordedSplit(pi.id).length === 0) {
-      const amount = pi.amount_received || pi.amount || 0;
+      /**
+       * THE TUITION, not what the card was charged (0.51.0). Stripe reports the gross; the processing
+       * fee rode along in the metadata and comes straight back out here. Reading `pi.amount` directly —
+       * which is what this line used to do — would credit the family Stripe's cut as though they had
+       * overpaid, leaving a credit that quietly eats into next month's bill (payments/fees.ts).
+       */
+      const amount = netOfIntent(pi.amount_received || pi.amount || 0, md);
       // One card charge, one ledger row per child: the parent paid a single household amount, and it
       // is spread over their children's open invoices oldest-due-first. Reconciliation (§11.4) uses
       // the same split, so a lost confirm-on-return lands identically when the daily job replays it.

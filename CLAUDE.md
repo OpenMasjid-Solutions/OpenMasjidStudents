@@ -229,6 +229,15 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   anything.
 - **Manual payments**: channel `cash | check | ach | zelle | other`, amount, date, memo, and optionally the
   exact lines the money was handed over for.
+- **Processing fees** (0.51.0, `payments/fees.ts`): off by default, an office can decide the PAYER covers
+  Stripe’s cut rather than the school — $100 owed is charged as $103.30 and the madrasah receives $100.
+  Card and bank carry SEPARATE rates and separate switches, because 2.9%+30¢ against 0.8%-capped-at-$5 is
+  fifty-five dollars apart on a term bill. **A fee is not tuition and never enters the ledger**: it rides
+  on the PaymentIntent (`students_fee_cents`, §11.3) and `netOfIntent` is the ONE place a Stripe amount
+  becomes a tuition amount — the three read-back paths (portal confirm, autopay confirm, reconciliation)
+  all see the gross, and crediting it would leave a credit that quietly eats next month. Every screen says
+  the extra is the card networks’, not the masjid’s; the consumer half is advertised in `info.fee`.
+  Surcharging is regulated (debit cards, some states, network caps) so the panel says to check first.
 - **Refunds** (0.48.0, `payments/refunds.ts`): any transaction, grouped by Stripe PaymentIntent. A card
   payment is refunded at Stripe *and* reversed on the ledger, in that order; cash is reversed on the ledger
   with the screen saying plainly that a person still has to hand the money over. Full refunds only — a
@@ -341,11 +350,11 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | Capability | `admin` | `finance` | `parent` |
 | --- | :-: | :-: | :-: |
 | Settings: school name, currency, logo, colour, date format, contact, sheet wording | ✅ | ❌ | ❌ |
-| Settings: Stripe account, email alerts, parent emails, past-due policy, self-registration | ✅ | ❌ | ❌ |
+| Settings: Stripe account, **who pays the processing fee**, email alerts, parent emails, past-due policy, self-registration | ✅ | ❌ | ❌ |
 | Settings: WhatsApp (on/off, pause, events, country codes, test student, outreach, queue log) | ✅ | ❌ | ❌ |
 | Staff accounts (create, role, disable, reset password, school limits) | ✅ | ❌ | ❌ |
 | Staff WhatsApp number + which alerts they get on it | ✅ | ❌ | ❌ |
-| **Opt out of WhatsApp** (and back in) | ❌ | ❌ | ✅ anyone on their own household |
+| **Opt out of WhatsApp** (and back in) | ✅ *(0.51.0 — the office is told in person)* | ❌ | ✅ anyone on their own household |
 | Schools, school years, terms, courses, classes, rollover — write | ✅ | ❌ | ❌ |
 | Schools / years / courses / classes — read | ✅ | ✅ | ❌ |
 | Students / households / guardians / emergency contacts — write | ✅ | ❌ | ❌ |
@@ -601,7 +610,12 @@ Non-negotiable rules:
   rather than the household because it is a decision about a phone — and **nothing overrides it**, not the
   pause exception and not an office broadcast — but **any adult on a household may set it for anyone on that
   household**, because the portal IS the household (§5) and two parents sharing one balance and one set of
-  cards should not need the office to switch a spouse's number on. Every parent message is an office-editable
+  cards should not need the office to switch a spouse's number on. **The OFFICE may set it too, from 0.51.0**
+  (`people.guardianWhatsApp`, its own procedure so the trail records `by: 'office'` rather than burying it in a
+  general edit): a parent says "stop messaging me" at pickup or down the phone, never by signing into a
+  portal and finding a toggle, and an office that could not act on being told had only two options — keep
+  messaging them, or delete the number and lose the ability to ring them at all. It sets the same one flag,
+  so nothing overrides it whichever side set it. Every parent message is an office-editable
   TEMPLATE with a fixed tag list per message (`whatsapp/templates.ts`); there is no tag for a Student ID or a
   card, which is the enforcement rather than a rule in a document. **A WhatsApp GROUP is a STAFF channel**
   (0.50.0) — a finance group subscribing to the same `ALERT_EVENTS` a staff account can, and the fifth
@@ -906,6 +920,7 @@ omos_app           = donations | kiosk | students-portal    ← students-portal 
 students_family_id = fam_x1                  ← REQUIRED (from lookup / known internally)
 students_student_id = stu_1                  ← optional, the matched student
 students_channel   = portal | autopay        ← set by this app, so reconciliation can tell them apart
+students_fee_cents = 330                     ← 0.51.0: REQUIRED whenever the payer covered Stripe’s cut
 ```
 **Never put a Student ID or a child's name in Stripe metadata, descriptions, or URLs** — metadata is visible
 in Stripe dashboards and exports. Description: `School balance — <family label>`. **Receipts must say
@@ -1132,7 +1147,9 @@ secrets). Additions:
   manual-payment UI. One `billing/lines.ts` for what a bill is made of and in what order. One
   `alerts/index.ts` for who hears about an event. One `schools/index.ts` for school scope. One
   `settings/dates.ts` for every date edge. One `auth/usernames.ts` for how a username matches. One
-  `payments/methods.ts` for what a saved method is and what order they are tried in. One `payments/stripe.ts`
+  `payments/methods.ts` for what a saved method is and what order they are tried in. One
+  `payments/fees.ts` for whether a payer covers Stripe’s cut, and for what a PaymentIntent’s amount means
+  once it has. One `payments/stripe.ts`
   that imports the SDK. One `whatsapp/index.ts` for whether a WhatsApp message goes out and to whom, and one
   `whatsapp/numbers.ts` for what a number is on the wire. Adding a second place is the bug.
 - Unit tests for the ledger: exact pay, partial, overpay→credit, multi-invoice, replayed idempotency key,
@@ -1335,6 +1352,7 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | a balance being wrong | `billing/ledger.ts` (`reallocateStudent` first) |
   | a month showing the wrong state | `billing/yearCells.ts`, `billing/period.ts` |
   | a card, a refund or a saved method | `payments/*` — and only `payments/stripe.ts` imports the SDK |
+  | who pays the processing fee, or an amount read back off a PaymentIntent | `payments/fees.ts` |
   | who gets told | `alerts/index.ts`, then `mail/notify.ts` (which fans out BOTH parent channels) |
   | a WhatsApp message — whether it goes, to whom, or what it says | `whatsapp/index.ts`, `whatsapp/numbers.ts`, `whatsapp/templates.ts` |
   | which household a pause does NOT apply to (either channel) | `settings/testStudent.ts` |

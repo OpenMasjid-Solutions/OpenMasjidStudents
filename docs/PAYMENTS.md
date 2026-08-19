@@ -117,6 +117,50 @@ Consumer-side note: a kiosk or donation site must offer its amount field even at
 `info.allowAdvance` flag exists to tell it so — see
 [`FABRIC_BILLING_CONTRACT.md`](./FABRIC_BILLING_CONTRACT.md) §11.2.
 
+## 6. Processing fees — who pays Stripe's cut (0.51.0, `payments/fees.ts`)
+
+Off by default. A madrasah pays roughly **2.9% + 30¢** to accept a card, so a $100 invoice brings in
+$96.80; switch this on and the payer covers it instead — the card is charged **$103.30** and the school
+receives the full $100. Cash, cheque and Zelle are never touched, because there is no processing fee to
+pass on and inventing one would be a charge for nothing.
+
+**A fee is not tuition and never enters the ledger.** That is the whole invariant. Every balance in this
+app is `invoiced − paid` (§9), so crediting $103.30 against a $100 bill leaves a $3.30 credit that
+absorbs part of next month — and it is not an error anybody sees, it is a slow drift that compounds for
+as long as the setting is on. The dangerous direction is therefore *reading a Stripe amount back*, and
+three paths do it: the portal's confirm-on-return, autopay's synchronous confirm, and the daily
+reconciliation. All three go through `netOfIntent`, and nothing else may do that subtraction.
+
+**The fee travels on the PaymentIntent** (`students_fee_cents`, §11.3), not in a setting. Reconciliation
+runs a day later, on a job that never saw the request, and by then the rate may have changed or the
+feature been switched off — so the figure that was true when the payer agreed to it is carried with the
+charge. It is also what lets Donations and Kiosk mint their own intents and still be read correctly here.
+
+**Two rates, because they are not the same cost.** A card is 2.9% + 30¢ with no ceiling; ACH is 0.8%
+**capped at $5**. On a $2,000 term payment that is $59.79 against $5.00, so the bank rate has its own
+switch (an office may reasonably pass on the card cost and absorb the bank one) and the cap is honoured
+— grossing up past it would charge a percentage of a fee that had stopped growing, which is money taken
+for nothing. Because a PaymentIntent's amount is fixed before Stripe asks the payer anything, an install
+that passes on both asks the parent which they are using *first*.
+
+**The arithmetic, and why the obvious version is wrong.** Stripe takes its percentage of the GROSS, so
+`gross = (tuition + fixed) / (1 − rate)`, rounded **up**. A naive markup on the tuition gives $103.20 and
+leaves the school a dime short on every $100 — an invoice that settles at $99.99 and stays open forever,
+showing a family as unpaid over a penny. Rounding up means the school is occasionally a cent over, which
+is a rounding; a cent under is a support call.
+
+**A refund returns the whole charge**, fee included, because that is what the payer handed over —
+`stripe.refunds.create` with no amount refunds the PaymentIntent in full, and the ledger reverses the
+tuition. Stripe does not return its own cut on a refund, so the madrasah absorbs it. That is the honest
+outcome and the refund screen says so.
+
+**Compliance is the masjid's, and we say so out loud.** Passing a card fee to the payer is regulated:
+US federal law forbids it on **debit** cards, a few states forbid it outright, and the card networks cap
+it at what acceptance actually costs. This app cannot know a masjid's jurisdiction or its Stripe
+agreement, so the rate is clamped to something that could not exceed a real cost of acceptance (10%),
+the default is off, and the Settings panel carries the warning above the switch rather than in a
+footnote.
+
 ## Ledger invariants (see `billing/ledger.ts`)
 
 - All money in **integer cents**. Balances **derived, never stored**. Payments **immutable** (corrections =

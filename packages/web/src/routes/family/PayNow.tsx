@@ -36,15 +36,35 @@ export function PayNow({ familyId, owedCents, currency, onPaid, chosen = [] }: {
   const chosenCents = chosen.reduce((s, l) => s + l.amountCents, 0);
   const picking = chosen.length > 0;
 
+  /**
+   * THE PROCESSING FEE (0.51.0), when the madrasah has chosen to pass Stripe's cut on.
+   *
+   * `method` exists because a card and a bank account cost the school different amounts, and a
+   * PaymentIntent's amount is fixed before Stripe asks the payer anything — so on an install that
+   * passes on both, the parent picks first. When only the card fee is on there is nothing to choose
+   * and no question is asked.
+   */
+  const cfg = trpc.portal.payConfig.useQuery();
+  const [method, setMethod] = useState<'card' | 'bank'>('card');
+  const cents = picking ? chosenCents : parseCents(amount) ?? 0;
+  /**
+   * Quoted by the SERVER, from the same function that will create the charge (§16). The browser could
+   * do this arithmetic and must not: the figure a parent agrees to has to be the figure their card is
+   * charged, and two implementations of a rounding rule disagree by a cent the moment one is edited.
+   */
+  const quote = trpc.portal.feeQuote.useQuery({ amountCents: cents, method }, { enabled: !!cfg.data?.fee.enabled && cents > 0 });
+  const fee = cfg.data?.fee.enabled ? quote.data ?? null : null;
+
   async function start(e: FormEvent) {
     e.preventDefault();
     setError('');
     // When lines are ticked, THEY are the amount — a parent who chose the book fee has already said how
     // much, and letting the two disagree is how money ends up on the wrong line.
-    const cents = picking ? chosenCents : parseCents(amount);
     if (!cents || cents < 100) return setError(t('family.payMin'));
     try {
-      const r = await create.mutateAsync({ familyId, amountCents: cents });
+      // The TUITION goes up, never the total: the server re-quotes and adds the fee itself, so a
+      // tampered browser cannot settle a $300 bill for $3 (§14).
+      const r = await create.mutateAsync({ familyId, amountCents: cents, method });
       if (r.clientSecret && r.publishableKey) setIntent({ clientSecret: r.clientSecret, stripe: loadStripe(r.publishableKey), lines: chosen });
       else setError(t('family.payUnavailable'));
     } catch (err) {
@@ -94,6 +114,32 @@ export function PayNow({ familyId, owedCents, currency, onPaid, chosen = [] }: {
           <input className="input glass-inset" type="number" step="0.01" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
           {payingAhead && <p className="hint">{t('family.payAheadHint')}</p>}
         </>
+      )}
+      {/* Which way they are paying, only where the two actually cost the school different amounts.
+          Asked BEFORE the total is shown, because it changes the total. */}
+      {cfg.data?.chooseMethod && (
+        <>
+          <span className="label">{t('family.payHow')}</span>
+          <div className="chip-row">
+            {(['card', 'bank'] as const).map((m) => (
+              <label key={m} className={`chip ${method === m ? '' : 'is-muted'}`} style={{ cursor: 'pointer' }}>
+                <input type="radio" name="pay-method" checked={method === m} onChange={() => setMethod(m)} style={{ marginInlineEnd: '0.35rem' }} />
+                {t(`family.payMethod_${m}`)}
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+      {/* WHAT THEY WILL ACTUALLY BE CHARGED, itemised, before they commit to it — and a plain sentence
+          saying whose money the extra is. A total that appears for the first time on Stripe's own form
+          is the version of this feature that generates phone calls. */}
+      {fee && fee.feeCents > 0 && (
+        <div className="glass-inset pay-fee">
+          <div className="pay-fee-row"><span>{t('family.feeTuition')}</span><span className="tnum">{formatMoney(fee.netCents, currency)}</span></div>
+          <div className="pay-fee-row"><span>{t(`family.feeLine_${fee.method}`)}</span><span className="tnum">{formatMoney(fee.feeCents, currency)}</span></div>
+          <div className="pay-fee-row pay-fee-total"><strong>{t('family.feeTotal')}</strong><strong className="tnum">{formatMoney(fee.grossCents, currency)}</strong></div>
+          <p className="hint" style={{ marginBlockStart: '0.4rem', marginBlockEnd: 0 }}>{t(`family.feeWhose_${fee.method}`)}</p>
+        </div>
       )}
       {error && <p className="form-error">{error}</p>}
       <button type="submit" className="btn btn--primary btn--block" disabled={create.isPending}>{create.isPending ? t('auth.working') : t('family.continueToCard')}</button>

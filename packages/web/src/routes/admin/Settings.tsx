@@ -213,6 +213,25 @@ export function Settings() {
   /** Students nobody can email — every message above depends on an address existing. */
   const noEmail = trpc.settings.noEmailStudents.useQuery();
 
+  /** Who pays Stripe's cut (0.51.0). Same shape as the past-due block above: read, patch, invalidate. */
+  const feeCfg = trpc.settings.processingFeeGet.useQuery();
+  const setFee = trpc.settings.processingFeeSet.useMutation();
+  const [feeMsg, setFeeMsg] = useState<string | null>(null);
+  const money = (c: number) => formatMoney(c, feeCfg.data?.currency ?? 'usd');
+
+  async function saveFee(patch: { enabled?: boolean; cardPercentBps?: number; cardFixedCents?: number; bankEnabled?: boolean }) {
+    setFeeMsg(null);
+    // Same guard as the past-due numbers: a box mid-edit is NaN, and the server would rightly refuse it.
+    const clean = Object.fromEntries(Object.entries(patch).filter(([, v]) => typeof v !== 'number' || Number.isFinite(v)));
+    if (!Object.keys(clean).length) return;
+    try {
+      await setFee.mutateAsync(clean);
+      await utils.settings.processingFeeGet.invalidate();
+    } catch (e) {
+      setFeeMsg((e as Error).message);
+    }
+  }
+
   async function savePastDue(patch: { parentEmails?: boolean; graceDays?: number; everyDays?: number }) {
     setPastDueMsg(null);
     // The number inputs fire on every keystroke, and an empty box reads as NaN — the server would refuse
@@ -785,6 +804,84 @@ export function Settings() {
             <p className="muted" style={{ fontSize: '0.85rem', marginBlockStart: '0.5rem' }}>
               {stripeAccounts.data?.ready ? t('settings.paymentsReady') : t('settings.paymentsNotReady')}
             </p>
+          </>
+        )}
+
+        {/* ── Who pays the processing fee (0.51.0) ─────────────────────────────
+            Inside Payments rather than a section of its own: it is a property of how this madrasah
+            takes card money, and the account it charges is right above it. */}
+        <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.fee')}</h3>
+        <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('settings.feeHint')}</p>
+        {feeCfg.data && (
+          <>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
+              <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={feeCfg.data.enabled} onChange={() => void saveFee({ enabled: !feeCfg.data!.enabled })} disabled={setFee.isPending} />
+              <span>{t('settings.feeOn')}<br /><span className="hint">{t('settings.feeOnHint')}</span></span>
+            </label>
+            {/* The rules are the masjid's jurisdiction and card agreements, not ours — but shipping a
+                mandatory card fee without saying so would be a disservice. Always shown, not only when
+                the switch is on: it is what the decision needs to be made against. */}
+            <p className="notice notice--warn" style={{ marginBlock: '0.6rem' }}>{t('settings.feeLegal')}</p>
+            {feeCfg.data.enabled && (
+              <>
+                <div className="inline-form glass-inset">
+                  <div className="field" style={{ flex: '0 1 9rem' }}>
+                    <label className="label" htmlFor="fee-card-pct">{t('settings.feeCardPct')}</label>
+                    <input
+                      id="fee-card-pct"
+                      className="input glass-inset"
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      max={10}
+                      value={(feeCfg.data.cardPercentBps / 100).toString()}
+                      onChange={(e) => void saveFee({ cardPercentBps: Math.round(Number(e.target.value) * 100) })}
+                    />
+                    <span className="hint">{t('settings.feePctHint')}</span>
+                  </div>
+                  <div className="field" style={{ flex: '0 1 9rem' }}>
+                    <label className="label" htmlFor="fee-card-fixed">{t('settings.feeCardFixed')}</label>
+                    <input
+                      id="fee-card-fixed"
+                      className="input glass-inset"
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      max={10}
+                      value={(feeCfg.data.cardFixedCents / 100).toFixed(2)}
+                      onChange={(e) => void saveFee({ cardFixedCents: Math.round(Number(e.target.value) * 100) })}
+                    />
+                    <span className="hint">{t('settings.feeFixedHint')}</span>
+                  </div>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBlockStart: '0.6rem', cursor: 'pointer' }}>
+                  <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={feeCfg.data.bankEnabled} onChange={() => void saveFee({ bankEnabled: !feeCfg.data!.bankEnabled })} disabled={setFee.isPending} />
+                  <span>{t('settings.feeBank')}<br /><span className="hint">{t('settings.feeBankHint')}</span></span>
+                </label>
+                {/* Worked examples, computed by the SAME function that will charge the card — so this
+                    cannot drift from the arithmetic the way a hand-written "about 3%" would. */}
+                <table className="data-table" style={{ marginBlockStart: '0.7rem' }}>
+                  <thead>
+                    <tr>
+                      <th>{t('settings.feeExBill')}</th>
+                      <th>{t('settings.feeExCard')}</th>
+                      {feeCfg.data.bankEnabled && <th>{t('settings.feeExBank')}</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {feeCfg.data.examples.map((ex) => (
+                      <tr key={ex.netCents}>
+                        <td className="tnum">{money(ex.netCents)}</td>
+                        <td className="tnum">{t('settings.feeExRow', { total: money(ex.card.grossCents), fee: money(ex.card.feeCents) })}</td>
+                        {feeCfg.data!.bankEnabled && <td className="tnum">{t('settings.feeExRow', { total: money(ex.bank.grossCents), fee: money(ex.bank.feeCents) })}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="hint" style={{ marginBlockStart: '0.4rem' }}>{t('settings.feeExHint')}</p>
+              </>
+            )}
+            {feeMsg && <div className="notice" style={{ marginBlockStart: '0.6rem' }}>{feeMsg}</div>}
           </>
         )}
       </section>

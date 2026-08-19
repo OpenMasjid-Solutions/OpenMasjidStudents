@@ -48,6 +48,9 @@ export const SETTING_KEYS = {
   pastDue: 'past_due',
   // ISO date of the last past-due digest sent to the office, so a daily job does not become a daily email.
   pastDueStaffLast: 'past_due_staff_last',
+  // JSON — whether the PAYER covers Stripe's cut rather than the school (0.51.0). Off by default; the
+  // math and the reasoning live in payments/fees.ts. See `getProcessingFee`.
+  processingFee: 'processing_fee',
   // The masjid's own logo, stored as a `data:` URI so it travels with the DB and needs no file
   // handling or attachment plumbing. Bounded and magic-byte checked on the way in (§14).
   schoolLogo: 'school_logo',
@@ -453,6 +456,89 @@ export function getPastDue(): PastDueConfig {
 
 export function setPastDue(patch: Partial<PastDueConfig>): void {
   setSetting(SETTING_KEYS.pastDue, JSON.stringify({ ...getPastDue(), ...patch }));
+}
+
+/**
+ * Does the PAYER cover Stripe's cut, or does the school? (0.51.0)
+ *
+ * Off by default and that is not a shrug — turning it on changes what every parent is charged, so it
+ * has to be a decision somebody made rather than a default they inherited in an update. The math is in
+ * payments/fees.ts, which is also where the compliance note lives; this is only the stored policy.
+ *
+ * The card and bank rates are SEPARATE and the bank one has its own switch, because they are not
+ * remotely the same cost: 2.9% + 30¢ against 0.8% capped at $5. An office may reasonably pass on the
+ * card cost and absorb the bank one, and on a $2,000 term payment the difference between the two rates
+ * is fifty-five dollars of somebody's money.
+ *
+ * The defaults are Stripe's own published US rates, so an office that switches this on without reading
+ * anything is charging what it is actually being charged.
+ */
+export interface ProcessingFeeConfig {
+  /** The master switch. Off means every quote in the app is the identity — no code path changes. */
+  enabled: boolean;
+  /** Card rate in basis points (290 = 2.9%) and the per-charge fixed part, in cents. */
+  cardPercentBps: number;
+  cardFixedCents: number;
+  /** US bank account (ACH) — its own switch, because absorbing this one is a reasonable choice. */
+  bankEnabled: boolean;
+  bankPercentBps: number;
+  bankFixedCents: number;
+  /** ACH is capped by Stripe. Without honouring the cap a large payment would be charged a percentage
+   *  of a fee that stopped growing — money taken for nothing. 0 means uncapped. */
+  bankCapCents: number;
+}
+
+const FEE_DEFAULTS: ProcessingFeeConfig = {
+  enabled: false,
+  cardPercentBps: 290,
+  cardFixedCents: 30,
+  bankEnabled: false,
+  bankPercentBps: 80,
+  bankFixedCents: 0,
+  bankCapCents: 500,
+};
+
+/**
+ * A hard ceiling on the percentage, not a preference.
+ *
+ * 10% is far above any real cost of card acceptance, which is the thing the card networks actually cap
+ * a passed-on fee at (see payments/fees.ts). Its job is to stop a typo — a `2900` meant as 2.9% —
+ * from adding $290 to a $100 bill and taking it off a family's card before anybody notices.
+ */
+const MAX_FEE_BPS = 1000;
+
+const clampBps = (v: unknown, fallback: number): number => {
+  const n = Math.trunc(Number(v));
+  return Number.isFinite(n) && n >= 0 && n <= MAX_FEE_BPS ? n : fallback;
+};
+
+const clampCents = (v: unknown, fallback: number, max: number): number => {
+  const n = Math.trunc(Number(v));
+  return Number.isFinite(n) && n >= 0 && n <= max ? n : fallback;
+};
+
+export function getProcessingFee(): ProcessingFeeConfig {
+  const raw = getSetting(SETTING_KEYS.processingFee);
+  if (!raw) return { ...FEE_DEFAULTS };
+  try {
+    const p = JSON.parse(raw) as Partial<ProcessingFeeConfig>;
+    return {
+      enabled: p.enabled === true,
+      cardPercentBps: clampBps(p.cardPercentBps, FEE_DEFAULTS.cardPercentBps),
+      // A fixed part above a few dollars is a typo, not a payment processor's pricing.
+      cardFixedCents: clampCents(p.cardFixedCents, FEE_DEFAULTS.cardFixedCents, 1000),
+      bankEnabled: p.bankEnabled === true,
+      bankPercentBps: clampBps(p.bankPercentBps, FEE_DEFAULTS.bankPercentBps),
+      bankFixedCents: clampCents(p.bankFixedCents, FEE_DEFAULTS.bankFixedCents, 1000),
+      bankCapCents: clampCents(p.bankCapCents, FEE_DEFAULTS.bankCapCents, 100_000),
+    };
+  } catch {
+    return { ...FEE_DEFAULTS };
+  }
+}
+
+export function setProcessingFee(patch: Partial<ProcessingFeeConfig>): void {
+  setSetting(SETTING_KEYS.processingFee, JSON.stringify({ ...getProcessingFee(), ...patch }));
 }
 
 /** The last day the office's own past-due digest went out, or null. */

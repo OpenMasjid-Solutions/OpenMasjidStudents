@@ -318,7 +318,7 @@ async function queueGuardian(event: string, r: WaRecipient, text: string): Promi
     recipientId: r.guardianId,
     familyId: r.familyId,
     status: res.queued ? 'queued' : 'failed',
-    reason: res.queued ? null : res.reason,
+    reason: res.queued ? (res.note ?? null) : res.reason,
   });
   return res.queued;
 }
@@ -444,7 +444,7 @@ export async function notifyGroups(event: string, msg: { title: string; text: st
       // past. `detail` is the only thing that varies.
       const body = waStaffAlert(msg.title, g.detail ? msg.text : msg.publicText);
       const res = await sendPlatformWhatsAppGroup(groupId, body);
-      writeLog({ event, recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? null : res.reason });
+      writeLog({ event, recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? (res.note ?? null) : res.reason });
       if (res.queued) queued++;
     }
     // Ids and counts only — never the alert text (§14).
@@ -478,7 +478,7 @@ export async function testGroup(groupId: string): Promise<'queued' | 'off' | 'un
     // Terse, like the alerts it is standing in for — and it must READ like one, or it is not a test of
     // anything. No salam, no letterhead.
     const res = await sendPlatformWhatsAppGroup(groupId, waStaffAlert('Test', 'Staff alerts will reach this group. No reply is needed.'));
-    writeLog({ event: 'test', recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? null : res.reason });
+    writeLog({ event: 'test', recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? (res.note ?? null) : res.reason });
     return res.queued ? 'queued' : 'failed';
   } catch (e) {
     log.warn('whatsapp group test failed', { error: (e as Error).message });
@@ -531,7 +531,7 @@ export async function notifyStaff(event: string, text: string): Promise<number> 
         continue;
       }
       const res = await sendPlatformWhatsApp(s.to, text);
-      writeLog({ event, recipientKind: 'staff', recipientId: s.userId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? null : res.reason });
+      writeLog({ event, recipientKind: 'staff', recipientId: s.userId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? (res.note ?? null) : res.reason });
       if (res.queued) queued++;
     }
     log.info('whatsapp staff notify', { event, recipients: to.length, queued });

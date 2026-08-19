@@ -26,6 +26,7 @@ import { sendReceipt, sendAutopayFailure, sendAutopayUpcoming, sendCardExpiring 
 import { formatDate } from '../settings/dates';
 import { stripeClient } from './stripe';
 import { orderedMethods } from './methods';
+import { feeMetadata, feeQuote } from './fees';
 
 const log = makeLog('autopay');
 
@@ -183,17 +184,28 @@ export async function chargeFamily(familyId: string, amountCents: number, today:
   }
   const runId = createAutopayRun(familyId, amountCents, today, (enr.failureCount ?? 0) + 1);
   if (!runId) return; // already attempted today
+  /**
+   * THE PROCESSING FEE, QUOTED FOR THE METHOD THIS ATTEMPT WILL ACTUALLY USE (0.51.0).
+   *
+   * `amountCents` stays the tuition throughout — it is what `autopay_runs` stores, what the ledger
+   * records, and what the parent's notices quote — and the gross is used for the Stripe charge alone.
+   * Keeping the two apart is what makes the retry ladder safe: attempt 2 may fall through to a bank
+   * account, which costs the masjid a fifth of what the card did, and re-quoting per attempt means the
+   * family is charged the cost of the method that actually paid rather than the one that declined.
+   */
+  const kind = (ordered.find((m) => m.id === chosenPmId)?.type ?? 'card') === 'us_bank_account' ? 'bank' : 'card';
+  const quote = feeQuote(amountCents, kind);
   try {
     const pi = await stripe.paymentIntents.create(
       {
-        amount: amountCents,
+        amount: quote.grossCents,
         currency: getCurrency(),
         customer: fam.stripeCustomerId,
         payment_method: chosenPmId,
         off_session: true,
         confirm: true,
         description: 'Autopay tuition',
-        metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: familyId, students_channel: 'autopay', students_autopay_run_id: runId },
+        metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: familyId, students_channel: 'autopay', students_autopay_run_id: runId, ...feeMetadata(quote) },
       },
       { idempotencyKey: `autopay:${runId}` },
     );

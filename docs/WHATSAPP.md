@@ -136,6 +136,21 @@ blocks on a send, no screen says "sent", and no flow waits for one to arrive.
 The status endpoint returns only `{available, reason}` — the limits are not exposed to apps, so this
 app cannot show the masjid's actual window and says "9pm–7am unless your admin changed it".
 
+**QUIET HOURS APPLY TO STAFF ALERTS TOO, AND THAT IS A KNOWN GAP** (0.51.0). The window is the
+platform's and it is one window for every message on the queue: `{to, text}` is the entire send
+contract, there is no urgency flag, and this app has no way to mark a message as one that must not
+wait. So a declined card at nine on a Sunday evening is held until seven the next morning — which is
+the exact scenario §9 of CLAUDE.md gives as the *reason* staff carry a number at all ("it reaches a
+treasurer's phone and does not reach their inbox"). Our own doctrine and the platform's default
+contradict each other here, and the platform is the one holding the message.
+
+Nothing in this app can fix it and nothing here should try: a workaround would mean going round the
+queue, and the queue is the whole defence for the masjid's number. It needs an OS-side change —
+either a per-message `urgent: true` that skips the window (and only the window, never the caps), or
+quiet hours becoming a per-recipient-kind setting. Until then, the honest position is that WhatsApp
+is a *fast-most-of-the-time* staff channel and email is the one that arrives at 21:30. Anything
+genuinely time-critical must not be WhatsApp-only.
+
 **One recipient per call**, by the API's design. We loop where we must and the queue paces it — but
 the shape of every feature here is "one parent at a time", never a broadcast.
 

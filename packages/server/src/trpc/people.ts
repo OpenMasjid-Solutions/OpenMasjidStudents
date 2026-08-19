@@ -826,8 +826,9 @@ export const peopleRouter = router({
       if (input.name !== undefined) patch.name = input.name;
       if (input.phone !== undefined) patch.phone = blankToNull(input.phone);
       if (input.email !== undefined) patch.email = blankToNull(input.email);
-      // Which country this number belongs to (0.50.0). Deliberately NOT `waOptOut`: that is the
-      // guardian's own answer, given in the parent portal, and no office screen overrides it.
+      // Which country this number belongs to (0.50.0). Still deliberately NOT `waOptOut` — that has a
+      // procedure of its own (`guardianWhatsApp`) so the trail records who decided it, which a field
+      // buried in a general edit could never do.
       if (input.phoneCountry !== undefined) patch.phoneCountry = blankToNull(input.phoneCountry);
       db.update(guardians).set(patch).where(eq(guardians.id, g.id)).run();
       if (input.relation !== undefined) {
@@ -846,6 +847,35 @@ export const peopleRouter = router({
       audit(auditActor(ctx), 'guardian.update', { entity: 'guardian', entityId: g.id });
       return { ok: true as const };
     }),
+
+  /**
+   * Stop messaging this guardian on WhatsApp, or start again — from the OFFICE (0.51.0).
+   *
+   * Until now this was the parent's switch alone, and the reasoning was sound as far as it went: it is
+   * a decision about somebody's own phone, so it belongs to them. What that missed is how a parent
+   * actually says it. They say it at pickup, or down the phone, or to whoever is standing at the desk —
+   * not by signing into a portal and finding a toggle. An office that could not act on being told
+   * "please stop messaging me" had two options, both bad: keep messaging them, or delete the number and
+   * lose the ability to ring them at all.
+   *
+   * A PROCEDURE OF ITS OWN rather than a field on `guardianUpdate`, for the same reason a payment
+   * reversal is not an edit: the question "who decided this?" has to be answerable. The audit detail
+   * carries `by: 'office'`, and the portal's own `messagingSet` stays exactly as it was, so the trail
+   * distinguishes a parent's choice from the office's record of one.
+   *
+   * The RULE THIS DOES NOT BREAK: nothing overrides an opt-out (§9). This sets the same one flag the
+   * parent sets, so the effect of turning it on is identical however it got there — the pause exception,
+   * the outreach button and the test student still do not reach an opted-out person. Turning it back ON
+   * is allowed for the same reason it is allowed in the portal (an office asked to resume, a number
+   * changed hands), and it is audited just as loudly.
+   */
+  guardianWhatsApp: adminProcedure.input(z.object({ id: ID, optOut: z.boolean() })).mutation(({ ctx, input }) => {
+    const g = db.select({ id: guardians.id }).from(guardians).where(eq(guardians.id, input.id)).get();
+    if (!g) throw new TRPCError({ code: 'NOT_FOUND', message: 'Guardian not found.' });
+    db.update(guardians).set({ waOptOut: input.optOut, updatedAt: now() }).where(eq(guardians.id, g.id)).run();
+    audit(auditActor(ctx), 'guardian.whatsapp', { entity: 'guardian', entityId: g.id, detail: { optOut: input.optOut, by: 'office' } });
+    return { ok: true as const };
+  }),
 
   /** Link an existing guardian to another family (guardians can span families). */
   guardianLinkFamily: adminProcedure

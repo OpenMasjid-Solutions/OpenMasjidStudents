@@ -401,3 +401,11 @@
 .year-chip.is-void .year-chip-mark,
 .year-chip.is-none .year-chip-mark,
 .year-chip.is-before .year-chip-mark { color: var(--color-ink-faint); }
+
+/* The processing-fee breakdown on Pay now (0.51.0). A receipt shape rather than a paragraph: a parent
+   is checking three numbers add up, and the rule above the total is what makes it read as arithmetic
+   they can follow rather than a figure we asserted. Tokens only — see §15. */
+.pay-fee { padding: 0.6rem 0.75rem; border-radius: var(--radius-button); }
+.pay-fee-row { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.2rem 0; font-size: 0.9rem; }
+.pay-fee-row .tnum { font-variant-numeric: tabular-nums; }
+.pay-fee-total { border-block-start: 1px solid var(--glass-border); margin-block-start: 0.3rem; padding-block-start: 0.4rem; }

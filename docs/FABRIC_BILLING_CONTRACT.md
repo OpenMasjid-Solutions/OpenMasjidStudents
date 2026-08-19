@@ -114,9 +114,45 @@ app just gave you.
 { "v": 2 }
 → { "v": 2, "enabled": true, "schoolName": "An-Noor Weekend School", "currency": "usd",
     "tagline": "Pay tuition with your child's Student ID",
-    "allowAdvance": true, "minAmountCents": 100 }
+    "allowAdvance": true, "minAmountCents": 100,
+    // fee (0.51.0, additive): does the PAYER cover Stripe's cut? See below — `enabled: false` is the
+    // shape every consumer written before this already behaves correctly for.
+    "fee": { "enabled": true,
+             "card": { "percentBps": 290, "fixedCents": 30 },
+             "bank": { "percentBps": 80, "fixedCents": 0, "capCents": 500 } } }
 // "enabled": false (setup incomplete or external payments turned off by admin) → consumers hide the campaign
 ```
+
+**`fee` (added 0.51.0, additive — no version bump).** A madrasah may decide the payer covers the card
+processing fee rather than the school. `fee.enabled: false` — the default, and what every existing
+install returns — means **change nothing**: charge the tuition, report the tuition, and the masjid
+absorbs Stripe's cut exactly as it does today. `card` is null when the feature is off; `bank` is null
+whenever the office is absorbing the (much smaller, capped) bank fee, and a null means **do not add
+one**.
+
+**What a consumer must do when `fee.enabled` is true.** Three things, and the third is the one that
+matters:
+
+1. **Gross up, and show the payer the breakdown before they commit.** The fee is a percentage of the
+   GROSS, not of the tuition, so the arithmetic is `gross = (tuition + fixedCents) / (1 − percentBps/10000)`,
+   rounded UP, and `fee = gross − tuition`. Where a `capCents` is present, if that implied fee exceeds
+   it the answer is simply `tuition + capCents`. A naive markup — percentage of the tuition — leaves the
+   school ten cents short on every $100 and is the mistake this formula exists to prevent.
+2. **Say whose money it is, in words.** The payer must be told plainly that the extra is not the
+   madrasah's: it is what Visa, Mastercard and American Express charge to accept a card and it goes to
+   the payment processor. This app's own wording is *"The processing fee is not the madrasah's — it is
+   what Visa, Mastercard and American Express charge to accept a card, and it goes straight to the
+   payment processor. Paying by cash or cheque at the office avoids it."* Match the substance.
+3. **Write `students_fee_cents` onto the PaymentIntent, and report the NET in `record-payment`.**
+   This is the load-bearing one. `amountCents` has always meant *the tuition* and still does — see
+   §11.2 `record-payment`. Reporting a GROSS there credits Stripe's cut to the family as though they
+   had overpaid, which leaves a credit that silently eats into their next bill, compounding for as long
+   as the setting is on. The metadata key is what lets this app's daily reconciliation (§11.4) get the
+   same answer a day later, when it never saw your request.
+
+The failure directions are deliberately lopsided. Forget the metadata key and reconciliation credits
+the full charge — a small credit on one family's account. Put a gross in `amountCents` and the ledger
+is wrong until somebody notices by hand. So when in doubt, send the tuition.
 
 **`allowAdvance` (added 0.41.0, additive — no version bump).** A parent may pay **any amount at any
 time, including when nothing is due**. Tuition is not a donation appeal: families pay a term up front,
@@ -223,7 +259,10 @@ balance, and the child's next invoice absorbs it.
   "idempotencyKey": "pi_3PabcDEF",           // REQUIRED, ≤128 chars. Convention: the Stripe PaymentIntent id.
   "familyId": "fam_x1",                       // REQUIRED — from a prior lookup in this session
   "studentId": "stu_1",                       // optional — the matchedStudent from lookup
-  "amountCents": 15000, "currency": "usd",    // the ONE amount actually charged to the card
+  "amountCents": 15000, "currency": "usd",    // the TUITION — what the family owed. NOT the card total
+                                              // when you grossed up for a fee (0.51.0, §11.2 info.fee).
+  "feeCents": 330,                            // optional, 0.51.0: Stripe's cut, if you passed it on.
+                                              // Informational — the ledger holds tuition only.
   "channel": "donations-web",                 // "donations-web" | "kiosk"
   "occurredAt": "2026-07-15T18:03:22Z",
   "externalRef": { "stripePaymentIntentId": "pi_3PabcDEF", "stripeChargeId": "ch_...", "stripeAccountId": "acct_..." },
@@ -273,7 +312,12 @@ purpose            = students-billing        ← the discriminator; REQUIRED
 omos_app           = donations | kiosk | students-portal    ← students-portal is set ONLY by this app (§13)
 students_family_id = fam_x1                  ← REQUIRED (from lookup / known internally)
 students_student_id = stu_1                  ← optional, the matched student
+students_fee_cents = 330                     ← 0.51.0: REQUIRED whenever you grossed up (§11.2 `info.fee`)
 ```
+**`students_fee_cents` is how a processing fee survives the trip.** Omit it and this app has no way to
+tell a $103.30 charge covering $100 of tuition from a family who genuinely paid $103.30 — reconciliation
+runs a day later, on a job that never saw your request and may find the setting switched off. An amount
+is not identifying, so this key breaks none of the rules below.
 **Never put a Student ID or a child's name in Stripe metadata, descriptions, or URLs** — metadata is visible in Stripe dashboards and exports. Description: `School balance — <family label>`. **Receipts must say "payment", never "donation"** — tuition is generally not tax-deductible; consumers exclude `purpose=students-billing` from donation totals and year-end letters, and this app's own receipts follow the same wording rule.
 
 ### 11.4 Reconciliation (this app's safety net — covers three channels)

@@ -10,7 +10,7 @@ import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './t
 import { db } from '../db';
 import { families, guardians, guardianFamilies, paymentMethods, autopayEnrollments, alertRecipients, students } from '../db/schema';
 import { rid } from '../db/ids';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor, getSheetTextOverrides, setSheetTextOverrides, donationUrl, getPastDue, setPastDue, getPastDueStaffLast } from '../settings';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor, getSheetTextOverrides, setSheetTextOverrides, donationUrl, getPastDue, setPastDue, getPastDueStaffLast, getProcessingFee, setProcessingFee } from '../settings';
 import { SHEET_TEXT_DEFAULTS, SHEET_TEXT_KEYS, SHEET_TEXT_MAX, SHEET_TEXT_TAGS } from '../people/sheetText';
 import { dueForChasing, pastDueFamilies, runPastDue } from '../billing/pastDue';
 import { DATE_FORMATS, DATE_FORMAT_SAMPLES, getDateFormat, setDateFormat } from '../settings/dates';
@@ -21,6 +21,7 @@ import { portalBase } from '../auth/invites';
 import { cachedPublicUrl } from '../fabric/platform';
 import { fabricConfigured, config } from '../config';
 import { stripeReady, stripeAccountId, loadStripeKeys } from '../payments/stripe';
+import { feeQuote } from '../payments/fees';
 import { fetchStripeAccounts } from '../fabric/platform';
 
 export const settingsRouter = router({
@@ -392,6 +393,46 @@ export const settingsRouter = router({
     .mutation(({ ctx, input }) => {
       setPastDue(input);
       audit(auditActor(ctx), 'settings.pastDue', { entity: 'settings', detail: { ...input } });
+      return { ok: true as const };
+    }),
+
+  /**
+   * The processing-fee policy, plus a worked example (0.51.0).
+   *
+   * The examples are computed by the SAME function that will charge the card, not written into the copy.
+   * An office deciding whether to switch this on is really asking "what will a parent see?", and a
+   * hand-written "about 3%" would drift from the arithmetic the moment either changed — which on this
+   * screen is the difference between an informed decision and a surprise on 200 cards.
+   */
+  processingFeeGet: adminProcedure.query(() => {
+    const cfg = getProcessingFee();
+    // $100 and $500: one ordinary monthly bill and one term paid up front, which is where the ACH cap
+    // starts to matter and where the two rates stop looking similar.
+    const examples = [10_000, 50_000].map((net) => ({
+      netCents: net,
+      card: feeQuote(net, 'card', { ...cfg, enabled: true }),
+      bank: feeQuote(net, 'bank', { ...cfg, enabled: true, bankEnabled: true }),
+    }));
+    return { ...cfg, currency: getCurrency(), examples, stripeReady: stripeReady() };
+  }),
+
+  processingFeeSet: adminProcedure
+    .input(
+      z.object({
+        enabled: z.boolean().optional(),
+        cardPercentBps: z.number().int().min(0).max(1000).optional(),
+        cardFixedCents: z.number().int().min(0).max(1000).optional(),
+        bankEnabled: z.boolean().optional(),
+        bankPercentBps: z.number().int().min(0).max(1000).optional(),
+        bankFixedCents: z.number().int().min(0).max(1000).optional(),
+        bankCapCents: z.number().int().min(0).max(100_000).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      setProcessingFee(input);
+      // Audited like every other money-path setting: this one changes what every parent is charged, so
+      // "when did this start?" has to be answerable from the trail.
+      audit(auditActor(ctx), 'settings.processingFee', { entity: 'settings', detail: { ...input } });
       return { ok: true as const };
     }),
 

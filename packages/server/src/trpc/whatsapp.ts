@@ -439,10 +439,21 @@ export const whatsappRouter = router({
     const emailed = await sendTestToHousehold(famId);
 
     let whatsapp: 'queued' | 'paused' | 'opted_out' | 'no_number' | 'failed' | 'not_ready' = 'not_ready';
+    /**
+     * WHICH PHONE SHOULD RING (0.51.0). The button reported only "queued", and a household routinely
+     * has two guardians — so an admin watching their own phone could be waiting on a number that was
+     * never written to, with the screen agreeing that everything worked. It goes to whichever guardian
+     * has a readable number, and now it says who and the last four digits.
+     *
+     * Live response only, never the log: §14 keeps numbers out of the trail, and this is being read by
+     * an admin who can already see the guardian's full number on their record.
+     */
+    let whatsappTo: { name: string; masked: string } | null = null;
     const status = await currentWhatsAppStatus();
     if (getWhatsApp().enabled && status.available) {
       const to = familyRecipients(famId).filter((r) => !!r.to && !r.optedOut);
       whatsapp = to.length ? await notifyGuardian('test', to[0], waTest()) : 'no_number';
+      if (to.length) whatsappTo = { name: to[0].name, masked: maskNumber(to[0].to) };
     }
 
     audit(auditActor(ctx), 'whatsapp.test', { entity: 'settings', detail: { emailed, whatsapp } });
@@ -455,7 +466,7 @@ export const whatsappRouter = router({
             : 'That didn’t reach anybody. Check that the household has an email address or a WhatsApp number we can read.',
       });
     }
-    return { emailed, whatsapp };
+    return { emailed, whatsapp, whatsappTo };
   }),
 
   // ── Staff alerts to a group (0.50.0) ──────────────────────────────────────

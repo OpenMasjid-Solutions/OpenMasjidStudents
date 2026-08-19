@@ -29,7 +29,46 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ## [0.51.0]
 
-<!-- Nothing yet. First entry of the next release goes here; see the two-audiences note above. -->
+- **Parents can now cover the card processing fee, if you want them to.** Every card payment costs the
+  madrasah about 2.9% plus 30¢, so a $100 bill has always brought in $96.80. Switch this on and the payer
+  is charged $103.30 instead and you receive the full $100. It is **off until you turn it on**, it never
+  touches cash or cheques, and parents see the fee on its own line before they pay — with a sentence
+  saying plainly that the money is not the madrasah’s but what Visa, Mastercard and Amex charge to accept
+  a card. Bank payments cost a fifth as much, so they have their own switch and their own figure, and the
+  screen shows you exactly what a $100 and a $500 bill would come to before you decide.
+- **The office can record that a parent does not want WhatsApp.** It sits with their name on the family’s
+  record. Parents say it at pickup rather than by signing into a portal, and until now the only way to
+  honour it was to delete their number — which also lost you the ability to ring them.
+- **"Which month?" is now a dropdown everywhere it is asked.** Adding a one-off charge, or applying one to
+  a whole class, used to want a period key typed as `2026-07`. A typo there put the charge on a month that
+  would never be billed, where it sat unnoticed.
+- **A test WhatsApp now tells you which phone it went to.** A household usually has two parents and the
+  test goes to whichever number can be read — so if you were watching your own handset, you could wait a
+  day and conclude the whole feature was broken.
+
+### Also in this release
+
+- **Why a WhatsApp says *Queued* and nothing arrives is now answerable.** OpenMasjidOS owns the sending
+  queue and paces it deliberately — randomised gaps, hourly and daily caps, a warm-up on a newly linked
+  number, and quiet hours (9pm–7am by default) during which a message waits rather than being sent. This
+  app hands a message over and is told it was accepted; anything after that belongs to the platform. Two
+  blind spots on our side are closed: the queue log now records what the platform actually answered
+  instead of treating any success as a hand-over, and a reply that explicitly refuses a message is no
+  longer logged as queued.
+- **Known gap, written down rather than papered over:** quiet hours apply to STAFF alerts as well as
+  parent messages, because the platform has one window for every message and no way for an app to mark
+  one as urgent. A declined card at nine on a Sunday evening waits until seven — which is the very
+  situation staff numbers exist for. Nothing here can fix it without going round the queue that protects
+  the masjid’s number; it needs a change on the platform side. Email arrives at 21:30.
+- Past-due reminders were already configurable and still are — off until you turn them on, then after a
+  grace period (3 days) and at most once every so many days (7), both set under Past due in Settings.
+- The processing fee is advertised to the kiosk and the donation site over the Fabric (`info.fee`), so
+  those two can quote the same figure and word it the same way. A consumer that ignores it keeps working
+  exactly as it does now.
+- The fee is never recorded as tuition. It rides on the Stripe charge itself and is taken back off before
+  anything reaches the ledger — including a day later, by the reconciliation job that never saw the
+  payment being made.
+- A refund still returns everything the payer handed over, fee included.
 
 ## [0.50.0]
 

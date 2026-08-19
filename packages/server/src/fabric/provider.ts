@@ -31,6 +31,7 @@ import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, rec
 import { invoiceLines } from '../billing/lines';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../settings';
+import { feePolicyForConsumers } from '../payments/fees';
 import { audit } from '../audit';
 import { alertStaff, studentAmounts } from '../alerts';
 import { sendReceipt } from '../mail/notify';
@@ -175,6 +176,18 @@ export function registerFabricProvider(app: FastifyInstance): void {
       tagline: 'Pay tuition with your child’s Student ID',
       allowAdvance: true,
       minAmountCents: MIN_PAYMENT_CENTS,
+      /**
+       * The PROCESSING FEE POLICY (0.51.0, additive — `enabled: false` is the shape every existing
+       * consumer already behaves correctly for).
+       *
+       * The rule rather than a quote, because a consumer mints its own PaymentIntent and cannot ask us
+       * per keystroke. Two obligations come with reading it, both spelled out in
+       * docs/FABRIC_BILLING_CONTRACT.md §11.3: write the fee onto the intent as `students_fee_cents`,
+       * and report the NET in `record-payment`. A consumer that ignores this field entirely stays
+       * correct — it charges the tuition, reports the tuition, and the masjid absorbs Stripe's cut,
+       * which is exactly what happens today.
+       */
+      fee: feePolicyForConsumers(),
     });
   });
 
@@ -364,7 +377,21 @@ export function registerFabricProvider(app: FastifyInstance): void {
         idempotencyKey: z.string().min(1).max(128),
         familyId: z.string().min(1).max(64),
         studentId: z.string().min(1).max(64).optional(),
+        /**
+         * THE TUITION — what the family owed, never what the card was charged.
+         *
+         * Unchanged in meaning since v1, and saying so is the whole safety argument for how the
+         * processing fee (0.51.0) was added. A consumer that grosses up reports the NET here and the
+         * fee separately in `feeCents`; a consumer that knows nothing about fees keeps sending exactly
+         * what it always sent. The failure directions are deliberately lopsided: forgetting `feeCents`
+         * loses a statistic, whereas putting a GROSS in this field would credit Stripe's cut to the
+         * family as tuition and leave a credit that eats into next month's bill.
+         */
         amountCents: z.number().int().min(1).max(100_000_000),
+        /** Stripe's cut, if the consumer passed it to the payer. Recorded nowhere and allocated to
+         *  nothing — the ledger holds tuition only (payments/fees.ts) — so this is accepted for the
+         *  contract's sake and to keep a consumer honest about which figure `amountCents` is. */
+        feeCents: z.number().int().min(0).max(100_000_000).optional(),
         currency: z.string().max(10).optional(),
         channel: z.enum(['donations-web', 'kiosk']),
         occurredAt: z.string().max(40).optional(),

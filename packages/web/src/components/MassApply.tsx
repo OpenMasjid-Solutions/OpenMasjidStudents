@@ -17,6 +17,7 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { trpc } from '../lib/trpc';
 import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
+import { PeriodMonthSelect } from './InvoiceGenFields';
 
 type TargetKind = 'course' | 'class' | 'students';
 type Mode = 'fee' | 'charge';
@@ -202,10 +203,9 @@ export function MassApply({ currency }: { currency: string }) {
               <label className="label">{t('mass.amount')}</label>
               <input type="number" step="0.01" className="input glass-inset" value={chargeAmount} onChange={(e) => setChargeAmount(e.target.value)} />
             </div>
-            <div className="field" style={{ flex: '0 1 8rem' }}>
-              <label className="label">{t('mass.periodKey')}</label>
-              <input className="input glass-inset" value={periodKey} onChange={(e) => setPeriodKey(e.target.value)} placeholder="2026-07" />
-            </div>
+            {/* The same month picker as everywhere else a month is asked for, not a box wanting a
+                storage key (components/InvoiceGenFields). Blank = the next invoice generated. */}
+            <PeriodMonthSelect id="mass-period" value={periodKey} onChange={setPeriodKey} />
             <div className="field">
               <label className="label">{t('mass.note')}</label>
               <input className="input glass-inset" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} />

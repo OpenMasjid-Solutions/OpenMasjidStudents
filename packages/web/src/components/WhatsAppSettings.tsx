@@ -93,7 +93,11 @@ export function WhatsAppSettings() {
       // Reports BOTH channels: the test student governs the email pause too, so "the email went and
       // the WhatsApp did not" is a real and useful outcome rather than a failure.
       const r = await testSend.mutateAsync();
-      setMsg(t('settings.waTestDone', { emailed: r.emailed, whatsapp: t(`settings.waTestWa_${r.whatsapp}`) }));
+      // WHICH phone, said out loud. A household usually has two guardians and the test goes to
+      // whichever one has a readable number — so an admin watching their own handset needs to be told
+      // it was somebody else's, or they spend a day concluding the feature is broken.
+      const to = r.whatsappTo && r.whatsapp === 'queued' ? ` ${t('settings.waTestTo', { name: r.whatsappTo.name, mask: r.whatsappTo.masked })}` : '';
+      setMsg(t('settings.waTestDone', { emailed: r.emailed, whatsapp: t(`settings.waTestWa_${r.whatsapp}`) }) + to);
       await utils.whatsapp.log.invalidate();
     } catch (e) {
       setMsg((e as Error).message);

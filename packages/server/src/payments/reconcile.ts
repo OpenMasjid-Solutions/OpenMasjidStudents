@@ -24,6 +24,7 @@ import { formatMoney } from '../db/money';
 import { audit, type AuditActor } from '../audit';
 import { alertStaff, studentAmounts } from '../alerts';
 import { makeLog } from '../logger';
+import { netOfIntent } from './fees';
 
 const log = makeLog('reconcile');
 
@@ -175,7 +176,15 @@ export async function reconcile(actor: AuditActor): Promise<ReconcileResult> {
         }
         const familyId = md.students_family_id;
         const channel = channelFor(md);
-        const amount = pi.amount_received || pi.amount || 0;
+        /**
+         * THE TUITION, not what was charged (0.51.0). This job is the whole reason the processing fee
+         * travels in the PI's own metadata rather than in a setting: it runs a day later, it never saw
+         * the request, and the office may have changed the rate or switched the feature off in between.
+         * The figure that was true when the payer agreed to it is the one carried on the charge
+         * (payments/fees.ts). A consumer that grossed up without writing the key is credited its full
+         * charge — the safe direction, and the contract says so in §11.3.
+         */
+        const amount = netOfIntent(pi.amount_received || pi.amount || 0, md);
         if (!familyId || !channel || amount <= 0) {
           // A succeeded tuition PI we can't attribute (missing family id / unknown origin). It can
           // never be recorded, so let the cursor pass it — but surface it so finance can reconcile

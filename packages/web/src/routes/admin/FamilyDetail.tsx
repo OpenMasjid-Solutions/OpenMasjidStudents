@@ -45,6 +45,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const updateStudent = trpc.people.studentUpdate.useMutation();
   const addGuardian = trpc.people.guardianCreate.useMutation();
   const updateGuardian = trpc.people.guardianUpdate.useMutation();
+  const guardianWa = trpc.people.guardianWhatsApp.useMutation();
   const removeGuardian = trpc.people.guardianRemove.useMutation();
   const removeContact = trpc.people.emergencyContactRemove.useMutation();
   const deleteStudent = trpc.people.studentDelete.useMutation();
@@ -243,6 +244,23 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
    * household but kept for another; deleted outright; or deleted along with their portal login. The
    * last one is the reason this asks the server at all rather than just confirming and posting.
    */
+  /**
+   * Record that this parent does or does not want WhatsApp (0.51.0).
+   *
+   * No confirmation dialog: it is one tap to undo, and the chip beside the name says which state it is
+   * in. A dialog on something this reversible is how people learn to click through the ones that
+   * matter (§15).
+   */
+  async function setGuardianWa(guardianId: string, optOut: boolean) {
+    setGuardianErr('');
+    try {
+      await guardianWa.mutateAsync({ id: guardianId, optOut });
+      await refresh();
+    } catch (err) {
+      setGuardianErr((err as Error).message);
+    }
+  }
+
   async function askRemoveGuardian(guardianId: string, name: string) {
     setGuardianErr('');
     try {
@@ -427,9 +445,11 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 {g.phone && <a className="muted" href={telHref(g.phone)}>· {formatUsPhone(g.phone)}</a>}
                 {g.email && <a className="muted" href={`mailto:${g.email}`}>· {g.email}</a>}
                 {g.isEmergencyContact && <span className="chip is-accent">{t('directory.emergency')}</span>}
-                {/* This person asked not to be messaged (0.50.0). Shown, never changed from here: it is
-                    their own answer, given in the parent portal. Without it, "why didn't they get the
-                    reminder?" has no visible answer on the screen the office is actually looking at. */}
+                {/* This person is not messaged on WhatsApp (0.50.0). The chip alone was the whole
+                    feature at first — shown, never changeable — on the reasoning that it is the
+                    parent's own answer. But a parent says "stop messaging me" at pickup, not by
+                    finding a toggle in a portal, so from 0.51.0 the office can record it here too. It
+                    sets the same one flag, so nothing overrides it either way (§9). */}
                 {g.waOptOut && countries.length > 0 && <span className="chip is-muted">{t('directory.waOptedOut')}</span>}
                 {/* Whether they took up a portal account decides which action is useful: an invite for
                     someone who never signed up, a reset for someone who did and forgot. */}
@@ -451,6 +471,19 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     <button type="button" className="btn btn--ghost btn--sm" onClick={() => void askRemoveGuardian(g.guardianId, g.name)} disabled={removeGuardian.isPending}>
                       <Trash2 size={13} /> {t('common.delete')}
                     </button>
+                    {/* Only where WhatsApp is actually configured — the same `countries` condition the
+                        chip uses. On an install that does not use it this is a button about nothing. */}
+                    {countries.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => void setGuardianWa(g.guardianId, !g.waOptOut)}
+                        disabled={guardianWa.isPending}
+                        title={t(g.waOptOut ? 'directory.waResumeHint' : 'directory.waStopHint')}
+                      >
+                        {t(g.waOptOut ? 'directory.waResume' : 'directory.waStop')}
+                      </button>
+                    )}
                   </>
                 )}
                 {g.hasAccount ? (

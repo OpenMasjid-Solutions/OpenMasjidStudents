@@ -279,7 +279,32 @@ export async function whatsappStatus(): Promise<WhatsAppStatus> {
 }
 
 /** What happened when we handed one message over. `queued` is NOT `sent` — see `sendPlatformWhatsApp`. */
-export type WhatsAppQueueResult = { queued: true } | { queued: false; reason: string };
+export type WhatsAppQueueResult = { queued: true; note?: string } | { queued: false; reason: string };
+
+/**
+ * What did the platform actually SAY? (0.51.0)
+ *
+ * `res.ok` was the whole test, and it turned two different answers into one. The contract is
+ * `202 {"queued": true}` — so a 200, a 204, or a 202 whose body says `queued: false` all read as a
+ * successful hand-over, and the queue log then said `queued` for a message the platform had not
+ * taken. That is the exact shape of the fault that is impossible to diagnose from this side: our
+ * records say we handed it over, and there is nothing anywhere to contradict them.
+ *
+ * So: an explicit `queued: false` is a FAILURE however it is dressed, and any success that is not
+ * the documented 202 is queued-but-noted, with the status recorded in the log. `note` is deliberately
+ * not an error — an OS that starts answering 200 must not stop this app sending — but it stops the
+ * log from asserting something nobody checked.
+ */
+async function readQueueAnswer(res: Response): Promise<WhatsAppQueueResult> {
+  if (!res.ok && res.status !== 202) return { queued: false, reason: `http_${res.status}` };
+  const body = (await res.json().catch(() => null)) as { queued?: unknown; reason?: unknown } | null;
+  // The platform saying so outright beats any inference from the status code.
+  if (body && body.queued === false) {
+    const said = typeof body.reason === 'string' ? body.reason.slice(0, 40).replace(/[^a-z0-9_-]/gi, '') : '';
+    return { queued: false, reason: said ? `refused_${said}` : `refused_${res.status}` };
+  }
+  return res.status === 202 ? { queued: true } : { queued: true, note: `http_${res.status}` };
+}
 
 /** A group the masjid's admin approved this app to post into. A label and an opaque id, nothing else —
  *  the platform never exposes the masjid's other groups, and we never learn who is in one. */
@@ -373,11 +398,11 @@ export async function sendPlatformWhatsAppGroup(groupId: string, text: string): 
       redirect: 'error',
     });
     clearTimeout(timer);
-    if (res.status === 202 || res.ok) return { queued: true };
+    const answer = await readQueueAnswer(res);
     // 403 here is specifically "that group is not approved (any more)" — an authorisation answer, not
     // a malformed request, and the screen should tell an admin to re-approve it rather than hunt a bug.
-    log.warn('whatsapp group post rejected', { status: res.status });
-    return { queued: false, reason: `http_${res.status}` };
+    if (!answer.queued) log.warn('whatsapp group post rejected', { status: res.status, reason: answer.reason });
+    return answer;
   } catch {
     return { queued: false, reason: 'unreachable' };
   }
@@ -414,11 +439,11 @@ export async function sendPlatformWhatsApp(to: string, text: string): Promise<Wh
       redirect: 'error',
     });
     clearTimeout(timer);
-    if (res.status === 202 || res.ok) return { queued: true };
+    const answer = await readQueueAnswer(res);
     // 400 bad number / empty text / no gateway / queue full · 403 we didn't declare `whatsapp: true`
     // · 429 slow down. All four are the platform protecting the masjid's number; none is retried here.
-    log.warn('whatsapp queue rejected', { status: res.status });
-    return { queued: false, reason: `http_${res.status}` };
+    if (!answer.queued) log.warn('whatsapp queue rejected', { status: res.status, reason: answer.reason });
+    return answer;
   } catch {
     return { queued: false, reason: 'unreachable' };
   }

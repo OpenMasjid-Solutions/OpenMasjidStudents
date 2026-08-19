@@ -16,7 +16,7 @@ import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
 import { formatDate, type DateFormat } from '../lib/dates';
 import { withBase } from '../lib/base';
 import { useWindows } from './Windows';
-import { InvoiceGenFields, useInvoiceGen } from './InvoiceGenFields';
+import { InvoiceGenFields, PeriodMonthSelect, useInvoiceGen } from './InvoiceGenFields';
 import { FamilyDetail } from '../routes/admin/FamilyDetail';
 
 /** The channels the office can record by hand. Kept in step with the server's
@@ -345,7 +345,9 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             <div className="field"><label className="label">{t('billing.chargeLabel')}</label><input className="input glass-inset" value={charge.label} onChange={(e) => setCharge({ ...charge, label: e.target.value })} maxLength={120} /></div>
           )}
           <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" className="input glass-inset" value={charge.amount} onChange={(e) => setCharge({ ...charge, amount: e.target.value })} /></div>
-          <div className="field" style={{ flex: '0 1 7rem' }}><label className="label">{t('billing.periodKey')}</label><input className="input glass-inset" value={charge.periodKey} onChange={(e) => setCharge({ ...charge, periodKey: e.target.value })} placeholder="2026-07" /></div>
+          {/* The same month picker as the invoice form two clicks away, not a box wanting `2026-07`
+              (components/InvoiceGenFields). Blank still means "the next invoice generated". */}
+          <PeriodMonthSelect id={`chg-${familyId}-period`} value={charge.periodKey} onChange={(v) => setCharge({ ...charge, periodKey: v })} />
           <div className="field"><label className="label">{t('billing.memo')}</label><input className="input glass-inset" value={charge.note} onChange={(e) => setCharge({ ...charge, note: e.target.value })} maxLength={200} /></div>
           <button type="submit" className="btn btn--primary" disabled={chargeAdd.isPending}>{t('billing.addCharge')}</button>
           <p className="hint">{t('billing.chargeHint')}</p>
