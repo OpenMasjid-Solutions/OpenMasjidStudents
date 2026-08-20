@@ -3,14 +3,14 @@
 /**
  * NO RAW ERROR REACHES A USER (§15) — found missing in the 0.50.0 pre-release audit.
  *
- * tRPC was initialised with no `errorFormatter`, so anything that threw without being a `TRPCError`
- * had its own message serialised to the client: a Drizzle constraint string naming columns, a Stripe
+ * tRPC was initialized with no `errorFormatter`, so anything that threw without being a `TRPCError`
+ * had its own message serialized to the client: a Drizzle constraint string naming columns, a Stripe
  * SDK message, a `TypeError` with a property path. Over the tunnel, that reached a parent.
  *
  * DRIVEN THROUGH REAL HTTP, not `createCaller`. That distinction is the whole test: `createCaller`
  * invokes the procedure directly and never runs the formatter, so a `createCaller` version of this
  * file would fail while the code was correct — and, worse, would pass while the formatter was deleted
- * from `initTRPC`. What a client receives is a serialised HTTP response, so that is what is asserted.
+ * from `initTRPC`. What a client receives is a serialized HTTP response, so that is what is asserted.
  *
  * Both halves of the rule are pinned, because a formatter that scrubbed everything would be its own
  * bug: this app's refusals are carefully worded sentences and they must survive untouched.

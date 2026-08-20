@@ -81,13 +81,13 @@ parents ask to pay one of the two — which was not expressible at all.
 
 **Notes.** Every line of an open bill is listed, **including ones already settled** (`balanceCents: 0`) —
 show those as done on a part-paid bill, and offer only the lines with a balance as payable. A bill with a
-single line needs no itemised UI; render it exactly as before. Omit `lines` entirely and behaviour is
+single line needs no itemised UI; render it exactly as before. Omit `lines` entirely and behavior is
 unchanged (oldest-due-first), so this is safe to adopt screen by screen.
 
 **Also fixed in 0.43.0:** `allocations[]` (invoice-level, in the contract since v1) was parsed and then
 **silently ignored** — a consumer asking for a specific invoice got oldest-due-first with nothing to say
-so. It now works, normalised into the same line mechanism. `lines` is the better field for new work;
-`allocations` is honoured for what already sends it.
+so. It now works, normalized into the same line mechanism. `lines` is the better field for new work;
+`allocations` is honored for what already sends it.
 
 `allocations` is treated as a **hint**, deliberately: it must still sum to `amountCents`, but if a named
 invoice cannot absorb what you asked for — the office recorded a cash payment against it between your
@@ -142,7 +142,7 @@ matters:
    madrasah's: it is what Visa, Mastercard and American Express charge to accept a card and it goes to
    the payment processor. This app's own wording is *"The processing fee is not the madrasah's — it is
    what Visa, Mastercard and American Express charge to accept a card, and it goes straight to the
-   payment processor. Paying by cash or cheque at the office avoids it."* Match the substance.
+   payment processor. Paying by cash or check at the office avoids it."* Match the substance.
 3. **Write `students_fee_cents` onto the PaymentIntent, and report the NET in `record-payment`.**
    This is the load-bearing one. `amountCents` has always meant *the tuition* and still does — see
    §11.2 `record-payment`. Reporting a GROSS there credits Stripe's cut to the family as though they
@@ -171,12 +171,12 @@ ask "is this the right child?" before showing a balance or taking money. **Call 
 confirmation step that replaced the PIN, not an optional nicety.
 ```jsonc
 // request — the ID printed on the statement: first 3 letters of the first name + 4 digits.
-// Input is normalised here (case, spaces, hyphens), so "yus-1234" is fine.
+// Input is normalized here (case, spaces, hyphens), so "yus-1234" is fine.
 { "v": 2, "studentCode": "YUS1234" }
 // 200 (found) — a first name + last initial and NOTHING else
 { "v": 2, "found": true, "student": { "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" } }
 // NOTE (no contract change): this app now stores ONE name per student rather than a first/last
-// pair, because plenty of the names a madrasa enrols do not split into two western halves. The wire
+// pair, because plenty of the names a madrasa enrolls do not split into two western halves. The wire
 // fields are unchanged and still mean the same thing — `firstName` is the first word of that name
 // and `lastInitial` is the first letter of the last word, so a consumer needs no update and the
 // promise that a full family name is never returned still holds. A child recorded under a single
@@ -186,7 +186,7 @@ confirmation step that replaced the PIN, not an optional nicety.
 ```
 > **A Student ID is NOT a secret and is not treated as one.** Its letters are derived from the child's
 > first name and it is printed on statements. It is nonetheless the whole credential, because of how
-> narrow what it authorises is: see a balance and pay it (§11.0). `identify` stays deliberately thin —
+> narrow what it authorizes is: see a balance and pay it (§11.0). `identify` stays deliberately thin —
 > **no balance, no invoices, no sibling list, not even the family id** — which is what makes it safe to
 > answer *before* the parent has confirmed anything. The one disclosure, a first name plus an initial,
 > is exactly what `lookup`'s sibling list already exposes. 6 failed probes per code per hour, then that
@@ -195,7 +195,7 @@ confirmation step that replaced the PIN, not an optional nicety.
 **`POST /fabric/billing/lookup`** — resolve a Student ID to a family + balance + the siblings it can be
 paid alongside. **Breaking at v2:** `name` and `pin` are gone (§11.0).
 ```jsonc
-// request — the Student ID alone, normalised as in `identify`.
+// request — the Student ID alone, normalized as in `identify`.
 { "v": 2, "studentCode": "YUS1234" }
 // 200 (found)
 { "v": 2, "found": true,
@@ -272,7 +272,7 @@ balance, and the child's next invoice absorbs it.
   "students": [{ "studentId": "stu_1", "amountCents": 10000 }, { "studentId": "stu_2", "amountCents": 5000 }],
   // NEW at 0.43.0, optional and preferred: the exact LINES the parent ticked (ids from lookup's
   // openInvoices[].items). Must sum EXACTLY to amountCents. SUPERSEDES students[] — a line already says
-  // whose bill it is — and it is HONOURED, not just accepted: the ticked line is the one that ends up
+  // whose bill it is — and it is HONORED, not just accepted: the ticked line is the one that ends up
   // settled, and stays settled when this app later recomputes its allocations. See §11.0b.
   "lines": [{ "itemId": "iti_2", "amountCents": 5000 }],
   "allocations": [{ "invoiceId": "inv_9", "amountCents": 15000 }],   // invoice-level, v1; works from 0.43.0 (ignored before)

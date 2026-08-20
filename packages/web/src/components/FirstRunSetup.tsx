@@ -6,7 +6,7 @@
  * is for.
  *
  * WHY IT EXISTS. Everything here was already possible and every piece of it was somewhere else: the name
- * and the colour in Settings, the school year and the classes on the Structure tab, fee plans on Billing,
+ * and the color in Settings, the school year and the classes on the Structure tab, fee plans on Billing,
  * the Stripe account further down Settings, the roster behind a button on Students. An office opening
  * this app for the first time saw an empty dashboard and a row of icons, with no indication of which tab
  * to start on — or that three of those tabs had to be visited before an invoice could exist at all. This
@@ -124,15 +124,15 @@ export function FirstRunSetup() {
   const termsQ = trpc.structure.termList.useQuery({ schoolYearId: currentYear?.id ?? '' }, { enabled: !!currentYear });
   const termCreate = trpc.structure.termCreate.useMutation();
 
-  // Drafts, so a half-typed name is not written on every keystroke. `??` rather than `||` on the colour:
+  // Drafts, so a half-typed name is not written on every keystroke. `??` rather than `||` on the color:
   // an empty string is a real saved value meaning "the default teal".
   const [name, setName] = useState<string | null>(null);
   const [currency, setCurrency] = useState<string | null>(null);
-  const [colour, setColour] = useState<string | null>(null);
+  const [color, setColor] = useState<string | null>(null);
   const [account, setAccount] = useState<string | null>(null);
   const nameEff = name ?? settings.data?.schoolName ?? '';
   const currencyEff = currency ?? settings.data?.currency ?? 'usd';
-  const colourEff = colour ?? settings.data?.accentColor ?? '#0f766e';
+  const colorEff = color ?? settings.data?.accentColor ?? '#0f766e';
   const accountEff = account ?? stripeAccounts.data?.chosenId ?? '';
 
   const thisYear = new Date().getFullYear();
@@ -189,15 +189,15 @@ export function FirstRunSetup() {
     );
   }
 
-  async function saveColour() {
+  async function saveColor() {
     await run(
       async () => {
-        await saveSettings.mutateAsync({ accentColor: colourEff });
+        await saveSettings.mutateAsync({ accentColor: colorEff });
         // The printed artifacts read this on the server, and the finance screens read it through
-        // `settings.display` — so that has to go too or the year view keeps yesterday's colour.
+        // `settings.display` — so that has to go too or the year view keeps yesterday's color.
         await Promise.all([utils.settings.get.invalidate(), utils.settings.display.invalidate()]);
       },
-      () => setColour(null),
+      () => setColor(null),
     );
   }
 
@@ -430,14 +430,14 @@ export function FirstRunSetup() {
           </div>
           <div className="inline-form glass-inset">
             <div className="field" style={{ flex: '0 1 12rem' }}>
-              <label className="label" htmlFor="fr-colour">{t('settings.accent')}</label>
+              <label className="label" htmlFor="fr-color">{t('settings.accent')}</label>
               <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                <input id="fr-colour" type="color" value={colourEff} onChange={(e) => setColour(e.target.value)} style={{ inlineSize: '2.6rem', blockSize: '2.1rem', padding: 0, border: 0, background: 'none', cursor: 'pointer' }} />
-                <input className="input glass-inset" value={colourEff} onChange={(e) => setColour(e.target.value)} maxLength={7} style={{ inlineSize: '6rem' }} aria-label={t('settings.accent')} />
+                <input id="fr-color" type="color" value={colorEff} onChange={(e) => setColor(e.target.value)} style={{ inlineSize: '2.6rem', blockSize: '2.1rem', padding: 0, border: 0, background: 'none', cursor: 'pointer' }} />
+                <input className="input glass-inset" value={colorEff} onChange={(e) => setColor(e.target.value)} maxLength={7} style={{ inlineSize: '6rem' }} aria-label={t('settings.accent')} />
               </div>
               <span className="hint">{t('settings.accentHint')}</span>
             </div>
-            <button type="button" className="btn btn--primary" onClick={() => void saveColour()} disabled={saveSettings.isPending}>{t('common.save')}</button>
+            <button type="button" className="btn btn--primary" onClick={() => void saveColor()} disabled={saveSettings.isPending}>{t('common.save')}</button>
           </div>
         </section>
       )}

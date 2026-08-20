@@ -6,7 +6,7 @@
  *
  * WHAT THIS IS. A madrasah pays Stripe roughly 2.9% + 30¢ to accept a card. Off by default, an office
  * can decide the PAYER covers that instead of the school: a parent settling $100 is charged $103.30,
- * the school still receives $100, and the extra is Stripe's, not the masjid's. Cash, cheque and Zelle
+ * the school still receives $100, and the extra is Stripe's, not the masjid's. Cash, check and Zelle
  * are untouched — there is no processing fee to pass on, and inventing one would be a charge for
  * nothing.
  *

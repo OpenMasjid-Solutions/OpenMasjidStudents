@@ -14,7 +14,19 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
      wants all of it, including the fixes too small to announce.
 
      So each release opens with its HEADLINES — the major changes, additions and fixes, and nothing else —
-     and everything after the `### Also in this release` heading is detail. The app's What's new shows the
+     and everything after the `- **WhatsApp messages now say whether they actually arrived.** The queue log used to stop at
+  "Queued", which only ever meant OpenMasjidOS had accepted the message — and when a masjid hit a
+  platform fault where nothing was delivered for over a day, neither the office nor this app had
+  anything to look at. Rows now settle to **Sent**, or say plainly that a message failed or expired.
+  (Needs OpenMasjidOS 0.51.1 or later; on anything older a row stops at Queued and the screen says so.)
+- **There are no more quiet hours.** OpenMasjidOS used to hold every message between 9pm and 7am,
+  staff alerts included — so a declined card on a Sunday evening waited until Monday morning, which is
+  the opposite of why anyone puts their number in. A message now goes out when the pacing allows,
+  whatever the hour.
+- **The app writes American English throughout.** "Cheque" is now "check", and the same for every other
+  British spelling in the app, on printed sheets and in emails.
+
+### Also in this release` heading is detail. The app's What's new shows the
      headlines on a release build and the whole entry on a `-dev.N` one, deciding from the version it is
      actually running (packages/web/src/lib/changelog.ts). On GitHub, where the full history belongs, both
      halves always show.
@@ -47,6 +59,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   day and conclude the whole feature was broken.
 
 ### Also in this release
+
+- If your masjid was waiting on WhatsApp messages from before the platform fix, they are gone rather
+  than late — the queue was never durable, so each restart discarded it. Re-send anything you need.
+- The queue log records the platform's own message id, and a job asks every five minutes what became
+  of anything still waiting. Five rather than fifteen because the platform keeps only the 200 most
+  recent outcomes.
+- A test WhatsApp says which parent's phone it went to, and a parent about to switch autopay on is told
+  that the automatic charge carries the processing fee.
 
 - **Why a WhatsApp says *Queued* and nothing arrives is now answerable.** OpenMasjidOS owns the sending
   queue and paces it deliberately — randomised gaps, hourly and daily caps, a warm-up on a newly linked

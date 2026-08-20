@@ -18,8 +18,10 @@
  *   5. **Which events**, all starting off.
  *   6. **What was actually queued**, afterwards.
  *
- * Nothing here says "sent". The platform's queue paces every message and holds it through the masjid's
- * quiet hours, so what this screen can honestly report is that a message was handed over.
+ * "Queued" is not "sent", and the log now says which (0.51.0). The platform paces every message and
+ * reports the outcome afterwards, so a row settles to Sent, Not sent or expired — on OpenMasjidOS
+ * 0.51.1+. On anything older it stops at Queued, which is the honest answer: we handed it over and
+ * cannot know more. There are no longer any quiet hours; a message sent at night goes out at night.
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -664,6 +666,9 @@ function QueueLog() {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const q = trpc.whatsapp.log.useQuery({ limit: 100 }, { enabled: open });
+  /** Only to answer "why does nothing get past Queued?" — asked once the log is actually open, and
+   *  already cached by the panel above it, so this costs nothing. */
+  const cfg = trpc.whatsapp.get.useQuery(undefined, { enabled: open });
 
   return (
     <>
@@ -674,11 +679,13 @@ function QueueLog() {
         </button>
       </h3>
       <p className="hint">{t('settings.waLogHint')}</p>
-      {/* WHAT "QUEUED" ACTUALLY MEANS, where somebody reads the word and starts wondering. A receipt
-          queued at three in the morning does not arrive at three in the morning — the platform holds
-          everything through the masjid's quiet hours — and a screen that leaves that to be discovered
-          reads as "it doesn't work". */}
+      {/* WHAT "QUEUED" ACTUALLY MEANS, where somebody reads the word and starts wondering. Paced
+          delivery looks exactly like a broken feature if nobody says so, which is how this screen
+          earned the sentence. */}
       {open && <p className="hint">{t('settings.waQueuedMeaning')}</p>}
+      {/* And on an older platform, why a row never gets past Queued — otherwise the missing outcome
+          reads as a message that never went. */}
+      {open && cfg.data?.status && !cfg.data.status.outcomes && <p className="hint">{t('settings.waOutcomesOff')}</p>}
       {open && q.data && (q.data.length === 0 ? (
         <p className="muted" style={{ fontSize: '0.9rem' }}>{t('settings.waLogEmpty')}</p>
       ) : (
@@ -699,7 +706,10 @@ function QueueLog() {
                   <td data-label={t('settings.waLogWhat')}>{r.event}</td>
                   <td data-label={t('settings.waWho')}>{r.who}{r.household ? <><br /><span className="hint">{r.household}</span></> : null}</td>
                   <td data-label={t('directory.status')}>
-                    <span className={`chip ${r.status === 'queued' ? '' : 'is-muted'}`}>{t(`settings.waStatus_${r.status}`)}</span>
+                    {/* `sent` is the only row that is actually good news, so it is the only accented
+                        one (0.51.0). `queued` is neutral — it means "accepted, still waiting" — and
+                        everything else is muted, because a skip and a failure are both just facts. */}
+                    <span className={`chip ${r.status === 'sent' ? 'is-accent' : r.status === 'queued' ? '' : 'is-muted'}`}>{t(`settings.waStatus_${r.status}`)}</span>
                     {r.reason && <span className="hint" style={{ display: 'block' }}>{t(`settings.waReasonShort_${r.reason}`, { defaultValue: r.reason })}</span>}
                   </td>
                 </tr>

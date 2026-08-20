@@ -195,7 +195,7 @@ export async function sendPlatformEmail(to: string, subject: string, text: strin
  * WHY THAT SEPARATION IS LOAD-BEARING AND NOT PLUMBING. WhatsApp does not permit this, and a linked
  * number can be restricted or banned — there is no way to make that risk zero. The platform runs ONE
  * paced queue shared by every installed app: randomised gaps, typing indicators, per-recipient
- * cooldowns, rolling hourly and daily caps, quiet hours. That single queue is the entire defence for
+ * cooldowns, rolling hourly and daily caps, quiet hours. That single queue is the entire defense for
  * the masjid's number, and it only works because no app goes around it. So: no direct gateway calls
  * from here, ever, and no design that assumes a send happens now or that hundreds a day are available
  * — the caps belong to the NUMBER, and every other installed app is drawing on the same allowance.
@@ -248,12 +248,20 @@ export interface WhatsAppStatus {
   /** The HTTP status, when there was one. Shown to an admin verbatim — it is the difference between
    *  "your gateway is off" and "this app was refused", and no amount of prose substitutes for it. */
   httpStatus?: number;
+  /**
+   * Can this platform tell us what became of a message? (0.51.0, OpenMasjidOS 0.51.1+.)
+   *
+   * ABSENT MEANS FALSE, which is the platform's stated convention for a capability flag (the same one
+   * `media` uses) and the only safe reading: an older platform says nothing here, and treating silence
+   * as support would have the settings screen promise an office a delivery state that never arrives.
+   */
+  outcomes: boolean;
 }
 
 /** Can this masjid send WhatsApp at all? Fail-soft: anything unexpected reads as `unreachable`, which
  *  is the state that tells an admin to go and look rather than implying they never set it up. */
 export async function whatsappStatus(): Promise<WhatsAppStatus> {
-  if (!fabricConfigured()) return { available: false, reason: 'not-configured', source: 'local' };
+  if (!fabricConfigured()) return { available: false, reason: 'not-configured', source: 'local', outcomes: false };
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 5000);
@@ -266,20 +274,42 @@ export async function whatsappStatus(): Promise<WhatsAppStatus> {
     if (!res.ok) {
       log.warn('whatsapp status rejected', { status: res.status });
       const reason: WhatsAppReason = res.status === 403 ? 'not-permitted' : res.status === 404 || res.status === 405 ? 'unsupported' : 'unreachable';
-      return { available: false, reason, source: 'http', httpStatus: res.status };
+      return { available: false, reason, source: 'http', httpStatus: res.status, outcomes: false };
     }
-    const j = (await res.json().catch(() => null)) as { available?: unknown; reason?: unknown } | null;
+    const j = (await res.json().catch(() => null)) as { available?: unknown; reason?: unknown; outcomes?: unknown } | null;
     const said = typeof j?.reason === 'string' && (PLATFORM_REASONS as readonly string[]).includes(j.reason) ? (j.reason as WhatsAppReason) : null;
-    // A 200 with a reason we don't recognise is the platform talking to a client that is out of date,
+    // A 200 with a reason we don't recognize is the platform talking to a client that is out of date,
     // not a gateway problem — `unreachable` is the honest fallback and never claims "not set up".
-    return { available: j?.available === true, reason: said ?? 'unreachable', source: 'platform', httpStatus: res.status };
+    return { available: j?.available === true, reason: said ?? 'unreachable', source: 'platform', httpStatus: res.status, outcomes: j?.outcomes === true };
   } catch {
-    return { available: false, reason: 'unreachable', source: 'local' };
+    return { available: false, reason: 'unreachable', source: 'local', outcomes: false };
   }
 }
 
-/** What happened when we handed one message over. `queued` is NOT `sent` — see `sendPlatformWhatsApp`. */
-export type WhatsAppQueueResult = { queued: true; note?: string } | { queued: false; reason: string };
+/**
+ * What happened when we handed one message over. `queued` is NOT `sent` — see `sendPlatformWhatsApp`.
+ *
+ * `id` (0.51.0) is the platform's own message id, returned alongside the 202 from OpenMasjidOS 0.51.1
+ * onward. It is the handle for `whatsappMessageStatus`, and it is the difference between a log that
+ * ends at "we handed it over" and one that can say what became of it. Absent on an older platform,
+ * which is why every consumer treats it as optional rather than assuming it.
+ */
+export type WhatsAppQueueResult = { queued: true; note?: string; id?: string } | { queued: false; reason: string };
+
+/** Where a message actually got to. `expired` is the platform dropping one it held over 24 hours. */
+export type WhatsAppMessageState = 'queued' | 'sent' | 'failed' | 'expired';
+
+/**
+ * The outcome of one message, or why we could not find out.
+ *
+ * `unknown` is deliberately not an error state and must not be retried forever: the platform keeps
+ * only the 200 most recent outcomes and scopes them to the asking app, so a 404 means "past the end
+ * of that buffer, or never ours" — both of which are permanent answers to the question we asked.
+ */
+export type WhatsAppMessageStatus =
+  | { ok: true; state: WhatsAppMessageState; reason: string | null; at: string | null }
+  | { ok: false; unknown: true }
+  | { ok: false; unknown: false; reason: string };
 
 /**
  * What did the platform actually SAY? (0.51.0)
@@ -297,13 +327,63 @@ export type WhatsAppQueueResult = { queued: true; note?: string } | { queued: fa
  */
 async function readQueueAnswer(res: Response): Promise<WhatsAppQueueResult> {
   if (!res.ok && res.status !== 202) return { queued: false, reason: `http_${res.status}` };
-  const body = (await res.json().catch(() => null)) as { queued?: unknown; reason?: unknown } | null;
+  const body = (await res.json().catch(() => null)) as { queued?: unknown; reason?: unknown; id?: unknown } | null;
   // The platform saying so outright beats any inference from the status code.
   if (body && body.queued === false) {
     const said = typeof body.reason === 'string' ? body.reason.slice(0, 40).replace(/[^a-z0-9_-]/gi, '') : '';
     return { queued: false, reason: said ? `refused_${said}` : `refused_${res.status}` };
   }
-  return res.status === 202 ? { queued: true } : { queued: true, note: `http_${res.status}` };
+  // 0.51.1+ returns an id alongside the 202. Bounded and character-checked before it goes anywhere
+  // near a URL path — it is about to be interpolated into one (`whatsappMessageStatus`).
+  const id = typeof body?.id === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(body.id) ? body.id : undefined;
+  return res.status === 202 ? { queued: true, id } : { queued: true, note: `http_${res.status}`, id };
+}
+
+/**
+ * What became of one message we handed over (0.51.0, needs OpenMasjidOS 0.51.1+).
+ *
+ * This closes the hole that made a real outage undiagnosable. A masjid turned WhatsApp on, every send
+ * was accepted, and nothing arrived for more than a day — and because a 202 was the end of what this
+ * app could know, our records and the office's screen both said "queued" with total confidence and no
+ * way to be contradicted. (The cause was platform-side, and needed the platform's own logs to find.)
+ *
+ * Deliberately quiet about failure. This is a polled, best-effort enrichment of a log, not a step in
+ * any flow — nothing waits on it and nothing is retried because of it, so an unreachable platform
+ * simply leaves rows as they were.
+ */
+export async function whatsappMessageStatus(id: string): Promise<WhatsAppMessageStatus> {
+  if (!fabricConfigured()) return { ok: false, unknown: false, reason: 'no_fabric' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp/status/${encodeURIComponent(id)}`, {
+      headers: { 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    // 404 is "no longer in the platform's 200-message buffer, or never ours" — a permanent answer, not
+    // a transient one, so the caller stops asking rather than polling this id for ever.
+    if (res.status === 404) return { ok: false, unknown: true };
+    // A platform that has never heard of this route (older than 0.51.1) answers 404/405. The 404 above
+    // catches the first, and 405 lands here as an ordinary failure, which is the right shape: nothing
+    // is known and nothing is claimed.
+    if (!res.ok) return { ok: false, unknown: false, reason: `http_${res.status}` };
+    const j = (await res.json().catch(() => null)) as { state?: unknown; reason?: unknown; at?: unknown } | null;
+    const states: WhatsAppMessageState[] = ['queued', 'sent', 'failed', 'expired'];
+    if (!j || typeof j.state !== 'string' || !states.includes(j.state as WhatsAppMessageState)) {
+      return { ok: false, unknown: false, reason: 'bad_shape' };
+    }
+    return {
+      ok: true,
+      state: j.state as WhatsAppMessageState,
+      // Bounded and stripped: it lands in a log column and then on a screen.
+      reason: typeof j.reason === 'string' && j.reason ? j.reason.slice(0, 60) : null,
+      at: typeof j.at === 'string' && j.at ? j.at.slice(0, 40) : null,
+    };
+  } catch {
+    return { ok: false, unknown: false, reason: 'unreachable' };
+  }
 }
 
 /** A group the masjid's admin approved this app to post into. A label and an opaque id, nothing else —
@@ -336,7 +416,7 @@ export type WhatsAppGroupList = { ok: true; groups: WhatsAppGroup[] } | { ok: fa
 /**
  * The groups an admin has approved for THIS app.
  *
- * The list is authorisation, not decoration: an id we did not get from here is refused with 403, and
+ * The list is authorization, not decoration: an id we did not get from here is refused with 403, and
  * approval can be withdrawn at any moment. A confirmed-empty list means "no groups available" and the
  * feature is hidden rather than shown broken — the platform's own guidance, and the right shape for a
  * permission that is somebody else's to give.
@@ -399,7 +479,7 @@ export async function sendPlatformWhatsAppGroup(groupId: string, text: string): 
     });
     clearTimeout(timer);
     const answer = await readQueueAnswer(res);
-    // 403 here is specifically "that group is not approved (any more)" — an authorisation answer, not
+    // 403 here is specifically "that group is not approved (any more)" — an authorization answer, not
     // a malformed request, and the screen should tell an admin to re-approve it rather than hunt a bug.
     if (!answer.queued) log.warn('whatsapp group post rejected', { status: res.status, reason: answer.reason });
     return answer;
@@ -417,7 +497,7 @@ export async function sendPlatformWhatsAppGroup(groupId: string, text: string): 
  * is supposed to have.
  *
  * A 202 means QUEUED, and the gap between that and delivery is larger than it sounds. The platform
- * serialises every sender behind one queue with a randomised 6–20s gap, a 60s per-recipient cooldown,
+ * serializes every sender behind one queue with a randomised 6–20s gap, a 60s per-recipient cooldown,
  * caps of 12/hour and 60/day (4/hour and 10/day for groups), a seven-day warm-up ramp on a freshly
  * linked number — and **quiet hours, 21:00–07:00 by default, checked FIRST**. A receipt queued at
  * 03:00 is held until 07:00. It is never dropped, but nothing may block on this, and no screen may

@@ -64,10 +64,10 @@ export const SETTING_KEYS = {
   // JSON — the madrasah's own wording for the printed family sheet (0.48.0). A partial map of
   // people/sheetText.ts keys; anything absent uses the shipped sentence.
   sheetText: 'sheet_text',
-  // The colour the printed artifacts are ruled in (0.47.0). One hex value; see `getAccentColor`.
+  // The color the printed artifacts are ruled in (0.47.0). One hex value; see `getAccentColor`.
   accentColor: 'accent_color',
   // JSON — WhatsApp (0.50.0): the master switch, the parent pause, the per-event toggles, the country
-  // codes and the test student. See `getWhatsApp`; the event CATALOGUE lives in whatsapp/index.ts.
+  // codes and the test student. See `getWhatsApp`; the event CATALOG lives in whatsapp/index.ts.
   whatsapp: 'whatsapp',
   // The office's own wording for the "we don't have your email address" message (0.50.0). One string;
   // blank means the shipped sentence. See whatsapp/templates.ts.
@@ -164,7 +164,7 @@ export function getAutoInvoiceLast(): string | null {
  *
  * Contact details are split ONE COLUMN PER NUMBER (0.42.0) rather than the old single "guardian
  * phones" cell that crammed every number in behind a comma. A column headed "Father's" that you can
- * tap to ring is worth more to an office than a list, and a labelled column is the only way to know
+ * tap to ring is worth more to an office than a list, and a labeled column is the only way to know
  * whose number you are about to call. `other` is not a leftover: a guardian with no relation recorded —
  * every CSV-imported one — still has to appear somewhere, and dropping them would silently lose the
  * only number the school has.
@@ -185,13 +185,13 @@ export const YEAR_VIEW_COLUMNS = [
 export type YearViewColumn = (typeof YEAR_VIEW_COLUMNS)[number];
 
 /** What the two pre-0.42.0 combined columns become, so an install that had them keeps showing exactly
- *  the same information the morning after an update — just in labelled columns. */
+ *  the same information the morning after an update — just in labeled columns. */
 const LEGACY_COLUMNS: Record<string, YearViewColumn[]> = {
   guardianPhones: ['fatherPhone', 'motherPhone', 'otherPhone'],
   guardianEmails: ['fatherEmail', 'motherEmail', 'otherEmail'],
 };
 
-/** Phone numbers, in labelled columns — what an office keeps beside a payment grid. Everything else is
+/** Phone numbers, in labeled columns — what an office keeps beside a payment grid. Everything else is
  *  opt-in, so a page that gets printed and left on a desk carries only what the admin asked for (§14). */
 const DEFAULT_YEAR_VIEW_COLUMNS: YearViewColumn[] = ['fatherPhone', 'motherPhone', 'otherPhone'];
 
@@ -483,7 +483,7 @@ export interface ProcessingFeeConfig {
   bankEnabled: boolean;
   bankPercentBps: number;
   bankFixedCents: number;
-  /** ACH is capped by Stripe. Without honouring the cap a large payment would be charged a percentage
+  /** ACH is capped by Stripe. Without honoring the cap a large payment would be charged a percentage
    *  of a fee that stopped growing — money taken for nothing. 0 means uncapped. */
   bankCapCents: number;
 }
@@ -676,7 +676,7 @@ export function setSheetTextOverrides(patch: Record<string, string | null | unde
 export const DEFAULT_ACCENT = '#0f766e';
 
 /**
- * The masjid's colour, used for the rules, headings and boxes on printed artifacts (0.47.0).
+ * The masjid's color, used for the rules, headings and boxes on printed artifacts (0.47.0).
  *
  * VALIDATED ON READ, not just on write, and that is not paranoia: this value is interpolated straight
  * into a `<style>` block on a page served to a browser, so a row edited by hand (or surviving from an
@@ -690,7 +690,7 @@ export function getAccentColor(): string {
 
 export function setAccentColor(hex: string | null): void {
   const v = (hex ?? '').trim();
-  if (v && !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)) throw new Error('invalid_colour');
+  if (v && !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)) throw new Error('invalid_color');
   setSetting(SETTING_KEYS.accentColor, v);
 }
 
@@ -700,7 +700,7 @@ export function setAccentColor(hex: string | null): void {
  * `color-mix` in sRGB rather than a hand-computed tint: it follows whatever accent is set without a
  * second setting to keep in step, and every browser that can print these pages supports it. The
  * printed rules already force these panels to white (toner), so this only affects the on-screen
- * preview and a colour print.
+ * preview and a color print.
  */
 export function accentWash(accent: string = getAccentColor()): string {
   return `color-mix(in srgb, ${accent} 7%, #ffffff)`;
@@ -722,7 +722,7 @@ export function accentWash(accent: string = getAccentColor()): string {
  *  • every event off. Same reason, one level down.
  *
  * `events` is stored OPAQUELY (a plain string→bool map) so this module knows nothing about which
- * events exist — whatsapp/index.ts owns that catalogue, exactly as alerts/index.ts owns the alert one.
+ * events exist — whatsapp/index.ts owns that catalog, exactly as alerts/index.ts owns the alert one.
  * Adding an event needs no change here.
  */
 export interface WhatsAppConfig {
@@ -798,7 +798,7 @@ export function getWhatsApp(): WhatsAppConfig {
 }
 
 /** Coerce a hand-edited or older `groupAlerts` row into shape. Unknown event ids are left alone here —
- *  whatsapp/index.ts owns the catalogue and filters against it, exactly as `alert_recipients` does. */
+ *  whatsapp/index.ts owns the catalog and filters against it, exactly as `alert_recipients` does. */
 function readGroupAlerts(raw: unknown): Record<string, { events: string[]; detail: boolean }> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const out: Record<string, { events: string[]; detail: boolean }> = {};
@@ -839,7 +839,7 @@ export function setWhatsAppEmailRequest(text: string | null): void {
 /**
  * The madrasah's own wording for each WhatsApp message (0.50.0).
  *
- * Stored OPAQUELY — this module knows nothing about which messages exist, so the catalogue and the
+ * Stored OPAQUELY — this module knows nothing about which messages exist, so the catalog and the
  * shipped sentences stay in whatsapp/templates.ts next to the code that renders them, exactly as
  * `sheet_text` keeps the printed sheet's registry beside the sheet. Unknown keys are never read back,
  * and the tRPC boundary validates against the real list.

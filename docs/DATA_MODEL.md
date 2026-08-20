@@ -4,7 +4,7 @@
 # DATA_MODEL — schema notes, non-trivial decisions, and the assumptions log
 
 > **Status: stub + living log.** Canonical schema spec is `CLAUDE.md` §9. This file records
-> (a) non-trivial modelling decisions as they are made, and (b) the **assumptions log** for the
+> (a) non-trivial modeling decisions as they are made, and (b) the **assumptions log** for the
 > §20 open questions — per the working agreement, if a build step touches an open question we ask
 > Hasan first; otherwise we proceed with the documented assumption and record it here.
 
@@ -37,12 +37,12 @@ Notable absences, each deliberate:
   the next thing to it.
 - **`attachments`** — payment-proof uploads were planned once and never built. There is no upload
   path and no `/data/attachments` (§4).
-- **`enrollments`** — fees attach to the STUDENT (`student_fees`), not to a class enrolment, so each
+- **`enrollments`** — fees attach to the STUDENT (`student_fees`), not to a class enrollment, so each
   child's bill is their own.
 
 Non-negotiable rules live in CLAUDE.md §9: Student IDs unique and always generated; money in integer
 cents; idempotency keys UNIQUE; **balances derived, never stored**; payments immutable (reversals, not
-edits); allocation derived and per line, with a payer's instruction re-honoured; dates stored ISO and
+edits); allocation derived and per line, with a payer's instruction re-honored; dates stored ISO and
 compared as TEXT; FKs `ON DELETE RESTRICT` on money paths. Every table carries `id` and `created_at`,
 and `updated_at` wherever a row is ever updated.
 
@@ -96,7 +96,7 @@ and `updated_at` wherever a row is ever updated.
   - **Not a column on `users`**: the person who must know that autopay switched itself off is often not
     someone who logs in (the treasurer, the imām, a trustee). A recipient row grants no access.
   - **`events` as JSON, not a join table**: a handful of rows, always read and written whole, never
-    queried BY event. `alerts/index.ts` owns the catalogue and filters unknown ids on read, so a stale
+    queried BY event. `alerts/index.ts` owns the catalog and filters unknown ids on read, so a stale
     row can never widen what it receives.
   - **Two texts per alert, and `publicText` is REQUIRED**: `text` goes by email to the addresses an
     admin typed and MAY name the household and the amount — without that an alert is unactionable, which
@@ -168,7 +168,7 @@ Working assumptions in force unless/until Hasan says otherwise. **Ask before the
 | 4 | Parent self-registration default | **ON** (child's Student ID + on-file guardian email + email verify) | 11 (portal) |
 | 5 | Gradebook visibility to parents | Visible **immediately on entry** (publish workflow deferred) | 5 (gradebook) |
 | 6 | SMTP provider | Per-masjid in-app settings only (no house relay) | portal/mail steps |
-| 7 | PIN policy + name match | **ANSWERED (Hasan, 2026-07-26): no PINs.** Removed in v0.39.0 — the Student ID (`YUS1234`) is the whole credential, because the only thing it authorises is *paying* someone's tuition. Replaced by a name-confirmation step (`identify`) plus a shared per-ID lockout. Contract → **v2**. | done |
+| 7 | PIN policy + name match | **ANSWERED (Hasan, 2026-07-26): no PINs.** Removed in v0.39.0 — the Student ID (`YUS1234`) is the whole credential, because the only thing it authorizes is *paying* someone's tuition. Replaced by a name-confirmation step (`identify`) plus a shared per-ID lockout. Contract → **v2**. | done |
 | 8 | Existing campaign-type enum values `tuition` joins | **ANSWERED (recon):** enum is `donation \| zakat \| tuition` in BOTH Donations (`server` + `web`) and Kiosk (added v0.9.12). `tuition` ALREADY EXISTS — we mirror it, nothing to add. Type drives the card-fee rule (donation=optional cover, zakat=forced cover, tuition=admin-toggle). | 14 (Fabric provider) |
 | 9 | Default madrasa scale + merit categories | Ship the CLAUDE.md defaults (Mumtāz…Rāsib; Ādāb, Sunnah, Hifz milestone, Helping others), admin-editable | 5/6 |
 | 10 | Report cards: scale bands + teacher remark | Show scale band by default; keep optional per-student remark | 7 |

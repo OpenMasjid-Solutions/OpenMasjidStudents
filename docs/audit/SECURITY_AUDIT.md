@@ -150,12 +150,12 @@ The query reads **all** allocation rows for **all** students, then discards all 
 
 **Failure scenario.** `generatePeriod` loops every active student ([invoices.ts:180](../../packages/server/src/billing/invoices.ts#L180): `for (const k of kids) generateForStudent(...)`), so cost is *students × total allocation rows*. A 200-student madrasa three years in holds roughly 15,000 allocation rows, making the nightly 02:00 auto-invoice run ≈ 3,000,000 row reads inside one transaction — on a Pi, and growing quadratically with roster × history. The work is wasted: >99% of rows read are discarded by the very next line.
 
-**Fix.** Added `.where(inArray(paymentAllocations.paymentId, [...liveIds]))`, with the empty-set case short-circuited (SQLite renders an empty `IN ()` as a false predicate, but relying on that is fragile). Behaviour is identical by construction — the JS filter kept exactly the rows the WHERE clause now selects.
+**Fix.** Added `.where(inArray(paymentAllocations.paymentId, [...liveIds]))`, with the empty-set case short-circuited (SQLite renders an empty `IN ()` as a false predicate, but relying on that is fragile). Behavior is identical by construction — the JS filter kept exactly the rows the WHERE clause now selects.
 
 ---
 
 ### <a id="oms-005"></a>OMS-005 — Changing a password does not invalidate the user's other sessions
-**Medium · Confirmed · `trpc/auth.ts:160` · Tier 2 (behaviour change)**
+**Medium · Confirmed · `trpc/auth.ts:160` · Tier 2 (behavior change)**
 
 ```ts
 changePassword: protectedProcedure...
@@ -167,9 +167,9 @@ changePassword: protectedProcedure...
 
 `resetConfirm` in the same file does the opposite, deliberately: `tx.delete(sessions).where(eq(sessions.userId, r.userId)).run(); // sign out everywhere (§14)`. So the intended rule is not ambiguous — it is simply missing from the other half of the pair.
 
-**Failure scenario.** A parent uses the portal on a shared or borrowed phone and forgets to sign out. Later, from home, they change their password precisely because they are worried. The stolen session cookie keeps working for the remainder of its 12-hour TTL, and the app gave them no way to end it: there is no session-list UI and no "sign out everywhere" button. Changing a password is the universal user expectation for revocation, and the app quietly does not honour it.
+**Failure scenario.** A parent uses the portal on a shared or borrowed phone and forgets to sign out. Later, from home, they change their password precisely because they are worried. The stolen session cookie keeps working for the remainder of its 12-hour TTL, and the app gave them no way to end it: there is no session-list UI and no "sign out everywhere" button. Changing a password is the universal user expectation for revocation, and the app quietly does not honor it.
 
-**Fix.** `changePassword` now deletes the user's other sessions, keeping the caller's current token so they are not logged out of the tab they are using. Behaviour-changing (a user with the app open on a phone and a laptop will be signed out of the other device), hence Tier 2 and flagged. Regression test added covering both halves: other sessions die, the current one survives.
+**Fix.** `changePassword` now deletes the user's other sessions, keeping the caller's current token so they are not logged out of the tab they are using. Behavior-changing (a user with the app open on a phone and a laptop will be signed out of the other device), hence Tier 2 and flagged. Regression test added covering both halves: other sessions die, the current one survives.
 
 ---
 
@@ -208,7 +208,7 @@ The consequences are concrete:
 - **The `payment-short` incident is the proof.** CLAUDE.md §9 records that `payment-short` was raisable in code but undeclared in the manifest for the whole of 0.43.0, so every such alert was answered `400 Unknown alert` and dropped, fail-soft and invisible. A guard test was then written — but with no CI, that guard protects nothing.
 - **A push that breaks typecheck still publishes an image**, because the Docker build and the typecheck are different code paths (`vite build` does not typecheck).
 
-**Fix.** Added `.github/workflows/ci.yml` running `npm ci`, `npm run lint`, `npm run test`, `npm run build` on pushes to `main` and on all pull requests, with `permissions: contents: read` and no secrets. Additive and cannot affect existing behaviour.
+**Fix.** Added `.github/workflows/ci.yml` running `npm ci`, `npm run lint`, `npm run test`, `npm run build` on pushes to `main` and on all pull requests, with `permissions: contents: read` and no secrets. Additive and cannot affect existing behavior.
 
 ---
 
@@ -297,7 +297,7 @@ screen = s.origin === 'tunnel' ? <SetupOnLanNotice /> : <Setup />;
 
 **Why accepting it is right.** The single bit disclosed is "first-run has not happened", and there is nothing an attacker can do with it: `setup` refuses every non-LAN origin at the top of the handler, so the first admin can only ever be created from the masjid network. §14's "no install-state oracle" constrains the setup mutation's *error text*, which does stay uniform. Trading one unactionable bit for a first-run experience that explains itself is the better engineering call, and it was made on purpose.
 
-**Action taken.** No behaviour change. Added a comment at the call site recording that this was reviewed and kept, and why — so the next person auditing does not read it as the oversight I first took it for.
+**Action taken.** No behavior change. Added a comment at the call site recording that this was reviewed and kept, and why — so the next person auditing does not read it as the oversight I first took it for.
 
 ---
 
@@ -317,7 +317,7 @@ The file's own header promises otherwise: *"every dynamic value (names, memos, l
 const m = /^data:([a-z\/+-]+);base64,([A-Za-z0-9+\/=]+)$/.exec(value.trim());
 ```
 
-The permitted alphabet contains no `"`, `'`, `<`, or `>`, so there is no way to close the attribute. Magic bytes must then match the declared MIME, and SVG is excluded by design ("script-capable and would be served back to browsers"). Writing is admin-only. So this is a genuine defence-in-depth gap, not a vulnerability: correctness rests entirely on a regex two modules away, and the next person to relax that regex has no local signal that HTML safety depends on it.
+The permitted alphabet contains no `"`, `'`, `<`, or `>`, so there is no way to close the attribute. Magic bytes must then match the declared MIME, and SVG is excluded by design ("script-capable and would be served back to browsers"). Writing is admin-only. So this is a genuine defense-in-depth gap, not a vulnerability: correctness rests entirely on a regex two modules away, and the next person to relax that regex has no local signal that HTML safety depends on it.
 
 **Fix.** Wrapped in `esc()`. `esc()` is idempotent over the permitted alphabet, so rendering is byte-identical today.
 
@@ -386,7 +386,7 @@ const wait = loginLimiter.retryAfterMs(key);      // 8 failures / 15 min, per IP
 
 CLAUDE.md §14 requires internet-facing limits "per-IP and per-account". Only the per-IP half exists, so an attacker with a botnet or a rotating IPv6 prefix can grind one known username without ever tripping the limiter.
 
-**Why deferred rather than fixed.** Practical exploitability is low: argon2id at 19 MiB / 2 iterations with a 12-character minimum ([passwords.ts:12](../../packages/server/src/auth/passwords.ts#L12)) makes online guessing hopeless, and the limiter already resists the single-source case. Meanwhile a per-account lockout is a **denial-of-service primitive against a named user**: anyone who knows the admin's username could lock them out at will, and admin sign-in is LAN-only, so the lockout would hit the one person who can fix it. Which way to resolve that is a real product judgement (fail counter without lockout? exponential delay? alert instead of block?), not a mechanical fix — so per the brief I am not guessing. Options in `ACTION_REQUIRED.md`.
+**Why deferred rather than fixed.** Practical exploitability is low: argon2id at 19 MiB / 2 iterations with a 12-character minimum ([passwords.ts:12](../../packages/server/src/auth/passwords.ts#L12)) makes online guessing hopeless, and the limiter already resists the single-source case. Meanwhile a per-account lockout is a **denial-of-service primitive against a named user**: anyone who knows the admin's username could lock them out at will, and admin sign-in is LAN-only, so the lockout would hit the one person who can fix it. Which way to resolve that is a real product judgment (fail counter without lockout? exponential delay? alert instead of block?), not a mechanical fix — so per the brief I am not guessing. Options in `ACTION_REQUIRED.md`.
 
 ---
 
@@ -444,7 +444,7 @@ options will be removed in `fastify@6`.
 
 The option itself is load-bearing and well justified — [index.ts:61-66](../../packages/server/src/index.ts#L61-L66) raises `maxParamLength` to 5000 because tRPC's `httpBatchLink` packs a comma-joined procedure list into one GET path, and Fastify's default of 100 truncates the batch to a 414. The comment notes this was caught by driving a browser, since `createCaller` tests bypass HTTP entirely.
 
-**Impact today: none** — it is a warning, the behaviour is correct, and it costs one noisy line per boot. It matters on the next Fastify major, where the top-level form is removed and the batch endpoint would silently start 414-ing again. Worth moving to `routerOptions: { maxParamLength: 5000 }` when Fastify 6 is on the horizon; **not** worth a change to the HTTP boot layer of a just-released version on my own initiative. Now that a container can be booted and probed, this is also cheap to verify when someone does it.
+**Impact today: none** — it is a warning, the behavior is correct, and it costs one noisy line per boot. It matters on the next Fastify major, where the top-level form is removed and the batch endpoint would silently start 414-ing again. Worth moving to `routerOptions: { maxParamLength: 5000 }` when Fastify 6 is on the horizon; **not** worth a change to the HTTP boot layer of a just-released version on my own initiative. Now that a container can be booted and probed, this is also cheap to verify when someone does it.
 
 ---
 
@@ -552,7 +552,7 @@ Stating these explicitly, because "no finding" is a result:
 1. **No browser, no Stripe test mode.** The UI was never driven, and no card was charged. Anything needing a real payment round-trip — Elements, SCA, the autopay ladder against live Stripe — is still unverified either way.
 2. **The multi-arch build was not reproduced locally.** The published index carries `linux/amd64` + `linux/arm64` and I verified both are present, but only amd64 was executed; nothing here ran on arm64 hardware, which is the actual Raspberry Pi target. [OMS-009](#oms-009) stays deferred for that reason.
 3. **`@fastify/static` traversal was not attempted.** Its advisories were assessed as unreachable by configuration, not by exploitation; that reasoning is unchanged and untested.
-3. **The OS platform is a black box.** `/api/fabric/{session,email,alert,notify,site,stripe}` behaviour is taken from this repo's comments. Notably, [OMS-016](#oms-016)-style silent failure already bit this app once via the platform's alert allow-list.
+3. **The OS platform is a black box.** `/api/fabric/{session,email,alert,notify,site,stripe}` behavior is taken from this repo's comments. Notably, [OMS-016](#oms-016)-style silent failure already bit this app once via the platform's alert allow-list.
 4. **Consumer repos not read.** Donations and Kiosk are being audited in parallel; whether they actually send a correct `currency` ([OMS-015](#oms-015)) or call `identify` before `lookup` is unverified here.
 5. **The Stripe account is untouched.** No API calls, no webhook config inspection, no key validity check — Tier 3 by instruction.
 6. **Dependency advisories are as reported by `npm audit` on 2026-08-04.** I did not independently confirm each GHSA's technical details; where reachability mattered I reasoned from the advisory *class* and this codebase's configuration, and said so. No CVE or GHSA identifier in this report is invented — every one is quoted verbatim from `npm audit` output reproduced in `REMEDIATION.md`.

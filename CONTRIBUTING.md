@@ -48,7 +48,7 @@ and leaves the two thrashing each other.
 2. Fork, branch, and keep commits small with [Conventional Commit](https://www.conventionalcommits.org/)
    messages (`feat:`, `fix:`, `docs:`, `chore:` …). **No AI co-author trailers.**
 3. Before pushing: `npm run build` and `npm run test` must pass, `tsc` must be clean, and the change
-   must work in **both** light/dark themes and **both** LTR/RTL, honour `prefers-reduced-motion`, look
+   must work in **both** light/dark themes and **both** LTR/RTL, honor `prefers-reduced-motion`, look
    right at phone width, and keep the role × origin matrix intact (an admin session over the tunnel must
    still get 403; a parent must not be able to fetch another household). New user-facing strings go
    through i18next. See `CLAUDE.md` §18 for the full Definition of Done.
@@ -122,7 +122,7 @@ which adds a `Signed-off-by: Your Name <you@example.com>` trailer.
 
 **2. Copyright-license grant for relicensing.** So that the project can be
 sustained — including by offering **commercial / proprietary licenses** to
-organisations that cannot accept AGPL terms — you additionally grant
+organizations that cannot accept AGPL terms — you additionally grant
 **OpenMasjid-Solutions** a **perpetual, worldwide, non-exclusive, royalty-free,
 irrevocable** license to use, reproduce, modify, prepare derivative works of,
 publicly display and perform, sublicense, and **distribute your contribution and
@@ -148,7 +148,7 @@ exact sentence
 
 > I have read the CLA Document and I hereby sign the CLA
 
-Your signature is recorded under `signatures/` and future PRs are recognised
+Your signature is recorded under `signatures/` and future PRs are recognized
 automatically.
 
 If you cannot agree to the relicensing grant in §2 of the CLA, you may still

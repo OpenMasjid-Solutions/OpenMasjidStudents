@@ -104,7 +104,7 @@ export const AUTOPAY_NOTICE_DAYS = 3;
  * subtle thing here: a household qualifies only when it has an open invoice whose due date is
  * EXACTLY `today + AUTOPAY_NOTICE_DAYS`. Selecting on "something is due soon" instead would message a
  * family with an older overdue bill every single day until they paid it — which is not a courtesy,
- * it is the behaviour that gets a school's messages muted.
+ * it is the behavior that gets a school's messages muted.
  *
  * The amount quoted is what autopay would actually take on that day, capped by the household's real
  * balance, so it is the same figure `autopayDue` will compute when the run happens.
@@ -280,7 +280,7 @@ export async function runAutopay(today: string): Promise<{ attempted: number }> 
 }
 
 /** How a card is named to a parent — "Visa ···· 4242", brand and last four only. Never a PAN and never
- *  a holder name; neither is stored (§14). Empty when there is nothing recognisable to say. */
+ *  a holder name; neither is stored (§14). Empty when there is nothing recognizable to say. */
 function cardLabelFor(familyId: string): string {
   const pm = orderedMethods(familyId)[0];
   if (!pm) return '';
@@ -380,7 +380,7 @@ export function onAutopayFailed(paymentIntentId: string, runId?: string | null):
  * an id, and a metadata search confirms no PaymentIntent for this run exists.
  *
  * Marked `failed` so it stops blocking the family's future charges, but WITHOUT advancing the retry
- * ladder: nothing was ever presented to the card, so counting it as a strike would penalise the
+ * ladder: nothing was ever presented to the card, so counting it as a strike would penalize the
  * family for our own network error and could auto-disable autopay on three bad nights of
  * connectivity. Idempotent, and only ever acts on a still-pending run.
  */
@@ -418,7 +418,7 @@ function markRunFailed(runId: string, runDate: string): void {
     // must reach a person — the office's own alert list, and the admin's email via OpenMasjidOS —
     // rather than only the masjid webhook, which most installs never configure.
     //
-    // The children, not a household label. A card and an autopay enrolment DO belong to the household
+    // The children, not a household label. A card and an autopay enrollment DO belong to the household
     // — one adult holds the card for all of them — so this names the children it pays FOR rather than
     // claiming a child owns the card. Either way the office gets the names their records are keyed by.
     void alertStaff('autopay-disabled', {

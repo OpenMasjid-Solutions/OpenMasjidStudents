@@ -16,7 +16,7 @@
  *    normal in a madrasa, so these start UNTICKED and are worded as a question.
  *
  * Nothing is ever linked without a click, and every group can be linked on its own — an office that
- * recognises four families and is unsure about the fifth is not made to decide all five at once.
+ * recognizes four families and is unsure about the fifth is not made to decide all five at once.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -149,7 +149,7 @@ export function SiblingSuggestions({ onDone, doneLabel }: { onDone?: () => void;
                               <input type="checkbox" checked={set.has(s.id)} onChange={() => toggle(g.key, s.id)} />
                               <span className="pick-name">{s.fullName}</span>
                               {s.studentCode && <span className="code">{s.studentCode}</span>}
-                              {/* Whose household it is, which is how the office recognises the family. */}
+                              {/* Whose household it is, which is how the office recognizes the family. */}
                               {s.guardianNames.length > 0 && <span className="muted">{s.guardianNames.join(', ')}</span>}
                             </label>
                           </li>

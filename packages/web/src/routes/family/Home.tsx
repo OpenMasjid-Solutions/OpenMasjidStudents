@@ -101,7 +101,7 @@ export function FamilyHome({ onManageAutopay }: { onManageAutopay: () => void })
               </div>
               <div className="sub">{owed ? t('family.due') : credit ? t('family.inCredit') : t('family.allSettled')}</div>
               {/* Offered even when nothing is due: a parent who wants to pay the term up front, or
-                  top up before travelling, should not have to wait for an invoice to exist. PayNow
+                  top up before traveling, should not have to wait for an invoice to exist. PayNow
                   re-words itself for that case; the money lands as credit and the next invoices
                   generated absorb it. */}
               {payConfigQ.data?.ready && chosenFor(fam).length === 0 && (

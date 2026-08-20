@@ -14,7 +14,7 @@
  * a Spanish portal ends up saying "Visado".
  *
  * Two rules held on purpose:
- *   - never claim a kind we were not told. An unrecognised type is titled from the type itself
+ *   - never claim a kind we were not told. An unrecognized type is titled from the type itself
  *     ("Cash App"), and a method with nothing recorded is `other` with no name, which the component
  *     renders as "Saved payment method" — vague, but true, which the old output was not.
  *   - a card expires at the END of its expiry month, which is what the networks mean by 04/27.
@@ -78,7 +78,7 @@ const TYPES: Record<string, { name: string; kind: 'bank' | 'other' }> = {
   us_bank_account: { name: 'Bank account', kind: 'bank' },
   sepa_debit: { name: 'SEPA Direct Debit', kind: 'bank' },
   bacs_debit: { name: 'Bacs Direct Debit', kind: 'bank' },
-  acss_debit: { name: 'Pre-authorised debit', kind: 'bank' },
+  acss_debit: { name: 'Pre-authorized debit', kind: 'bank' },
   au_becs_debit: { name: 'BECS Direct Debit', kind: 'bank' },
   link: { name: 'Link', kind: 'other' },
   cashapp: { name: 'Cash App', kind: 'other' },
@@ -110,7 +110,7 @@ export function describeMethod(m: SavedMethod, now: Date = new Date()): MethodDi
   if (type === 'card') {
     return {
       kind: 'card',
-      // An unrecognised brand still gets said rather than dropped — a new network is a name, not an error.
+      // An unrecognized brand still gets said rather than dropped — a new network is a name, not an error.
       name: m.brand ? BRANDS[m.brand] ?? prettifyType(m.brand) : null,
       last4,
       wallet: m.wallet ? WALLETS[m.wallet] ?? prettifyType(m.wallet) : null,

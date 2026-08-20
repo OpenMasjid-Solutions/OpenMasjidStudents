@@ -120,7 +120,7 @@ Finance records cash/Zelle/check by hand, and prints **statements**, **household
 the **Cloudflare uplink the OS provides**; the admin surface stays on the masjid LAN. Tuition paid with a
 **child's Student ID** through **OpenMasjidDonations** and **OpenMasjidKiosk** flows automatically into the
 same ledger over the **OpenMasjidOS Fabric** — this app is the **provider** of the `students/billing`
-capability those apps consume. A masjid running more than one programme on different calendars (a weekend
+capability those apps consume. A masjid running more than one program on different calendars (a weekend
 maktab beside a full-time hifz school) can define **schools** (0.47.0), which scope the calendar and the
 class tree and never the household or the money.
 
@@ -163,7 +163,7 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   (ts/tsx/js/css), `# …` (yml/sh/Dockerfile), `<!-- … -->` (md/html) — followed by
   `Copyright (C) 2026 OpenMasjid-Solutions`. Never strip an existing header.
 - Never copy code from AGPL-incompatible sources — and **never copy QuickSchools' UI text, templates, assets,
-  or code**; they are the feature benchmark, nothing more. Re-implement from behaviour. Permissive deps
+  or code**; they are the feature benchmark, nothing more. Re-implement from behavior. Permissive deps
   (MIT/ISC/BSD) are fine. When in doubt, write it yourself.
 - **No AI co-author trailers in commits.** Conventional-commit messages (`feat:`, `fix:`, `docs:` …), small
   focused commits.
@@ -208,7 +208,7 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   (`student_fees`), with a per-student amount **override** — which is also how a sibling/hardship discount is
   expressed. (The family-level discount was removed in 0.39.0: with one bill per child it had nowhere honest
   to sit.) Writing plans is admin-only; finance reads them (0.42.0).
-- **Charge items + charges**: a configurable catalogue of one-off things (a book fee, a trip) applied to one
+- **Charge items + charges**: a configurable catalog of one-off things (a book fee, a trip) applied to one
   child or mass-applied to a class or course, each **snapshotting** its label and amount so re-pricing the
   item never rewrites history. A **negative** charge is how a credit, bursary or correction is expressed.
 - **Invoices** per STUDENT (generated for a month/term by hand or by the nightly job), line items (one per
@@ -284,7 +284,7 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   channel families actually read, through the masjid's own self-hosted OpenWA gateway. Every one of the
   seven exists on EMAIL too, with its own switch on each channel: `invoice-ready`, `receipt`, `past-due`,
   `autopay-upcoming`, `autopay-failed`, `card-expiring`, `payment-refunded`. **The platform owns
-  the connection AND the single paced queue every app shares**, which is the entire defence for a number
+  the connection AND the single paced queue every app shares**, which is the entire defense for a number
   WhatsApp does not officially permit; this app never goes near a gateway and never designs for volume.
   Off by default, **paused by default**, every event off, with a **test student** whose household gets
   through the pause so a real message can be tried on one family. Parents opt out from their own portal;
@@ -349,7 +349,7 @@ account may additionally be restricted to certain **schools**, which narrows a v
 
 | Capability | `admin` | `finance` | `parent` |
 | --- | :-: | :-: | :-: |
-| Settings: school name, currency, logo, colour, date format, contact, sheet wording | ✅ | ❌ | ❌ |
+| Settings: school name, currency, logo, color, date format, contact, sheet wording | ✅ | ❌ | ❌ |
 | Settings: Stripe account, **who pays the processing fee**, email alerts, parent emails, past-due policy, self-registration | ✅ | ❌ | ❌ |
 | Settings: WhatsApp (on/off, pause, events, country codes, test student, outreach, queue log) | ✅ | ❌ | ❌ |
 | Staff accounts (create, role, disable, reset password, school limits) | ✅ | ❌ | ❌ |
@@ -557,7 +557,7 @@ payment record, so the file itself is a secret regardless.
 Non-negotiable rules:
 
 - **A SCHOOL scopes the calendar and the grouping. It never scopes the household or the money** (0.47.0).
-  `schools` exists because a masjid may run a weekend maktab beside a full-time hifz programme on a
+  `schools` exists because a masjid may run a weekend maktab beside a full-time hifz program on a
   different calendar, so `school_years.school_id` and `courses.school_id` (and through courses, classes)
   belong to one school, and `students.school_id` says which one a child attends. That is the whole of it.
   `families`, `invoices`, `payments`, `payment_allocations`, `autopay_*` and every fee plan are
@@ -582,7 +582,7 @@ Non-negotiable rules:
   field stays authoritative. The Fabric contract still exposes `firstName` + `lastInitial` and still never
   returns a full surname (§11.2) — those are derived too.
 - **Usernames are compared case-INSENSITIVELY, in one place** (`auth/usernames.ts`, 0.48.0). Login always
-  matched loosely — a parent's username is their email address and a phone keyboard capitalises it — while
+  matched loosely — a parent's username is their email address and a phone keyboard capitalizes it — while
   every "is this name taken?" check compared exactly, and `users.username` is UNIQUE under a binary
   collation. So `Office` and `office` were both accepted and only one of them could ever be signed into. One
   helper now answers both questions; `findUserByUsername` tries an exact match first so an install that
@@ -592,7 +592,7 @@ Non-negotiable rules:
   would have been personal data collected for no purpose. WhatsApp is that purpose — a declined card at nine
   on a Sunday evening reaches a treasurer's phone and does not reach their inbox. So the column is back
   **with** `phone_country` and `wa_events`, entirely opt-in per account, and clearing the number is the off
-  switch. Minimisation is satisfied by the purpose, not by the absence; a number with no purpose is what the
+  switch. Minimization is satisfied by the purpose, not by the absence; a number with no purpose is what the
   old rule forbade and still is.
 - **WhatsApp gates in ONE place, and three of its defaults are the feature** (0.50.0, `whatsapp/index.ts`).
   `enabled` off, `paused` **ON** and every event off, on every install. The pause starting on is the one
@@ -604,7 +604,7 @@ Non-negotiable rules:
   them, a withdrawn one fails closed) and it overrides a pause and nothing else. **It covers BOTH channels**
   (`settings/testStudent.ts`, which is why it lives in settings and not in `whatsapp/`): it lifted only the
   WhatsApp pause at first, so an office that set a test student and took a payment got nothing at all —
-  the parent-EMAIL pause is a separate switch and held the receipt back silently. The email side honours it
+  the parent-EMAIL pause is a separate switch and held the receipt back silently. The email side honors it
   twice, at the sender AND in `guardianEmailsForFamily`, because that second line would otherwise cancel the
   exception the first one granted. `guardians.wa_opt_out` is the parent's own answer, stored on the PERSON
   rather than the household because it is a decision about a phone — and **nothing overrides it**, not the
@@ -645,7 +645,7 @@ Non-negotiable rules:
   is every row written before 0.43.0; `billing/lines.ts` reads those by spreading them over the lines in
   order). When a parent chose lines — "this $50 is the book fee", at the kiosk, on the donation site or in the
   portal — that choice is stored on the payment (`payments.directed`, immutable like the rest of it) and
-  re-honoured by every later `reallocateStudent` BEFORE the oldest-due-first sweep. Storing it is the whole
+  re-honored by every later `reallocateStudent` BEFORE the oldest-due-first sweep. Storing it is the whole
   point: an instruction applied only at the moment of payment is undone by the next invoice, and the line the
   parent deliberately settled would read as outstanding again. `billing/lines.ts` is the ONE place that turns
   an invoice into lines, and `orderedItems` there is the ONE canonical order (tuition → charges → credits) —
@@ -701,7 +701,7 @@ Non-negotiable rules:
   household reads "Farooqi / Ismail", naming a child who may not be the one who is behind. So
   `alerts/index.ts` exports `studentName`, `studentAmounts` (per-child, since one card charge is recorded as
   one row per child) and `childrenOf` — the last for the two facts that genuinely belong to the household, a
-  CARD and an AUTOPAY enrolment, which name the children they pay FOR rather than pretending a child owns the
+  CARD and an AUTOPAY enrollment, which name the children they pay FOR rather than pretending a child owns the
   card. The past-due digest counts and lists STUDENTS while still chasing one household once, and says both
   numbers, because otherwise an office wonders why 9 students produced 5 emails. **The privacy line does not
   move**: all of this is the `text` variant, where a name beside an amount was always allowed; `publicText`
@@ -716,7 +716,7 @@ Non-negotiable rules:
 - **A WhatsApp COMMAND reply is the one place that goes the other way, and says only counts and totals**
   (0.50.0-dev.15, `fabric/commands.ts` + `billing/stats.ts`). An alert reaches addresses and numbers an
   admin configured, one event at a time; a command reply lands in a chat that keeps a copy forever, on
-  whichever phone is authorised today — the platform's own reason for refusing to expose app logs. So
+  whichever phone is authorized today — the platform's own reason for refusing to expose app logs. So
   `stats` reports how many and how much and points at a screen behind a login for who, and a test asserts
   no child's name can appear in it. Two arithmetic rules there are load-bearing: owed and credit are summed
   PER STUDENT and never netted install-wide (one child $100 behind and another $100 ahead is $100
@@ -856,7 +856,7 @@ the family id.
 
 **`POST /fabric/billing/lookup`** — resolve a **Student ID** to a family + balance + sibling list.
 ```jsonc
-// request — the ID alone (case/spaces/hyphens normalised here). No name, no PIN: v2 removed both.
+// request — the ID alone (case/spaces/hyphens normalized here). No name, no PIN: v2 removed both.
 { "v": 2, "studentCode": "YUS1234" }
 // Any mismatch — unknown ID, withdrawn child, locked ID, tuition payments switched off — gives an
 // identical "found": false. `identify` and `lookup` share ONE per-ID lockout bucket (6 failures/hour),
@@ -1039,7 +1039,7 @@ ledger by one of four **pull** paths: the Fabric `record-payment` call (Donation
 confirm-on-return (13.2.4), autopay's synchronous confirm (13.3), and the daily reconciliation (§11.4). There
 is no `/api/stripe/webhook` route, no signature verification and no webhook endpoint registration, because
 there is nothing for a webhook to tell us that reconciliation will not — and a webhook is an internet-facing
-route that must be exposed, verified and kept in step with Stripe's event catalogue. `stripe_events` is the
+route that must be exposed, verified and kept in step with Stripe's event catalog. `stripe_events` is the
 vestigial table from that design (§9). **A refund is the one Stripe call that changes our ledger
 immediately** (`payments/refunds.ts`): Stripe first, then the mirror rows.
 
@@ -1086,7 +1086,7 @@ invariant here is load-bearing:
 - **Printed documents are minors' records**: served only through the authed route that re-checks the role ×
   origin matrix on every request, with `no-store`, `nosniff`, `no-referrer` and a CSP whose `default-src
   'none'` means an injected reference cannot phone home. Every interpolated value is escaped; the accent
-  colour and the logo are re-validated on the way out (a hex pattern, and magic bytes) because they land
+  color and the logo are re-validated on the way out (a hex pattern, and magic bytes) because they land
   inside a `<style>` block and an `<img>` on a page a browser renders.
 - **The SPA shell** is `no-store` (a cached shell is how an update becomes a no-op) plus `nosniff` and
   `no-referrer` — the invite/reset pages carry a token in the query string, and a referrer is not the place
@@ -1126,7 +1126,7 @@ strings**, and the office can rewrite the sentences on a family's printed sheet 
 portal is the face of the madrasah** — highest polish bar, phone-first (big tap targets, bottom nav,
 one-thumb payment flow), and since 0.48.0 the staff shell allows for a phone's notch and home bar too.
 **The printed documents are the artifacts families keep** — a dignified header (school name, period, the
-madrasah's own logo and colour), clean tables, the org's geometric restraint, and they must look right printed
+madrasah's own logo and color), clean tables, the org's geometric restraint, and they must look right printed
 in black-and-white on a masjid photocopier. Voice: plain and warm for parents (✅ "Your balance is $350" /
 "Autopay is on — we'll charge your Visa ···4242 when tuition is due" ❌ "off_session PaymentIntent
 requires_action"), and for staff (the finance manager is a volunteer, not an accountant). Errors: one friendly
@@ -1194,7 +1194,7 @@ payment paths (there is no webhook to forward — see §13.4); a small mock of `
 Builds via `npm run build`; `npm run lint` (`tsc --noEmit`) clean; the ledger / Fabric-contract / origin-policy tests pass;
 **role × origin matrix verified for touched routes** (an admin session over simulated tunnel gets 403; a
 parent token literally cannot fetch another household — tested, not assumed); works light+dark, LTR+RTL,
-reduced-motion honoured; new/changed screens reviewed side-by-side with the OpenMasjidOS dashboard for
+reduced-motion honored; new/changed screens reviewed side-by-side with the OpenMasjidOS dashboard for
 token/motion/typography parity (§15) **and checked on a phone-width viewport**; works with Fabric/mail/tunnel
 absent (standalone) and present; payment features tested against Stripe test mode including a declined card;
 printed documents checked in a real print preview, in black and white; every new date/money boundary validated

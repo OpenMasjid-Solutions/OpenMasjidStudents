@@ -9,7 +9,7 @@
  *     one but does not get to re-write what it says.
  *  2. THE REGISTRY IS THE ALLOW-LIST. An unknown box is refused at the boundary rather than stored and
  *     silently ignored — a client that made up a key would otherwise look like it had worked.
- *  3. The catalogue is SERVED, not hard-coded in the browser: keys, shipped defaults, tags and the length
+ *  3. The catalog is SERVED, not hard-coded in the browser: keys, shipped defaults, tags and the length
  *     cap all come from the server, so adding a sentence needs no change on the UI side.
  *  4. Reset means reset — every box, back to the shipped sentence.
  */

@@ -29,7 +29,7 @@ describe('generateTempPassword', () => {
     expect(generateTempPassword(15)).toMatch(/^[^-]{5}-[^-]{5}-[^-]{5}$/);
   });
 
-  it('honours a requested length', () => {
+  it('honors a requested length', () => {
     // 20 characters in groups of five = 20 + 3 dashes.
     expect(generateTempPassword(20).replace(/-/g, '')).toHaveLength(20);
   });

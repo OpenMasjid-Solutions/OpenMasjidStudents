@@ -10,7 +10,7 @@
  *     sums what the parent ticked charges the wrong amount. Credit lines are the interesting case: their
  *     value is deducted from the lines above them and they report a balance of 0, so summing is always
  *     safe.
- *  2. SURVIVAL. Allocation is DERIVED and recomputed whenever a bill changes, so an instruction honoured
+ *  2. SURVIVAL. Allocation is DERIVED and recomputed whenever a bill changes, so an instruction honored
  *     only at the moment of payment would be silently undone by the next month's invoice — the book fee
  *     the parent deliberately settled would be outstanding again on their next statement. The
  *     instruction is stored on the payment and re-applied on every recompute, and the test that matters

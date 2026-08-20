@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Copyright (C) 2026 OpenMasjid-Solutions */
-/* The parent portal — phone-first (CLAUDE.md §15): a single centred column, big tap targets,
+/* The parent portal — phone-first (CLAUDE.md §15): a single centered column, big tap targets,
    generous spacing. Reuses the org tokens + glass so it stays on-brand with the platform. */
 
 .family-shell {
@@ -59,9 +59,9 @@
 }
 .fam-tab {
   flex: 1 1 0;
-  /* Centred BY LAYOUT rather than by line-height (0.48.0): the tabs are equal widths, so the longest
+  /* Centered BY LAYOUT rather than by line-height (0.48.0): the tabs are equal widths, so the longest
      label decides the height of the row, and a label that wrapped to two lines used to sit high in a pill
-     sized for one. Flex centring holds whether a label takes one line or two, which also means a longer
+     sized for one. Flex centering holds whether a label takes one line or two, which also means a longer
      translation cannot break the bar. */
   display: inline-flex;
   align-items: center;
@@ -119,7 +119,7 @@
    A pop-up, on every signed-in surface — the parent portal AND the staff shells, since a finance manager
    taking cash on their phone wants it on their home screen too.
 
-   A BOTTOM SHEET rather than a centred box: it only ever appears on a phone, where the thumb is at the
+   A BOTTOM SHEET rather than a centered box: it only ever appears on a phone, where the thumb is at the
    bottom of the screen and every native equivalent of this slides up from there. `--fam-safe-b` carries the
    iOS home-bar inset so the buttons are not under it. */
 .install-scrim {
@@ -387,7 +387,7 @@
 }
 .year-chip-mark { font-size: 1.05rem; line-height: 1; font-weight: 700; }
 
-/* The same four meanings the office's grid uses, in the same colours, so a parent on the phone and the
+/* The same four meanings the office's grid uses, in the same colors, so a parent on the phone and the
    volunteer at the desk are describing one thing. `settled` is a month paid before this app arrived and
    `carried` is one still inside a carried-forward bill — both hollow, because neither is an invoice this
    app raised and collected. */

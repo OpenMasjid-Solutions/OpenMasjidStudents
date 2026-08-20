@@ -85,7 +85,7 @@ describe('the gross-up', () => {
     }
   });
 
-  it('honours the ACH cap instead of charging a percentage of a fee that stopped growing', () => {
+  it('honors the ACH cap instead of charging a percentage of a fee that stopped growing', () => {
     // $2,000 by bank costs the masjid $5, not 0.8% of $2,000 ($16).
     const q = fees.feeQuote(200_000, 'bank');
     expect(q.feeCents).toBe(500);

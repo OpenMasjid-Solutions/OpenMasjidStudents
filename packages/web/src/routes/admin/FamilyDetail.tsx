@@ -610,7 +610,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
       </section>
 
       {/* Add a sibling — at the bottom, because it is the thing you reach for after reading the
-          record and realising a child belongs on it. One choice: which child. The household you are
+          record and realizing a child belongs on it. One choice: which child. The household you are
           looking at is the one they join, so there is nothing else to say. */}
       {!readOnly && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>

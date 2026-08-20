@@ -28,7 +28,7 @@ import { isSchoolRestricted, visibleSchoolIds } from '../schools';
 import type { Session } from '../db/schema';
 
 /**
- * Defence in depth for a page assembled by string concatenation that carries a family's Student IDs
+ * Defense in depth for a page assembled by string concatenation that carries a family's Student IDs
  * and payment history (§14). The values in it are all escaped, so this is a second line, not the first.
  *
  * `'unsafe-inline'` is a deliberate, bounded compromise. The sheet has one authored `<style>` block and
@@ -61,7 +61,7 @@ function baseUrlFor(req: FastifyRequest): string {
 }
 
 export function registerStatementRoutes(app: FastifyInstance): void {
-  /** Shared by every document: authorise, render, and send with the full header set. */
+  /** Shared by every document: authorize, render, and send with the full header set. */
   async function servePrintable(
     req: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,

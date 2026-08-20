@@ -7,7 +7,7 @@
  * tests, and a bug in it SHIPPED. Until 0.45.1 a line that was not a bullet was silently dropped, so
  * four things a masjid was meant to read never reached the screen — including a correction published
  * against the 0.36.0 notes, which existed precisely to say what that release had really delivered. The
- * rule below ("an unrecognised line joins the item above rather than vanishing") is the fix, and the
+ * rule below ("an unrecognized line joins the item above rather than vanishing") is the fix, and the
  * tests beside this file are what keep it fixed.
  *
  * It handles only the constructs our changelog actually uses — version headings, group headings,

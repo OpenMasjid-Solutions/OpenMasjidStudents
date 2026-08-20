@@ -37,7 +37,7 @@ beforeEach(() => {
   for (const t of [autopayRuns, autopayEnrollments, paymentMethods, paymentAllocations, payments, invoiceItems, invoices, studentFees, feePlans, students, families, settings, auditLog]) db.delete(t).run();
 });
 
-/** A family, an autopay enrolment with a saved card, and one stuck 'pending' run. */
+/** A family, an autopay enrollment with a saved card, and one stuck 'pending' run. */
 async function stuckRun(opts: { withPiId: boolean; failureCount?: number }) {
   const admin = caller('admin');
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
@@ -54,7 +54,7 @@ async function stuckRun(opts: { withPiId: boolean; failureCount?: number }) {
 }
 
 const runStatus = (runId: string) => app.dbmod.db.select({ status: autopayRuns.status }).from(autopayRuns).where(eq(autopayRuns.id, runId)).get()!.status;
-const enrolment = (familyId: string) => app.dbmod.db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get()!;
+const enrollment = (familyId: string) => app.dbmod.db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get()!;
 
 describe('resolveStuckRuns', () => {
   /** Configurable fake: `retrieveStatus` drives paymentIntents.retrieve; `searchHit` drives the
@@ -95,7 +95,7 @@ describe('resolveStuckRuns', () => {
     retrieveStatus = 'canceled';
     expect(await recon.resolveStuckRuns(sysActor)).toEqual({ checked: 1, resolved: 1 });
     expect(runStatus(runId)).toBe('failed');
-    const e = enrolment(familyId);
+    const e = enrollment(familyId);
     expect(e.failureCount).toBe(1);
     expect(e.nextAttemptAt).toBeTruthy(); // ladder scheduled the retry
     expect(e.enabled).toBe(true); // not the third strike
@@ -106,7 +106,7 @@ describe('resolveStuckRuns', () => {
     retrieveStatus = 'requires_payment_method';
     await recon.resolveStuckRuns(sysActor);
     expect(runStatus(runId)).toBe('failed');
-    expect(enrolment(familyId).failureCount).toBe(1);
+    expect(enrollment(familyId).failureCount).toBe(1);
   });
 
   it('the third strike turns autopay off, exactly as a synchronous decline would', async () => {
@@ -114,7 +114,7 @@ describe('resolveStuckRuns', () => {
     retrieveStatus = 'canceled';
     await recon.resolveStuckRuns(sysActor);
     expect(runStatus(runId)).toBe('failed');
-    const e = enrolment(familyId);
+    const e = enrollment(familyId);
     expect(e.failureCount).toBe(3);
     expect(e.enabled).toBe(false);
   });
@@ -124,7 +124,7 @@ describe('resolveStuckRuns', () => {
     retrieveStatus = 'succeeded';
     expect(await recon.resolveStuckRuns(sysActor)).toEqual({ checked: 1, resolved: 1 });
     expect(runStatus(runId)).toBe('charged');
-    expect(enrolment(familyId).failureCount).toBe(0);
+    expect(enrollment(familyId).failureCount).toBe(0);
   });
 
   it('leaves a genuinely in-flight PI alone', async () => {
@@ -133,7 +133,7 @@ describe('resolveStuckRuns', () => {
       retrieveStatus = s;
       expect(await recon.resolveStuckRuns(sysActor)).toEqual({ checked: 1, resolved: 0 });
       expect(runStatus(runId)).toBe('pending');
-      expect(enrolment(familyId).failureCount).toBe(0);
+      expect(enrollment(familyId).failureCount).toBe(0);
     }
   });
 
@@ -142,8 +142,8 @@ describe('resolveStuckRuns', () => {
     searchHit = null; // the metadata search finds nothing: create() threw before returning an id
     expect(await recon.resolveStuckRuns(sysActor)).toEqual({ checked: 1, resolved: 1 });
     expect(runStatus(runId)).toBe('failed'); // no longer blocks future charges
-    // Crucially the family is NOT penalised for our own network error.
-    const e = enrolment(familyId);
+    // Crucially the family is NOT penalized for our own network error.
+    const e = enrollment(familyId);
     expect(e.failureCount).toBe(0);
     expect(e.enabled).toBe(true);
     expect(app.dbmod.db.select().from(auditLog).all().some((a) => a.action === 'autopay.run.abandoned')).toBe(true);
@@ -154,7 +154,7 @@ describe('resolveStuckRuns', () => {
     searchHit = { id: 'pi_found', status: 'succeeded' };
     await recon.resolveStuckRuns(sysActor);
     expect(runStatus(runId)).toBe('charged');
-    expect(enrolment(familyId).failureCount).toBe(0);
+    expect(enrollment(familyId).failureCount).toBe(0);
     expect(app.dbmod.db.select({ pi: autopayRuns.stripePaymentIntentId }).from(autopayRuns).where(eq(autopayRuns.id, runId)).get()!.pi).toBe('pi_found');
   });
 
@@ -163,7 +163,7 @@ describe('resolveStuckRuns', () => {
     throwOn = true;
     expect(await recon.resolveStuckRuns(sysActor)).toEqual({ checked: 1, resolved: 0 });
     expect(runStatus(runId)).toBe('pending');
-    expect(enrolment(familyId).failureCount).toBe(0);
+    expect(enrollment(familyId).failureCount).toBe(0);
   });
 
   it('unblocks the family: chargeFamily was refusing to charge while the run sat pending', async () => {

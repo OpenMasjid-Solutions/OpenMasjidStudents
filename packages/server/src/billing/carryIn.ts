@@ -10,7 +10,7 @@
  *
  * Two artifacts, both real ledger rows rather than a stored balance:
  *
- *  • OWES → an invoice on the reserved period `carry-in`, labelled so a parent can read it ("Balance
+ *  • OWES → an invoice on the reserved period `carry-in`, labeled so a parent can read it ("Balance
  *    carried forward"), due on a date that is genuinely in the past. The past due date is load-bearing:
  *    it makes the arrears sort FIRST in `reallocateStudent`, so the next money in clears the old debt
  *    before this month — the house rule, unchanged — and it puts the amount in front of autopay's

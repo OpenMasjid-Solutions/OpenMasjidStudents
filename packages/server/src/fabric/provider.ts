@@ -79,7 +79,7 @@ const CONTRACT_V = 2 as const;
 
 /**
  * Turn an invoice-level allocation into the per-child split and the line-level instruction the ledger
- * honours — a best-effort HINT, never a reason to refuse money.
+ * honors — a best-effort HINT, never a reason to refuse money.
  *
  * The contract has taken `allocations: [{invoiceId, amountCents}]` since v1, and until 0.43.0 this app
  * parsed it and threw it away: a consumer asking for money to land on a particular bill got
@@ -200,7 +200,7 @@ export function registerFabricProvider(app: FastifyInstance): void {
    * Returns a first name + last initial and NOTHING ELSE — no balance, no invoices, no siblings, no
    * family id. Keeping the confirm step this thin is what makes it safe to answer before the parent
    * has confirmed anything; `lookup` is where a balance appears. Capped per code by
-   * `codeLookupLimiter`, which is now the app's only defence on this surface.
+   * `codeLookupLimiter`, which is now the app's only defense on this surface.
    *
    * Also gated on the admin's external-payments toggle: with tuition payments switched off there is
    * no reason for this to answer at all.
@@ -361,12 +361,12 @@ export function registerFabricProvider(app: FastifyInstance): void {
    * stores it still gets something meaningful; `payments[]` carries the full per-child truth.
    *
    * 0.43.0 — `lines`: the parent ticked specific things to pay ("just the book fee"). It supersedes
-   * `students`, because the lines say whose bills they are, and it is HONOURED rather than merely
+   * `students`, because the lines say whose bills they are, and it is HONORED rather than merely
    * accepted: the choice is stored on the payment and re-applied every time allocation is recomputed,
    * so the line the parent chose still reads as settled on next month's statement.
    *
    * `allocations` (invoice-level, in the contract since v1) was parsed and then IGNORED before 0.43.0 —
-   * every such payment was silently allocated oldest-due-first instead. It now works, normalised into
+   * every such payment was silently allocated oldest-due-first instead. It now works, normalized into
    * the same line mechanism by filling the invoice's own lines in order.
    */
   app.post('/fabric/billing/record-payment', async (req, reply) => {

@@ -22,7 +22,7 @@
  *    the `<b>` we insert — the office's text itself is inert (§14), exactly like a guardian's name.
  *  • `[tags]` are filled in per household: `[names]`, `[is]`, `[child]`, `[school]`, `[website]`, `[date]`.
  *    Every tag works in every box (one tag set is built per sheet and passed to all of them), so nobody
- *    has to remember which line knows about which value. An unrecognised `[thing]` prints as written
+ *    has to remember which line knows about which value. An unrecognized `[thing]` prints as written
  *    rather than vanishing — the same rule as the invoice-label tags (billing/period.ts).
  *
  * `[website]` has one extra rule worth knowing: when the madrasah has no donations address configured, an

@@ -90,7 +90,7 @@ const order = (familyId: string) =>
     .where(eq(paymentMethods.familyId, familyId))
     .all()
     .sort((a, b) => a.sortOrder - b.sortOrder);
-const enrolment = (familyId: string) => app.dbmod.db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get();
+const enrollment = (familyId: string) => app.dbmod.db.select().from(autopayEnrollments).where(eq(autopayEnrollments.familyId, familyId)).get();
 
 describe('saving methods', () => {
   it('keeps them in the order they were added, first one default', async () => {
@@ -108,16 +108,16 @@ describe('saving methods', () => {
     await parent.portal.setAutopay({ familyId, enabled: true });
     await saveMethods(parent, familyId, ['pm_9999']);
     expect(order(familyId).map((r) => r.id)).toEqual(['pm_1111', 'pm_2222', 'pm_9999']);
-    expect(enrolment(familyId)!.defaultPmId).toBe('pm_1111');
+    expect(enrollment(familyId)!.defaultPmId).toBe('pm_1111');
   });
 });
 
 describe('reordering', () => {
-  it('moves a method to the front and takes the default and the enrolment with it', async () => {
+  it('moves a method to the front and takes the default and the enrollment with it', async () => {
     const { familyId, parent } = await household();
     await saveMethods(parent, familyId, ['pm_1111', 'pm_2222']);
     await parent.portal.setAutopay({ familyId, enabled: true });
-    expect(enrolment(familyId)!.defaultPmId).toBe('pm_1111');
+    expect(enrollment(familyId)!.defaultPmId).toBe('pm_1111');
 
     await parent.portal.reorderMethods({ familyId, orderedIds: ['pm_2222', 'pm_1111'] });
 
@@ -126,8 +126,8 @@ describe('reordering', () => {
     // All three in step — the whole point of resequenceMethods.
     expect(rows.map((r) => r.sortOrder)).toEqual([0, 1]);
     expect(rows.map((r) => r.isDefault)).toEqual([true, false]);
-    expect(enrolment(familyId)!.defaultPmId).toBe('pm_2222');
-    expect(enrolment(familyId)!.enabled).toBe(true); // still on; only the choice moved
+    expect(enrollment(familyId)!.defaultPmId).toBe('pm_2222');
+    expect(enrollment(familyId)!.enabled).toBe(true); // still on; only the choice moved
   });
 
   it('refuses a list that is not exactly this set of methods', async () => {
@@ -158,7 +158,7 @@ describe('removing', () => {
     await parent.portal.removeCard({ familyId, paymentMethodId: 'pm_1111' });
 
     expect(order(familyId).map((r) => [r.id, r.sortOrder, r.isDefault])).toEqual([['pm_2222', 0, true]]);
-    expect(enrolment(familyId)).toMatchObject({ enabled: true, defaultPmId: 'pm_2222' });
+    expect(enrollment(familyId)).toMatchObject({ enabled: true, defaultPmId: 'pm_2222' });
   });
 
   it('switches autopay off when nothing is left to charge', async () => {
@@ -170,7 +170,7 @@ describe('removing', () => {
     await parent.portal.removeCard({ familyId, paymentMethodId: 'pm_1111' });
 
     expect(order(familyId)).toEqual([]);
-    expect(enrolment(familyId)).toMatchObject({ enabled: false, defaultPmId: null });
+    expect(enrollment(familyId)).toMatchObject({ enabled: false, defaultPmId: null });
   });
 });
 
@@ -181,7 +181,7 @@ describe('the retry ladder walks down the order', () => {
     await parent.portal.setAutopay({ familyId, enabled: true });
     const { db } = app.dbmod;
 
-    // Attempt 1 is a fresh enrolment (failureCount 0).
+    // Attempt 1 is a fresh enrollment (failureCount 0).
     await ap.chargeFamily(familyId, 20000, '2026-07-01');
     // Then as the ladder advances. `failureCount` is what the real decline path sets.
     for (const [n, date] of [[1, '2026-07-03'], [2, '2026-07-06']] as const) {

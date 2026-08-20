@@ -17,7 +17,7 @@ import { describeMethod, formatExpiry, methodTitle } from '../../lib/paymentMeth
  * The Autopay & cards TAB (0.44.0): every household this parent is linked to, each with its own cards
  * and its own autopay switch.
  *
- * Per household on purpose — autopay is a per-family enrolment against a per-family Stripe Customer
+ * Per household on purpose — autopay is a per-family enrollment against a per-family Stripe Customer
  * (§13.3), so one switch for a parent linked to two households would be a lie about what it does.
  * Nearly every parent has exactly one, and then the heading is simply omitted.
  */

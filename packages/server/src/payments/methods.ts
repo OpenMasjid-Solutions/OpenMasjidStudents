@@ -16,7 +16,7 @@
  * WHAT IS DELIBERATELY NOT READ. `us_bank_account.routing_number`, any `billing_details.name`, and
  * `link.email`. A parent reading their own row learns nothing from them that the last four digits do not
  * already tell them, and this table is rendered on a screen the household reaches over the internet
- * (§14 data minimisation). The rule for this table has always been "brand/last4/exp only, never a PAN";
+ * (§14 data minimization). The rule for this table has always been "brand/last4/exp only, never a PAN";
  * this keeps to the same spirit for the kinds of method it did not previously know about.
  */
 import { eq, and, asc, isNull } from 'drizzle-orm';
@@ -60,8 +60,8 @@ const int = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 /**
  * Read a Stripe PaymentMethod into our columns.
  *
- * Every branch is additive: an unrecognised `type` still stores the type, so a method this app has never
- * heard of is described as itself ("Cash App") by the portal rather than mislabelled as a card. That is
+ * Every branch is additive: an unrecognized `type` still stores the type, so a method this app has never
+ * heard of is described as itself ("Cash App") by the portal rather than mislabeled as a card. That is
  * the whole failure this replaces.
  */
 export function describePaymentMethod(pm: StripePaymentMethodLike): PaymentMethodDetails {

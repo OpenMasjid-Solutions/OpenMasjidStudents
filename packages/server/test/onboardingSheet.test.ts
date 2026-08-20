@@ -168,7 +168,7 @@ describe('one sheet for the household', () => {
     child('stu_1', 'Yusuf Ismail', { code: 'YUS1234' });
     child('stu_2', 'Maryam Ismail', { code: 'MAR5678' });
     const out = (await html())!;
-    // One box per child, labelled with their first name so you can tell whose code is whose.
+    // One box per child, labeled with their first name so you can tell whose code is whose.
     expect(out.split('class="idcard"').length - 1).toBe(2);
     expect(out).toContain('<div class="lbl">Yusuf</div><div class="code">YUS1234</div>');
     expect(out).toContain('<div class="lbl">Maryam</div><div class="code">MAR5678</div>');
@@ -391,7 +391,7 @@ describe('it must not promise a payment route this install does not have', () =>
     household();
     child('stu_1', 'Yusuf Ismail');
     // Receipts off (or no mail, or parent mail paused) — the office line still appears, without the
-    // sentence this install cannot honour.
+    // sentence this install cannot honor.
     const out = (await html({ ...ALL_ON, receipts: false }))!;
     expect(out).toContain('through the office');
     expect(out).not.toContain('receipt by email');
@@ -544,7 +544,7 @@ describe('the madrasah’s own wording (0.48.0)', () => {
     expect(at('https://madani.test', '/donate')).toBe('madani.test/donate');
     expect(at('madani.test/', 'donate')).toBe('madani.test/donate'); // a missing slash is not an error
     expect(at('madani.test', '')).toBe('madani.test');
-    // Somewhere else entirely — not glued onto the school's homepage. Recognised by the dot before the
+    // Somewhere else entirely — not glued onto the school's homepage. Recognized by the dot before the
     // first slash, so the scheme is optional.
     expect(at('madani.test', 'https://donate.other.test/tuition')).toBe('donate.other.test/tuition');
     expect(at('madani.test', 'donate.other.test/tuition')).toBe('donate.other.test/tuition');
@@ -594,7 +594,7 @@ describe('GET /sheets/family/:id — the access wall', () => {
     expect((await get('fam_1', { cookie: `${sessionsMod.COOKIE}=nope` })).statusCode).toBe(403);
   });
 
-  it('404s an unknown household for an authorised caller', async () => {
+  it('404s an unknown household for an authorized caller', async () => {
     household();
     expect((await get('fam_nope', { cookie: cookieFor('finance') })).statusCode).toBe(404);
   });
@@ -640,7 +640,7 @@ describe('escaping — the sheet renders user input as text', () => {
 });
 
 /**
- * What 0.47.0 added to the sheet: the masjid's own contact details, the masjid's own colour, dates
+ * What 0.47.0 added to the sheet: the masjid's own contact details, the masjid's own color, dates
  * written the way the office writes them, and a relation that reads like a word rather than a
  * database value.
  */
@@ -682,7 +682,7 @@ describe('the masjid on the sheet (0.47.0)', () => {
     expect(/<header>[\s\S]*contactline[\s\S]*<\/header>/.test(out)).toBe(false);
   });
 
-  it('rules the sheet in the masjid’s colour, defaulting to the original teal', async () => {
+  it('rules the sheet in the masjid’s color, defaulting to the original teal', async () => {
     expect(await render()).toContain('--teal:#0f766e');
     settingsMod.setAccentColor('#7c3aed');
     const out = await render();
@@ -690,7 +690,7 @@ describe('the masjid on the sheet (0.47.0)', () => {
     expect(out).not.toContain('--teal:#0f766e');
   });
 
-  it('never lets a hand-edited colour row escape the style block', async () => {
+  it('never lets a hand-edited color row escape the style block', async () => {
     // Written straight into <style>, so a row edited outside the app must not be able to close the
     // declaration and add its own CSS (§14). Invalid values fall back rather than being passed on.
     // Set through the low-level writer on purpose — `setAccentColor` would reject it, and the point
@@ -709,7 +709,7 @@ describe('the masjid on the sheet (0.47.0)', () => {
     expect(uk).not.toContain('2016-03-04');
   });
 
-  it('capitalises a guardian’s relation without rewriting what the office typed', async () => {
+  it('capitalizes a guardian’s relation without rewriting what the office typed', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
     fee('fp_1', 'stu_1', 'Tuition', 20000, 'monthly');

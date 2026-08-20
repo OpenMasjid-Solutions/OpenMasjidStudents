@@ -6,7 +6,7 @@
  * The guardian form has offered a fixed four since 0.41.0 (`father | mother | relative | other`), but
  * the column is still free text and always will be: rows written before that hold whatever an office
  * typed, and a CSV import records no relation at all. So the year view — which now wants a separate,
- * labelled column per number — has to classify what is actually in the database rather than what the
+ * labeled column per number — has to classify what is actually in the database rather than what the
  * current form would produce.
  *
  * Hence `other` rather than `unknown`: a guardian whose relation is blank is not evidence of anything,

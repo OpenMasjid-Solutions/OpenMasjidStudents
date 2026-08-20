@@ -25,7 +25,7 @@ import { App } from './App';
 // hand-off (the #omos fragment on a dashboard "Open") so the app opens on-theme.
 prefsStore.hydrate();
 // The app is English-only, but a browser that used the old language picker may still have `ar`/`ur`
-// in localStorage — which `applyLanguage` would honour by setting dir="rtl" on a now-English UI.
+// in localStorage — which `applyLanguage` would honor by setting dir="rtl" on a now-English UI.
 // Force it back. (prefs.ts is a verbatim port from OpenMasjidOS and is deliberately not edited.)
 prefsStore.patch({ language: 'en' });
 hydrateAppearance();

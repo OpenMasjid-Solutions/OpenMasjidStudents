@@ -3,9 +3,9 @@
 /**
  * The school switcher (0.47.0) — and the one place that remembers which school is being looked at.
  *
- * A masjid may run a maktab on a Sep→Jun calendar beside a hifz programme that runs year-round. Each
+ * A masjid may run a maktab on a Sep→Jun calendar beside a hifz program that runs year-round. Each
  * has its own school year and its own classes, so the Students, Year and Structure tabs all need to
- * know which one you mean, and they need to AGREE: switching to the hifz programme on Students and
+ * know which one you mean, and they need to AGREE: switching to the hifz program on Students and
  * then opening Year must not drop you back into the maktab. Hence a context around the whole admin
  * shell rather than a piece of state per tab.
  *

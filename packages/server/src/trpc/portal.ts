@@ -91,7 +91,7 @@ export const portalRouter = router({
    * the office about November is looking at exactly what the office is looking at.
    *
    * GROUPED BY SCHOOL, because a school year belongs to a school (0.47.0) and a household is not scoped to
-   * one — a family with a child in the weekend maktab and another in the full-time hifz programme has two
+   * one — a family with a child in the weekend maktab and another in the full-time hifz program has two
    * different sets of months, and laying them on one axis would be nonsense. Almost always one group.
    *
    * Scoping is by `parentFamilyIds`, the same wall as every other procedure here: a parent can only ever
@@ -307,7 +307,7 @@ export const portalRouter = router({
       z.object({
         familyId: z.string().min(1).max(64),
         paymentIntentId: z.string().min(1).max(255),
-        /** The lines the parent ticked (0.43.0). Honoured only when they add up to what Stripe actually
+        /** The lines the parent ticked (0.43.0). Honored only when they add up to what Stripe actually
          *  took — otherwise this falls back to oldest-due-first, which is the documented default. */
         lines: z.array(z.object({ itemId: z.string().min(1).max(64), amountCents: z.number().int().min(1).max(100_000_000) })).max(200).optional(),
       }),
@@ -429,7 +429,7 @@ export const portalRouter = router({
           tx.update(paymentMethods).set({ sortOrder: i }).where(eq(paymentMethods.id, id)).run();
         });
       });
-      // One place keeps sort_order, is_default and the autopay enrolment agreeing (payments/methods.ts).
+      // One place keeps sort_order, is_default and the autopay enrollment agreeing (payments/methods.ts).
       resequenceMethods(input.familyId);
       return { ok: true as const };
     }),
@@ -512,7 +512,7 @@ export const portalRouter = router({
    *
    * Removing the one autopay charges no longer switches autopay OFF when the household has another (0.48.0)
    * — the next in their chosen order takes over, which is the point of being able to order them. It is only
-   * switched off when nothing is left, and `resequenceMethods` owns that decision so the enrolment can
+   * switched off when nothing is left, and `resequenceMethods` owns that decision so the enrollment can
    * never end up pointing at a row that has gone.
    */
   removeCard: parentProcedure.input(z.object({ familyId: z.string().min(1).max(64), paymentMethodId: z.string().min(1).max(64) })).mutation(async ({ ctx, input }) => {

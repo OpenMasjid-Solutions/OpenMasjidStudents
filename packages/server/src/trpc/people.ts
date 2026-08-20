@@ -382,7 +382,7 @@ export const peopleRouter = router({
    * family, which is what makes the guardians and emergency contacts already on file apply to them
    * too. Nothing is copied per-student; they hang off the family, so linking IS the sharing.
    *
-   * With no link, a fresh family is created for this child and labelled from their surname. Nobody is
+   * With no link, a fresh family is created for this child and labeled from their surname. Nobody is
    * asked to name it: a family is plumbing that connects siblings, not a record an office maintains.
    */
   studentAdd: adminProcedure

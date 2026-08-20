@@ -8,7 +8,7 @@
  * MasjidMark is the official OpenMasjid logo icon (the actual artwork, cropped
  * from the brand PNG to a transparent silhouette). It is rendered as a CSS mask
  * filled with `currentColor`, so it shows the real mark AND adapts to the theme
- * (dark/light) at any size — exactly the behaviour the old inline glyph had.
+ * (dark/light) at any size — exactly the behavior the old inline glyph had.
  */
 import markUrl from '../assets/logo-mark.png';
 

@@ -56,7 +56,7 @@ import { fabricConfigured } from '../config';
  *
  * A real cap, stated out loud rather than hidden: the sending allowance belongs to the masjid's NUMBER
  * and is shared with every other app on the server, so handing the queue two hundred messages in one
- * go is precisely the behaviour that gets a number restricted. The screen reports how many are left so
+ * go is precisely the behavior that gets a number restricted. The screen reports how many are left so
  * nothing is silently dropped — press it again tomorrow.
  */
 const OUTREACH_BATCH = 50;
@@ -122,7 +122,7 @@ export const whatsappRouter = router({
    * cache and only crosses the network when that is cold or stale (0.50.0-dev.4). It read the cache
    * alone at first, which produced a real fault rather than a slow screen: nothing primed the cache
    * except a 15-minute cron, so for the first quarter of an hour after a container start the panel
-   * said "Not ready" and greyed out the Send-a-test button on an install that was working perfectly.
+   * said "Not ready" and grayed out the Send-a-test button on an install that was working perfectly.
    * One request on an admin settings render is the right trade for that.
    */
   get: adminProcedure.query(async () => {
@@ -161,7 +161,7 @@ export const whatsappRouter = router({
       /** True when the pause is on but a test household is set: not a blocker, but the screen should
        *  say plainly that only that household will hear anything. */
       pausedWithTest: cfg.paused && !!testFam,
-      /** The catalogues, so the UI hard-codes no event list (same rule as the alert screen). */
+      /** The catalogs, so the UI hard-codes no event list (same rule as the alert screen). */
       parentEvents: WA_PARENT_EVENTS,
       staffEvents: ALERT_EVENTS,
       status,
@@ -184,7 +184,7 @@ export const whatsappRouter = router({
       z.object({
         enabled: z.boolean().optional(),
         paused: z.boolean().optional(),
-        /** One event at a time, validated against the catalogue so a stale client cannot invent one. */
+        /** One event at a time, validated against the catalog so a stale client cannot invent one. */
         event: z.object({ id: z.enum(WA_PARENT_EVENTS), on: z.boolean() }).optional(),
         defaultCountry: z.string().trim().max(5).optional(),
         countries: z.array(z.string().trim().max(5)).max(20).optional(),
@@ -273,7 +273,7 @@ export const whatsappRouter = router({
 
   // ── What each message says (0.50.0-dev.4) ─────────────────────────────────
   /**
-   * The wording of every parent message: the catalogue, the shipped sentences, this madrasah's own
+   * The wording of every parent message: the catalog, the shipped sentences, this madrasah's own
    * versions, the tags each one may use, and a live preview against a real household.
    *
    * The whole registry comes from the server (whatsapp/templates.ts owns it), so the UI hard-codes no
@@ -501,13 +501,13 @@ export const whatsappRouter = router({
     const subs = (id: string) => {
       const sub = cfg.groupAlerts[id];
       return {
-        // Filtered against the catalogue so a stale or hand-edited row cannot widen what a group hears.
+        // Filtered against the catalog so a stale or hand-edited row cannot widen what a group hears.
         events: (sub?.events ?? []).filter((e): e is (typeof ALERT_EVENTS)[number] => (ALERT_EVENTS as readonly string[]).includes(e)),
         detail: sub?.detail === true,
       };
     };
     return {
-      /** The catalogue, so the UI never hard-codes the event list (same rule as every other screen). */
+      /** The catalog, so the UI never hard-codes the event list (same rule as every other screen). */
       events: ALERT_EVENTS,
       /** Did OpenMasjidOS actually answer? False means "could not ask", never "you have none". */
       reachable: list.ok,
@@ -537,7 +537,7 @@ export const whatsappRouter = router({
     .input(
       z.object({
         groupId: z.string().trim().min(1).max(200),
-        /** Validated against the catalogue, so a stale client can never subscribe to an unknown id. */
+        /** Validated against the catalog, so a stale client can never subscribe to an unknown id. */
         events: z.array(z.enum(ALERT_EVENTS)).max(ALERT_EVENTS.length),
         detail: z.boolean().optional(),
       }),

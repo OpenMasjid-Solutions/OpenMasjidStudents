@@ -142,7 +142,7 @@
   color: var(--color-primary);
   border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
 }
-/* The count chip inherits the button's colour when that button is the active one, so it does not
+/* The count chip inherits the button's color when that button is the active one, so it does not
    sit there at 60% opacity looking disabled. */
 .filter-bar .btn.is-active .chip {
   opacity: 1;
@@ -256,7 +256,7 @@
 }
 
 /*
- * A row of labelled fields, aligned at the TOP (0.48.0).
+ * A row of labeled fields, aligned at the TOP (0.48.0).
  *
  * It used to align at the bottom, which looks right only while every field is the same height — and a
  * field with a `.hint` under its input is taller than one without. So on any form mixing the two, the
@@ -282,11 +282,11 @@
   flex: 1 1 12rem;
 }
 /*
- * A button is not a labelled field, so top-aligning it would leave it level with the LABELS, floating
+ * A button is not a labeled field, so top-aligning it would leave it level with the LABELS, floating
  * above the inputs it acts on. Push it down by exactly the label block.
  *
  * `:has(> .field)` is what keeps this honest: several rows in this app hold nothing but buttons (a Save /
- * Cancel pair, the wizard's Back / Next), and those are centred by design — offsetting their buttons would
+ * Cancel pair, the wizard's Back / Next), and those are centered by design — offsetting their buttons would
  * just drop them for no reason. No fields in the row, nothing to line up with, no offset.
  */
 .inline-form:has(> .field) > .btn,
@@ -440,8 +440,8 @@
 /*
  * The month heading and its cells MUST share one horizontal padding, or the tick does not sit under the
  * month name. That was the bug: `.year-cell` overrode the table's `padding: 0.55rem 0.6rem` down to
- * 0.15rem for the cells and the heading kept the wider one, so heading and cell centred on different
- * boxes — subtly, and worse the further along the row you read. One padding for both, centred in both.
+ * 0.15rem for the cells and the heading kept the wider one, so heading and cell centered on different
+ * boxes — subtly, and worse the further along the row you read. One padding for both, centered in both.
  */
 .year-month,
 .year-cell {
@@ -489,7 +489,7 @@
 /* "Billed, nothing paid" — the state the office is actually scanning for, and it used to be a faint
    `·` in the faintest ink the palette has: invisible next to the tinted paid and part-paid cells. A
    solid ● at full ink weight, on its own tint so the cell reads as filled rather than empty. NOT the
-   danger colour: an invoice generated this morning and not yet due is normal, and a page of red would
+   danger color: an invoice generated this morning and not yet due is normal, and a page of red would
    train the office to ignore it. */
 .year-cell.is-open .year-cell-btn {
   color: var(--color-ink);
@@ -580,7 +580,7 @@
   /* ── Ink, at the SOURCE (0.48.0) ───────────────────────────────────────────
      The shell's ink tokens are designed against a dark wallpaper, so in dark theme `--color-ink` is
      near-white. Forcing `color: #000` on containers below does not reach anything that sets its own
-     colour from a token — a `.btn`, a `.chip`, a `.contact-link` — so printing from dark theme put
+     color from a token — a `.btn`, a `.chip`, a `.contact-link` — so printing from dark theme put
      near-white text on white paper. That is the "names print in a very light shade" report, and the
      names were only the most visible case of it.
 
@@ -604,7 +604,7 @@
   }
 
   /* The page itself must be WHITE. `.scene-bg` is hidden below, but the shell's wallpaper also lives
-     on `body` as `--scene-base` — a soft gradient — and that kept printing as a grey vignette around
+     on `body` as `--scene-base` — a soft gradient — and that kept printing as a gray vignette around
      the sheet. Reset every layer that can carry it, and force dark-on-white text since the shell's
      default ink is light (it is designed against a dark wallpaper). */
   html,
@@ -688,7 +688,7 @@
   }
 
   /* The year grid is wide; landscape with narrow margins is what makes twelve months fit. 6mm is
-     about as tight as consumer laser printers will honour before they start clipping on their own —
+     about as tight as consumer laser printers will honor before they start clipping on their own —
      most have a hardware unprintable edge near 5mm — so this is the usable maximum, not a guess. */
   @page { size: landscape; margin: 6mm; }
 
@@ -714,7 +714,7 @@
   /* ── The name column (0.48.0) ──────────────────────────────────────────────
      A name is a BUTTON on screen (press it to open that child's billing), and a button is not a name on
      paper: it carried the shell's ink token, `justify-content: center` from `.btn`, and a border. Hence
-     names that printed pale AND centred. Here it is text: black, aligned to the start of the column, no
+     names that printed pale AND centered. Here it is text: black, aligned to the start of the column, no
      chrome, and no minimum height inflating every row. `start`, not `left`, so an RTL install still
      reads correctly. */
   .year-grid td.year-sticky { text-align: start !important; }
@@ -750,8 +750,8 @@
     color: #000 !important;
     font-weight: 700;
   }
-  /* Paid/part-paid tints become symbols only — the ✓ / ½ / · already carry the meaning, and a colour
-     wash prints as indistinguishable grey. */
+  /* Paid/part-paid tints become symbols only — the ✓ / ½ / · already carry the meaning, and a color
+     wash prints as indistinguishable gray. */
   .year-cell.is-paid .year-cell-btn,
   .year-cell.is-partial .year-cell-btn,
   .year-cell.is-open .year-cell-btn,
@@ -760,7 +760,7 @@
     color: #000 !important;
   }
   /* On paper the tints are gone, so the glyphs carry the whole meaning: ● must stay solid black and
-     the pre-go-live months must stay grey, or a photocopy reads as a page of identical marks. */
+     the pre-go-live months must stay gray, or a photocopy reads as a page of identical marks. */
   .year-cell.is-before,
   .year-cell.is-settled,
   .year-cell.is-carried { background: none !important; }
@@ -1042,9 +1042,9 @@ ul.picker-list {
         over the clock — and the close button could not be tapped at all, because that strip belongs to the
         OS. The padding below is the fix, and it is the reason this block exists.
      2. The controls were 13px circles whose glyphs only appear ON HOVER. There is no hover on a phone, so
-        they were three unlabelled dots, all far under the 44px a thumb needs (WCAG 2.5.8).
-     3. Minimize and fullscreen mean nothing here. The sheet already fills the screen, so maximise is a
-        no-op, and minimising it leaves no visible way back — it just vanishes.
+        they were three unlabeled dots, all far under the 44px a thumb needs (WCAG 2.5.8).
+     3. Minimize and fullscreen mean nothing here. The sheet already fills the screen, so maximize is a
+        no-op, and minimizing it leaves no visible way back — it just vanishes.
 
      So on a phone the header becomes what a sheet's header should be: the title leading, ONE real close
      button trailing, under the thumb rather than in the corner nearest the notch. Desktop is untouched —
@@ -1157,7 +1157,7 @@ ul.picker-list {
   .data-table.stack-phone td[data-label] > * { flex: 1 1 auto; min-width: 0; }
   .data-table.stack-phone td[data-label] input,
   .data-table.stack-phone td[data-label] select { width: 100% !important; }
-  /* The name is the card's heading rather than a labelled field. */
+  /* The name is the card's heading rather than a labeled field. */
   .data-table.stack-phone td.row-title {
     font-weight: 650;
     font-size: 1rem;
@@ -1261,7 +1261,7 @@ ul.picker-list {
 .refund-top { font-size: 0.95rem; }
 .refund-sub { font-size: 0.84rem; }
 /* The route matters more than it looks — it is the difference between the parent being paid back and the
-   parent waiting at the desk — so it is tinted rather than left as another grey line. */
+   parent waiting at the desk — so it is tinted rather than left as another gray line. */
 .refund-route { font-size: 0.78rem; color: var(--color-ink-faint); }
 /* A refunded row stays in the list. Removing it would leave an office wondering whether the press worked,
    and the record of what happened is the point. */
@@ -1269,7 +1269,7 @@ ul.picker-list {
 .refund-row.is-done .refund-route { display: none; }
 
 /* The email step's two facts. Not a `.notice` each, because they are as often good news as bad — the
-   colour carries which, and the icon repeats it for anyone who cannot see the colour. */
+   color carries which, and the icon repeats it for anyone who cannot see the color. */
 .setup-checks {
   list-style: none;
   margin: 0 0 0.8rem;

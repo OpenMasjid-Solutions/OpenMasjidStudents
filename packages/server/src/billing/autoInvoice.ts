@@ -53,7 +53,7 @@ function daysInMonth(d: Date): number {
 
 /**
  * Generate the current month's invoices if the schedule says it is due and it has not happened yet.
- * `today` is injectable so the behaviour is testable without waiting for a calendar.
+ * `today` is injectable so the behavior is testable without waiting for a calendar.
  */
 export function runAutoInvoice(today = new Date()): AutoInvoiceResult {
   const cfg = getAutoInvoice();

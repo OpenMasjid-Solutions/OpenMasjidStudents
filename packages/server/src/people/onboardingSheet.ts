@@ -93,7 +93,7 @@ const asDate = (v: unknown): string => {
 };
 
 /** Whole years between an ISO date and today. Returns null for absent or unparseable input — DOB is
- *  optional by design (§14 data minimisation), and a child without one just shows a blank. */
+ *  optional by design (§14 data minimization), and a child without one just shows a blank. */
 export function ageFromDob(dob: string | null | undefined, today = new Date()): number | null {
   if (!dob || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) return null;
   const d = new Date(`${dob}T00:00:00Z`);
@@ -514,8 +514,8 @@ export async function buildFamilySheetHtml(
   /* Sized for ONE DOUBLE-SIDED LETTER SHEET: front is who + what, back is how. The margin and the type
      scale are set together — dropping either loosens the fit enough to push a third side. */
   @page { size: letter; margin: 0.5in; }
-  /* --teal is the masjid's own colour (Settings → Appearance), defaulting to the original teal. Every
-     rule, heading and box on this sheet reads from it, so one setting re-colours the whole page.
+  /* --teal is the masjid's own color (Settings → Appearance), defaulting to the original teal. Every
+     rule, heading and box on this sheet reads from it, so one setting re-colors the whole page.
      Validated as a hex literal before it gets here — this is interpolated into a style block. */
   :root { --ink:#1a1a1a; --teal:${accent}; --wash:${wash}; --line:#cbcbcb; --muted:#666; }
   * { box-sizing: border-box; }
@@ -578,7 +578,7 @@ export async function buildFamilySheetHtml(
     body { padding: 0; font-size: 10.5pt; }
     .toolbar { display: none; }
     .signup { border-color: #999; }
-    /* Tinted panels print as white — a solid block of colour is what drains a masjid's toner. */
+    /* Tinted panels print as white — a solid block of color is what drains a masjid's toner. */
     .balance, .check, .idcard { background: #fff; }
   }
 ${SHEET_PHONE_CSS}

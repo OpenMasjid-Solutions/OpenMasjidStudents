@@ -192,7 +192,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
         )}
         {/* AUTOPAY, where the volunteer is standing (0.48.0). Nothing in the office ever showed this, so a
             family whose card pays them on Friday looked exactly like one that had ignored two reminders.
-            Worded as the HOUSEHOLD's, because that is what the enrolment is (§13.3) — the parent's own
+            Worded as the HOUSEHOLD's, because that is what the enrollment is (§13.3) — the parent's own
             screen has one switch for the family, and implying it belongs to one child would be a lie the
             office would repeat down the phone. */}
         {autopay?.enabled ? (

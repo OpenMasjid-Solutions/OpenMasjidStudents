@@ -26,7 +26,7 @@ function words(fullName: string): string[] {
   return fullName.trim().split(/\s+/).filter(Boolean);
 }
 
-/** The whole name, whitespace-normalised — what to show wherever a name is displayed. */
+/** The whole name, whitespace-normalized — what to show wherever a name is displayed. */
 export function displayName(fullName: string): string {
   return words(fullName).join(' ');
 }

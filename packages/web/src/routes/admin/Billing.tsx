@@ -56,7 +56,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   const reconcileStatusQ = trpc.billing.reconcileStatus.useQuery();
   const reconcileNow = trpc.billing.reconcileNow.useMutation();
 
-  // Charge items: the catalogue the one-off charges are applied from. A charge snapshots its label
+  // Charge items: the catalog the one-off charges are applied from. A charge snapshots its label
   // and amount when applied, so editing an item here never rewrites a charge already raised.
   const items = trpc.billing.chargeItemList.useQuery();
   const itemCreate = trpc.billing.chargeItemCreate.useMutation();
@@ -415,7 +415,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
         )}
       </section>
 
-      {/* Charge items — the catalogue one-off charges are applied from (uniform, exam fee, trip…). */}
+      {/* Charge items — the catalog one-off charges are applied from (uniform, exam fee, trip…). */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head"><h2>{t('billing.items')}</h2></div>
         <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('billing.itemsHint')}</p>

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
  * One-off CHARGES (books, uniform, registration, late fees, credits) and the configurable
- * charge-item catalogue, plus the shared bulk-apply target resolver and the course → class
+ * charge-item catalog, plus the shared bulk-apply target resolver and the course → class
  * grouping it selects over.
  *
  * The load-bearing rules under test:
@@ -41,7 +41,7 @@ async function seed() {
 const invoiceFor = async (admin: ReturnType<typeof caller>, familyId: string, periodKey: string) =>
   (await admin.billing.familyBilling({ familyId })).invoices.find((i) => i.periodKey === periodKey);
 
-describe('charge items are a catalogue, and applying one snapshots it', () => {
+describe('charge items are a catalog, and applying one snapshots it', () => {
   it('applies an item at its default price and records the label', async () => {
     const { admin, studentId, familyId } = await seed();
     const item = await admin.billing.chargeItemCreate({ name: 'Qaidah book', defaultAmountCents: 1500 });
@@ -61,7 +61,7 @@ describe('charge items are a catalogue, and applying one snapshots it', () => {
     expect(list[0]).toMatchObject({ label: 'Qaidah book', amountCents: 1500 });
   });
 
-  it('an item can be re-priced for one application without touching the catalogue', async () => {
+  it('an item can be re-priced for one application without touching the catalog', async () => {
     const { admin, studentId, familyId } = await seed();
     const item = await admin.billing.chargeItemCreate({ name: 'Uniform', defaultAmountCents: 4000 });
     await admin.billing.chargeAdd({ studentId, source: { kind: 'item', chargeItemId: item.id, amountCents: 3000 } });

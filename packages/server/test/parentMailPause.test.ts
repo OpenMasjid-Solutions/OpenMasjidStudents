@@ -108,7 +108,7 @@ describe('while parent mail is paused', () => {
     const h = household();
     expect(recipients.guardianEmailsForFamily(h.familyId)).toEqual([h.email]);
     settings.setParentMailPaused(true);
-    // The second line of defence: whatever a future parent-facing message reaches for, there is nobody
+    // The second line of defense: whatever a future parent-facing message reaches for, there is nobody
     // to write to. This function is only ever used to send.
     expect(recipients.guardianEmailsForFamily(h.familyId)).toEqual([]);
   });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
-/** App settings (admin-only): the school's name, currency, logo, colour and date format; how it appears
+/** App settings (admin-only): the school's name, currency, logo, color and date format; how it appears
  *  to parents; who hears about what by email; the past-due policy; and the Stripe account (from the OS
  *  vault) that tuition charges go through. A few reads are admin OR finance where finance needs them. */
 import { z } from 'zod';
@@ -110,12 +110,12 @@ export const settingsRouter = router({
     }),
 
   /**
-   * The wording on the printed family sheet (0.48.0) — the catalogue, the shipped sentences, and this
+   * The wording on the printed family sheet (0.48.0) — the catalog, the shipped sentences, and this
    * madrasah's own versions of them.
    *
    * The whole registry comes from the server (people/sheetText.ts owns it), so the UI hard-codes no
    * sentence and no tag list: adding a box there makes a new field appear in Settings with no change on
-   * the browser side, exactly like the alert catalogue above.
+   * the browser side, exactly like the alert catalog above.
    */
   sheetTextGet: adminProcedure.query(() => ({
     keys: [...SHEET_TEXT_KEYS],
@@ -218,7 +218,7 @@ export const settingsRouter = router({
    * the office's decision.
    */
   alertsGet: adminProcedure.query(() => ({
-    /** The catalogue, so the UI never hard-codes the event list. */
+    /** The catalog, so the UI never hard-codes the event list. */
     events: ALERT_EVENTS,
     recipients: listRecipients(),
     parentEmails: getParentEmails(),
@@ -238,7 +238,7 @@ export const settingsRouter = router({
         id: z.string().trim().max(64).optional(),
         email: z.string().trim().email().max(320),
         label: z.string().trim().max(80).optional(),
-        /** Validated against the catalogue, so a stale client can never subscribe to an unknown id. */
+        /** Validated against the catalog, so a stale client can never subscribe to an unknown id. */
         events: z.array(z.enum(ALERT_EVENTS)).max(ALERT_EVENTS.length).optional(),
       }),
     )

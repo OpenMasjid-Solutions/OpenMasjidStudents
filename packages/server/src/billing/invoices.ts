@@ -8,7 +8,7 @@
  *
  * Two rules live here and nowhere else:
  *
- *  1. CADENCE IS HONOURED. A `monthly` plan bills only on month periods; a `per_term` plan only
+ *  1. CADENCE IS HONORED. A `monthly` plan bills only on month periods; a `per_term` plan only
  *     on term periods (so generating a term invoice can't double-bill monthly tuition); a
  *     `one_time` plan bills exactly once, ever, deduped on (student, plan) against live invoice
  *     lines. A madrasah with no terms configured simply never generates term periods, so its

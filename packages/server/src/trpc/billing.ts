@@ -322,7 +322,7 @@ function familyTotals(rows: { familyId: string; familyLabel: string; afterOwedCe
 }
 
 /** Distinct, non-empty email addresses from a set of guardians — compared case-insensitively, since
- *  the same address typed twice with different capitalisation is one inbox. */
+ *  the same address typed twice with different capitalization is one inbox. */
 function emails(gs: { email: string | null }[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -723,7 +723,7 @@ export const billingRouter = router({
       const cellsByStudent = yearCellsFor(studentRows.map((r) => r.id), periodKeys);
 
       // Guardian contact, only when a guardian column is actually enabled — and classified by WHO each
-      // adult is, so each number gets its own labelled, tappable column (§ settings/YEAR_VIEW_COLUMNS).
+      // adult is, so each number gets its own labeled, tappable column (§ settings/YEAR_VIEW_COLUMNS).
       const wantsGuardians = columns.some((c) => c === 'guardianNames' || c.endsWith('Phone') || c.endsWith('Email'));
       const guardiansByFamily = new Map<string, { name: string; phone: string | null; email: string | null; kind: RelationKind; isEmergency: boolean }[]>();
       if (wantsGuardians) {
@@ -1151,7 +1151,7 @@ export const billingRouter = router({
       /**
        * Whether tuition collects itself, and off what (0.48.0).
        *
-       * The office could not see this anywhere. Autopay is a PER-HOUSEHOLD enrolment against a
+       * The office could not see this anywhere. Autopay is a PER-HOUSEHOLD enrollment against a
        * per-household Stripe Customer (§13.3), so it is reported here once and the screen says "this
        * household" rather than implying it is a property of one child — but it belongs on a child's record
        * because that is where a volunteer stands when a parent rings to ask why nothing was taken, or when

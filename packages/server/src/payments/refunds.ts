@@ -191,7 +191,7 @@ export function refundableTransactions(opts: { limit?: number; query?: string } 
          * WHAT THIS PAYMENT IS, not what we can do about it this minute (0.48.0).
          *
          * It used to read `pi && stripeReady()`, so a momentary loss of the Stripe keys (they are fetched
-         * from the platform, §13.1) relabelled every card payment as a manual one — and `manual` is the
+         * from the platform, §13.1) relabeled every card payment as a manual one — and `manual` is the
          * row that tells the office "the money still has to be handed back". Two volunteers and a cash box
          * later, Stripe reconnects and refunds the card too. The route is a property of how the money
          * ARRIVED and never changes; whether a card refund can be sent right now is a separate fact, and

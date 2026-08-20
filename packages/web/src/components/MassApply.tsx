@@ -45,7 +45,7 @@ export function MassApply({ currency }: { currency: string }) {
   const [feeOverride, setFeeOverride] = useState('');
   const [note, setNote] = useState('');
 
-  /** A charge is either a catalogue item (optionally re-priced here) or a free-typed one-off. */
+  /** A charge is either a catalog item (optionally re-priced here) or a free-typed one-off. */
   const [chargeItemId, setChargeItemId] = useState('');
   const [chargeLabel, setChargeLabel] = useState('');
   const [chargeAmount, setChargeAmount] = useState('');

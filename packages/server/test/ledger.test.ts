@@ -76,7 +76,7 @@ describe('allocation + balance', () => {
     expect(ledger.studentBalance(studentId).owedCents).toBe(9000);
   });
 
-  /** The behaviour Hasan asked for by name: cash sits in the child's balance and their next bill eats
+  /** The behavior Hasan asked for by name: cash sits in the child's balance and their next bill eats
    *  it. Nothing is stored — it falls out of `invoiced − paid`, so it cannot go stale. */
   it('overpayment becomes that STUDENT’s credit, and their next invoice absorbs it', () => {
     const { studentId, invId } = studentWithInvoice(10000, '2026-07-01');

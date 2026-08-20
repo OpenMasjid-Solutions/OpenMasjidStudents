@@ -82,7 +82,7 @@ describe('importTemplate', () => {
    * packages/web mirrors these aliases in its matcher test (it cannot import this module, which opens
    * the database on load), so this is what fails if the two drift apart.
    */
-  it('recognises the headers an export actually has, not the ones we would have picked', async () => {
+  it('recognizes the headers an export actually has, not the ones we would have picked', async () => {
     const { admin } = await base();
     const byKey = new Map((await admin.people.importTemplate()).fields.map((f) => [f.key, f.aliases]));
     expect(byKey.get('dob')).toContain('birthday');
@@ -183,7 +183,7 @@ describe('preview catches problems before anything is written', () => {
    * reformat the column by hand — which is exactly where the wrong day gets introduced. From 0.47.0 the
    * import reads the format the masjid set in Settings, and always still accepts ISO.
    */
-  it('accepts a slashed date in the configured order, and normalises it to ISO', async () => {
+  it('accepts a slashed date in the configured order, and normalizes it to ISO', async () => {
     const { admin, planId } = await base();
 
     // Default (`iso`) reads an ambiguous slashed date month-first.
@@ -327,7 +327,7 @@ describe('a student can span several rows', () => {
     expect(r.rows.every((row) => row.contacts.every((c) => c.placement === 'guardian' && !c.asked))).toBe(true);
   });
 
-  it('normalises the words an office types for a parent, and asks about the ones that only look like one', async () => {
+  it('normalizes the words an office types for a parent, and asks about the ones that only look like one', async () => {
     const { admin, planId } = await base();
     const r = await admin.people.importPreview({
       defaultFeePlanId: planId,
@@ -455,7 +455,7 @@ describe('commit is all-or-nothing', () => {
     const grouped = await admin.structure.studentsByClass();
     expect(new Set(grouped.map((g) => g.familyId)).size).toBe(3);
     expect(grouped.every((g) => g.classId === classId)).toBe(true);
-    // Each household is labelled from its own child, exactly as the UI would label it.
+    // Each household is labeled from its own child, exactly as the UI would label it.
     expect(grouped.map((g) => g.familyName).sort()).toEqual(['Farooqi family', 'Ismail family', 'Ismail family']);
 
     // The Amount column became a per-student override, and each child is billed their own figure.

@@ -49,7 +49,7 @@ export function SelfRegister() {
           <form onSubmit={submit}>
             <div className="field">
               <label className="label" htmlFor="sr-code">{t('family.registerStudentId')}</label>
-              {/* Uppercased as they type: the ID is stored uppercase and the server normalises anyway,
+              {/* Uppercased as they type: the ID is stored uppercase and the server normalizes anyway,
                   but seeing it match the statement removes the "did I type it right?" doubt. */}
               <input
                 id="sr-code"

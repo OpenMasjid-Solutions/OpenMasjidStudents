@@ -56,7 +56,7 @@ describe('withBase', () => {
     expect(withBase('/family')).toBe('/family');
   });
 
-  it('normalises a trailing slash and a missing leading slash', async () => {
+  it('normalizes a trailing slash and a missing leading slash', async () => {
     expect((await loadWithBase('/students/')).BASE).toBe('/students');
     expect((await loadWithBase('students')).BASE).toBe('/students');
     expect((await loadWithBase('  /students  ')).BASE).toBe('/students');

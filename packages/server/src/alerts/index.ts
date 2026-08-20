@@ -175,7 +175,7 @@ export function studentName(studentId: string): string {
 /**
  * The children a household-level fact covers: "Yusuf Ismail", "Yusuf and Maryam Ismail".
  *
- * A CARD and an AUTOPAY enrolment genuinely belong to the household — one adult holds the card for all
+ * A CARD and an AUTOPAY enrollment genuinely belong to the household — one adult holds the card for all
  * their children, and "Yusuf's card was declined" would be a lie about whose card it is. So those
  * alerts name the children the card is FOR, which is what an office chases and what their records are
  * keyed by, without claiming the child owns the payment method.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /** Student import: pick a file → confirm the column mapping (auto-matched first) → say where any
- *  unrecognised relationships go → review the resolved rows and their problems → commit.
+ *  unrecognized relationships go → review the resolved rows and their problems → commit.
  *
  *  The mapping step is always shown even when every column auto-matched, because a silently wrong
  *  guess here creates real students with real fees. The commit is all-or-nothing server-side, so a
@@ -288,7 +288,7 @@ export function ImportStudents() {
   const [cells, setCells] = useState<string[][]>([]);
   const [mapping, setMapping] = useState<Record<string, number>>({});
   const [defaultFeePlanId, setDefaultFeePlanId] = useState('');
-  /** Where each unrecognised relationship goes, keyed by the lowercased label the file used. */
+  /** Where each unrecognized relationship goes, keyed by the lowercased label the file used. */
   const [placements, setPlacements] = useState<Record<string, Placement>>({});
   const [parseError, setParseError] = useState('');
 
@@ -308,7 +308,7 @@ export function ImportStudents() {
   function downloadTemplate() {
     if (!cols) return;
     // Every column, and four example rows (0.48.0). The labels are exactly what the auto-matcher
-    // recognises; the rows show the two things a header row cannot — that a line with no name is
+    // recognizes; the rows show the two things a header row cannot — that a line with no name is
     // another adult for the student above it, and that the Amount column overrides the plan for one
     // child. The examples come from the server, which is also what refuses them if they are left in.
     downloadCsv('students-template.csv', toCsv(cols.map((f) => f.label), template.data?.example ?? []));
@@ -479,7 +479,7 @@ export function ImportStudents() {
         </section>
       )}
 
-      {/* ── Step 3: where do the unrecognised relationships go? ─────────── */}
+      {/* ── Step 3: where do the unrecognized relationships go? ─────────── */}
       {step === 'contacts' && preview.data && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head"><h2>{t('import.placeContacts')}</h2></div>

@@ -15,7 +15,7 @@ import { refreshSiteInfo } from '../fabric/platform';
 import { writeSnapshot } from '../db/snapshot';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { runPastDue } from '../billing/pastDue';
-import { pruneWhatsappLog, refreshWhatsAppStatus } from '../whatsapp';
+import { pruneWhatsappLog, refreshWhatsAppStatus, refreshWhatsappOutcomes } from '../whatsapp';
 
 const log = makeLog('scheduler');
 let started = false;
@@ -122,9 +122,20 @@ export function startSchedulers(): void {
     await refreshWhatsAppStatus();
   });
   // …and once at boot. A cron's first tick is a quarter of an hour away, and until it came the cache
-  // was cold — which the settings screen read as "not ready" and used to grey out the Send-a-test
+  // was cold — which the settings screen read as "not ready" and used to gray out the Send-a-test
   // button on an install that was working perfectly (0.50.0-dev.4).
   void refreshWhatsAppStatus();
+  // Every 5 minutes — ask what became of the messages still sitting at `queued` (0.51.0, needs
+  // OpenMasjidOS 0.51.1+). FIVE rather than fifteen because the platform keeps only the 200 most
+  // recent outcomes: ask too slowly on a busy day and the answer is gone before we collect it. It
+  // no-ops in one cheap check when the platform cannot report outcomes at all.
+  new Cron('*/5 * * * *', async () => {
+    try {
+      await refreshWhatsappOutcomes();
+    } catch (e) {
+      log.warn('whatsapp outcome refresh failed', { error: (e as Error).message });
+    }
+  });
   // Weekly — trim the WhatsApp queue log. It is an operational trail, not a record anybody bills from
   // (and it holds no message bodies), so an install running for years should not carry every line.
   new Cron('0 3 * * 0', () => {

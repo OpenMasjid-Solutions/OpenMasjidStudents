@@ -72,7 +72,7 @@ The complete feature set, by area.
 
 ### School structure (grouping only)
 
-- **Schools**, for a masjid running more than one programme on different calendars — a weekend
+- **Schools**, for a masjid running more than one program on different calendars — a weekend
   maktab beside a full-time hifz school. A school scopes the **calendar and the class tree, and
   never the household or the money**: a family with a child in each is still one household, one
   balance, one portal login and one printed sheet. A staff account can optionally be limited to some
@@ -84,14 +84,14 @@ The complete feature set, by area.
 - **Optional terms** within a year, so a `per-term` fee cadence means something concrete.
 - **Courses → classes** as a two-level grouping, with archive, delete and a deletability check.
 - **Assign a student to a class**, individually or in bulk, and list students by class.
-- Deliberately **organisational only**: no teachers, no attendance, no grades, no capacity. These
+- Deliberately **organizational only**: no teachers, no attendance, no grades, no capacity. These
   labels drive the roster, the year view, and applying fees to many children at once.
 
 ### Fee plans &amp; assignment
 
 - **Fee plans** — a name, an amount in whole cents, and a cadence: `monthly`, `per-term`, or
   `one-time`. Archive a plan that is no longer offered; delete one nothing has used yet.
-- **Assigned per student** (never per class enrolment), so each child's bill is their own.
+- **Assigned per student** (never per class enrollment), so each child's bill is their own.
 - **Per-child amount override** — which is also how a **bursary, hardship rate or sibling
   discount** is expressed, since with one bill per child a household-level discount has nowhere
   honest to sit.
@@ -100,7 +100,7 @@ The complete feature set, by area.
 
 ### One-off charges
 
-- A **reusable catalogue of charge items** — a book fee, a trip, an exam fee — created once and
+- A **reusable catalog of charge items** — a book fee, a trip, an exam fee — created once and
   applied when needed, rather than retyped each time. Update, archive, or delete an unused one.
 - **Add a charge to one child or to many at once**, list what has been charged, and **void** one
   that was a mistake.
@@ -139,7 +139,7 @@ The complete feature set, by area.
   them — and **one card charge covering several children is recorded as one row per child**, keyed
   so that a replay is a no-op per child.
 - **Allocation is per line, and a payer's instruction survives.** When a parent chose lines — "this
-  $50 is the book fee" — that choice is **stored on the payment** and re-honoured every time the
+  $50 is the book fee" — that choice is **stored on the payment** and re-honored every time the
   mapping is recomputed. Without that, the next invoice would silently undo it and the line they
   deliberately settled would read as outstanding again.
 - **Re-allocation is a recompute, not an increment**, so money paid before a bill existed attaches
@@ -184,7 +184,7 @@ The complete feature set, by area.
   Clear consent copy, and the consent timestamp is stored.
 - **Decline handling** — a retry ladder rather than one attempt, an email to the parent on each
   failure with a "pay now / update card" link, and after the third failure autopay **switches
-  itself off**, tells the parent, and **alerts the office**. A disabled enrolment is never charged.
+  itself off**, tells the parent, and **alerts the office**. A disabled enrollment is never charged.
 - **A charge that never resolves is chased.** A run left pending — a lost confirmation, a browser
   closed mid-payment — is resolved against Stripe rather than being silently re-charged or dropped.
 - **Autopay is its own tab**, with an offer on the portal's front page, and once it is on the same
@@ -235,7 +235,7 @@ The complete feature set, by area.
   - the **household information sheet**, whose wording the office can rewrite in Settings;
   - the **per-child invoice**;
   - the **Student ID sheet by class**, for handing out at the start of a year.
-  All carry the school's logo and colour, and all are served locked down, since they contain Student
+  All carry the school's logo and color, and all are served locked down, since they contain Student
   IDs and payment history.
 - **CSV export** of billing data, with spreadsheet **formula-injection escaping**.
 - **An append-only audit trail** on every sensitive write — fee assignment, invoices, payments,
@@ -262,7 +262,7 @@ The complete feature set, by area.
 
 ### Settings
 
-- **School name**, **contact details**, an **accent colour**, and a **logo** that appears on
+- **School name**, **contact details**, an **accent color**, and a **logo** that appears on
   statements, on every email, and as the app's icon when it is installed on a phone.
 - **Currency** per install (USD / CAD / GBP / EUR), and the **date format** the whole app displays
   and reads spreadsheet columns in.
@@ -334,7 +334,7 @@ The complete feature set, by area.
   explaining why, with the wording editable and a preview.
 - **Nothing about signing in ever goes this way** — invites, resets and verification links stay on
   email, which always works.
-- **Ask the app for the numbers by WhatsApp**: an authorised admin messages `!students` and gets this
+- **Ask the app for the numbers by WhatsApp**: an authorized admin messages `!students` and gets this
   month's takings, what is outstanding and how many students are behind. It answers with **counts and
   totals, never names** — a chat keeps its copy forever — and it cannot change anything.
 
@@ -354,7 +354,7 @@ The complete feature set, by area.
 - **Installable on a phone** — a web manifest carrying the masjid's own name and logo, an iOS
   touch icon, and an install prompt on every signed-in surface. Parents get a home-screen icon;
   the office gets one too.
-- Light and dark, RTL-aware layouts, reduced-motion honoured, every string through i18next.
+- Light and dark, RTL-aware layouts, reduced-motion honored, every string through i18next.
 
 ---
 
@@ -478,7 +478,7 @@ through i18next with RTL-aware layouts; English ships today.
 
 ---
 
-## Acknowledgements
+## Acknowledgments
 
 Created by **Hasan Ismail**, with immense help from **Qari Ijaz** and **Osman Sayed**.
 

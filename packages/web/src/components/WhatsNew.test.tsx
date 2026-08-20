@@ -10,7 +10,7 @@
  * because that is what the rest of the admin looks like.
  *
  * So this asserts the shape, not the prose. `renderToStaticMarkup` needs no DOM, which is why there is
- * no jsdom in this workspace; importing `../lib/i18n` initialises i18next synchronously so the real
+ * no jsdom in this workspace; importing `../lib/i18n` initializes i18next synchronously so the real
  * English strings resolve rather than bare keys.
  */
 import { describe, it, expect } from 'vitest';

@@ -4,14 +4,14 @@
 /**
  * Admin commands over WhatsApp — `POST /fabric/commands/run` (0.50.0-dev.15).
  *
- * An authorised admin messages the masjid's own WhatsApp number with `!students` and OpenMasjidOS runs
+ * An authorized admin messages the masjid's own WhatsApp number with `!students` and OpenMasjidOS runs
  * one of the commands declared in our `manifest.yaml`. **The platform owns everything except the
  * doing**: who may run what, the numbered menu, the confirmation step, the formatting. We are handed
  * one command id and asked to answer in plain text.
  *
  * WHAT WE DECLARE, AND WHY IT IS ONLY THIS. One command, `stats` — a read. Two rules shaped that:
  *
- *   1. **The reply lands in a chat that keeps a copy forever**, on whichever phone is authorised
+ *   1. **The reply lands in a chat that keeps a copy forever**, on whichever phone is authorized
  *      today. It is the platform's own stated reason for refusing to expose app logs, and it applies
  *      just as much to a roster of families who are behind. So the answer is counts and totals
  *      (`billing/stats.ts` enforces that end) and never a list of who.
@@ -144,7 +144,7 @@ export function registerFabricCommands(app: FastifyInstance): void {
     const caller = req.headers['x-openmasjid-caller-app'];
     if ((Array.isArray(caller) ? caller[0] : caller) !== PLATFORM_CALLER) {
       // A real app id can never equal `omos:platform`, so this is another app reaching for a handler
-      // that is not a Fabric capability. 403, not 404: it is an authorisation answer.
+      // that is not a Fabric capability. 403, not 404: it is an authorization answer.
       return reply.code(403).send({ ok: false, error: 'Only OpenMasjidOS may run commands.' });
     }
 

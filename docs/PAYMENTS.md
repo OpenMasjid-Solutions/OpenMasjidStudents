@@ -30,8 +30,8 @@ verification, no endpoint registration; `stripe_events` was DROPPED in 0.48.0 (m
 | **reconciliation** (§11.4) | the daily job, or the Reconcile now button | whatever the PI's metadata says | it *is* the backstop |
 
 **Why no webhook.** A webhook is an internet-facing route that must be exposed, signature-verified, deduped
-and kept in step with Stripe's event catalogue — and it can tell us nothing reconciliation will not find
-within a day. The pull paths are the optimisation; reconciliation is the guarantee. Money is never lost, only
+and kept in step with Stripe's event catalog — and it can tell us nothing reconciliation will not find
+within a day. The pull paths are the optimization; reconciliation is the guarantee. Money is never lost, only
 delayed. The one place this shows is the wording after a parent pays: the UI may say "received" from the
 client's own confirmation, softly, because the ledger write happens on the same round trip.
 
@@ -67,7 +67,7 @@ Only `payments/stripe.ts` imports the SDK. Everything else asks it for a client 
 
 ## 13.3 Autopay (saved method + our scheduler — NOT Stripe subscriptions)
 
-- **Enrol**: a SetupIntent with `usage: off_session`, then the household toggles autopay on. The consent
+- **Enroll**: a SetupIntent with `usage: off_session`, then the household toggles autopay on. The consent
   timestamp is stored.
 - **What is charged**: the sum of open invoice balances with `due_date <= today`, **capped at what the
   household's derived balance says it owes**. That cap is not belt-and-braces: a credit line larger than its
@@ -121,7 +121,7 @@ Consumer-side note: a kiosk or donation site must offer its amount field even at
 
 Off by default. A madrasah pays roughly **2.9% + 30¢** to accept a card, so a $100 invoice brings in
 $96.80; switch this on and the payer covers it instead — the card is charged **$103.30** and the school
-receives the full $100. Cash, cheque and Zelle are never touched, because there is no processing fee to
+receives the full $100. Cash, check and Zelle are never touched, because there is no processing fee to
 pass on and inventing one would be a charge for nothing.
 
 **A fee is not tuition and never enters the ledger.** That is the whole invariant. Every balance in this
@@ -138,7 +138,7 @@ charge. It is also what lets Donations and Kiosk mint their own intents and stil
 
 **Two rates, because they are not the same cost.** A card is 2.9% + 30¢ with no ceiling; ACH is 0.8%
 **capped at $5**. On a $2,000 term payment that is $59.79 against $5.00, so the bank rate has its own
-switch (an office may reasonably pass on the card cost and absorb the bank one) and the cap is honoured
+switch (an office may reasonably pass on the card cost and absorb the bank one) and the cap is honored
 — grossing up past it would charge a percentage of a fee that had stopped growing, which is money taken
 for nothing. Because a PaymentIntent's amount is fixed before Stripe asks the payer anything, an install
 that passes on both asks the parent which they are using *first*.
@@ -168,7 +168,7 @@ footnote.
 - **One** `recordPayment`/`recordSplit` path, used by the Fabric provider, the portal, autopay,
   reconciliation, the manual-payment UI and the mid-year go-live.
 - Allocation is **per line** and **re-derived** whenever a bill changes, with a payer's stored instruction
-  honoured before the oldest-due-first sweep.
+  honored before the oldest-due-first sweep.
 - Idempotency at the DB: `payments.idempotency_key` UNIQUE (the Stripe PI id, whatever the channel), suffixed
   `:studentId` when one charge fans out across siblings. Prefix-match it with `substr`, never `LIKE` — `_` is
   a LIKE wildcard and Stripe ids are full of them.

@@ -7,7 +7,7 @@
  *
  *  1. THE ORDER. The roster importer resolves a row's Class, Course and Fee plan columns against rows
  *     already in the database and refuses a file that names one which does not exist yet
- *     (`packages/server/test/import.test.ts` pins that behaviour). So the year, the classes and the fee
+ *     (`packages/server/test/import.test.ts` pins that behavior). So the year, the classes and the fee
  *     plans have to be OFFERED BEFORE the import — a wizard that put the roster first would walk an
  *     office into an error it could do nothing about. That is a real constraint with a real error
  *     message behind it, not a preference about pacing, so it is asserted rather than commented.

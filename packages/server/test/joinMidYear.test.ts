@@ -131,7 +131,7 @@ describe('billFromMonths — what the dropdown offers', () => {
     settingsMod.setBillingStartPeriod(null);
   });
 
-  it('honours the billing floor in the fallback too', () => {
+  it('honors the billing floor in the fallback too', () => {
     settingsMod.setBillingStartPeriod('2027-01');
     expect(join.billFromMonths(null, FEB).map((m) => m.periodKey)).toEqual(['2027-01', '2027-02']);
     settingsMod.setBillingStartPeriod(null);

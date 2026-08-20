@@ -11,15 +11,25 @@
  * ── HOW A MESSAGE IS SENT ────────────────────────────────────────────────────
  * We never touch the gateway. OpenMasjidOS owns the WhatsApp connection (a self-hosted OpenWA
  * install, linked to the masjid's own phone) and runs ONE paced queue shared by every app on the
- * server — randomised gaps, typing indicators, per-recipient cooldowns, rolling hourly and daily
- * caps, quiet hours. That queue is the entire defence for a number WhatsApp does not officially
- * permit and can restrict at any time, and it only works because nothing goes around it. Two things
- * follow, and they are design constraints rather than cautions:
+ * server — randomized gaps, typing indicators, per-recipient cooldowns, rolling hourly and daily
+ * caps. That queue is the entire defense for a number WhatsApp does not officially permit and can
+ * restrict at any time, and it only works because nothing goes around it. Two things follow, and they
+ * are design constraints rather than cautions:
  *
- *   • **`queued` is not `sent`.** Delivery is seconds to minutes away and hours inside quiet hours.
- *     Nothing blocks on a send, no screen says "sent", and no flow waits for one to arrive.
+ *   • **`queued` is not `sent`.** Delivery is seconds to minutes away, longer once the hour's or the
+ *     day's allowance is spent. Nothing blocks on a send and no flow waits for one to arrive. Since
+ *     0.51.0 the log can at least SAY what happened afterwards — see `refreshWhatsappOutcomes`.
  *   • **The allowance belongs to the NUMBER, not to us.** Every other installed app draws on the same
  *     daily cap, so nothing here is designed as a broadcast. One recipient per call, always.
+ *
+ * **THERE ARE NO QUIET HOURS** (platform 0.51.1). There were, 21:00–07:00, and they applied to every
+ * message on the shared queue — including staff alerts, which is the one case where waiting until
+ * morning defeats the purpose: a declined card at nine on a Sunday reaches a treasurer's phone
+ * precisely because it will not reach their inbox. They were also half of a real outage. The window
+ * was evaluated in UTC while the masjid was not, so every evening message was held; the queue was
+ * memory-only, so each container restart destroyed the backlog. Accepted, logged as queued, delivered
+ * never. The platform removed the window and made the queue durable. A message now goes out when the
+ * pacing lets it, whatever the hour.
  *
  * ── WHAT NEVER GOES BY WHATSAPP ──────────────────────────────────────────────
  * Nothing auth-critical: no invite links, no password resets, no verification codes, no one-time
@@ -42,14 +52,14 @@
  * Message BODIES are never logged and never stored (§14): they routinely carry a child's name and a
  * family's fees. The log holds the event, an id, the time and the outcome.
  */
-import { and, eq, inArray, lt } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, lt } from 'drizzle-orm';
 import { db } from '../db';
 import { families, guardians, guardianFamilies, students, users, whatsappLog } from '../db/schema';
 import { rid } from '../db/ids';
 import { getCurrency, getSchoolName, getWhatsApp } from '../settings';
 import { pausedFor, testFamilyId } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
-import { sendPlatformWhatsApp, sendPlatformWhatsAppGroup, whatsappGroups, whatsappStatus, type WhatsAppGroupList, type WhatsAppStatus } from '../fabric/platform';
+import { sendPlatformWhatsApp, sendPlatformWhatsAppGroup, whatsappGroups, whatsappMessageStatus, whatsappStatus, type WhatsAppGroupList, type WhatsAppStatus } from '../fabric/platform';
 import { toE164 } from './numbers';
 import { renderText, waStaffAlert, type WaTextKey, type WaVars } from './templates';
 import { familyBalance } from '../billing/ledger';
@@ -178,6 +188,9 @@ interface LogRow {
   familyId?: string | null;
   status: 'queued' | 'failed' | 'skipped';
   reason?: string | null;
+  /** The platform's own message id, when it gave us one (0.51.0) — the handle for asking what
+   *  became of it. Only ever present on a `queued` row; a skip never reached the platform. */
+  platformId?: string | null;
 }
 
 function writeLog(row: LogRow): void {
@@ -190,9 +203,69 @@ function writeLog(row: LogRow): void {
       familyId: row.familyId ?? null,
       status: row.status,
       reason: row.reason ?? null,
+      platformId: row.platformId ?? null,
       createdAt: new Date(),
     })
     .run();
+}
+
+/**
+ * Ask the platform what became of the messages still sitting at `queued` (0.51.0).
+ *
+ * WHY THIS EXISTS. `queued` used to be the last thing this app could ever say, and a masjid then hit
+ * the failure that design cannot explain: every send accepted, nothing delivered for over a day, no
+ * error anywhere. Our log said "queued" with total confidence and there was nothing in the world to
+ * contradict it. OpenMasjidOS 0.51.1 reports outcomes, so the log can finally finish its sentences.
+ *
+ * FOUR RULES, each of them load-bearing:
+ *
+ *  1. **Only rows we have a handle for.** No `platform_id` means an older platform or a `skipped` row,
+ *     and those stay `queued` for good — which is honest, because we still do not know.
+ *  2. **Oldest first, and bounded per pass.** The platform keeps only the 200 most recent outcomes, so
+ *     the rows in danger of falling off the end are the old ones. A cap keeps a backlog from turning
+ *     one tick into hundreds of requests at a platform that is already unwell.
+ *  3. **`unknown` settles the row, and does not retry.** A 404 is "past the end of that buffer, or
+ *     never ours" — a permanent answer. Left as `queued` it would be re-asked every five minutes for
+ *     as long as the row lives.
+ *  4. **Anything else leaves the row alone.** An unreachable platform must never be written down as a
+ *     delivery failure; the next pass asks again.
+ *
+ * Best-effort throughout. Nothing waits on this and no send is retried because of it.
+ */
+export async function refreshWhatsappOutcomes(limit = 40): Promise<{ checked: number; settled: number }> {
+  if (!fabricConfigured() || !getWhatsApp().enabled) return { checked: 0, settled: 0 };
+  // Cheap guard against asking an older platform 40 times per tick for a route it does not have.
+  const status = await currentWhatsAppStatus();
+  if (!status.outcomes) return { checked: 0, settled: 0 };
+
+  const pending = db
+    .select({ id: whatsappLog.id, platformId: whatsappLog.platformId })
+    .from(whatsappLog)
+    .where(and(eq(whatsappLog.status, 'queued'), isNotNull(whatsappLog.platformId)))
+    .orderBy(whatsappLog.createdAt)
+    .limit(limit)
+    .all();
+
+  let settled = 0;
+  for (const row of pending) {
+    if (!row.platformId) continue;
+    const got = await whatsappMessageStatus(row.platformId);
+    if (!got.ok) {
+      if (!got.unknown) continue; // transient — ask again next pass
+      // The platform can no longer say. Record that rather than asking for ever.
+      db.update(whatsappLog).set({ status: 'failed', reason: 'outcome_unknown' }).where(eq(whatsappLog.id, row.id)).run();
+      settled++;
+      continue;
+    }
+    if (got.state === 'queued') continue; // genuinely still waiting its turn in the pacing
+    db.update(whatsappLog)
+      .set({ status: got.state === 'sent' ? 'sent' : got.state === 'expired' ? 'expired' : 'failed', reason: got.reason })
+      .where(eq(whatsappLog.id, row.id))
+      .run();
+    settled++;
+  }
+  if (settled) log.info('whatsapp outcomes settled', { checked: pending.length, settled });
+  return { checked: pending.length, settled };
 }
 
 /** Drop rows older than `days`. Called from the scheduler — this is an operational trail, not a
@@ -319,6 +392,7 @@ async function queueGuardian(event: string, r: WaRecipient, text: string): Promi
     familyId: r.familyId,
     status: res.queued ? 'queued' : 'failed',
     reason: res.queued ? (res.note ?? null) : res.reason,
+    platformId: res.queued ? (res.id ?? null) : null,
   });
   return res.queued;
 }
@@ -444,7 +518,7 @@ export async function notifyGroups(event: string, msg: { title: string; text: st
       // past. `detail` is the only thing that varies.
       const body = waStaffAlert(msg.title, g.detail ? msg.text : msg.publicText);
       const res = await sendPlatformWhatsAppGroup(groupId, body);
-      writeLog({ event, recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? (res.note ?? null) : res.reason });
+      writeLog({ event, recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? (res.note ?? null) : res.reason, platformId: res.queued ? (res.id ?? null) : null });
       if (res.queued) queued++;
     }
     // Ids and counts only — never the alert text (§14).
@@ -478,7 +552,7 @@ export async function testGroup(groupId: string): Promise<'queued' | 'off' | 'un
     // Terse, like the alerts it is standing in for — and it must READ like one, or it is not a test of
     // anything. No salam, no letterhead.
     const res = await sendPlatformWhatsAppGroup(groupId, waStaffAlert('Test', 'Staff alerts will reach this group. No reply is needed.'));
-    writeLog({ event: 'test', recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? (res.note ?? null) : res.reason });
+    writeLog({ event: 'test', recipientKind: 'group', recipientId: groupId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? (res.note ?? null) : res.reason, platformId: res.queued ? (res.id ?? null) : null });
     return res.queued ? 'queued' : 'failed';
   } catch (e) {
     log.warn('whatsapp group test failed', { error: (e as Error).message });
@@ -531,7 +605,7 @@ export async function notifyStaff(event: string, text: string): Promise<number> 
         continue;
       }
       const res = await sendPlatformWhatsApp(s.to, text);
-      writeLog({ event, recipientKind: 'staff', recipientId: s.userId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? (res.note ?? null) : res.reason });
+      writeLog({ event, recipientKind: 'staff', recipientId: s.userId, status: res.queued ? 'queued' : 'failed', reason: res.queued ? (res.note ?? null) : res.reason, platformId: res.queued ? (res.id ?? null) : null });
       if (res.queued) queued++;
     }
     log.info('whatsapp staff notify', { event, recipients: to.length, queued });

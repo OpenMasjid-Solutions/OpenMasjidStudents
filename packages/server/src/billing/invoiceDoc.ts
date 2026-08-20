@@ -18,7 +18,7 @@
  *     module the portal, the kiosk and the Fabric `lookup` use, so a line reads identically wherever a
  *     parent meets it, and the paid/outstanding split matches what a card payment would settle.
  *   • `billing/ledger.ts` for the invoice's own total and paid figures.
- *   • The masjid's contact details, colour and date format from settings, exactly like the statement
+ *   • The masjid's contact details, color and date format from settings, exactly like the statement
  *     and the family sheet — one set of letterhead settings across all three printed artifacts.
  *
  * SECURITY. It carries a child's name and the household's money, so it is served through the same
@@ -48,7 +48,7 @@ const asDate = (v: unknown): string => {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
 };
 
-/** How the money arrived, in the words a parent would recognise. Mirrors the statement's list. */
+/** How the money arrived, in the words a parent would recognize. Mirrors the statement's list. */
 const CHANNEL_LABELS: Record<string, string> = {
   cash: 'Cash', zelle: 'Zelle', check: 'Check', ach: 'Bank transfer', other: 'Other',
   'donations-web': 'Masjid website', kiosk: 'Kiosk', portal: 'Parent portal', autopay: 'Autopay',
@@ -110,7 +110,7 @@ export function collectInvoiceDoc(invoiceId: string): InvoiceDocData | null {
   const fam = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.id, stu.familyId)).get();
 
   // Who to address it to. Email only — a printed bill does not need the household's phone numbers on
-  // it, and this is the one field that makes "who do I give this to" answerable (§14 minimisation).
+  // it, and this is the one field that makes "who do I give this to" answerable (§14 minimization).
   const gs = db
     .select({ name: guardians.name, email: guardians.email })
     .from(guardianFamilies)
@@ -242,7 +242,7 @@ export function buildInvoiceHtml(invoiceId: string, now: Date = new Date()): str
 <title>Invoice — ${esc(d.studentName)} — ${esc(d.label)}</title>
 <style>
   @page { size: letter; margin: 0.6in; }
-  /* --teal is the masjid's own colour (Settings → How you appear to parents), defaulting to the
+  /* --teal is the masjid's own color (Settings → How you appear to parents), defaulting to the
      original teal, so this reads as the same school as the statement and the family sheet.
      Validated as a hex literal before it reaches here — it is interpolated into a style block. */
   :root { --ink:#1a1a1a; --teal:${accent}; --wash:${wash}; --line:#cbcbcb; --muted:#666; }
@@ -286,7 +286,7 @@ export function buildInvoiceHtml(invoiceId: string, now: Date = new Date()): str
   @media print {
     body { padding: 0; font-size: 10.5pt; }
     .toolbar { display: none; }
-    /* A solid block of colour is what drains a masjid's toner. */
+    /* A solid block of color is what drains a masjid's toner. */
     .due { background: #fff; }
   }
 ${SHEET_PHONE_CSS}

@@ -183,7 +183,7 @@ function PayForm({ familyId, onPaid, lines }: { familyId: string; onPaid: () => 
   }
 
   const ok = useMemo(() => !!stripe && !!elements, [stripe, elements]);
-  if (status === 'done') return <div className="notice notice--ok">{t('family.paidOptimistic')}</div>;
+  if (status === 'done') return <div className="notice notice--ok">{t('family.paidOptimiztic')}</div>;
 
   return (
     <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>

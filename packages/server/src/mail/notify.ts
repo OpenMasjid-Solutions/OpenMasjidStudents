@@ -303,7 +303,7 @@ export async function sendRefund(familyId: string, amountFormatted: string): Pro
  * Deliberately a test message rather than a fake receipt: a family who gets a realistic-looking
  * receipt for a payment nobody made will ring the office, which is the opposite of helpful.
  *
- * It goes through `guardianEmailsForFamily`, which honours the test-household exception — so this
+ * It goes through `guardianEmailsForFamily`, which honors the test-household exception — so this
  * proves the whole pause-exception path an office is trying to verify, not just the transport.
  */
 export async function sendTestToHousehold(familyId: string): Promise<number> {

@@ -12,7 +12,7 @@ import { formatMoney } from '../../lib/money';
 import { trpc, type RouterOutputs } from '../../lib/trpc';
 import { WhatsAppSettings } from '../../components/WhatsAppSettings';
 
-/** The alert catalogue comes from the server (alerts/index.ts owns it), so the UI never hard-codes the
+/** The alert catalog comes from the server (alerts/index.ts owns it), so the UI never hard-codes the
  *  event list — adding an event there makes a new checkbox appear here with no change on this side. */
 type AlertEvent = RouterOutputs['settings']['alertsGet']['events'][number];
 type AlertRecipient = RouterOutputs['settings']['alertsGet']['recipients'][number];
@@ -40,8 +40,8 @@ export function Settings() {
   }
 
   // ── How the masjid appears on paper and in email (0.47.0) ───────────────────
-  // Contact details, the date format, and the colour printed artifacts are ruled in. Held as one
-  // draft object with one Save, because they are edited together and a per-field autosave on a colour
+  // Contact details, the date format, and the color printed artifacts are ruled in. Held as one
+  // draft object with one Save, because they are edited together and a per-field autosave on a color
   // picker would fire on every drag.
   type Contact = { address: string; phone: string; email: string; website: string; donatePath: string };
   const [look, setLook] = useState<{ contact: Contact; dateFormat: string; accentColor: string } | null>(null);

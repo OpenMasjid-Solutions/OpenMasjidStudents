@@ -35,7 +35,7 @@ export type Context = Awaited<ReturnType<typeof createContext>>;
  * `TRPCError` at all, and nothing here ever throws it on purpose (checked — there are no explicit
  * uses). So it always means an unhandled throw, and its message is whatever the thrower said: a
  * Drizzle constraint string naming columns, a Stripe SDK message, a `TypeError` with a property path.
- * That was being serialised straight to the client — to a parent, over the internet uplink — which is
+ * That was being serialized straight to the client — to a parent, over the internet uplink — which is
  * both unreadable and a description of our internals nobody outside needs.
  *
  * The real message still goes to the log, where it is useful and where §14 already governs what may

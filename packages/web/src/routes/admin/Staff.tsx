@@ -16,7 +16,7 @@ import { trpc, type RouterOutputs } from '../../lib/trpc';
 
 const MIN_PW = 12;
 type StaffRole = 'admin' | 'finance';
-/** The alert catalogue comes from the server (alerts/index.ts owns it), exactly as it does on the
+/** The alert catalog comes from the server (alerts/index.ts owns it), exactly as it does on the
  *  Settings screen — adding an event there adds a tick box here with no change on this side. */
 type AlertEvent = RouterOutputs['whatsapp']['get']['staffEvents'][number];
 

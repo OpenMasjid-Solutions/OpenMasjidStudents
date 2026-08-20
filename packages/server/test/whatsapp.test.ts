@@ -57,6 +57,10 @@ let groupsHttp = 200;
 let groupsBodyOk = true;
 /** The status the queue answers with. 202 is the real one; the others are the four documented refusals. */
 let queueStatus = 202;
+/** Does this platform report outcomes (0.51.0)? Absent means false, which is the real convention. */
+let waOutcomes: boolean | undefined = true;
+/** What GET /api/fabric/whatsapp/status/<id> answers. 404 = past the platform's 200-message buffer. */
+let outcomeReply: { http: number; body: Record<string, unknown> } = { http: 200, body: { state: 'sent', at: '2026-08-20T10:00:00Z' } };
 const realFetch = globalThis.fetch;
 
 function installFetch(): void {
@@ -71,9 +75,15 @@ function installFetch(): void {
         json: async () => (groupsBodyOk ? { groups: groupList } : {}),
       } as unknown as Response;
     }
+    if (url.includes('/api/fabric/whatsapp/status/')) {
+      return { ok: outcomeReply.http < 300, status: outcomeReply.http, json: async () => outcomeReply.body } as unknown as Response;
+    }
     if (url.endsWith('/api/fabric/whatsapp')) {
-      if ((i.method ?? 'GET') === 'GET') return { ok: statusHttp < 300, status: statusHttp, json: async () => waAvailable } as unknown as Response;
-      return { ok: queueStatus < 300, status: queueStatus, json: async () => ({ queued: queueStatus === 202 }) } as unknown as Response;
+      if ((i.method ?? 'GET') === 'GET') {
+        return { ok: statusHttp < 300, status: statusHttp, json: async () => ({ ...waAvailable, ...(waOutcomes === undefined ? {} : { outcomes: waOutcomes }) }) } as unknown as Response;
+      }
+      // 0.51.1+ returns the message id alongside the 202 — the handle the outcome poller uses.
+      return { ok: queueStatus < 300, status: queueStatus, json: async () => ({ queued: queueStatus === 202, id: 'wam_test_1' }) } as unknown as Response;
     }
     if (url.endsWith('/api/fabric/email')) return { ok: true, status: 200, json: async () => ({ sent: true }) } as unknown as Response;
     return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
@@ -114,6 +124,8 @@ beforeEach(() => {
   db.delete(users).run();
   calls = [];
   waAvailable = { available: true, reason: 'ready' };
+  waOutcomes = true;
+  outcomeReply = { http: 200, body: { state: 'sent', at: '2026-08-20T10:00:00Z' } };
   statusHttp = 200;
   queueStatus = 202;
   groupList = [{ id: '1203630001@g.us', label: 'Parents' }];
@@ -609,7 +621,7 @@ describe('reported by an office setting this up', () => {
     expect(sends()).toHaveLength(0);
   });
 
-  /** The second line of the mail pause has to honour the exception too, or it silently cancels it. */
+  /** The second line of the mail pause has to honor the exception too, or it silently cancels it. */
   it('the exception survives the guardian-address lookup, not just the sender', async () => {
     const a = await household('Ismail', { email: 'parent@test.org' });
     await a.admin.settings.parentMailPauseSet({ paused: true });
@@ -622,7 +634,7 @@ describe('reported by an office setting this up', () => {
   });
 
   /**
-   * "The Send test button is greyed out even after adding a test student."
+   * "The Send test button is grayed out even after adding a test student."
    *
    * The screen read a CACHED gateway status that nothing primed except a 15-minute cron, so for the
    * first quarter of an hour after a container start a perfectly working install reported "not ready".
@@ -1171,7 +1183,7 @@ describe('staff alerts to a group', () => {
  *
  * A parent message is the madrasah speaking to a family and is written like it — salam, the school's
  * name, warm wording. A staff alert is not that: it arrives on the masjid's own number, in a thread
- * the recipient already recognises, for somebody who has to act on it. "Assalamu alaykum" ahead of "a
+ * the recipient already recognizes, for somebody who has to act on it. "Assalamu alaykum" ahead of "a
  * card was declined" is a line to scroll past before reaching the point.
  *
  * Worth a test rather than a comment because it is exactly the sort of thing a well-meaning edit
@@ -1367,5 +1379,104 @@ describe('what the gateway actually said', () => {
     statusHttp = 403;
     whatsapp.resetWhatsAppStatusCache();
     expect((await admin.whatsapp.get()).blockers).toContain('gateway_not-permitted');
+  });
+});
+
+/**
+ * WHAT BECAME OF IT (0.51.0) — the outcome poller.
+ *
+ * `queued` used to be the last word this app could say, and a masjid hit exactly the failure that
+ * design cannot explain: every send accepted, nothing delivered for over a day, no error anywhere.
+ * Our log said "queued" with total confidence and nothing in the world could contradict it.
+ *
+ * So these tests are less about the happy path than about the three ways this poller must NOT behave:
+ * it must not claim knowledge on a platform that cannot report outcomes, it must not treat an
+ * unreachable platform as a delivery failure, and it must not re-ask a question that has a permanent
+ * answer.
+ */
+describe('message outcomes', () => {
+  /** Queue one real message and hand back its log row id. */
+  async function queueOne(): Promise<string> {
+    const { familyId } = await household('Ismail');
+    await turnOn();
+    await whatsapp.notifyFamily('receipt', familyId, 'receipt');
+    await drain();
+    const { db } = app.dbmod;
+    const row = db.select().from(whatsappLog).all().at(-1);
+    expect(row?.status).toBe('queued');
+    // The id returned alongside the 202 is what makes any of this possible.
+    expect(row?.platformId).toBe('wam_test_1');
+    return row!.id;
+  }
+
+  const rowById = (id: string) => app.dbmod.db.select().from(whatsappLog).all().find((r) => r.id === id);
+
+  it('settles a queued row to sent', async () => {
+    const id = await queueOne();
+    const r = await whatsapp.refreshWhatsappOutcomes();
+    expect(r.settled).toBe(1);
+    expect(rowById(id)?.status).toBe('sent');
+  });
+
+  it('records expired, because a dropped message is an outcome and not a silence', async () => {
+    const id = await queueOne();
+    outcomeReply = { http: 200, body: { state: 'expired', reason: 'held_over_24h' } };
+    await whatsapp.refreshWhatsappOutcomes();
+    expect(rowById(id)?.status).toBe('expired');
+    expect(rowById(id)?.reason).toBe('held_over_24h');
+  });
+
+  it('leaves a row alone while the platform still says queued', async () => {
+    const id = await queueOne();
+    outcomeReply = { http: 200, body: { state: 'queued' } };
+    const r = await whatsapp.refreshWhatsappOutcomes();
+    expect(r.settled).toBe(0);
+    expect(rowById(id)?.status).toBe('queued');
+  });
+
+  it('does NOT write an unreachable platform down as a delivery failure', async () => {
+    const id = await queueOne();
+    outcomeReply = { http: 500, body: {} };
+    const r = await whatsapp.refreshWhatsappOutcomes();
+    expect(r.settled).toBe(0);
+    // Still queued — the next pass asks again. Recording a failure here would invent a fact.
+    expect(rowById(id)?.status).toBe('queued');
+  });
+
+  it('settles a 404 instead of asking the same question every five minutes for ever', async () => {
+    const id = await queueOne();
+    outcomeReply = { http: 404, body: {} };
+    await whatsapp.refreshWhatsappOutcomes();
+    expect(rowById(id)?.status).toBe('failed');
+    expect(rowById(id)?.reason).toBe('outcome_unknown');
+  });
+
+  it('asks nothing at all when the platform cannot report outcomes', async () => {
+    const id = await queueOne();
+    // An older platform: the field is simply absent, which MUST read as false.
+    waOutcomes = undefined;
+    whatsapp.resetWhatsAppStatusCache();
+    calls = [];
+    const r = await whatsapp.refreshWhatsappOutcomes();
+    expect(r.checked).toBe(0);
+    // Not one per-row poll against a route that does not exist — that would be dozens of futile
+    // requests every five minutes.
+    expect(calls.filter((c) => c.url.includes('/status/'))).toHaveLength(0);
+    // And the row stays queued, which is the honest answer rather than a guess.
+    expect(rowById(id)?.status).toBe('queued');
+  });
+
+  it('never polls a skipped row — it never reached the platform', async () => {
+    const { familyId } = await household('Farooqi', { phone: null });
+    await turnOn();
+    await whatsapp.notifyFamily('receipt', familyId, 'receipt');
+    await drain();
+    const { db } = app.dbmod;
+    const row = db.select().from(whatsappLog).all().at(-1);
+    expect(row?.status).toBe('skipped');
+    expect(row?.platformId).toBeNull();
+    calls = [];
+    await whatsapp.refreshWhatsappOutcomes();
+    expect(calls.filter((c) => c.url.includes('/status/'))).toHaveLength(0);
   });
 });

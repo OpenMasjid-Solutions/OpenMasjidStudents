@@ -126,7 +126,7 @@ export interface RecordInput {
   /**
    * The invoice LINES this money was handed over for — "the $50 is the book fee" (0.43.0).
    *
-   * Stored on the payment and re-honoured by every later `reallocateStudent`, which is the whole
+   * Stored on the payment and re-honored by every later `reallocateStudent`, which is the whole
    * point: allocation is derived and gets recomputed whenever a bill changes, so an instruction that
    * lived only in the first allocation pass would silently move to the oldest invoice the next time
    * anything happened, and the line the parent chose would go back to reading as unpaid.
@@ -142,8 +142,8 @@ export interface RecordInput {
  * money on another child's bill (§11.2) or to mark a $50 line as $500 settled. Rejected as
  * `invalid_allocation`, which is the error code the Fabric provider already maps to a 422.
  *
- * An invoice-level instruction (the Fabric contract's `allocations`) is normalised into lines by the
- * caller, so there is only ever one shape to honour here.
+ * An invoice-level instruction (the Fabric contract's `allocations`) is normalized into lines by the
+ * caller, so there is only ever one shape to honor here.
  */
 function normalizeDirected(tx: Tx, input: RecordInput): DirectedLine[] | null {
   const wanted = input.directed?.filter((d) => d.amountCents > 0) ?? [];
@@ -183,7 +183,7 @@ export function recordPayment(input: RecordInput, actor: Actor): { paymentId: st
     tx.insert(payments).values({ id: paymentId, studentId: input.studentId, amountCents: input.amountCents, channel: input.channel, occurredAt: input.occurredAt, memo: input.memo ?? null, idempotencyKey: input.idempotencyKey, externalRef: input.externalRef ?? null, directed, reversalOf: null, recordedByUserId: actor.userId, recordedByName: actor.name, createdAt: ts }).run();
 
     // ONE allocation path, always: re-derive the whole student's mapping, which places this payment,
-    // honours any instruction it carries, and simultaneously picks up earlier money that was left
+    // honors any instruction it carries, and simultaneously picks up earlier money that was left
     // unattached (see `reallocateStudent`). There used to be a second loop here for explicit
     // allocations; it wrote rows that the very next recompute deleted, so an instruction only held
     // until the next invoice was raised.
@@ -230,7 +230,7 @@ export function recordPayment(input: RecordInput, actor: Actor): { paymentId: st
  *
  * THE ONE EXCEPTION IS AN INSTRUCTION (0.43.0). When a parent picked lines to pay — "this $50 is the
  * book fee" at the kiosk, on the donation site or in the portal — that choice is stored on the payment
- * and honoured here BEFORE the oldest-first sweep. It has to happen here rather than at the moment of
+ * and honored here BEFORE the oldest-first sweep. It has to happen here rather than at the moment of
  * payment, because this function runs again every time a bill changes: an instruction applied once
  * would be quietly undone by the next invoice, and the line the parent deliberately paid would go back
  * to reading as outstanding on their next statement.

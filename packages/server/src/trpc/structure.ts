@@ -4,7 +4,7 @@
  * Structure: the schools, each one's school year (+ optional terms), and the course → class grouping
  * beneath it.
  *
- * This is ORGANISATIONAL ONLY. Courses and classes label students for the directory, the year
+ * This is ORGANIZATIONAL ONLY. Courses and classes label students for the directory, the year
  * view, and mass fee/charge apply. They carry no teachers, attendance, grades, or capacity —
  * that scope was removed at v0.35.0 and stays out (CLAUDE.md §4 ❌). Terms exist purely so a
  * madrasah that bills per term can have `fee_plans.cadence = 'per_term'` mean something.
@@ -226,7 +226,7 @@ export const structureRouter = router({
 
   /** Exactly one year is current PER SCHOOL; setting one clears that school's others in the same
    *  transaction. Scoping the clear is the whole change from 0.47.0 — an unscoped one would switch
-   *  the maktab's current year off every time somebody set the hifz programme's. */
+   *  the maktab's current year off every time somebody set the hifz program's. */
   /**
    * Everything the year-rollover wizard shows (0.48.0) — the year closing, a suggested next one, each
    * class with a guessed destination and its children, the fee plans, the closing year's term names, and
@@ -533,7 +533,7 @@ export const structureRouter = router({
    *
    * The per-student dropdown on the roster is the right tool for one correction and the wrong tool for
    * September: putting thirty children into Hifz 1 meant thirty trips through a dropdown. This takes the
-   * class and the list, in ONE transaction, so a half-finished enrolment cannot happen.
+   * class and the list, in ONE transaction, so a half-finished enrollment cannot happen.
    *
    * Withdrawn students are skipped rather than refused: a stale browser tab can easily hold a child who
    * left this morning, and failing the whole action over one of them would be the wrong trade. The

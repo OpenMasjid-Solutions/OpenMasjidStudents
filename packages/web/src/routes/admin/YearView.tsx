@@ -313,7 +313,7 @@ export function YearView({ canConfigure }: { canConfigure: boolean }) {
                   {enabled.includes('dob') && <th>{t('year.col_dob')}</th>}
                   {enabled.includes('balance') && <th>{t('year.col_balance')}</th>}
                   {enabled.includes('guardianNames') && <th>{t('year.col_guardianNames')}</th>}
-                  {/* One labelled column per number, in the order an office would ring them. */}
+                  {/* One labeled column per number, in the order an office would ring them. */}
                   {CONTACT_COLUMNS.filter((c) => enabled.includes(c)).map((c) => (
                     <th key={c}>{t(`year.col_${c}`)}</th>
                   ))}

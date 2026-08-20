@@ -19,7 +19,7 @@
  *  • card details, of any kind;
  *  • another household's anything.
  * There is no tag for any of those, which is the enforcement: an office can only interpolate what the
- * catalogue below offers.
+ * catalog below offers.
  *
  * A child's FIRST NAME is allowed in a message to that child's own parent, and is most of the value —
  * "we've received your payment for Yusuf" is worth sending; "a payment was received" is not.
@@ -28,7 +28,7 @@
  */
 import { getSchoolName, getWhatsAppTexts } from '../settings';
 
-// ── The catalogue ────────────────────────────────────────────────────────────
+// ── The catalog ────────────────────────────────────────────────────────────
 /**
  * Every message whose wording an office can change.
  *
@@ -152,7 +152,7 @@ export function renderText(key: WaTextKey, vars: WaVars, opts: { hasEmail: boole
 }
 
 /** The office's "does this reach you?" probe, sent to the test student's HOUSEHOLD — a parent's phone,
- *  so it greets like every other parent message. Not editable: its whole job is to be recognisable as
+ *  so it greets like every other parent message. Not editable: its whole job is to be recognizable as
  *  a test, and a rewritten one that reads like a real message defeats the point. */
 export function waTest(): string {
   return `Assalamu alaykum. This is a test message from ${getSchoolName()}’s tuition app. No reply is needed.`;
@@ -163,7 +163,7 @@ export function waTest(): string {
  *
  * NO GREETING, NO LETTERHEAD, JUST THE ALERT. A parent message is the madrasah speaking to a family
  * and is written like it; this is an operational notice to somebody who has to act on it, arriving on
- * the masjid's own number in a thread they already recognise. "Assalamu alaykum" ahead of "a card was
+ * the masjid's own number in a thread they already recognize. "Assalamu alaykum" ahead of "a card was
  * declined" is a line to scroll past before reaching the point — and the point is the whole message.
  * The school name went for the same reason: it is the sender, so saying it again is noise.
  *
