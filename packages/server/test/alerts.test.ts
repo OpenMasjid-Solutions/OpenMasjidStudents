@@ -349,3 +349,91 @@ describe('what parents are emailed', () => {
     expect(String(receipt!.body.subject)).toContain('$50.00');
   });
 });
+
+/**
+ * THE STORM GATE (0.51.0-dev.6).
+ *
+ * OpenMasjidOS removed the 60-second per-recipient cooldown that had been quietly absorbing
+ * per-external-failure alerts, and Kiosk found out what that had been hiding: one alert per refused
+ * card, all through jummah. Three of ours have the same shape — `lookup-lockout` (one per Student ID
+ * a sweep locks), `payment-recovered` (raised per PaymentIntent, and a first reconcile looks back 35
+ * days), and `login-blocked`.
+ *
+ * The tests that matter are the boundaries: that it actually suppresses a repeat, that the HELD COUNT
+ * survives to the next alert (for a sweep the number is the entire signal), and — most importantly —
+ * that it does NOT suppress the ordinary alerts, where two of a thing in an afternoon are two things
+ * an office needs to see.
+ */
+describe('the storm gate', () => {
+  async function recipient(events: string[]) {
+    const admin = caller('admin');
+    await admin.settings.alertRecipientSave({ email: 'treasurer@test.org', events: events as never[] });
+    return admin;
+  }
+
+  const bodies = () => emailCalls().map((c) => String(c.body.text ?? ''));
+
+  it('lets the first through and holds the rest', async () => {
+    await recipient(['lookup-lockout']);
+    calls = [];
+    for (let i = 0; i < 5; i++) {
+      await alerts.alertStaff('lookup-lockout', { title: 'A Student ID was locked', text: 'One was locked.', publicText: 'One was locked.' });
+    }
+    // Five sweeps, one email — not five.
+    expect(emailCalls()).toHaveLength(1);
+  });
+
+  it('reports how many it held, because on a sweep the count IS the signal', async () => {
+    await recipient(['lookup-lockout']);
+    // First speaks, three are held.
+    for (let i = 0; i < 4; i++) {
+      await alerts.alertStaff('lookup-lockout', { title: 'A Student ID was locked', text: 'One was locked.', publicText: 'One was locked.' });
+    }
+    // Wind the clock past the window by rewriting the stored timestamp — the state is in settings
+    // precisely so it survives a restart, which makes it addressable here too.
+    const s = await import('../src/settings');
+    const raw = JSON.parse(s.getSetting(s.SETTING_KEYS.alertStorm) ?? '{}');
+    raw['lookup-lockout'].at = Date.now() - 31 * 60_000;
+    s.setSetting(s.SETTING_KEYS.alertStorm, JSON.stringify(raw));
+    calls = [];
+    await alerts.alertStaff('lookup-lockout', { title: 'A Student ID was locked', text: 'One was locked.', publicText: 'One was locked.' });
+    expect(emailCalls()).toHaveLength(1);
+    expect(bodies()[0]).toContain('3 more like it');
+  });
+
+  it('does NOT gate an ordinary alert — two refunds are two things to know about', async () => {
+    await recipient(['payment-refunded']);
+    calls = [];
+    for (let i = 0; i < 3; i++) {
+      await alerts.alertStaff('payment-refunded', { title: 'A payment was refunded', text: 'Yusuf, $50.00.', publicText: 'A refund of $50.00 was made.' });
+    }
+    expect(emailCalls()).toHaveLength(3);
+  });
+
+  it('gates each event separately — a locked ID must not silence a recovered payment', async () => {
+    await recipient(['lookup-lockout', 'payment-recovered']);
+    calls = [];
+    await alerts.alertStaff('lookup-lockout', { title: 'A Student ID was locked', text: 'One was locked.', publicText: 'One was locked.' });
+    await alerts.alertStaff('lookup-lockout', { title: 'A Student ID was locked', text: 'One was locked.', publicText: 'One was locked.' });
+    await alerts.alertStaff('payment-recovered', { title: 'A missed payment was recovered', text: 'Yusuf, $50.00.', publicText: 'A payment of $50.00 was recorded.' });
+    // One lockout (the second held) plus the recovery = two.
+    expect(emailCalls()).toHaveLength(2);
+  });
+
+  it('keeps the held count out of nobody-naming text, since a count names nobody', async () => {
+    await recipient(['payment-recovered']);
+    for (let i = 0; i < 3; i++) {
+      await alerts.alertStaff('payment-recovered', { title: 'A missed payment was recovered', text: 'Yusuf, $50.00.', publicText: 'A payment of $50.00 was recorded.' });
+    }
+    const s = await import('../src/settings');
+    const raw = JSON.parse(s.getSetting(s.SETTING_KEYS.alertStorm) ?? '{}');
+    raw['payment-recovered'].at = Date.now() - 31 * 60_000;
+    s.setSetting(s.SETTING_KEYS.alertStorm, JSON.stringify(raw));
+    calls = [];
+    await alerts.alertStaff('payment-recovered', { title: 'A missed payment was recovered', text: 'Yusuf, $50.00.', publicText: 'A payment of $50.00 was recorded.' });
+    // The public text carries the count too — it is a number, not a person (§14).
+    const pushed = calls.filter((c) => c.url.includes('/api/fabric/alert')).map((c) => String(c.body.message ?? c.body.text ?? ''));
+    expect(pushed.some((m) => m.includes('2 more like it'))).toBe(true);
+    expect(pushed.some((m) => m.includes('Yusuf'))).toBe(false);
+  });
+});

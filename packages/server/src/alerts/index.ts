@@ -33,6 +33,7 @@ import { raiseAlert, notifyPlatform, type AlertId, type AlertLevel } from '../fa
 import { sendAlert } from '../mail/notify';
 import { notifyStaff, notifyGroups } from '../whatsapp';
 import { waStaffAlert } from '../whatsapp/templates';
+import { getSetting, setSetting, SETTING_KEYS } from '../settings';
 import { makeLog } from '../logger';
 
 const log = makeLog('alerts');
@@ -244,9 +245,100 @@ export interface AlertMessage {
  * `void alertStaff(...)`. The platform's mail endpoint takes one recipient per call, so a masjid with
  * five recipients means five sequential HTTP calls; that belongs after the response, not in it.
  */
+/**
+ * Alerts that fire per EXTERNAL FAILURE rather than per human action — and how long one of them
+ * speaks for (0.51.0-dev.6).
+ *
+ * This gate exists because OpenMasjidOS removed the 60-second per-recipient cooldown that had been
+ * quietly absorbing exactly this, and OpenMasjidKiosk found out the expensive way: its
+ * `payment-failed` alert fired once per refused card, so an expired key on a Friday meant one message
+ * per person who tried to give, for the whole of jummah. Nothing bounds that any more, and three of
+ * our own alerts have the same shape:
+ *
+ *  • `lookup-lockout` — one per Student ID locked. The per-ID guard means one alert per ID, which is
+ *    no bound at all against the thing it exists to detect: somebody sweeping IDs locks a new one
+ *    every few minutes, and fifty locked IDs was fifty alerts.
+ *  • `payment-recovered` — raised **per PaymentIntent** inside the reconcile loop. A first reconcile
+ *    looks back 35 days, so a masjid whose broker path had been broken gets one alert per recovered
+ *    payment: dozens, in one pass, all saying the same thing.
+ *  • `login-blocked` — one per account name. Bounded by the number of real staff accounts, so a
+ *    handful rather than a storm, but the same class and cheap to include.
+ *
+ * NOT a blanket cooldown, deliberately. Two refunds in an afternoon are two things an office needs to
+ * see, and suppressing the second because it resembles the first would be worse than the noise. Only
+ * events that can fire faster than a person can cause them are listed.
+ *
+ * THE HELD COUNT IS THE POINT, not a consolation. For ID sweeping the number IS the signal — "one ID
+ * was locked" and "forty-seven were" call for completely different reactions — so a suppressed alert
+ * increments a counter and the next one that gets through reports it. Suppressing silently would be
+ * the same invisible-failure shape this whole release has been about removing.
+ */
+const STORM_WINDOW_MS: Partial<Record<AlertEvent, number>> = {
+  'lookup-lockout': 30 * 60_000,
+  'payment-recovered': 30 * 60_000,
+  'login-blocked': 30 * 60_000,
+};
+
+interface StormState {
+  /** When this event last actually spoke. */
+  at: number;
+  /** How many have been suppressed since. */
+  held: number;
+}
+
+/** Read/write in the settings table rather than a module variable, so a container restart cannot
+ *  discard it. That is not a hypothetical concern: half of the platform's own WhatsApp outage was
+ *  pacing state that a restart threw away, and holding this in memory would repeat the mistake. */
+function stormRead(): Record<string, StormState> {
+  try {
+    const raw = getSetting(SETTING_KEYS.alertStorm);
+    return raw ? (JSON.parse(raw) as Record<string, StormState>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * May this alert speak? Returns the number of siblings it should mention, or null to stay quiet.
+ *
+ * `0` means "speak, nothing was held" — distinct from `null`, which means "say nothing at all". A
+ * caller that treated those the same would either suppress every alert or none.
+ */
+function stormGate(event: AlertEvent, now = Date.now()): number | null {
+  const window = STORM_WINDOW_MS[event];
+  if (!window) return 0; // not storm-prone: always speaks, nothing to report
+  const all = stormRead();
+  const prev = all[event];
+  if (prev && now - prev.at < window) {
+    all[event] = { at: prev.at, held: (prev.held ?? 0) + 1 };
+    setSetting(SETTING_KEYS.alertStorm, JSON.stringify(all));
+    return null;
+  }
+  const held = prev?.held ?? 0;
+  all[event] = { at: now, held: 0 };
+  setSetting(SETTING_KEYS.alertStorm, JSON.stringify(all));
+  return held;
+}
+
 export async function alertStaff(event: AlertEvent, msg: AlertMessage): Promise<void> {
   const spec = SPEC[event];
   try {
+    /**
+     * The storm gate, before ANY fan-out — email, the platform channel, the webhook, WhatsApp and the
+     * groups alike. All five have the same problem with fifty copies of one sentence, and gating one
+     * channel would leave the office's inbox filling while their phone stayed quiet, or the reverse.
+     */
+    const held = stormGate(event);
+    if (held === null) {
+      log.info('staff alert suppressed — one already went recently', { event });
+      return;
+    }
+    if (held > 0) {
+      // Appended to BOTH texts: a count names nobody, so it clears §14 on the public side too, and it
+      // is the half of the message an office most needs on a sweep.
+      const more = ` (and ${held} more like it in the last half hour)`;
+      msg = { ...msg, text: msg.text + more, publicText: msg.publicText + more };
+    }
     // Both platform channels get the de-identified text (§14) — only our own email may name a family.
     if (spec.platform) void raiseAlert(spec.platform, msg.publicText, { title: msg.title, level: spec.level });
     if (spec.webhook) void notifyPlatform(msg.publicText, { title: msg.title, level: spec.level === 'error' ? 'error' : spec.level === 'warning' ? 'warn' : 'info' });

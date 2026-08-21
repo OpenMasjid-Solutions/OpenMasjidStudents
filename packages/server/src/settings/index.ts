@@ -48,6 +48,10 @@ export const SETTING_KEYS = {
   pastDue: 'past_due',
   // ISO date of the last past-due digest sent to the office, so a daily job does not become a daily email.
   pastDueStaffLast: 'past_due_staff_last',
+  // JSON — the last time each STORM-PRONE alert actually spoke, and how many have been held since
+  // (0.51.0-dev.6). In the settings table rather than memory so a restart cannot discard it; see
+  // alerts/index.ts `STORM_WINDOW_MS` for which alerts and why.
+  alertStorm: 'alert_storm',
   // JSON — whether the PAYER covers Stripe's cut rather than the school (0.51.0). Off by default; the
   // math and the reasoning live in payments/fees.ts. See `getProcessingFee`.
   processingFee: 'processing_fee',

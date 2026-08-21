@@ -291,9 +291,16 @@ export function capState(): { blocked: 'hour' | 'day' | null; hourUsed: number; 
  *
  *  1. **Only rows we have a handle for.** No `platform_id` means an older platform or a `skipped` row,
  *     and those stay `queued` for good — which is honest, because we still do not know.
- *  2. **Oldest first, and bounded per pass.** The platform keeps only the 200 most recent outcomes, so
- *     the rows in danger of falling off the end are the old ones. A cap keeps a backlog from turning
- *     one tick into hundreds of requests at a platform that is already unwell.
+ *  2. **Oldest first, and bounded per pass.** Oldest because those are the rows nearest the end of the
+ *     platform's retention, and bounded so a backlog cannot turn one tick into a flood.
+ *
+ *     The numbers were relaxed in 0.51.0-dev.6, when the platform fixed two things it had told us
+ *     wrongly: the outcome history is **500 per app for 24 hours**, not 200 shared across every app
+ *     (a 200-family invoice run used to evict every other app's records AND our own oldest, which are
+ *     the ones most likely to have failed), and **reads no longer count against the send budget** —
+ *     they have their own 600/minute ceiling, so a polling burst can no longer refuse a message. A
+ *     day of this app's traffic is capped at 60 parent messages, so it now fits inside 500 several
+ *     times over and there is nothing to race.
  *  3. **`unknown` settles the row, and does not retry.** A 404 is "past the end of that buffer, or
  *     never ours" — a permanent answer. Left as `queued` it would be re-asked every five minutes for
  *     as long as the row lives.
@@ -302,7 +309,7 @@ export function capState(): { blocked: 'hour' | 'day' | null; hourUsed: number; 
  *
  * Best-effort throughout. Nothing waits on this and no send is retried because of it.
  */
-export async function refreshWhatsappOutcomes(limit = 40): Promise<{ checked: number; settled: number }> {
+export async function refreshWhatsappOutcomes(limit = 100): Promise<{ checked: number; settled: number }> {
   if (!fabricConfigured() || !getWhatsApp().enabled) return { checked: 0, settled: 0 };
   // Cheap guard against asking an older platform 40 times per tick for a route it does not have.
   const status = await currentWhatsAppStatus();

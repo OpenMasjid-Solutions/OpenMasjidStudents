@@ -125,11 +125,13 @@ export function startSchedulers(): void {
   // was cold — which the settings screen read as "not ready" and used to gray out the Send-a-test
   // button on an install that was working perfectly (0.50.0-dev.4).
   void refreshWhatsAppStatus();
-  // Every 5 minutes — ask what became of the messages still sitting at `queued` (0.51.0, needs
-  // OpenMasjidOS 0.51.1+). FIVE rather than fifteen because the platform keeps only the 200 most
-  // recent outcomes: ask too slowly on a busy day and the answer is gone before we collect it. It
-  // no-ops in one cheap check when the platform cannot report outcomes at all.
-  new Cron('*/5 * * * *', async () => {
+  // Every 15 minutes — ask what became of the messages still sitting at `queued` (0.51.0, needs
+  // OpenMasjidOS 0.51.1+). This was FIVE, to beat a shared 200-record ring that a single invoice run
+  // could fill on its own; the platform made it 500 per app kept for 24 hours (0.51.1-dev.8), and a
+  // day of our traffic is capped at 60 messages, so the race is gone and a quarter of an hour is the
+  // right trade for an admin refreshing a log. It no-ops in one cheap check when the platform cannot
+  // report outcomes at all.
+  new Cron('*/15 * * * *', async () => {
     try {
       await refreshWhatsappOutcomes();
     } catch (e) {

@@ -166,6 +166,13 @@ the queue rather than the gateway, which is exactly how the outage above was nar
 accepted and delivered nowhere, because WhatsApp treats it as the phone's own notes — so an admin
 testing against the masjid's own number got silence that looked identical to a broken feature.
 
+**There is no "send this one immediately" flag, and asking for one is settled** (0.51.0-dev.6). We
+asked; the answer was no, and it was the right answer. With all pacing gone the only delay left is a
+typing indicator sized to the message, which is already a few seconds — and the flag could only either
+skip that (the last thing making the traffic look human) or jump a queue every app shares, which every
+app would then set. If urgency ever needs expressing it belongs on the shared queue where the total
+traffic is visible, never as a per-caller privilege.
+
 ## 2a. VOLUME IS OURS NOW (0.51.0-dev.5)
 
 **The platform stopped pacing anything in 0.51.1.** Gone: quiet hours, the hourly and daily caps, the
@@ -214,6 +221,30 @@ A spent budget appears in the settings screen’s "why is nothing sending?" list
 `cap_day`) and writes a log row per household. A cap that silently truncates an invoice run is the
 same invisible-failure shape this release spent its time removing.
 
+**A STORM-PRONE ALERT SPEAKS ONCE PER HALF HOUR, AND SAYS HOW MANY IT HELD** (0.51.0-dev.6,
+`alerts/index.ts` `STORM_WINDOW_MS`). The platform removed the 60-second per-recipient cooldown that
+had been absorbing per-external-failure alerts — Kiosk found out what that had been hiding when an
+expired key meant one message per person who tried to give, all through jummah. Three of ours are the
+same shape:
+
+| Alert | Why it can storm |
+| --- | --- |
+| `lookup-lockout` | One per Student ID locked. The per-ID guard is no bound against the very thing it detects — a sweep locks a new ID every few minutes, so fifty locked IDs was fifty alerts. |
+| `payment-recovered` | Raised **per PaymentIntent** inside the reconcile loop, and a first reconcile looks back 35 days. A masjid whose broker path had been broken gets one per recovered payment. |
+| `login-blocked` | One per account name. Bounded by the number of real staff accounts, so small — same class, cheap to include. |
+
+Not a blanket cooldown: two refunds in an afternoon are two things an office needs to see, so only
+events that can fire faster than a person can cause them are listed. The gate is applied before ANY
+fan-out — email, platform channel, webhook, staff WhatsApp and groups — because all five have the same
+problem with fifty copies of one sentence, and gating one channel would leave an inbox filling while
+the phone stayed quiet.
+
+**The held count is the point, not a consolation.** For a sweep the number IS the signal — "one ID was
+locked" and "forty-seven were" call for different reactions — so a suppressed alert increments a
+counter and the next one through reports it, on the public text as well as the private one (a count
+names nobody). The state lives in the settings table rather than memory, because holding pacing state
+in memory across restarts is precisely the mistake that cost the platform a week.
+
 **A refusal keeps the platform’s own sentence.** A 400 or 403 carries a plain-language `error` — "That
 phone number needs a country code", "That is the number WhatsApp is linked to", "That group has not
 been approved" — and each names something an admin can fix in a minute. This used to reduce all of
@@ -236,9 +267,11 @@ GET  /api/fabric/whatsapp/status/<id>
 This is what finally lets the queue log finish its sentences, and it exists because the outage above
 was undiagnosable from this side: our records said we handed the message over and there was nothing
 anywhere able to contradict them. `whatsapp_log.platform_id` stores the id and
-`refreshWhatsappOutcomes` polls every 5 minutes — **five** rather than fifteen because the platform
-keeps only the 200 most recent outcomes, so asking too slowly on a busy day means the answer is gone
-before it is collected.
+`refreshWhatsappOutcomes` polls every **15 minutes**. It was five, to beat a 200-record ring shared
+across every app that a single invoice run could fill on its own — our own reports are what surfaced
+that, and platform 0.51.1-dev.8 made it **500 per app, kept 24 hours**, with **reads on their own
+600/minute budget** so a polling burst can no longer refuse a send. A day of this app's traffic is
+capped at 60 parent messages, so it fits several times over and the race is gone.
 
 Three rules in that poller, each one earned:
 

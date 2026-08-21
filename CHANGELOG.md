@@ -60,6 +60,12 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **An alert that can fire over and over now speaks once every half hour, and says how many it held
+  back.** Three of them could repeat without limit: one per Student ID when somebody is guessing IDs
+  at the kiosk, one per payment when the daily check recovers a backlog, and one per account when a
+  password is being guessed. OpenMasjidOS used to absorb that and no longer does. The held count is
+  reported rather than dropped — with someone guessing IDs, how many is the whole point.
+
 - **WhatsApp messages are now paced by this app, not by OpenMasjidOS.** The platform used to refuse to
   send too fast; as of its 0.51.1 it does not, because its own pacing was blocking every app’s
   messages behind whichever one was stuck. So there is now a limit here — 12 parent messages an hour
