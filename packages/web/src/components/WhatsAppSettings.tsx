@@ -277,6 +277,41 @@ export function WhatsAppSettings() {
               the household is set, the pause is on, and nothing gets through. */}
           {c.testStudentId && !c.testFamilyId && <p className="form-error">{t('settings.waTestStudentGone')}</p>}
 
+          {/* HOW MANY, which became this app's problem in 0.51.0-dev.5: the platform stopped capping
+              anything, and an invoice run messages every household. Placed BEFORE the event switches
+              on purpose — it is the sentence that should be read before turning on `invoice-ready`
+              for a roster of two hundred. */}
+          <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.waCaps')}</h3>
+          <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>{t('settings.waCapsHint')}</p>
+          <div className="inline-form glass-inset">
+            <div className="field" style={{ flex: '0 1 8rem' }}>
+              <label className="label" htmlFor="wa-cap-hour">{t('settings.waCapHour')}</label>
+              <input
+                id="wa-cap-hour"
+                className="input glass-inset"
+                type="number"
+                min={1}
+                max={200}
+                value={c.cap.hourly}
+                onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n >= 1) void patch({ hourlyCap: n }); }}
+              />
+            </div>
+            <div className="field" style={{ flex: '0 1 8rem' }}>
+              <label className="label" htmlFor="wa-cap-day">{t('settings.waCapDay')}</label>
+              <input
+                id="wa-cap-day"
+                className="input glass-inset"
+                type="number"
+                min={1}
+                max={1000}
+                value={c.cap.daily}
+                onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n >= 1) void patch({ dailyCap: n }); }}
+              />
+            </div>
+            {/* What is actually left, so the limit is a live figure rather than a policy. */}
+            <p className="hint" style={{ alignSelf: 'end', margin: 0 }}>{t('settings.waCapUsed', { ...c.cap })}</p>
+          </div>
+
           {/* 5. Which messages. All off until somebody says otherwise. */}
           <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.waEvents')}</h3>
           <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>{t('settings.waEventsHint')}</p>

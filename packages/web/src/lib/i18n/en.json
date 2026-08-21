@@ -790,7 +790,16 @@
     "waStatus_sent": "Sent",
     "waStatus_expired": "Not sent — expired",
     "waReasonShort_outcome_unknown": "OpenMasjidOS can no longer say",
-    "waOutcomesOff": "This server cannot yet report whether a message actually arrived — that needs OpenMasjidOS 0.51.1 or later. Until then a row stops at “Queued”, which only means it was accepted."
+    "waOutcomesOff": "This server cannot yet report whether a message actually arrived — that needs OpenMasjidOS 0.51.1 or later. Until then a row stops at “Queued”, which only means it was accepted.",
+    "waReasonShort_cap_hour": "Hourly send limit reached",
+    "waReasonShort_cap_day": "Daily send limit reached",
+    "waCaps": "How many parent messages a day",
+    "waCapsHint": "OpenMasjidOS no longer limits how fast messages go out, so this app does. It matters: the risk of a ban attaches to the masjid’s phone number, it is shared with every other app on the server, and a blocked number cannot be recovered — you would lose the number your families reach you on. An invoice run messages every household, so without a limit that is two hundred messages in a few seconds. Anything over the limit is not sent on WhatsApp, and the email still goes.",
+    "waCapHour": "Per hour",
+    "waCapDay": "Per day",
+    "waCapUsed": "{{hourUsed}} of {{hourly}} this hour, {{dayUsed}} of {{daily}} today.",
+    "waBlock_cap_hour": "This hour’s send limit is used up. Parent messages resume next hour; email is unaffected.",
+    "waBlock_cap_day": "Today’s send limit is used up. Parent messages resume tomorrow; email is unaffected."
   },
   "relation": {
     "father": "Father",

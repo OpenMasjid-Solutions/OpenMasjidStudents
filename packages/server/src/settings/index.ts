@@ -759,10 +759,28 @@ export interface WhatsAppConfig {
    * other way is one click rather than two hundred parents reading a family's balance.
    */
   groupAlerts: Record<string, { events: string[]; detail: boolean }>;
+  /**
+   * How many PARENT messages this app will send per hour and per day (0.51.0-dev.5).
+   *
+   * Ours to enforce now: platform 0.51.1 removed every cap, cooldown and gap of its own, so an invoice
+   * run over 200 households would hand over 200 messages that all leave within seconds. The reasoning,
+   * the defaults and what is deliberately NOT capped are in whatsapp/index.ts `WA_CAP_DEFAULTS` —
+   * this is only where an office’s own figures live. Absent falls back to those defaults, so an
+   * upgraded install inherits exactly the pacing the platform used to impose.
+   */
+  hourlyCap?: number;
+  dailyCap?: number;
 }
 
 /** `+1` unless the office says otherwise — this app's first madāris are North American, and a wrong
  *  default is visible and one click to fix, whereas no default means every number fails silently. */
+/** A send cap an office typed, or undefined to inherit the shipped default. */
+const clampCap = (v: unknown, max: number): number | undefined => {
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = Math.trunc(Number(v));
+  return Number.isFinite(n) && n >= 1 && n <= max ? n : undefined;
+};
+
 const WA_DEFAULTS: WhatsAppConfig = { enabled: false, paused: true, events: {}, defaultCountry: '+1', countries: ['+1'], testStudentId: '', groupAlerts: {} };
 
 /** A country code as we store it: `+` and 1–3 digits. Anything else is dropped rather than stored, since
@@ -791,6 +809,11 @@ export function getWhatsApp(): WhatsAppConfig {
       countries,
       testStudentId: typeof p.testStudentId === 'string' ? p.testStudentId.trim() : '',
       groupAlerts: readGroupAlerts(p.groupAlerts),
+      // Clamped, not trusted. A ceiling because this is the setting whose worst case is a banned
+      // number the masjid cannot get back; a floor of 1 because 0 would read as "unlimited" to
+      // somebody typing it and mean the opposite.
+      hourlyCap: clampCap(p.hourlyCap, 200),
+      dailyCap: clampCap(p.dailyCap, 1000),
     };
   } catch {
     return { ...WA_DEFAULTS, events: {}, countries: [...WA_DEFAULTS.countries], groupAlerts: {} };

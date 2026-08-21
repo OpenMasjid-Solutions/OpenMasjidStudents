@@ -166,6 +166,60 @@ the queue rather than the gateway, which is exactly how the outage above was nar
 accepted and delivered nowhere, because WhatsApp treats it as the phone's own notes — so an admin
 testing against the masjid's own number got silence that looked identical to a broken feature.
 
+## 2a. VOLUME IS OURS NOW (0.51.0-dev.5)
+
+**The platform stopped pacing anything in 0.51.1.** Gone: quiet hours, the hourly and daily caps, the
+per-recipient cooldown, the 30-minute group cooldown, the group caps, the warm-up ramp, and the random
+6–20s gap. A typing indicator sized to the message is the only pause left. Anything handed over goes
+out within seconds.
+
+That was right for the platform — its own pacing was causing head-of-line blocking across every app,
+which is what made one group image able to stall every masjid notification for half an hour — and it
+moves the entire responsibility here. **This app is the shape that gets a number banned if nobody is
+holding it:** `billing/invoices.ts` loops every household on an invoice run, and `billing/pastDue.ts`
+loops the whole chase list. Two hundred messages to two hundred numbers in one burst, from a client
+WhatsApp does not permit, is how a masjid loses the number their families reach them on — permanently.
+
+So `whatsapp/index.ts` holds its own budget:
+
+| | Default | Where |
+| --- | --- | --- |
+| Parent messages per hour | 12 | `WA_CAP_DEFAULTS`, overridable per install |
+| Parent messages per day | 60 | same |
+
+**The defaults are the platform’s own former figures, deliberately.** They were its considered
+judgment about what a linked number tolerates, so inheriting them means the platform removing its cap
+changed nothing about what this app actually sends until an office decides otherwise.
+
+**The ledger is `whatsapp_log`**, not a counter. Every send is already a row with a timestamp, so
+counting them is the rate limit and there is no second place for the two to disagree — and it survives
+a restart for free, which is not incidental: half of the platform’s own outage was pacing state that a
+container restart discarded.
+
+**What a capped message costs is small, and it is why a hard cap is affordable here.** Every parent
+event exists on EMAIL too and defaults there (§9). A refused WhatsApp is a notice that arrived on one
+channel instead of two — a degraded nicety, not a lost notification.
+
+**What is NOT capped, and why:**
+
+- **Staff and group alerts.** A handful of recipients. A declined card must never be dropped because
+  an invoice run spent the budget first; starving the alert channel to protect the bulk one is exactly
+  the wrong way round. Tested.
+- **A test send and the missing-email outreach.** Both are a person pressing a button, and the outreach
+  is already bounded at 50 per press with the screen saying so. They COUNT toward the budget — real
+  traffic on the number — but are never refused, because a control whose purpose is to prove the
+  channel works must not be silently disabled by a quota. Tested.
+
+A spent budget appears in the settings screen’s "why is nothing sending?" list (`cap_hour` /
+`cap_day`) and writes a log row per household. A cap that silently truncates an invoice run is the
+same invisible-failure shape this release spent its time removing.
+
+**A refusal keeps the platform’s own sentence.** A 400 or 403 carries a plain-language `error` — "That
+phone number needs a country code", "That is the number WhatsApp is linked to", "That group has not
+been approved" — and each names something an admin can fix in a minute. This used to reduce all of
+them to `http_400`; the sentence now goes in the log row, because recording the code and discarding
+the reason is how a diagnosable refusal becomes indistinguishable from a lost message.
+
 **One recipient per call**, by the API's design. We loop where we must and the queue paces it — but
 the shape of every feature here is "one parent at a time", never a broadcast.
 

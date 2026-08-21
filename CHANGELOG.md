@@ -60,6 +60,21 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **WhatsApp messages are now paced by this app, not by OpenMasjidOS.** The platform used to refuse to
+  send too fast; as of its 0.51.1 it does not, because its own pacing was blocking every app’s
+  messages behind whichever one was stuck. So there is now a limit here — 12 parent messages an hour
+  and 60 a day by default, both adjustable under Settings → WhatsApp. It matters because the risk of a
+  ban attaches to the masjid’s phone number, it is shared with every other app on the server, and a
+  blocked number cannot be got back. An invoice run messages every household, so without a limit that
+  is two hundred messages in a few seconds. Anything over the limit is not sent on WhatsApp — the
+  email still goes, which is why the limit is safe.
+- Staff alerts are deliberately outside that limit: a declined card must not go unsent because an
+  invoice run used up the day’s messages first. A test message is outside it too.
+- **When OpenMasjidOS refuses a message it now says why, in plain words** — "That phone number needs a
+  country code", "That is the number WhatsApp is linked to", "That group has not been approved". Those
+  used to be recorded as a bare error number, which made a five-second fix look identical to a
+  message that vanished.
+
 - If your masjid was waiting on WhatsApp messages from before the platform fix, they are gone rather
   than late — the queue was never durable, so each restart discarded it. Re-send anything you need.
 - The queue log records the platform's own message id, and a job asks every five minutes what became

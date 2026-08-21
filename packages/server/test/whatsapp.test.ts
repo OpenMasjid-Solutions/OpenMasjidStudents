@@ -57,6 +57,8 @@ let groupsHttp = 200;
 let groupsBodyOk = true;
 /** The status the queue answers with. 202 is the real one; the others are the four documented refusals. */
 let queueStatus = 202;
+/** The plain-language `error` the platform sends with a 400/403. */
+let refusalError = '';
 /** Does this platform report outcomes (0.51.0)? Absent means false, which is the real convention. */
 let waOutcomes: boolean | undefined = true;
 /** What GET /api/fabric/whatsapp/status/<id> answers. 404 = past the platform's 200-message buffer. */
@@ -83,7 +85,8 @@ function installFetch(): void {
         return { ok: statusHttp < 300, status: statusHttp, json: async () => ({ ...waAvailable, ...(waOutcomes === undefined ? {} : { outcomes: waOutcomes }) }) } as unknown as Response;
       }
       // 0.51.1+ returns the message id alongside the 202 — the handle the outcome poller uses.
-      return { ok: queueStatus < 300, status: queueStatus, json: async () => ({ queued: queueStatus === 202, id: 'wam_test_1' }) } as unknown as Response;
+      if (queueStatus >= 300) return { ok: false, status: queueStatus, json: async () => (refusalError ? { error: refusalError } : {}) } as unknown as Response;
+      return { ok: true, status: queueStatus, json: async () => ({ queued: true, id: 'wam_test_1' }) } as unknown as Response;
     }
     if (url.endsWith('/api/fabric/email')) return { ok: true, status: 200, json: async () => ({ sent: true }) } as unknown as Response;
     return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
@@ -128,6 +131,7 @@ beforeEach(() => {
   outcomeReply = { http: 200, body: { state: 'sent', at: '2026-08-20T10:00:00Z' } };
   statusHttp = 200;
   queueStatus = 202;
+  refusalError = '';
   groupList = [{ id: '1203630001@g.us', label: 'Parents' }];
   groupsHttp = 200;
   groupsBodyOk = true;
@@ -1478,5 +1482,124 @@ describe('message outcomes', () => {
     calls = [];
     await whatsapp.refreshWhatsappOutcomes();
     expect(calls.filter((c) => c.url.includes('/status/'))).toHaveLength(0);
+  });
+});
+
+/**
+ * OUR OWN VOLUME BOUND (0.51.0-dev.5).
+ *
+ * Platform 0.51.1 removed every cap, cooldown and gap it had, which was right for the platform and
+ * moves the whole responsibility here. This app is the shape that gets a number banned if nobody
+ * holds it: an invoice run loops EVERY household, and a banned number cannot be recovered.
+ *
+ * So the tests worth having are about the boundaries of the cap rather than the arithmetic: that it
+ * actually stops a roster-wide fan-out, that it does NOT starve the staff alert channel, and that a
+ * capped household is written down rather than silently dropped.
+ */
+describe('the send budget', () => {
+  const logRows = () => app.dbmod.db.select().from(whatsappLog).all();
+
+  it('stops a roster-wide fan-out once the daily budget is spent', async () => {
+    await turnOn();
+    const admin = caller('admin');
+    await admin.whatsapp.set({ dailyCap: 3 });
+    // Six households, a budget of three.
+    const fams: string[] = [];
+    for (let i = 0; i < 6; i++) fams.push((await household(`House${i}`, { phone: `555000000${i}` })).familyId);
+    calls = [];
+    for (const f of fams) await whatsapp.notifyFamily('receipt', f, 'receipt');
+    await drain();
+    // Three sent, and the rest refused rather than handed over.
+    expect(sends()).toHaveLength(3);
+    expect(logRows().filter((r) => r.reason === 'cap_day')).toHaveLength(3);
+  });
+
+  it('never starves a staff alert — a declined card must not wait on an invoice run', async () => {
+    await turnOn();
+    const admin = caller('admin');
+    await admin.whatsapp.set({ dailyCap: 1 });
+    const staff = await admin.staff.create({ username: 'treasurer', role: 'finance', tempPassword: 'a-long-temp-password' });
+    await admin.staff.setContact({ userId: staff.id, phone: '5559990000', waEvents: ['autopay-disabled'] });
+    // Spend the whole budget on a parent message.
+    const { familyId } = await household('Ismail');
+    await whatsapp.notifyFamily('receipt', familyId, 'receipt');
+    await drain();
+    expect(whatsapp.capState().blocked).toBe('day');
+    calls = [];
+    // The staff channel is a different, tiny population and is deliberately outside the budget.
+    await whatsapp.notifyStaff('autopay-disabled', 'A card failed three times.');
+    await drain();
+    expect(sends()).toHaveLength(1);
+  });
+
+  it('lets a deliberate test through a spent budget — the control that proves the channel works', async () => {
+    await turnOn();
+    const admin = caller('admin');
+    await admin.whatsapp.set({ dailyCap: 1 });
+    const { familyId, studentId } = await household('Ismail');
+    await admin.whatsapp.set({ testStudentId: studentId });
+    await whatsapp.notifyFamily('receipt', familyId, 'receipt');
+    await drain();
+    expect(whatsapp.capState().blocked).toBe('day');
+    calls = [];
+    // A quota must not silently disable the button whose entire purpose is diagnosis.
+    const r = await admin.whatsapp.testSend();
+    expect(r.whatsapp).toBe('queued');
+    expect(sends()).toHaveLength(1);
+  });
+
+  it('inherits the platform’s old figures, so removing its cap changed nothing by itself', async () => {
+    const c = whatsapp.capState();
+    expect(c.hourly).toBe(whatsapp.WA_CAP_DEFAULTS.hourly);
+    expect(c.daily).toBe(whatsapp.WA_CAP_DEFAULTS.daily);
+  });
+
+  it('reports a spent budget as a blocker, rather than sending nothing in silence', async () => {
+    await turnOn();
+    const admin = caller('admin');
+    await admin.whatsapp.set({ dailyCap: 1 });
+    const { familyId } = await household('Ismail');
+    await whatsapp.notifyFamily('receipt', familyId, 'receipt');
+    await drain();
+    // The settings screen's "why is nothing sending?" list is the one place an office looks.
+    expect((await admin.whatsapp.get()).blockers).toContain('cap_day');
+  });
+
+  it('does not count a skipped household against the budget — nothing was sent', async () => {
+    await turnOn();
+    const admin = caller('admin');
+    await admin.whatsapp.set({ dailyCap: 2 });
+    const { familyId } = await household('NoPhone', { phone: null });
+    await whatsapp.notifyFamily('receipt', familyId, 'receipt');
+    await drain();
+    expect(whatsapp.capState().dayUsed).toBe(0);
+  });
+});
+
+/** The platform's refusals carry a sentence written for a human. Losing it is how a fixable problem
+ *  becomes indistinguishable from a lost message — which is the fault this app just spent a release on. */
+describe('a refusal keeps the platform’s own words', () => {
+  it('records the sentence, not just the status code', async () => {
+    await turnOn();
+    const { familyId } = await household('Ismail');
+    queueStatus = 400;
+    outcomeReply = { http: 404, body: {} };
+    // The shape the platform actually sends on a 400 (§1 of its brief).
+    refusalError = 'That is the number WhatsApp is linked to, so the message would only go to that phone’s own notes.';
+    await whatsapp.notifyFamily('receipt', familyId, 'receipt');
+    await drain();
+    const row = app.dbmod.db.select().from(whatsappLog).all().at(-1);
+    expect(row?.status).toBe('failed');
+    expect(row?.reason).toContain('linked to');
+  });
+
+  it('falls back to the status code when there is no sentence', async () => {
+    await turnOn();
+    const { familyId } = await household('Ismail');
+    queueStatus = 403;
+    refusalError = '';
+    await whatsapp.notifyFamily('receipt', familyId, 'receipt');
+    await drain();
+    expect(app.dbmod.db.select().from(whatsappLog).all().at(-1)?.reason).toBe('http_403');
   });
 });

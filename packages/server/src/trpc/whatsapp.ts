@@ -23,6 +23,7 @@ import {
   approvedGroups,
   groupIsApproved,
   testGroup,
+  capState,
   currentWhatsAppStatus,
   familyRecipients,
   familyVars,
@@ -132,6 +133,8 @@ export const whatsappRouter = router({
       ? db.select({ id: students.id, fullName: students.fullName, familyId: students.familyId, status: students.status }).from(students).where(eq(students.id, cfg.testStudentId)).get()
       : null;
     const status = await currentWhatsAppStatus();
+    /** What is left of today's and this hour's send budget (0.51.0-dev.5). */
+    const cap = capState();
 
     /**
      * WHY NOTHING IS SENDING (0.50.0-dev.5) — the diagnostic this screen should have had from the start.
@@ -152,6 +155,9 @@ export const whatsappRouter = router({
       if (!status.available) blockers.push(`gateway_${status.reason}`);
       if (!WA_PARENT_EVENTS.some((e) => cfg.events[e])) blockers.push('no_events');
       if (cfg.paused && !testFam) blockers.push('paused_no_test');
+      // A spent send budget stops every parent message just as completely as a switch being off, and
+      // it is the one blocker that appears on its own halfway through an invoice run (0.51.0-dev.5).
+      if (cap.blocked) blockers.push(`cap_${cap.blocked}`);
     }
 
     return {
@@ -172,6 +178,9 @@ export const whatsappRouter = router({
        *  Said explicitly, because "paused, and the exception silently stopped working" is invisible. */
       testFamilyId: testFam,
       emailRequest: { text: getWhatsAppEmailRequest(), fallback: WA_EMAIL_REQUEST_DEFAULT, tags: [...WA_EMAIL_REQUEST_TAGS], maxLength: WA_TEXT_MAX },
+      /** The send budget and what is left of it — the platform caps nothing now, so this is the only
+       *  place an office can see the limit that is actually in force. */
+      cap,
     };
   }),
 
@@ -190,6 +199,10 @@ export const whatsappRouter = router({
         countries: z.array(z.string().trim().max(5)).max(20).optional(),
         /** '' clears it — the household stops being the exception to the pause. */
         testStudentId: z.string().trim().max(64).optional(),
+        /** The send budget. Bounded here AND clamped in the settings store — this is the setting whose
+         *  worst case is a number the masjid can never get back. */
+        hourlyCap: z.number().int().min(1).max(200).optional(),
+        dailyCap: z.number().int().min(1).max(1000).optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
@@ -205,6 +218,8 @@ export const whatsappRouter = router({
         if (!input.countries.every(isCountryCode)) throw new TRPCError({ code: 'BAD_REQUEST', message: 'A country code looks like +1 or +44.' });
         patch.countries = input.countries;
       }
+      if (input.hourlyCap !== undefined) patch.hourlyCap = input.hourlyCap;
+      if (input.dailyCap !== undefined) patch.dailyCap = input.dailyCap;
       if (input.testStudentId !== undefined) {
         if (input.testStudentId && !db.select({ id: students.id }).from(students).where(eq(students.id, input.testStudentId)).get()) {
           throw new TRPCError({ code: 'NOT_FOUND', message: 'That student isn’t on the roll.' });

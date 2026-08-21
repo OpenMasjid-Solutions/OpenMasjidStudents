@@ -52,7 +52,7 @@
  * Message BODIES are never logged and never stored (§14): they routinely carry a child's name and a
  * family's fees. The log holds the event, an id, the time and the outcome.
  */
-import { and, eq, inArray, isNotNull, lt } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, lt } from 'drizzle-orm';
 import { db } from '../db';
 import { families, guardians, guardianFamilies, students, users, whatsappLog } from '../db/schema';
 import { rid } from '../db/ids';
@@ -207,6 +207,76 @@ function writeLog(row: LogRow): void {
       createdAt: new Date(),
     })
     .run();
+}
+
+// ── Volume: OURS to bound now (0.51.0-dev.5) ────────────────────────────────
+/**
+ * HOW MANY PARENT MESSAGES THIS APP WILL SEND, per hour and per day.
+ *
+ * **The platform used to refuse to send too much, and as of 0.51.1 it does not.** Quiet hours, the
+ * hourly and daily caps, the per-recipient cooldown, the group cooldown, the warm-up ramp and the
+ * random 6–20s gap are all gone; a typing indicator is the only pause left. Every message handed over
+ * now goes out within seconds. That was the right call for the platform — its pacing was causing
+ * head-of-line blocking across every app — but it moves the whole of this responsibility here, and
+ * this app is exactly the shape that gets a number banned if nobody is holding it: an invoice run
+ * loops EVERY household (`billing/invoices.ts`), and so does the past-due chase.
+ *
+ * Two hundred messages to two hundred numbers in one burst, from a client WhatsApp does not permit,
+ * is how a masjid loses the number their parents are reachable on — permanently, with no appeal.
+ *
+ * THE DEFAULTS ARE THE PLATFORM'S OLD ONES (12/hour, 60/day) and that is deliberate rather than lazy:
+ * they were its considered judgment about what a linked number tolerates, and inheriting them means
+ * removing the platform's cap changes nothing about what this app actually sends until an office
+ * decides otherwise. They are low for a 200-family roster, and that is the honest shape of WhatsApp as
+ * a channel rather than a limitation to design around.
+ *
+ * WHAT A CAPPED MESSAGE COSTS IS SMALL, and it is the reason a hard cap is safe here: every parent
+ * event exists on EMAIL too and defaults there (§9). A message we decline to send is a notice that
+ * arrived by email and not also by WhatsApp — a degraded nicety, not a lost notification.
+ *
+ * WHAT IS NOT CAPPED, and why:
+ *   • **Staff alerts and group alerts.** A handful of recipients, and a declined card must never be
+ *     dropped because an invoice run spent the budget first. Starving the alert channel to protect the
+ *     bulk channel would be exactly the wrong way round.
+ *   • **A test send, and the missing-email outreach.** Both are a person pressing a button, and the
+ *     outreach is already bounded at 50 per press with the screen saying so. They COUNT toward the
+ *     budget — they are real traffic on the number — but they are not refused, because a control whose
+ *     entire purpose is to prove the channel works must not be silently disabled by a quota.
+ */
+export const WA_CAP_DEFAULTS = { hourly: 12, daily: 60 } as const;
+
+/**
+ * How many parent messages we have handed over inside `windowMs`.
+ *
+ * Counted from `whatsapp_log`, which already records every send with a timestamp — so the log IS the
+ * rate-limit ledger and there is no second place for the two to disagree. It also means the budget
+ * survives a restart for free, which an in-memory counter would not: the platform's own outage last
+ * week was half caused by pacing state that a container restart threw away.
+ *
+ * `skipped` rows do not count. Nothing was sent, so nothing was spent.
+ */
+function parentSendsSince(windowMs: number): number {
+  const since = new Date(Date.now() - windowMs);
+  return db
+    .select({ id: whatsappLog.id })
+    .from(whatsappLog)
+    .where(and(eq(whatsappLog.recipientKind, 'guardian'), inArray(whatsappLog.status, ['queued', 'sent', 'expired']), gte(whatsappLog.createdAt, since)))
+    .all().length;
+}
+
+/** Which budget, if either, is spent right now. Exported so the settings screen can say so — a cap
+ *  that silently stops an invoice run is another invisible failure, which is the whole thing we have
+ *  been digging out of. */
+export function capState(): { blocked: 'hour' | 'day' | null; hourUsed: number; dayUsed: number; hourly: number; daily: number } {
+  const cfg = getWhatsApp();
+  const hourly = cfg.hourlyCap ?? WA_CAP_DEFAULTS.hourly;
+  const daily = cfg.dailyCap ?? WA_CAP_DEFAULTS.daily;
+  const hourUsed = parentSendsSince(3_600_000);
+  const dayUsed = parentSendsSince(86_400_000);
+  // Day first: it is the one an office should act on, and reporting "the hour is full" when the day is
+  // also full sends them to wait an hour for nothing.
+  const blocked = dayUsed >= daily ? 'day' : hourUsed >= hourly ? 'hour' : null;
+  return { blocked, hourUsed, dayUsed, hourly, daily };
 }
 
 /**
@@ -391,7 +461,9 @@ async function queueGuardian(event: string, r: WaRecipient, text: string): Promi
     recipientId: r.guardianId,
     familyId: r.familyId,
     status: res.queued ? 'queued' : 'failed',
-    reason: res.queued ? (res.note ?? null) : res.reason,
+    // The platform's own sentence when it refused, in preference to our status code: "That phone
+    // number needs a country code" tells an office what to do and `http_400` does not.
+    reason: res.queued ? (res.note ?? null) : (res.message ?? res.reason),
     platformId: res.queued ? (res.id ?? null) : null,
   });
   return res.queued;
@@ -427,6 +499,24 @@ export async function notifyFamily(event: WaParentEvent, familyId: string, textK
       // row for every family on every event, and "we are paused" is a fact about the install, not
       // about any one of them.
       return { queued: 0, skipped: { paused: 1 } };
+    }
+
+    /**
+     * OUR OWN VOLUME BOUND — checked per household, because the caller is a loop over the roster.
+     *
+     * The platform stopped capping anything in 0.51.1, so an invoice run for 200 families would hand
+     * over 200 messages that all go out within seconds. See `WA_CAP_DEFAULTS` for why that is the way
+     * a masjid loses its number, and why refusing is affordable: every parent event goes by email too,
+     * so a capped message is a notice that arrived on one channel instead of two.
+     *
+     * Logged per household rather than swallowed. A cap that silently truncates an invoice run is the
+     * same invisible-failure shape this app has just spent a release digging out of, and the settings
+     * screen reads these rows.
+     */
+    const cap = capState();
+    if (cap.blocked) {
+      writeLog({ event, recipientKind: 'guardian', recipientId: familyId, familyId, status: 'skipped', reason: `cap_${cap.blocked}` });
+      return { queued: 0, skipped: { [`cap_${cap.blocked}`]: 1 } };
     }
 
     const vars = { ...familyVars(familyId), ...extra };

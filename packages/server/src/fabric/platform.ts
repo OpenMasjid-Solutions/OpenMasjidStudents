@@ -294,7 +294,10 @@ export async function whatsappStatus(): Promise<WhatsAppStatus> {
  * ends at "we handed it over" and one that can say what became of it. Absent on an older platform,
  * which is why every consumer treats it as optional rather than assuming it.
  */
-export type WhatsAppQueueResult = { queued: true; note?: string; id?: string } | { queued: false; reason: string };
+export type WhatsAppQueueResult =
+  | { queued: true; note?: string; id?: string }
+  /** `message` is the platform's own plain-language refusal, kept verbatim — see `readQueueAnswer`. */
+  | { queued: false; reason: string; message?: string };
 
 /** Where a message actually got to. `expired` is the platform dropping one it held over 24 hours. */
 export type WhatsAppMessageState = 'queued' | 'sent' | 'failed' | 'expired';
@@ -326,7 +329,23 @@ export type WhatsAppMessageStatus =
  * log from asserting something nobody checked.
  */
 async function readQueueAnswer(res: Response): Promise<WhatsAppQueueResult> {
-  if (!res.ok && res.status !== 202) return { queued: false, reason: `http_${res.status}` };
+  if (!res.ok && res.status !== 202) {
+    /**
+     * KEEP THE PLATFORM'S OWN SENTENCE (0.51.0-dev.5). A 400 or 403 from OpenMasjidOS carries a
+     * plain-language `error` written for a human — "That phone number needs a country code", "That is
+     * the number WhatsApp is linked to", "That group has not been approved" — and every one of those
+     * names something an admin can go and fix in under a minute.
+     *
+     * This used to reduce all of them to `http_400`, which is the difference between a settings screen
+     * that says what to do and one that says a number. Recording the code and discarding the reason is
+     * how a diagnosable refusal becomes indistinguishable from a lost message, and this app has just
+     * spent a week on the consequences of exactly that class of mistake.
+     */
+    const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+    // Bounded and stripped of control characters: it lands in a log column and then on a screen.
+    const said = typeof body?.error === 'string' ? body.error.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 160) : '';
+    return { queued: false, reason: `http_${res.status}`, message: said || undefined };
+  }
   const body = (await res.json().catch(() => null)) as { queued?: unknown; reason?: unknown; id?: unknown } | null;
   // The platform saying so outright beats any inference from the status code.
   if (body && body.queued === false) {
