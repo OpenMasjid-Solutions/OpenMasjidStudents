@@ -21,7 +21,7 @@ import { portalBase } from '../auth/invites';
 import { cachedPublicUrl } from '../fabric/platform';
 import { fabricConfigured, config } from '../config';
 import { stripeReady, stripeAccountId, loadStripeKeys } from '../payments/stripe';
-import { feeQuote } from '../payments/fees';
+import { FEE_EXAMPLE_CENTS, feeQuote } from '../payments/fees';
 import { fetchStripeAccounts } from '../fabric/platform';
 
 export const settingsRouter = router({
@@ -406,9 +406,9 @@ export const settingsRouter = router({
    */
   processingFeeGet: adminProcedure.query(() => {
     const cfg = getProcessingFee();
-    // $100 and $500: one ordinary monthly bill and one term paid up front, which is where the ACH cap
-    // starts to matter and where the two rates stop looking similar.
-    const examples = [10_000, 50_000].map((net) => ({
+    // The amounts live in payments/fees.ts, because the printed family sheet quotes one of them too and
+    // a parent's copy on paper must not work from a different bill than the office decided on.
+    const examples = FEE_EXAMPLE_CENTS.map((net) => ({
       netCents: net,
       card: feeQuote(net, 'card', { ...cfg, enabled: true }),
       bank: feeQuote(net, 'bank', { ...cfg, enabled: true, bankEnabled: true }),

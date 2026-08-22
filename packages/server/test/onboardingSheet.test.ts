@@ -54,9 +54,15 @@ beforeEach(() => {
   ]) db.delete(t).run();
   settingsMod.setSetting(settingsMod.SETTING_KEYS.externalPayments, '1');
   settingsMod.setSetting(settingsMod.SETTING_KEYS.selfRegistration, '1');
+  // Back to the shipped default between tests: the madrasah absorbs the processing fee. Without this a
+  // test that switches it on leaks a fee line into every sheet rendered after it.
+  settingsMod.setProcessingFee({ enabled: false, bankEnabled: false });
 });
 
-const ALL_ON = { card: true, external: true, selfRegister: true, receipts: true };
+// `fee: false` is the shipped default (the madrasah absorbs Stripe's cut), so every existing expectation
+// below is about a sheet with no fee line — which is what almost every install prints. The fee line has
+// its own describe block.
+const ALL_ON = { card: true, external: true, selfRegister: true, receipts: true, fee: false };
 const TS = new Date('2026-01-15T00:00:00Z');
 const NOW = new Date('2026-06-01T00:00:00Z');
 
@@ -377,7 +383,7 @@ describe('it must not promise a payment route this install does not have', () =>
   it('always offers the office routes — they need no integration, only a person', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
-    const out = (await html({ card: false, external: false, selfRegister: false, receipts: true }))!;
+    const out = (await html({ card: false, external: false, selfRegister: false, receipts: true, fee: false }))!;
     expect(out).toContain('Cash, check, Zelle or bank transfer (ACH)');
     expect(out).toContain('through the office');
     // 0.48.0 wording: a parent is told a receipt is coming, not told to police the office. Both of the
@@ -400,9 +406,89 @@ describe('it must not promise a payment route this install does not have', () =>
   it('does not describe a payment history the family could never have had', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
-    const out = (await html({ card: false, external: false, selfRegister: false, receipts: false }))!;
+    const out = (await html({ card: false, external: false, selfRegister: false, receipts: false, fee: false }))!;
     expect(out).toContain('Every payment the office has recorded for you');
     expect(out).not.toContain('the kiosk or the madrasah’s website');
+  });
+
+  /**
+   * THE PROCESSING FEE ON PAPER (0.51.0). The sheet is the artifact a family keeps and the only place
+   * they meet the cost while still CHOOSING how to pay — the portal discloses it once they already are.
+   * So the line has to appear when the fee is real, stay away when it is not, and carry a computed figure
+   * rather than a rate an office could mistype into the prose.
+   */
+  describe('the processing fee line', () => {
+    const feeOn = (patch: Record<string, unknown> = {}) => {
+      settingsMod.setProcessingFee({ enabled: true, cardPercentBps: 290, cardFixedCents: 30, bankEnabled: false, ...patch });
+    };
+
+    it('is absent when the madrasah absorbs the fee — which is every install by default', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      const out = (await html())!;
+      expect(out).not.toContain('processing fee');
+      expect(out).not.toContain('avoids it entirely');
+    });
+
+    it('prints the fee, a worked figure, and that cash at the office avoids it', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      feeOn();
+      const out = (await html({ ...ALL_ON, fee: true }))!;
+      expect(out).toContain('adds a processing fee');
+      // The figure, not the rate: $100 grossed up at 2.9% + 30¢ is $103.30 (payments/fees.ts). If this
+      // ever reads $103.20 somebody has re-implemented the gross-up as a markup on the net.
+      expect(out).toContain('A bill of $100.00 is charged as $103.30 by card.');
+      expect(out).toContain('not the madrasah’s');
+      expect(out).toContain('avoids it entirely');
+    });
+
+    it('names the bank figure too, but only when that rate is passed on as well', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      feeOn();
+      expect((await html({ ...ALL_ON, fee: true }))!).not.toContain('from a bank account');
+
+      // 0.8% capped at $5 → $100 becomes $100.81.
+      feeOn({ bankEnabled: true, bankPercentBps: 80, bankFixedCents: 0, bankCapCents: 500 });
+      const both = (await html({ ...ALL_ON, fee: true }))!;
+      expect(both).toContain('$103.30 by card, or $100.81 from a bank account.');
+    });
+
+    it('is not printed when there is no online route to charge it on', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      feeOn();
+      // `payRoutes()` is the gate: the fee is switched on, but with no Stripe account and external
+      // payments off there is no way for a family to incur it, so telling them about it is a lie.
+      settingsMod.setSetting(settingsMod.SETTING_KEYS.externalPayments, '0');
+      expect(sheet.payRoutes().fee).toBe(false);
+      const out = (await html({ ...ALL_ON, card: false, external: false, fee: sheet.payRoutes().fee }))!;
+      expect(out).not.toContain('processing fee');
+    });
+
+    it('sits between the online routes and the office line, because the order is the comparison', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      feeOn();
+      const out = (await html({ ...ALL_ON, fee: true }))!;
+      expect(out.indexOf('At the kiosk')).toBeLessThan(out.indexOf('adds a processing fee'));
+      expect(out.indexOf('adds a processing fee')).toBeLessThan(out.indexOf('Cash, check, Zelle'));
+    });
+
+    it('is the madrasah’s own wording, like every other box on the sheet', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      feeOn();
+      settingsMod.setSheetTextOverrides({ payFee: 'Card payments cost extra: [fee] Bring cash to avoid it.' });
+      const out = (await html({ ...ALL_ON, fee: true }))!;
+      expect(out).toContain('Card payments cost extra:');
+      expect(out).toContain('Bring cash to avoid it.');
+      // The FIGURE still comes from us even inside the office's sentence — that is the whole point of it
+      // being a tag rather than something they type.
+      expect(out).toContain('$103.30 by card.');
+      settingsMod.setSheetTextOverrides({});
+    });
   });
 
   it('points the QR at signup when self-registration is on, and says one account covers all', async () => {

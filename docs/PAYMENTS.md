@@ -149,6 +149,21 @@ leaves the school a dime short on every $100 — an invoice that settles at $99.
 showing a family as unpaid over a penny. Rounding up means the school is occasionally a cent over, which
 is a rounding; a cent under is a support call.
 
+**WHERE IT IS DISCLOSED, AND WHY THAT IS THREE PLACES** (0.51.0). A surcharge nobody was told about is
+the failure mode this feature has to avoid, and each of the three is a different moment:
+
+| Where | What it shows | Why it cannot be the others |
+| --- | --- | --- |
+| Portal **pay-now** | Tuition / fee / total, itemized, before the parent confirms | The payer is present and about to commit |
+| Portal **autopay tab** | The same three lines, worked on the household's balance today | An autopay charge is **off-session** — nobody is looking at a screen when it happens, so this toggle is the only moment the figure can be seen. Shown while a household is still *deciding*, before any method is saved: it used to appear only once a card was on file, which hid it for the whole of setup |
+| The printed **family sheet** | A worked example, and that cash or a check at the office avoids it | The sheet is where a family CHOOSES how to pay. The portal discloses at the point of paying, which is after the decision |
+
+All three read `payments/fees.ts` — `feeQuote` for the figures, `FEE_EXAMPLE_CENTS` for the bill a worked
+example uses, so the office's Settings preview and the parent's printed sheet quote the same one. The
+browser does no fee arithmetic anywhere: two implementations of the gross-up disagree by a cent the moment
+one is edited. Which RATE applies to a saved method is `payments/methods.ts` `feeKindOf` — one function,
+used by both the autopay charge and the screen that describes it, so they cannot name different rates.
+
 **A refund returns the whole charge**, fee included, because that is what the payer handed over —
 `stripe.refunds.create` with no amount refunds the PaymentIntent in full, and the ledger reverses the
 tuition. Stripe does not return its own cut on a refund, so the madrasah absorbs it. That is the honest

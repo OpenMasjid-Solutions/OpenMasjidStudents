@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronUp, CreditCard, Landmark, Trash2, Wallet } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { describeMethod, formatExpiry, methodTitle } from '../../lib/paymentMethod';
+import { formatMoney } from '../../lib/money';
 
 /**
  * The Autopay & cards TAB (0.44.0): every household this parent is linked to, each with its own cards
@@ -55,7 +56,8 @@ export function PayMethods({ familyId }: { familyId: string }) {
   const removeCard = trpc.portal.removeCard.useMutation();
   const setAutopay = trpc.portal.setAutopay.useMutation();
   const reorder = trpc.portal.reorderMethods.useMutation();
-  /** The fee policy, for the disclosure below the autopay toggle (0.51.0). */
+  /** The fee policy and the currency, for the disclosure below the autopay toggle (0.51.0). The FIGURES
+   *  come from `autopayStatus.fee` instead — quoted server-side for the method autopay would charge. */
   const payCfg = trpc.portal.payConfig.useQuery();
   const [adding, setAdding] = useState<{ clientSecret: string; stripe: Promise<Stripe | null> } | null>(null);
   /** Set when the method just added still needs the parent to confirm it with their bank. */
@@ -63,7 +65,8 @@ export function PayMethods({ familyId }: { familyId: string }) {
   const refresh = () => utils.portal.autopayStatus.invalidate({ familyId });
 
   if (!statusQ.data?.ready) return null; // card payments not configured → nothing to show
-  const { enabled, cards } = statusQ.data;
+  const { enabled, cards, fee } = statusQ.data;
+  const currency = payCfg.data?.currency ?? 'usd';
 
   async function addCard() {
     const r = await createSetup.mutateAsync({ familyId });
@@ -183,11 +186,43 @@ export function PayMethods({ familyId }: { familyId: string }) {
       {/* Consent copy stays visible while it is ON as well: a parent should be able to see what they
           agreed to at the moment they are deciding whether to keep it (§13.3). */}
       {cards.length > 0 && <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('family.autopayConsent')}</p>}
-      {/* THE FEE HAS TO BE DISCLOSED HERE TOO (0.51.0). An autopay charge is off-session — nobody is
-          looking at a screen when it happens — so this toggle is the only moment a parent can be told
-          that the automatic charge will carry the processing fee. Pay-now itemises it; without this
-          line, agreeing to autopay would be agreeing to a figure they were never shown. */}
-      {cards.length > 0 && payCfg.data?.fee.enabled && <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('family.autopayFee')}</p>}
+      {/*
+       * THE FEE, WITH THE FIGURE — because this tab is the only place it can ever be shown (0.51.0).
+       *
+       * An autopay charge is off-session: nobody is looking at a screen when it happens, so unlike
+       * pay-now — which itemizes tuition, fee and total in front of the payer — agreeing to autopay
+       * means agreeing to an amount that is never presented again. This started as one sentence saying a
+       * fee would be added, which told a parent the fact and withheld the only part they wanted.
+       *
+       * NOT GATED ON HAVING A SAVED METHOD, and that was the actual defect. It was, so the disclosure was
+       * hidden during setup — the one moment a household is deciding whether to do this at all — and only
+       * appeared once they had already committed a card. Someone weighing autopay has to be able to read
+       * the cost before there is anything to charge.
+       *
+       * Every figure comes from the server (`autopayStatus.fee`, quoted by payments/fees.ts with the rate
+       * for the method autopay would actually present first). The browser does no fee arithmetic: two
+       * implementations of the gross-up disagree by a cent as soon as one is edited (§16).
+       */}
+      {payCfg.data?.fee.enabled && fee && (
+        <div className="glass-inset pay-fee" style={{ marginBlockStart: '0.5rem' }}>
+          <p className="hint" style={{ marginBlockStart: 0, marginBlockEnd: fee.feeCents > 0 ? '0.4rem' : 0 }}>{t('family.autopayFee')}</p>
+          {/* Only with something actually owed. At a zero balance the quote is all zeros, and a table of
+              nothing reads as a fault — the prose above and below still says what will happen. */}
+          {fee.feeCents > 0 && (
+            <>
+              <div className="pay-fee-row"><span>{t('family.feeTuition')}</span><span className="tnum">{formatMoney(fee.netCents, currency)}</span></div>
+              <div className="pay-fee-row"><span>{t(`family.feeLine_${fee.method}`)}</span><span className="tnum">{formatMoney(fee.feeCents, currency)}</span></div>
+              <div className="pay-fee-row pay-fee-total"><strong>{t('family.feeTotal')}</strong><strong className="tnum">{formatMoney(fee.grossCents, currency)}</strong></div>
+              {/* Said out loud rather than left to be assumed: this is today's balance worked through,
+                  not a promise about the run date. A bill can be paid another way in between. */}
+              <p className="hint" style={{ marginBlockStart: '0.4rem', marginBlockEnd: 0 }}>{t('family.autopayFeeToday')}</p>
+            </>
+          )}
+          {/* The same sentence pay-now uses — whose money the extra is, and that cash or a check at the
+              office avoids it. One wording for one fact, in both places a parent meets it. */}
+          <p className="hint" style={{ marginBlockStart: '0.4rem', marginBlockEnd: 0 }}>{t(`family.feeWhose_${fee.method}`)}</p>
+        </div>
+      )}
     </section>
   );
 }

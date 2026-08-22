@@ -25,7 +25,7 @@ import { maskNumber, toE164 } from '../whatsapp/numbers';
 import { parentFamilyIds, assertFamilyAccess } from './familyAccess';
 import { stripeClient, stripeReady, publishableKey } from '../payments/stripe';
 import { feeMetadata, feeQuote, netOfIntent } from '../payments/fees';
-import { describePaymentMethod, repairPaymentMethods, resequenceMethods } from '../payments/methods';
+import { describePaymentMethod, feeKindOf, repairPaymentMethods, resequenceMethods } from '../payments/methods';
 import { alertStaff, studentAmounts } from '../alerts';
 import { sendReceipt } from '../mail/notify';
 import { makeLog } from '../logger';
@@ -402,7 +402,37 @@ export const portalRouter = router({
       // feature, so it must arrive in that order rather than being sorted on the client.
       .orderBy(asc(paymentMethods.sortOrder), asc(paymentMethods.createdAt))
       .all();
-    return { ready: stripeReady(), enabled: !!enr?.enabled, defaultPmId: enr?.defaultPmId ?? null, cards };
+    /**
+     * WHAT THE NEXT AUTOMATIC CHARGE WOULD COST, when the madrasah passes Stripe's cut on (0.51.0).
+     *
+     * The autopay tab is the ONLY place a household can be told this. An autopay charge is off-session —
+     * nobody is looking at a screen when it happens — so unlike pay-now, which itemizes the fee in front
+     * of the payer, agreeing to autopay means agreeing to a figure that will never be shown again. A
+     * sentence saying "a fee is added" is not that figure, which is why this returns real money.
+     *
+     * Quoted HERE rather than in the browser for the reason every fee figure is (§16): `payments/fees.ts`
+     * is the one place that knows the arithmetic, and a second implementation of the rounding rule
+     * disagrees by a cent the moment one of them is edited. The rate is never sent to the client at all —
+     * only what it works out to — so the portal has nothing to re-derive.
+     *
+     * `method` is the kind of the method autopay would present FIRST (`feeKindOf`, the same function
+     * `chargeFamily` quotes with, so the screen and the charge cannot disagree about which rate applies).
+     * With nothing saved yet it reads `card`: that is what a household is most likely to add, and it is
+     * the dearer of the two, so a parent setting autopay up is never shown a figure lower than what they
+     * will be charged.
+     *
+     * The amount is what the household owes TODAY, not what will be due on the run date — labeled as
+     * such on screen. A speculative future total would be a number this app cannot honestly promise.
+     */
+    const owedNow = familyBalance(input.familyId).owedCents;
+    const quote = feeQuote(owedNow, feeKindOf(cards[0]?.type));
+    return {
+      ready: stripeReady(),
+      enabled: !!enr?.enabled,
+      defaultPmId: enr?.defaultPmId ?? null,
+      cards,
+      fee: { enabled: getProcessingFee().enabled, method: quote.method, netCents: quote.netCents, feeCents: quote.feeCents, grossCents: quote.grossCents },
+    };
   }),
 
   /**

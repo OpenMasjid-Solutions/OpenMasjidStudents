@@ -277,20 +277,40 @@
      pixel — it only has to put a button level with the inputs, not match them to the subpixel. */
   --field-input-offset: calc(0.85rem * 1.45 + 0.4rem);
 }
+/* Killing the stack margin is right at ANY depth — nothing inside a row should add vertical spacing,
+   including a `.field` that a component renders for itself (StudentPicker does). */
 .inline-form .field {
   margin: 0;
+}
+/*
+ * SIZING, though, is the ROW's business and belongs to the row's own children — hence `>`.
+ *
+ * It was a descendant selector, and a nested `.field` inherited `flex: 1 1 12rem` from it. Where the
+ * wrapper was itself a `.field`, that nested field sat in a COLUMN flex parent, where a flex-basis is
+ * read as a HEIGHT: the picker became a 12rem-tall block, which opened a void between the control and
+ * its hint and pushed the row's button to the bottom of the card. Three call sites had already worked
+ * around it by wrapping StudentPicker in a plain `<div>` instead — the tell that the rule, not the
+ * markup, was wrong.
+ */
+.inline-form > .field {
   flex: 1 1 12rem;
 }
 /*
  * A button is not a labeled field, so top-aligning it would leave it level with the LABELS, floating
  * above the inputs it acts on. Push it down by exactly the label block.
  *
- * `:has(> .field)` is what keeps this honest: several rows in this app hold nothing but buttons (a Save /
- * Cancel pair, the wizard's Back / Next), and those are centered by design — offsetting their buttons would
- * just drop them for no reason. No fields in the row, nothing to line up with, no offset.
+ * KEYED ON A LABEL, not on a field, and that distinction is the whole correctness of it. Several rows
+ * hold nothing but buttons (a Save / Cancel pair, the wizard's Back / Next) and are centered by design.
+ * But a field is not always labeled either: the mail-test row is a bare input with an `aria-label`, and
+ * offsetting beside it dropped the button a full line BELOW the input it acts on. So the question to ask
+ * is "does this row have a label to clear?" — at either nesting level, since a labeled field may be the
+ * row's own child or one a component renders inside a wrapper (StudentPicker).
+ *
+ * `> .label` alone is deliberately NOT matched: a heading marked `.label` is not a field's caption and
+ * has no input under it to line anything up with.
  */
-.inline-form:has(> .field) > .btn,
-.inline-form:has(> .field) > .hint { margin-block-start: var(--field-input-offset); }
+.inline-form:has(> .field > .label, > * > .field > .label) > .btn,
+.inline-form:has(> .field > .label, > * > .field > .label) > .hint { margin-block-start: var(--field-input-offset); }
 @media (max-width: 700px) {
   /* Stacked one per row, there is nothing to line up with — the offset would just be a gap. */
   .inline-form > .btn,
@@ -551,7 +571,11 @@
   .section-head .spacer { display: none; }
   .admin-header .page-title { font-size: 1.25rem !important; }
 
-  .inline-form .field { min-width: 0; flex: 1 1 100%; }
+  /* `>` for the same reason as the desktop sizing rule above: "one field per row when stacked" is about
+     the ROW's children. Handing `flex: 1 1 100%` to a nested field (StudentPicker renders its own) makes
+     a percentage basis resolve against a column parent's height, which is the phone-width version of the
+     void this selector's desktop twin used to open. */
+  .inline-form > .field { min-width: 0; flex: 1 1 100%; }
 
   /* Thumb-sized targets (WCAG 2.5.8 / 44px) on these surfaces only. */
   .page .btn,

@@ -178,3 +178,46 @@ describe('what consumers are told', () => {
     expect(fees.feePolicyForConsumers().bank).toEqual({ percentBps: 80, fixedCents: 0, capCents: 500 });
   });
 });
+
+/**
+ * WHICH RATE A SAVED METHOD ATTRACTS (0.51.0) — `payments/methods.ts` `feeKindOf`.
+ *
+ * It was an inline ternary inside `chargeFamily`, and it moved because the parent portal now has to tell a
+ * household what their next automatic charge will cost — which means the answer is needed in two places.
+ * Two copies of "is this a bank account?" is the shape of bug this codebase keeps paying for (§16), so the
+ * test that matters is the one proving there is only one answer.
+ */
+describe('which rate a saved method attracts', () => {
+  let methods: typeof import('../src/payments/methods');
+  beforeAll(async () => {
+    methods = await import('../src/payments/methods');
+  });
+
+  it('treats a US bank account as a bank debit and everything else as a card', () => {
+    expect(methods.feeKindOf('us_bank_account')).toBe('bank');
+    expect(methods.feeKindOf('card')).toBe('card');
+  });
+
+  /**
+   * The direction of the guess is the point, not the guess itself. An unrecognized type falls to the
+   * DEARER rate, so a wrong answer overcharges the payer by pennies rather than quietly billing the
+   * masjid for a fee it never passed on — and a missing method (nothing saved yet, which is exactly when
+   * the portal is explaining autopay to somebody deciding) is the same case.
+   */
+  it('falls to the card rate for anything it was not told about, including nothing at all', () => {
+    expect(methods.feeKindOf('link')).toBe('card');
+    expect(methods.feeKindOf('sepa_debit')).toBe('card');
+    expect(methods.feeKindOf(null)).toBe('card');
+    expect(methods.feeKindOf(undefined)).toBe('card');
+  });
+
+  it('is what makes a bank-funded autopay cheaper than a card one', () => {
+    settings.setProcessingFee({ enabled: true, bankEnabled: true });
+    const card = fees.feeQuote(200_000, methods.feeKindOf('card'));
+    const bank = fees.feeQuote(200_000, methods.feeKindOf('us_bank_account'));
+    // $2,000 on a card is ~$59.79; from a bank account the cap holds it at $5.00. Passing the wrong kind
+    // here is a $55 error on one term bill, which is why the derivation is not duplicated.
+    expect(card.feeCents).toBeGreaterThan(5_000);
+    expect(bank.feeCents).toBe(500);
+  });
+});

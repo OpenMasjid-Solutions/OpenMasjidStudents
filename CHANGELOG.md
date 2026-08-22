@@ -60,6 +60,22 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **If parents cover the card fee, they are now told so in all three places it matters.** Setting up
+  automatic payments shows the tuition, the fee and the total — worked out on what the family owes
+  today — and it shows this while they are still deciding, before any card is saved. It used to appear
+  only after a card was already on file, which is the one moment it was no use. An automatic payment
+  happens with nobody watching a screen, so that page is the only chance to show the figure at all.
+- **And the printed family sheet says it too**, with a worked example and the line that matters to a
+  family choosing how to pay: cash or a check handed to the office avoids the fee entirely. The sheet
+  is where that choice is made — the portal only mentions the fee once somebody is already paying. It
+  is your own wording, editable in Settings like every other sentence on the sheet, and the figures are
+  worked out by the same code that will charge the card, on the same example bill Settings shows you.
+- **Buttons sit level with the boxes they belong to again.** "Send test" beside the email address had
+  dropped a line below it, and the Send-a-test button on the WhatsApp test student had fallen to the
+  bottom of the card with an empty gap above it. One layout rule was at fault for both, and it also
+  quietly affected every screen where you pick a student by name — recording a payment, linking a
+  sibling, applying a charge to a class.
+
 - **An alert that can fire over and over now speaks once every half hour, and says how many it held
   back.** Three of them could repeat without limit: one per Student ID when somebody is guessing IDs
   at the kiosk, one per payment when the daily check recovers a backlog, and one per account when a

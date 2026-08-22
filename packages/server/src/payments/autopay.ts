@@ -25,7 +25,7 @@ import { alertStaff, childrenOf, studentAmounts } from '../alerts';
 import { sendReceipt, sendAutopayFailure, sendAutopayUpcoming, sendCardExpiring } from '../mail/notify';
 import { formatDate } from '../settings/dates';
 import { stripeClient } from './stripe';
-import { orderedMethods } from './methods';
+import { feeKindOf, orderedMethods } from './methods';
 import { feeMetadata, feeQuote } from './fees';
 
 const log = makeLog('autopay');
@@ -193,8 +193,7 @@ export async function chargeFamily(familyId: string, amountCents: number, today:
    * account, which costs the masjid a fifth of what the card did, and re-quoting per attempt means the
    * family is charged the cost of the method that actually paid rather than the one that declined.
    */
-  const kind = (ordered.find((m) => m.id === chosenPmId)?.type ?? 'card') === 'us_bank_account' ? 'bank' : 'card';
-  const quote = feeQuote(amountCents, kind);
+  const quote = feeQuote(amountCents, feeKindOf(ordered.find((m) => m.id === chosenPmId)?.type));
   try {
     const pi = await stripe.paymentIntents.create(
       {

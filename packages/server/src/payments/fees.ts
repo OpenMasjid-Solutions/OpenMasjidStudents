@@ -113,6 +113,16 @@ export function feeQuote(netCents: number, method: PayMethodKind, cfg: Processin
 }
 
 /**
+ * The bills a worked example is shown against — one place, because two screens show one (0.51.0).
+ *
+ * $100 is an ordinary monthly bill; $500 is a term paid up front, which is where the ACH cap starts to
+ * bite and where the two rates stop looking alike. The office's Settings panel prints both, and the
+ * printed family sheet prints the first — so the figure a parent reads on paper is the same arithmetic,
+ * on the same bill, that the admin saw before switching the feature on.
+ */
+export const FEE_EXAMPLE_CENTS = [10_000, 50_000] as const;
+
+/**
  * The metadata key the fee travels in, and the only way it travels.
  *
  * On the PaymentIntent rather than in our database on purpose. A PI is read back by three separate

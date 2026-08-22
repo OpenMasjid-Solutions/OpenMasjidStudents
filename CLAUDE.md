@@ -238,6 +238,16 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   all see the gross, and crediting it would leave a credit that quietly eats next month. Every screen says
   the extra is the card networks’, not the masjid’s; the consumer half is advertised in `info.fee`.
   Surcharging is regulated (debit cards, some states, network caps) so the panel says to check first.
+  **DISCLOSED IN THREE PLACES, because each is a different moment** (the third and the shape of the second
+  are 0.51.0-dev.7): pay-now itemizes it in front of the payer; the **autopay tab** shows the same three
+  lines worked on the household’s balance, since an off-session charge is never watched and that toggle is
+  the only chance — and it shows them *before* a method is saved, having previously appeared only once a
+  card was on file, which hid it for the whole of setup; and the **printed family sheet** carries a worked
+  example plus “cash or a check at the office avoids it”, because the sheet is where a family chooses HOW
+  to pay and the portal only speaks once they are already paying. Which rate a saved method attracts is
+  `payments/methods.ts` `feeKindOf` — one function for the charge and for the screen describing it, so
+  they cannot name different rates; `FEE_EXAMPLE_CENTS` likewise keeps the office’s preview and the
+  parent’s sheet on the same bill. See `docs/PAYMENTS.md` §6.
 - **Refunds** (0.48.0, `payments/refunds.ts`): any transaction, grouped by Stripe PaymentIntent. A card
   payment is refunded at Stripe *and* reversed on the ledger, in that order; cash is reversed on the ledger
   with the screen saying plainly that a person still has to hand the money over. Full refunds only — a

@@ -254,7 +254,11 @@ export function WhatsAppSettings() {
           </label>
           {c.paused && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{t('settings.waPausedNotice')}</div>}
 
-          <div className="inline-form glass-inset" style={{ alignItems: 'flex-end' }}>
+          {/* No `align-items` override here any more. It was compensating for a CSS bug, not expressing a
+              layout: `.inline-form .field` was handing StudentPicker's own nested field a 12rem flex-basis
+              that a column parent read as a HEIGHT, so bottom-aligning was the only way to get the button
+              anywhere near the control. Fixed in admin.css — the row now aligns like every other one. */}
+          <div className="inline-form glass-inset">
             <div className="field" style={{ flex: '1 1 16rem' }}>
               <StudentPicker
                 students={roster.data ?? []}

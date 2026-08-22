@@ -94,6 +94,26 @@ export function orderedMethods(familyId: string) {
 }
 
 /**
+ * WHICH PROCESSING-FEE RATE A SAVED METHOD ATTRACTS — the one place that decides it (0.51.0).
+ *
+ * A card and a bank debit cost the masjid amounts an order of magnitude apart (2.9% + 30¢ against 0.8%
+ * capped at $5), so `payments/fees.ts` quotes them separately and something has to say which of the two a
+ * stored `PaymentMethod.type` is. That was an inline ternary inside `chargeFamily`, invisible to anything
+ * else — and the moment the parent portal wanted to TELL a household what their next automatic charge
+ * would cost, the browser would have had to re-derive the same rule from the same column. Two copies of
+ * "is this a bank account?" is precisely the shape of bug this codebase keeps paying for (§16), so the
+ * question is answered here, beside the ordering that decides WHICH method gets asked.
+ *
+ * Deliberately narrow: only Stripe's `us_bank_account` is treated as a bank debit, because that is the
+ * only non-card method this app can save off-session and the only one the bank rate in Settings describes.
+ * Anything unrecognized falls to `card`, which is the dearer rate — a wrong guess then overcharges the
+ * PAYER by pennies rather than quietly billing the masjid for a fee it never passed on.
+ */
+export function feeKindOf(type: string | null | undefined): 'card' | 'bank' {
+  return type === 'us_bank_account' ? 'bank' : 'card';
+}
+
+/**
  * Renumber a household's methods 0..n-1 and make everything that reads "which one is default" agree.
  *
  * THREE THINGS HAVE TO MOVE TOGETHER, which is the whole reason this is one function: `sort_order` (the
