@@ -33,6 +33,7 @@ import type { Role } from '../src/db/schema';
 let app: Awaited<ReturnType<typeof freshApp>>;
 let suspect: typeof import('../src/whatsapp/suspect');
 let settingsMod: typeof import('../src/settings');
+let whatsapp: typeof import('../src/whatsapp');
 
 const caller = (role: Role) => app.appRouter.createCaller(makeCtx({ origin: 'lan', session: { role, source: 'local', username: role, userId: `usr_${role}` } }).ctx);
 
@@ -63,6 +64,7 @@ beforeAll(async () => {
   app = await freshApp({ fabric: true, publicUrl: 'https://masjid.example.org' });
   suspect = await import('../src/whatsapp/suspect');
   settingsMod = await import('../src/settings');
+  whatsapp = await import('../src/whatsapp');
 });
 
 afterAll(() => {
@@ -375,5 +377,90 @@ describe('matching by platform id rather than by clock', () => {
     expect(r.checked).toBe(false);
     expect(r.reason).toBe('not_ok');
     expect(rowById(h.rowId)?.status).toBe('sent');
+  });
+});
+
+/**
+ * THE FALLBACK'S KNOWN FALSE POSITIVE, pinned so it stays a documented trade rather than a surprise
+ * (platform 0.51.1-dev.13 correction).
+ *
+ * Now that the platform HOLDS messages through an outage, a message queued during the window and
+ * delivered perfectly after the re-link still sits inside the time range. The range cannot tell that
+ * apart; a complete id list can, and is authoritative in both directions — a message it does not name
+ * was not lost, whatever the timing looks like.
+ *
+ * We accept the false positive in the FALLBACK because of what it costs here: this app does not resend, so
+ * an over-marked row is an office told to consider phoning a family who was in fact reached. An app that
+ * resent on this signal could not make that trade — which is the whole reason to prefer ids when they exist.
+ */
+describe('ids are authoritative in both directions', () => {
+  it('does NOT mark a message the id list leaves out, even when the timing matches', async () => {
+    const delivered = await household('Ismail');
+    app.dbmod.db.update(whatsappLog).set({ platformId: 'wam_delivered_fine' }).where(eq(whatsappLog.id, delivered.rowId)).run();
+
+    // The window names somebody else's message; ours is inside the range but not in the list.
+    reply = { http: 200, body: { ok: true, windows: [{ ...covering(), ids: ['wam_a_different_one'], truncated: false, cause: 'session-expired' }] } };
+    await suspect.checkSuspectWindows();
+
+    expect(rowById(delivered.rowId)?.status).toBe('sent');
+    expect(suspect.suspectSummary().total).toBe(0);
+  });
+
+  /** …whereas the range alone cannot tell the two apart, which is the documented cost of the fallback. */
+  it('over-marks on the range fallback, which is why ids are preferred', async () => {
+    const delivered = await household('Ismail');
+    reply = { http: 200, body: { ok: true, windows: [{ ...covering(), ids: [], truncated: false }] } };
+    await suspect.checkSuspectWindows();
+    // Marked purely on timing. Over-reporting, in the safe direction for an app that never resends.
+    expect(rowById(delivered.rowId)?.status).toBe('unknown');
+  });
+});
+
+/**
+ * A WINDOW IS A SNAPSHOT, NOT A RUNNING TALLY (platform 0.51.1-dev.13 correction). Everything in it is
+ * fixed at detection, so seven days of hourly polling hands back the identical window — and the office
+ * must be told about it once, not once an hour.
+ */
+describe('a re-reported window is the same window', () => {
+  it('stays reported once across a week of identical polls', async () => {
+    await household('Ismail');
+    const w = { ...covering(), ids: [], truncated: false, cause: 'session-expired' };
+    reply = { http: 200, body: { ok: true, windows: [w] } };
+
+    expect((await suspect.checkSuspectWindows()).newWindows).toBe(1);
+    // The platform retains it for 7 days; every one of those polls returns the same snapshot.
+    for (let i = 0; i < 5; i++) expect((await suspect.checkSuspectWindows()).newWindows).toBe(0);
+    expect(suspect.suspectSummary().windows).toHaveLength(1);
+    expect(suspect.suspectSummary().total).toBe(1);
+  });
+
+  /** A genuinely SECOND incident — a key rotation during recovery — is a different window and is told. */
+  it('reports a second incident as its own window', async () => {
+    await household('Ismail');
+    reply = { http: 200, body: { ok: true, windows: [{ ...covering(), cause: 'session-expired' }] } };
+    await suspect.checkSuspectWindows();
+
+    const later = { from: TS.getTime() + 600_000, to: TS.getTime() + 900_000, count: 1, ids: [], truncated: false, cause: 'key-rejected' };
+    reply = { http: 200, body: { ok: true, windows: [{ ...covering(), cause: 'session-expired' }, later] } };
+    expect((await suspect.checkSuspectWindows()).newWindows).toBe(1);
+    expect(suspect.suspectSummary().windows.map((x) => x.cause).sort()).toEqual(['key-rejected', 'session-expired']);
+  });
+});
+
+/**
+ * NO AGE-BASED GIVE-UP on `status/<id>`, which Kiosk flagged for everyone. Retention used to run from
+ * queueing, so a 24-hour cutoff looked reasonable; the platform now keeps a still-queued message's record
+ * for as long as it waits, and abandoning it after a day would leave it reading `queued` for ever.
+ */
+describe('a long-held message is still asked about', () => {
+  it('polls a queued row far older than a day', async () => {
+    const old = await household('Ismail', { status: 'queued', at: new Date(TS.getTime() - 6 * 86_400_000) });
+    app.dbmod.db.update(whatsappLog).set({ platformId: 'wam_held' }).where(eq(whatsappLog.id, old.rowId)).run();
+    // The poller correctly no-ops while the feature is off, so it has to be on for this to mean anything.
+    await caller('admin').whatsapp.set({ enabled: true });
+    whatsapp.resetWhatsAppStatusCache();
+    const r = await whatsapp.refreshWhatsappOutcomes();
+    // Six days old and still asked about — no cutoff dropped it.
+    expect(r.checked).toBe(1);
   });
 });

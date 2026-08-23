@@ -295,12 +295,19 @@ export function capState(): { blocked: 'hour' | 'day' | null; hourUsed: number; 
  *     platform's retention, and bounded so a backlog cannot turn one tick into a flood.
  *
  *     The numbers were relaxed in 0.51.0-dev.6, when the platform fixed two things it had told us
- *     wrongly: the outcome history is **500 per app for 24 hours**, not 200 shared across every app
- *     (a 200-family invoice run used to evict every other app's records AND our own oldest, which are
- *     the ones most likely to have failed), and **reads no longer count against the send budget** —
- *     they have their own 600/minute ceiling, so a polling burst can no longer refuse a message. A
- *     day of this app's traffic is capped at 60 parent messages, so it now fits inside 500 several
- *     times over and there is nothing to race.
+ *     wrongly: the outcome history is **500 per app**, not 200 shared across every app (a 200-family
+ *     invoice run used to evict every other app's records AND our own oldest, which are the ones most
+ *     likely to have failed), and **reads no longer count against the send budget** — they have their
+ *     own 600/minute ceiling, so a polling burst can no longer refuse a message. A day of this app's
+ *     traffic is capped at 60 parent messages, so it now fits inside 500 several times over.
+ *
+ *     THE 24-HOUR FIGURE THAT USED TO BE HERE IS DEAD, and it is called out because it is exactly the
+ *     premise somebody would build a give-up on. Platform 0.51.1-dev.13 keeps a STILL-QUEUED message's
+ *     record for as long as the message waits — retention used to run from queueing, so a message held
+ *     through a long outage lost its record before it was ever sent. Which is why there is deliberately
+ *     **no age-based cutoff in the query below**: a message can now sit queued for days while the link
+ *     is down, and abandoning it after a day would leave it reading `queued` for ever — the precise
+ *     failure this whole feature exists to end. Do not add one.
  *  3. **`unknown` settles the row, and does not retry.** A 404 is "past the end of that buffer, or
  *     never ours" — a permanent answer. Left as `queued` it would be re-asked every five minutes for
  *     as long as the row lives.

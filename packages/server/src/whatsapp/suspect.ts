@@ -64,9 +64,17 @@ export const SUSPECT_REASON = 'link_down';
  * How many windows we remember.
  *
  * Enough to cover a bad week without letting the settings row grow without bound. They are kept at all so
- * a second poll does not re-report a window the office has already been shown — the platform may keep
- * returning one for as long as it remembers it, and an office watching a count climb every hour for the
- * same incident would reasonably conclude it was still happening.
+ * a second poll does not re-report a window the office has already been shown: the platform retains a
+ * window for seven days after the outage ends (0.51.1-dev.13), so every hourly poll for a week hands back
+ * the same one.
+ *
+ * KEYED ON THE BOUNDS, and that is safe because **a window is a snapshot, not a running tally**. Everything
+ * in it — the bounds, the cause, the count, the ids — is fixed at detection and never revised, since the
+ * queue pauses at that moment and nothing else writes outcome records. (The earlier version of this comment
+ * justified the dedupe by imagining a count that climbed hour by hour. It does not; the conclusion was
+ * right and the reasoning was invented.) So a re-report is byte-identical, and skipping it is not merely an
+ * optimization: re-marking would be a harmless no-op, but re-announcing would tell an office a settled
+ * incident was still unfolding.
  */
 const MAX_WINDOWS = 20;
 
@@ -86,7 +94,14 @@ export interface SuspectWindowRecord {
   /** How many of OUR log rows the window actually covered — usually, but not always, the platform's
    *  `count`: it counts what it reported sent, we count what we still have a row for. */
   marked: number;
-  /** What the platform said went wrong (platform 0.51.1-dev.13), so the screen can say why. */
+  /**
+   * What the platform said went wrong (platform 0.51.1-dev.13), so the screen can say why.
+   *
+   * Stored once and never refreshed, which is correct rather than lazy: a cause is fixed at detection and
+   * cannot change mid-window — confirmed in the platform's own source, not assumed. A session expiry
+   * followed by a key rotation during recovery is reported as two separate windows, which is what a
+   * screen wants anyway.
+   */
   cause?: string;
 }
 
@@ -123,16 +138,28 @@ export async function checkSuspectWindows(now = Date.now()): Promise<{ checked: 
 /**
  * Re-label the rows one window covers.
  *
- * BY PLATFORM ID WHEN WE HAVE THEM (platform 0.51.1-dev.13), by time range otherwise. The ids are exact
- * and the range never was: `from`/`to` are when the PLATFORM reported those messages sent, while our
- * `created_at` is when WE handed them over, with the paced queue sitting between the two. So a message
- * queued just before the window and sent inside it fell outside our match, and one queued inside it but
- * sent after fell inside — wrong at both edges. Matching ids removes the whole class of error.
+ * BY PLATFORM ID WHEN WE HAVE THEM (platform 0.51.1-dev.13), by time range otherwise.
  *
- * `truncated` is why the range path stays for more than backward compatibility: the platform caps the id
- * list at 500 per window, and a truncated list would leave the overflow silently unmarked — which is the
- * same invisible under-reporting this feature exists to remove. A truncated window falls back to the
- * range, which is complete by construction.
+ * A COMPLETE ID LIST IS AUTHORITATIVE IN BOTH DIRECTIONS: a message it names was affected, and **a message
+ * it does not name was not lost, whatever the timing looks like**. That second half is the one worth
+ * stating, because the timing genuinely lies. `from`/`to` are when the PLATFORM reported those messages
+ * sent; our `created_at` is when WE handed them over, with the paced queue between the two. So the range
+ * is wrong at both edges — and now that the platform HOLDS messages through an outage, it is wrong in a
+ * new way as well: a message queued during the outage and delivered perfectly after the re-link sits
+ * inside the range and was never in trouble at all.
+ *
+ * That false positive is the fallback's, and it is the reason the range is only ever a fallback. We accept
+ * it there rather than engineering around it because of what it costs HERE specifically: this app does not
+ * resend (see the header), so an over-marked row is an office told to consider phoning a family who was in
+ * fact reached — over-reporting, in a feature whose entire purpose is to stop silent under-reporting. An
+ * app that resent on this signal could not make that trade, which is what makes the id list worth using
+ * whenever it exists.
+ *
+ * `truncated` is the other reason the range path stays: the platform caps the id list at 500 per window,
+ * and a truncated list would leave the overflow silently unmarked. A truncated window therefore falls back
+ * to the range, which is complete by construction. (Our own send budget is 60 parent messages a day, so a
+ * truncated window is close to unreachable here — but the fallback costs nothing and the cap is theirs to
+ * change.) Older platforms send no ids at all, and the range is then all there is.
  *
  * ONLY rows we currently believe were `sent`, either way. A row already `failed`, `expired` or `skipped`
  * has a more specific answer than this one and must keep it; a row still `queued` was never claimed to be
