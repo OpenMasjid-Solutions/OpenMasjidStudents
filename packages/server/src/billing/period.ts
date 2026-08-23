@@ -21,6 +21,27 @@ export const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 /** The period key the mid-year carried-forward balance lives on. Not a month, and never generated. */
 export const CARRY_IN_PERIOD = 'carry-in';
 
+/**
+ * The period key prefix for a charge billed ON ITS OWN, right away (0.51.0-dev.10).
+ *
+ * WHY A PERIOD KEY AT ALL. `invoices.period_key` is NOT NULL and UNIQUE per student, so an invoice that
+ * is not a month still needs a value, and it must be one that cannot collide with the month it happens
+ * to fall in. Taking `2026-08` for a book fee would occupy that student's August slot and make the real
+ * August tuition run silently skip them — the worst possible failure, since the office would see a bill
+ * and never notice the missing one.
+ *
+ * So it is per-CHARGE (`charge-chg_abc123`), which is unique by construction, and it is deliberately not
+ * a month: `isMonthPeriod` says false, so every month-shaped query — the year grid, the generator, the
+ * month dropdowns — passes over it without needing to know it exists. Same trick as `carry-in`, one step
+ * further because a student can have many of these and only ever one carried-in balance.
+ */
+export const IMMEDIATE_PERIOD_PREFIX = 'charge-';
+
+/** Was this invoice a charge billed on its own rather than part of a period's run? */
+export function isImmediateCharge(key: string): boolean {
+  return key.startsWith(IMMEDIATE_PERIOD_PREFIX);
+}
+
 export function isMonthPeriod(key: string): boolean {
   return PERIOD_RE.test(key);
 }
@@ -41,6 +62,9 @@ export function periodKeyError(key: string): string | null {
   const k = key.trim();
   if (!k) return 'Enter the month to bill, like 2027-02.';
   if (k.toLowerCase() === CARRY_IN_PERIOD) return 'That name is reserved for balances carried in from before you started using the app.';
+  // Reserved for the same reason `carry-in` is: these keys are minted by the app, and an office typing
+  // one by hand could land a whole period's run on top of a single charge's own invoice.
+  if (isImmediateCharge(k.toLowerCase())) return 'That name is reserved for charges billed on their own.';
   if (MONTH_SHAPED.test(k) && !PERIOD_RE.test(k)) {
     return 'Write the month as YYYY-MM with the leading zero — February 2027 is 2027-02. Without it this would bill that month a second time.';
   }

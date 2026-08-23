@@ -110,7 +110,7 @@ describe('a one-off charge comes out of the advance balance first', () => {
     // A $100 book fee on the April invoice. There is no spare money, so it has to come from
     // somewhere — and it comes off the NEWEST covered month, leaving the older ones settled.
     const item = await admin.billing.chargeItemCreate({ name: 'Books', defaultAmountCents: 10000 });
-    await admin.billing.chargeAdd({ studentId, source: { kind: 'item', chargeItemId: item.id }, periodKey: '2026-04' });
+    await admin.billing.chargeAdd({ bill: 'period', studentId, source: { kind: 'item', chargeItemId: item.id }, periodKey: '2026-04' });
 
     const after = await months(admin, studentId);
     expect(after.slice(0, 3)).toEqual(['paid', 'paid', 'paid']);
@@ -129,7 +129,7 @@ describe('a one-off charge comes out of the advance balance first', () => {
     expect((await admin.billing.studentBilling({ studentId })).balance.creditCents).toBe(35000);
 
     const item = await admin.billing.chargeItemCreate({ name: 'Books', defaultAmountCents: 10000 });
-    await admin.billing.chargeAdd({ studentId, source: { kind: 'item', chargeItemId: item.id }, periodKey: '2026-04' });
+    await admin.billing.chargeAdd({ bill: 'period', studentId, source: { kind: 'item', chargeItemId: item.id }, periodKey: '2026-04' });
 
     // Every month stays paid and the credit simply shrinks — the parent is told nothing, correctly.
     expect(await months(admin, studentId)).toEqual(['paid', 'paid', 'paid', 'paid']);
@@ -144,7 +144,7 @@ describe('a one-off charge comes out of the advance balance first', () => {
     await admin.billing.recordManualPayment({ studentId: sib.id, amountCents: 105000, channel: 'cash', occurredAt: '2026-04-02' });
 
     const item = await admin.billing.chargeItemCreate({ name: 'Books', defaultAmountCents: 10000 });
-    await admin.billing.chargeAdd({ studentId, source: { kind: 'item', chargeItemId: item.id }, periodKey: '2026-04' });
+    await admin.billing.chargeAdd({ bill: 'period', studentId, source: { kind: 'item', chargeItemId: item.id }, periodKey: '2026-04' });
 
     // Yusuf owes his own April tuition plus the charge; Maryam's credit is untouched. Bills are per
     // child, so one child's money must never quietly settle another's.

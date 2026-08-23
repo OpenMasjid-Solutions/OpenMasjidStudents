@@ -92,7 +92,7 @@ describe('portal.confirmPayment (record-on-return, no webhook)', () => {
     const { famId, parentUserId } = await familyWithParent();
     const admin = caller('admin');
     const studentId = (await admin.billing.familyBilling({ familyId: famId })).students[0].id;
-    await admin.billing.chargeAdd({ studentId, source: { kind: 'custom', label: 'Book fee', amountCents: 2000 }, periodKey: '2026-07' });
+    await admin.billing.chargeAdd({ bill: 'period', studentId, source: { kind: 'custom', label: 'Book fee', amountCents: 2000 }, periodKey: '2026-07' });
     const parent = caller('parent', parentUserId);
 
     const book = (await parent.portal.myFamily()).families[0].invoices[0].items.find((i) => i.label === 'Book fee')!;

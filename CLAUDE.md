@@ -213,6 +213,13 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
 - **Charge items + charges**: a configurable catalog of one-off things (a book fee, a trip) applied to one
   child or mass-applied to a class or course, each **snapshotting** its label and amount so re-pricing the
   item never rewrites history. A **negative** charge is how a credit, bursary or correction is expressed.
+  **A charge is BILLED ON ITS OWN by default** (0.51.0-dev.10, `billChargeNow`) — its own one-line invoice,
+  due today, payable immediately — because waiting for the month's run meant the office had to generate
+  every child's tuition early or tell the parent to wait. The invoice is keyed `charge-<id>` and NOT the
+  month: `invoices` is UNIQUE on (student, period) and generation returns early when one exists, so a
+  month-keyed immediate invoice would silently make that student's real tuition run skip them. `canBillAlone`
+  is the one place that knows a **credit cannot** be billed alone (it has to reduce something, and alone it
+  is an unpayable negative invoice), because both the router and the biller need that answer.
 - **Invoices** per STUDENT (generated for a month/term by hand or by the nightly job), line items (one per
   plan, plus each charge), statuses `open | partially_paid | paid | void`, due dates, and a label resolved
   from a remembered template so the month on the bill always matches the period it is filed under.

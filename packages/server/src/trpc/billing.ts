@@ -16,7 +16,7 @@ import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { makeLog } from '../logger';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
-import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
+import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice, billChargeNow, canBillAlone } from '../billing/invoices';
 import { billFromMonths, currentPeriod } from '../billing/joinMidYear';
 import { schoolYearMonths } from '../billing/schoolYear';
 import { AUDIENCE_CLASS, AUDIENCE_COURSE, AUDIENCE_STUDENTS, resolveAudience } from '../structure/audience';
@@ -101,6 +101,24 @@ function isoDayOrNull(value: string | undefined, what: string): string | null {
  * convenience: leave the boundary narrow and the one resolver shared.
  */
 const BULK_TARGET = z.discriminatedUnion('kind', [AUDIENCE_STUDENTS, AUDIENCE_CLASS, AUDIENCE_COURSE]);
+
+/**
+ * WHEN a one-off charge becomes payable (0.51.0-dev.10).
+ *
+ * `now` is the default because it is what an office almost always means. A charge added mid-August used
+ * to sit `pending` until somebody generated August's tuition — so the choice was to bill the whole month
+ * early, committing every child's tuition, or tell the parent to wait. `now` gives the charge its own
+ * one-line bill, due today, payable through every channel immediately (`billChargeNow`).
+ *
+ * `period` is the old behavior and still the right answer when the charge genuinely belongs ON a month's
+ * bill — the office would rather a family got one invoice than two — and it is the ONLY answer for a
+ * CREDIT, which has to reduce something. A negative amount falls back to `period` on its own rather than
+ * being refused at the boundary: the office picked an amount and a target, and failing the whole action
+ * over a default they never chose would be the worse behavior.
+ *
+ * Defaulted here rather than in the browser so the two UIs that call this cannot disagree about it.
+ */
+const CHARGE_BILL = z.enum(['now', 'period']).default('now');
 
 /** Where a charge's label + amount come from: a preconfigured item (optionally re-priced for
  *  this application) or a free-typed one-off. */
@@ -1008,44 +1026,73 @@ export const billingRouter = router({
    *  line lands on it immediately (and the invoice status is re-derived); otherwise the charge
    *  waits as `pending` and the next generation for that period picks it up. */
   chargeAdd: adminOrFinanceProcedure
-    .input(z.object({ studentId: ID, source: CHARGE_SOURCE, note: NOTE.optional(), periodKey: PERIOD.optional() }))
+    .input(z.object({ studentId: ID, source: CHARGE_SOURCE, note: NOTE.optional(), periodKey: PERIOD.optional(), bill: CHARGE_BILL }))
     .mutation(({ ctx, input }) => {
       if (!db.select({ id: students.id }).from(students).where(and(eq(students.id, input.studentId), eq(students.status, 'active'))).get()) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
       }
       const snap = snapshotCharge(input.source);
+      // Billing it now means it belongs to no period at all — see CHARGE_BILL. Storing the month the
+      // office happened to be looking at would leave a charge that is already invoiced still claiming a
+      // period, which is the kind of half-truth a later query reads as "not billed yet".
+      const immediate = input.bill === 'now' && canBillAlone(snap.amountCents);
       const id = rid('chg');
       const ts = now();
       db.insert(charges)
-        .values({ id, studentId: input.studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: input.periodKey ?? null, status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
+        .values({ id, studentId: input.studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: immediate ? null : (input.periodKey ?? null), status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
         .run();
-      const attach = attachChargeToExistingInvoice(id);
-      audit(auditActor(ctx), 'charge.add', { entity: 'student', entityId: input.studentId, detail: { chargeId: id, amountCents: snap.amountCents, periodKey: input.periodKey ?? null, attached: attach.attached } });
-      return { id, attached: attach.attached, invoiceId: attach.invoiceId };
+      // `billed` is its own bill, `attached` is a line added to a period's existing invoice. Both mean
+      // "payable now"; neither happens when the period has not been generated yet.
+      const immediateResult = immediate ? billChargeNow(id) : null;
+      const attach = immediateResult?.billed ? { attached: false as const, invoiceId: undefined } : attachChargeToExistingInvoice(id);
+      audit(auditActor(ctx), 'charge.add', {
+        entity: 'student',
+        entityId: input.studentId,
+        detail: { chargeId: id, amountCents: snap.amountCents, bill: input.bill, periodKey: immediate ? null : (input.periodKey ?? null), billed: !!immediateResult?.billed, attached: attach.attached },
+      });
+      return {
+        id,
+        attached: attach.attached,
+        invoiceId: immediateResult?.invoiceId ?? attach.invoiceId,
+        /** True when this became a bill of its own, payable straight away. */
+        billedNow: !!immediateResult?.billed,
+        /** Set when "now" was asked for and refused — today only ever `credit` (§ billChargeNow). */
+        billNowRefused: immediateResult && !immediateResult.billed ? immediateResult.reason : undefined,
+      };
     }),
 
   /** Mass-apply one charge to many students — "go on the item and select who to charge". */
   chargeAddBulk: adminOrFinanceProcedure
-    .input(z.object({ source: CHARGE_SOURCE, target: BULK_TARGET, note: NOTE.optional(), periodKey: PERIOD.optional() }))
+    .input(z.object({ source: CHARGE_SOURCE, target: BULK_TARGET, note: NOTE.optional(), periodKey: PERIOD.optional(), bill: CHARGE_BILL }))
     .mutation(({ ctx, input }) => {
       const snap = snapshotCharge(input.source);
       const ids = resolveTarget(input.target);
+      const immediate = input.bill === 'now' && canBillAlone(snap.amountCents);
       const ts = now();
       const created: string[] = [];
       db.transaction((tx) => {
         for (const studentId of ids) {
           const id = rid('chg');
           tx.insert(charges)
-            .values({ id, studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: input.periodKey ?? null, status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
+            .values({ id, studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: immediate ? null : (input.periodKey ?? null), status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
             .run();
           created.push(id);
         }
       });
-      // Attach after the insert transaction so one family's open invoice can't roll back the batch.
+      // Billed/attached AFTER the insert transaction, one child at a time, so a single family's invoice
+      // problem cannot roll back a hundred charges. Each is independent by construction.
       let attached = 0;
-      for (const id of created) if (attachChargeToExistingInvoice(id).attached) attached++;
-      audit(auditActor(ctx), 'charge.addBulk', { entity: 'billing', detail: { amountCents: snap.amountCents, targeted: ids.length, created: created.length, attached, periodKey: input.periodKey ?? null } });
-      return { created: created.length, attached, targeted: ids.length };
+      let billed = 0;
+      for (const id of created) {
+        if (immediate) {
+          if (billChargeNow(id).billed) billed++;
+        } else if (attachChargeToExistingInvoice(id).attached) attached++;
+      }
+      audit(auditActor(ctx), 'charge.addBulk', {
+        entity: 'billing',
+        detail: { amountCents: snap.amountCents, targeted: ids.length, created: created.length, bill: input.bill, billed, attached, periodKey: immediate ? null : (input.periodKey ?? null) },
+      });
+      return { created: created.length, attached, billed, targeted: ids.length };
     }),
 
   chargeList: adminOrFinanceProcedure

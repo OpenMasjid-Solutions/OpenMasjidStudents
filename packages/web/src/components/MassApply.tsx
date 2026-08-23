@@ -50,6 +50,8 @@ export function MassApply({ currency }: { currency: string }) {
   const [chargeLabel, setChargeLabel] = useState('');
   const [chargeAmount, setChargeAmount] = useState('');
   const [periodKey, setPeriodKey] = useState('');
+  /** "Now" by default: its own bill per child, due today, rather than waiting on a period's run. */
+  const [bill, setBill] = useState<'now' | 'period'>('now');
 
   const [result, setResult] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -121,9 +123,10 @@ export function MassApply({ currency }: { currency: string }) {
           source,
           target: target(),
           ...(note.trim() ? { note: note.trim() } : {}),
+          bill: massIsCredit ? 'period' : bill,
           ...(periodKey.trim() ? { periodKey: periodKey.trim() } : {}),
         });
-        setResult(t('mass.chargeResult', { created: r.created, attached: r.attached, targeted: r.targeted }));
+        setResult(t('mass.chargeResult', { created: r.created, attached: r.attached + r.billed, targeted: r.targeted }));
         await Promise.all([utils.billing.chargeList.invalidate(), utils.billing.familyBilling.invalidate()]);
       }
     } catch (e2) {
@@ -135,6 +138,8 @@ export function MassApply({ currency }: { currency: string }) {
   /** Negative charges are how a credit or scholarship is expressed — worth saying out loud so a
    *  minus sign does not look like a mistake. */
   const chargeCents = parseSignedCents(chargeAmount);
+  /** A credit has to reduce a bill, so it can only land ON a period (§ billChargeNow). */
+  const massIsCredit = chargeCents !== null && chargeCents < 0;
 
   return (
     <div className="win-content">
@@ -203,14 +208,31 @@ export function MassApply({ currency }: { currency: string }) {
               <label className="label">{t('mass.amount')}</label>
               <input type="number" step="0.01" className="input glass-inset" value={chargeAmount} onChange={(e) => setChargeAmount(e.target.value)} />
             </div>
+            {/* WHEN it becomes payable (0.51.0-dev.10). Default "now" — each child gets a one-line bill
+                due today, instead of the charge waiting on a month nobody has generated. A CREDIT has to
+                reduce a bill, so it is held to a period and the select says so. */}
+            <div className="field" style={{ flex: '0 1 12rem' }}>
+              <label className="label">{t('billing.chargeWhen')}</label>
+              <select
+                className="input glass-inset"
+                value={massIsCredit ? 'period' : bill}
+                disabled={massIsCredit}
+                onChange={(e) => setBill(e.target.value as 'now' | 'period')}
+              >
+                <option value="now">{t('billing.chargeWhen_now')}</option>
+                <option value="period">{t('billing.chargeWhen_period')}</option>
+              </select>
+            </div>
             {/* The same month picker as everywhere else a month is asked for, not a box wanting a
                 storage key (components/InvoiceGenFields). Blank = the next invoice generated. */}
-            <PeriodMonthSelect id="mass-period" value={periodKey} onChange={setPeriodKey} />
+            {(bill === 'period' || massIsCredit) && <PeriodMonthSelect id="mass-period" value={periodKey} onChange={setPeriodKey} />}
             <div className="field">
               <label className="label">{t('mass.note')}</label>
               <input className="input glass-inset" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} />
             </div>
-            <p className="hint">{chargeCents !== null && chargeCents < 0 ? t('mass.negativeHint') : t('mass.periodHint')}</p>
+            <p className="hint">
+              {massIsCredit ? t('mass.negativeHint') : bill === 'now' ? t('billing.chargeWhenNowHint') : t('mass.periodHint')}
+            </p>
           </div>
         )}
       </section>

@@ -42,7 +42,7 @@ async function seedBillWithCharge() {
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
   const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
-  await admin.billing.chargeAdd({ studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
+  await admin.billing.chargeAdd({ bill: 'period', studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
   return { admin, familyId: fam.id, studentId: s.id };
 }
@@ -77,7 +77,7 @@ describe('a bill can be read line by line', () => {
    *  lines above it and it reports 0, which is what keeps a consumer's sum honest. */
   it('a credit line reduces the payable lines and reports no balance of its own', async () => {
     const { admin, studentId, familyId } = await seedBillWithCharge();
-    await admin.billing.chargeAdd({ studentId, source: { kind: 'custom', label: 'Bursary', amountCents: -5000 }, periodKey: '2026-07' });
+    await admin.billing.chargeAdd({ bill: 'period', studentId, source: { kind: 'custom', label: 'Bursary', amountCents: -5000 }, periodKey: '2026-07' });
 
     const all = await admin.billing.invoiceLines({ invoiceId: (await admin.billing.familyBilling({ familyId })).invoices[0].id });
     const credit = lineNamed(all, 'Bursary');

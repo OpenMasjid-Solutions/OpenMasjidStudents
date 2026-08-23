@@ -44,13 +44,13 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **Parents can now cover the card processing fee, if you want them to.** Every card payment costs the
   madrasah about 2.9% plus 30¢, so a $100 bill has always brought in $96.80. Switch this on and the payer
   is charged $103.30 instead and you receive the full $100. It is **off until you turn it on**, it never
-  touches cash or cheques, and parents see the fee on its own line before they pay — with a sentence
+  touches cash or checks, and parents see the fee on its own line before they pay — with a sentence
   saying plainly that the money is not the madrasah’s but what Visa, Mastercard and Amex charge to accept
   a card. Bank payments cost a fifth as much, so they have their own switch and their own figure, and the
   screen shows you exactly what a $100 and a $500 bill would come to before you decide.
 - **The office can record that a parent does not want WhatsApp.** It sits with their name on the family’s
   record. Parents say it at pickup rather than by signing into a portal, and until now the only way to
-  honour it was to delete their number — which also lost you the ability to ring them.
+  honor it was to delete their number — which also lost you the ability to ring them.
 - **"Which month?" is now a dropdown everywhere it is asked.** Adding a one-off charge, or applying one to
   a whole class, used to want a period key typed as `2026-07`. A typo there put the charge on a month that
   would never be billed, where it sat unnoticed.
@@ -60,6 +60,13 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **A one-off charge is now billed straight away, without generating the month first.** Adding a book fee
+  in the middle of August used to leave it waiting: either you generated August's tuition early —
+  committing every child's bill — or you told the parent to wait. Now it becomes a small bill of its own,
+  due today, payable in the portal, at the kiosk or on your website the moment you add it. That is the
+  default, and it works the same when you apply a charge to a whole class. Putting it on a month's
+  invoice is still there when you'd rather the family got one bill than two, and it is still how a credit
+  works — a credit has to come off something, so it stays on the month it reduces.
 - **A WhatsApp that says "Sent" now admits when it might not have arrived.** A masjid's WhatsApp can sign
   itself out on its own, the way WhatsApp Desktop does. When that happened, OpenMasjidOS kept accepting
   messages and recording them as sent while none of them were delivered — for over a day. The platform
@@ -132,24 +139,20 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 - If your masjid was waiting on WhatsApp messages from before the platform fix, they are gone rather
   than late — the queue was never durable, so each restart discarded it. Re-send anything you need.
-- The queue log records the platform's own message id, and a job asks every five minutes what became
-  of anything still waiting. Five rather than fifteen because the platform keeps only the 200 most
-  recent outcomes.
+- The queue log records the platform's own message id, and a job asks every fifteen minutes what became
+  of anything still waiting.
 - A test WhatsApp says which parent's phone it went to, and a parent about to switch autopay on is told
   that the automatic charge carries the processing fee.
 
-- **Why a WhatsApp says *Queued* and nothing arrives is now answerable.** OpenMasjidOS owns the sending
-  queue and paces it deliberately — randomised gaps, hourly and daily caps, a warm-up on a newly linked
-  number, and quiet hours (9pm–7am by default) during which a message waits rather than being sent. This
-  app hands a message over and is told it was accepted; anything after that belongs to the platform. Two
-  blind spots on our side are closed: the queue log now records what the platform actually answered
-  instead of treating any success as a hand-over, and a reply that explicitly refuses a message is no
-  longer logged as queued.
-- **Known gap, written down rather than papered over:** quiet hours apply to STAFF alerts as well as
-  parent messages, because the platform has one window for every message and no way for an app to mark
-  one as urgent. A declined card at nine on a Sunday evening waits until seven — which is the very
-  situation staff numbers exist for. Nothing here can fix it without going round the queue that protects
-  the masjid’s number; it needs a change on the platform side. Email arrives at 21:30.
+- **Why a WhatsApp says *Queued* and nothing arrives is now answerable.** This app hands a message to
+  OpenMasjidOS and is told it was accepted; everything after that belonged to the platform, and we had
+  no way to ask. Two blind spots on our side are closed: the queue log now records what the platform
+  actually answered instead of treating any success as a hand-over, and a reply that explicitly refuses
+  a message is no longer logged as queued.
+- **There are no quiet hours any more.** OpenMasjidOS used to hold every message between 9pm and 7am —
+  including staff alerts, so a declined card on a Sunday evening waited until Monday morning, which is
+  the opposite of why staff carry a number. That window is gone, and the pacing that remains lives here
+  instead (12 messages an hour, 60 a day, adjustable).
 - Past-due reminders were already configurable and still are — off until you turn them on, then after a
   grace period (3 days) and at most once every so many days (7), both set under Past due in Settings.
 - The processing fee is advertised to the kiosk and the donation site over the Fabric (`info.fee`), so

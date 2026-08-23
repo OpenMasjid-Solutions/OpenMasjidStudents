@@ -70,7 +70,7 @@ describe('studentDelete', () => {
   it('takes a pending charge with them, but REFUSES once that charge is on an invoice', async () => {
     const { admin, studentId } = await seed();
     // A pending charge is not yet money — it goes with them.
-    await admin.billing.chargeAdd({ studentId, source: { kind: 'custom', label: 'Books', amountCents: 1000 } });
+    await admin.billing.chargeAdd({ bill: 'period', studentId, source: { kind: 'custom', label: 'Books', amountCents: 1000 } });
     let info = await admin.people.studentDeletable({ studentId });
     expect(info.deletable).toBe(true);
     expect(info.pendingCharges).toBe(1);

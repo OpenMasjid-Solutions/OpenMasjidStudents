@@ -53,7 +53,10 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
   const [payment, setPayment] = useState<{ studentId: string; amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({ studentId: focusStudentId ?? '', amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
   /** Which fee assignment is having its per-student amount edited, if any. */
   const [override, setOverrideForm] = useState<{ feeId: string; amount: string; note: string } | null>(null);
-  const [charge, setCharge] = useState({ studentId: focusStudentId ?? '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
+  /** `bill: 'now'` is the default — its own bill, due today, rather than waiting on a period's run. */
+  const [charge, setCharge] = useState({ studentId: focusStudentId ?? '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '', bill: 'now' as 'now' | 'period' });
+  /** A credit has to reduce a bill, so it can only go ON a period (§ billChargeNow). */
+  const isCredit = (parseSignedCents(charge.amount) ?? 0) < 0;
   const [chargeErr, setChargeErr] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
   /** How this masjid writes dates (0.47.0). `settings.display` — admin AND finance, unlike
@@ -127,10 +130,11 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
         source: charge.chargeItemId
           ? { kind: 'item', chargeItemId: charge.chargeItemId, amountCents: cents }
           : { kind: 'custom', label: charge.label.trim(), amountCents: cents },
+        bill: cents < 0 ? 'period' : charge.bill,
         ...(charge.periodKey.trim() ? { periodKey: charge.periodKey.trim() } : {}),
         ...(charge.note.trim() ? { note: charge.note.trim() } : {}),
       });
-      setCharge({ studentId: '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
+      setCharge({ studentId: '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '', bill: 'now' });
       await refresh();
     } catch (err) {
       setChargeErr((err as Error).message);
@@ -345,12 +349,44 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             <div className="field"><label className="label">{t('billing.chargeLabel')}</label><input className="input glass-inset" value={charge.label} onChange={(e) => setCharge({ ...charge, label: e.target.value })} maxLength={120} /></div>
           )}
           <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" className="input glass-inset" value={charge.amount} onChange={(e) => setCharge({ ...charge, amount: e.target.value })} /></div>
+          {/*
+            WHEN it becomes payable (0.51.0-dev.10). "Bill it now" is the default and the common case: a
+            book fee added in the middle of August used to wait for somebody to generate August's tuition,
+            so the office had to bill the whole month early or tell the parent to wait. Now it becomes its
+            own one-line bill, due today.
+
+            A CREDIT cannot be billed on its own — its whole job is to reduce a bill — so a negative
+            amount switches to the month picker and says why, rather than offering a choice the server
+            would quietly override.
+          */}
+          <div className="field" style={{ flex: '0 1 12rem' }}>
+            <label className="label">{t('billing.chargeWhen')}</label>
+            <select
+              className="input glass-inset"
+              value={isCredit ? 'period' : charge.bill}
+              disabled={isCredit}
+              onChange={(e) => setCharge({ ...charge, bill: e.target.value as 'now' | 'period' })}
+            >
+              <option value="now">{t('billing.chargeWhen_now')}</option>
+              <option value="period">{t('billing.chargeWhen_period')}</option>
+            </select>
+          </div>
           {/* The same month picker as the invoice form two clicks away, not a box wanting `2026-07`
-              (components/InvoiceGenFields). Blank still means "the next invoice generated". */}
-          <PeriodMonthSelect id={`chg-${familyId}-period`} value={charge.periodKey} onChange={(v) => setCharge({ ...charge, periodKey: v })} />
+              (components/InvoiceGenFields). Blank still means "the next invoice generated". Only asked
+              for when it is what will actually be used. */}
+          {(charge.bill === 'period' || isCredit) && (
+            <PeriodMonthSelect id={`chg-${familyId}-period`} value={charge.periodKey} onChange={(v) => setCharge({ ...charge, periodKey: v })} />
+          )}
           <div className="field"><label className="label">{t('billing.memo')}</label><input className="input glass-inset" value={charge.note} onChange={(e) => setCharge({ ...charge, note: e.target.value })} maxLength={200} /></div>
           <button type="submit" className="btn btn--primary" disabled={chargeAdd.isPending}>{t('billing.addCharge')}</button>
-          <p className="hint">{t('billing.chargeHint')}</p>
+          {/* What the chosen option will actually do, then the standing caveat about credits and voiding.
+              Said per choice rather than as one paragraph covering both: the old single hint described the
+              period behavior as though it were the only one. */}
+          <p className="hint">
+            {isCredit ? t('billing.chargeWhenCreditHint') : charge.bill === 'now' ? t('billing.chargeWhenNowHint') : t('billing.chargeWhenPeriodHint')}
+            {' '}
+            {t('billing.chargeHint')}
+          </p>
         </form>
       </section>
 

@@ -24,7 +24,7 @@ import { db } from '../db';
 import { invoices, invoiceItems, studentFees, students, feePlans, charges } from '../db/schema';
 import { rid } from '../db/ids';
 import { refreshStatus, reallocateStudent, invoiceTotal, type Tx } from './ledger';
-import { firstDayOf, isMonthPeriod } from './period';
+import { firstDayOf, isMonthPeriod, IMMEDIATE_PERIOD_PREFIX } from './period';
 import { getCurrency } from '../settings';
 import { formatDate } from '../settings/dates';
 import { formatMoney } from '../db/money';
@@ -231,6 +231,85 @@ function tellFamilies(invoiceIds: string[]): Promise<void> {
       }
     }
   })();
+}
+
+/**
+ * BILL ONE CHARGE ON ITS OWN, NOW — without waiting for, or forcing, a period's invoice run
+ * (0.51.0-dev.10).
+ *
+ * The gap this closes: a book fee added in the middle of August was payable only once somebody
+ * generated August's tuition invoices. An office that had not billed the month yet had to either
+ * generate the whole month early — committing every child's tuition — or tell the parent to wait. So
+ * this is now the default: the charge becomes its own one-line bill, due today, payable through every
+ * channel the moment it exists.
+ *
+ * TWO THINGS MAKE IT SAFE, and both are the reason it is not simply "make an invoice":
+ *
+ *  1. **It cannot eat the month's slot.** `invoices` is UNIQUE on (student, period_key), so an invoice
+ *     keyed `2026-08` would BE that student's August invoice — and `generateForStudent` returns early
+ *     when one exists, so the real August tuition would silently never be billed for them. The key is
+ *     therefore per-charge (`charge-<id>`, `IMMEDIATE_PERIOD_PREFIX`), unique by construction and not
+ *     month-shaped, so the generator and every month-shaped query pass over it.
+ *  2. **The charge cannot be billed twice.** It flips to `invoiced` inside the same transaction
+ *     (`writeChargeLine`), and generation only ever picks up `pending` charges — so the next run for
+ *     any period cannot pick this one up again.
+ *
+ * A CREDIT IS REFUSED. A negative charge is how a bursary or a correction is expressed (§4), and its
+ * whole purpose is to reduce a bill — on its own it would be an invoice with a negative balance, which
+ * is not a thing a parent can pay and not a thing the allocator has any sensible answer for. A credit
+ * belongs on the period it is discounting, so the caller is told `credit` and the UI keeps it there.
+ *
+ * NO `invoice-ready` NOTIFICATION, deliberately, matching `generateForStudent` which also stays silent
+ * (§9: the notice is per household and is sent from the run-level functions, so a family of three gets
+ * one message and not three). The mass-apply path can create a hundred of these in one press, and a
+ * hundred households hearing about a $5 charge is exactly the burst the send budget exists to prevent.
+ * The parent sees it in the portal, on the statement, and on their next receipt.
+ */
+/**
+ * Can an amount stand as a bill of its own? — the ONE place that answers it.
+ *
+ * A credit cannot: it is a negative line whose whole purpose is to reduce something (§4), and alone it
+ * would be an invoice with a negative balance, which is not payable and which the allocator has no
+ * sensible answer for. So it has to go ON the period it is discounting.
+ *
+ * Exported because the ROUTER has to know the answer BEFORE it writes the charge row — a charge that is
+ * about to be billed on its own belongs to no period, and one that is not must keep the month it was
+ * aimed at. That is two callers, so this had to stop being a comparison written out twice: the first
+ * version tested `>= 0` in the router and `< 0` in here, which meant the guard that mattered was the
+ * router's and the one in here could be deleted with every test still passing.
+ */
+export function canBillAlone(amountCents: number): boolean {
+  return amountCents >= 0;
+}
+
+export function billChargeNow(chargeId: string, today = new Date()): { invoiceId?: string; billed: boolean; reason?: 'not_pending' | 'credit' | 'no_student' } {
+  const c = db
+    .select({ id: charges.id, studentId: charges.studentId, label: charges.label, amountCents: charges.amountCents, status: charges.status })
+    .from(charges)
+    .where(eq(charges.id, chargeId))
+    .get();
+  if (!c || c.status !== 'pending') return { billed: false, reason: 'not_pending' };
+  if (!canBillAlone(c.amountCents)) return { billed: false, reason: 'credit' };
+  if (!db.select({ id: students.id }).from(students).where(and(eq(students.id, c.studentId), eq(students.status, 'active'))).get()) {
+    return { billed: false, reason: 'no_student' };
+  }
+
+  const invId = rid('inv');
+  const ts = new Date();
+  // Due TODAY: "charge immediately" means payable immediately, and a due date is what makes it visible
+  // to autopay, to the past-due chase and to the year-end view of what is outstanding.
+  const dueDate = today.toISOString().slice(0, 10);
+  db.transaction((tx) => {
+    tx.insert(invoices)
+      .values({ id: invId, studentId: c.studentId, label: c.label, periodKey: `${IMMEDIATE_PERIOD_PREFIX}${c.id}`, dueDate, status: 'open', createdAt: ts, updatedAt: ts })
+      .run();
+    writeChargeLine(tx, invId, { id: c.id, studentId: c.studentId, label: c.label, amountCents: c.amountCents }, ts);
+    refreshStatus(tx, invId);
+    // A family already sitting on credit should have this come out of it, which is what a parent means
+    // by "we've paid ahead" — the same re-derivation `attachChargeToExistingInvoice` relies on.
+    reallocateStudent(tx, c.studentId);
+  });
+  return { billed: true, invoiceId: invId };
 }
 
 /** Append a single pending charge onto the family's ALREADY-EXISTING invoice for its period, when
