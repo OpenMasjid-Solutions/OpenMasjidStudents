@@ -60,6 +60,24 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **You can now send families a message explaining what all of this is.** Every other message this app
+  sends is about something that happened — a bill, a receipt, a reminder — and none of them says what a
+  parent portal is, or why an unfamiliar number is suddenly texting about fees. This one does, and then
+  tells families to ask the office for their family sheet, which has their children's IDs, the fees and
+  every way to pay. It goes by email and WhatsApp, and on WhatsApp it tells them messages will come from
+  that number so nobody blocks it. **Students → Onboarding message**: send to everyone, a course, a
+  class, or students you pick — and picking one child picks their brothers and sisters, because parents
+  belong to the whole household. There is a button on each family's own record too. It shows you how
+  many households you are about to write to, and how many of them you can actually reach, before you
+  press anything. Every word of it is yours to change in **Settings → Onboarding message**, where you
+  can read exactly what a family will get on each channel.
+- It sends to the first 50 households each press and tells you how many are left — messages go out
+  slowly on purpose, because the risk of a ban attaches to your masjid's phone number and a burst of two
+  hundred is how that number is lost.
+- **The processing fee on the printed family sheet is now one line, not a paragraph.** It reads as a
+  short italic note at the end of the portal, website and kiosk lines — the ways to pay that carry a
+  fee — and the office line simply does not have it, which says "not this one" without spending a
+  sentence on it.
 - **If parents cover the card fee, they are now told so in all three places it matters.** Setting up
   automatic payments shows the tuition, the fee and the total — worked out on what the family owes
   today — and it shows this while they are still deciding, before any card is saved. It used to appear

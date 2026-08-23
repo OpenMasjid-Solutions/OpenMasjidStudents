@@ -18,6 +18,8 @@ type AlertEvent = RouterOutputs['settings']['alertsGet']['events'][number];
 type AlertRecipient = RouterOutputs['settings']['alertsGet']['recipients'][number];
 /** Same idea for the family sheet's wording: people/sheetText.ts owns the list of boxes. */
 type SheetTextKey = RouterOutputs['settings']['sheetTextGet']['keys'][number];
+/** Same for the onboarding message's boxes — people/onboarding.ts owns the list. */
+type OnboardingKey = RouterOutputs['settings']['onboardingTextGet']['keys'][number];
 
 export function Settings() {
   const { t } = useTranslation();
@@ -136,6 +138,28 @@ export function Settings() {
   // empty string as "use the default").
   const sheetText = trpc.settings.sheetTextGet.useQuery();
   const saveSheetText = trpc.settings.sheetTextSet.useMutation();
+
+  // ── The onboarding message's wording (0.51.0) ───────────────────────────────
+  // Same served-registry shape as the sheet above, so nothing here names a box or a tag.
+  const onbText = trpc.settings.onboardingTextGet.useQuery();
+  const saveOnbText = trpc.settings.onboardingTextSet.useMutation();
+  const [onbWording, setOnbWording] = useState<Record<string, string>>({});
+  const [onbOpen, setOnbOpen] = useState(false);
+  const onbDirty = Object.keys(onbWording).length > 0;
+  const onbValue = (key: OnboardingKey) => onbWording[key] ?? onbText.data?.overrides[key] ?? onbText.data?.defaults[key] ?? '';
+
+  async function saveOnb() {
+    const boxes = Object.entries(onbWording).map(([key, text]) => ({ key: key as OnboardingKey, text }));
+    if (boxes.length) await saveOnbText.mutateAsync({ boxes });
+    await utils.settings.onboardingTextGet.invalidate();
+    setOnbWording({});
+  }
+
+  async function resetOnb() {
+    await saveOnbText.mutateAsync({ reset: true });
+    await utils.settings.onboardingTextGet.invalidate();
+    setOnbWording({});
+  }
   const [wording, setWording] = useState<Record<string, string>>({});
   const [wordingOpen, setWordingOpen] = useState(false);
   const wordingDirty = Object.keys(wording).length > 0;
@@ -538,6 +562,80 @@ export function Settings() {
               </button>
             </div>
             <p className="hint">{t('settings.sheetTextClearHint')}</p>
+          </>
+        )}
+      </section>
+
+      {/* ── The onboarding message (0.51.0) ──────────────────────────────────────
+          The one message that explains what any of this IS, sent from the Students tab. Its wording is
+          here beside the sheet's for the same reason: how a madrasah introduces itself to its families
+          is its own voice. Collapsed by default, and it shows the RENDERED result of both channels —
+          the tags are the part an office is really checking, and the WhatsApp form carries an extra
+          line the email one does not. */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head">
+          <h2>{t('settings.onboarding')}</h2>
+          <span className="spacer" />
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setOnbOpen((v) => !v)}>
+            {onbOpen ? t('common.close') : t('settings.onboardingEdit')}
+          </button>
+        </div>
+        <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: onbOpen ? '0.75rem' : 0 }}>{t('settings.onboardingHint')}</p>
+
+        {onbOpen && onbText.data && (
+          <>
+            <p className="hint" style={{ marginBlockEnd: '0.75rem' }}>
+              {t('settings.onboardingTags', { tags: onbText.data.tags.map((g) => `[${g}]`).join(' ') })}
+            </p>
+
+            {onbText.data.keys.map((key) => {
+              const custom = onbText.data!.overrides[key] !== undefined;
+              return (
+                <div className="field" key={key}>
+                  <label className="label" htmlFor={`onb-${key}`}>
+                    {t(`settings.onboarding_${key}`)}
+                    {custom && <span className="chip is-muted" style={{ marginInlineStart: '0.4rem' }}>{t('settings.sheetTextCustom')}</span>}
+                  </label>
+                  <textarea
+                    id={`onb-${key}`}
+                    className="textarea glass-inset"
+                    style={{ minHeight: key === 'body' ? '10rem' : '3rem', fontFamily: 'inherit', fontSize: '0.9rem' }}
+                    value={onbValue(key)}
+                    maxLength={onbText.data!.maxLength}
+                    onChange={(e) => setOnbWording({ ...onbWording, [key]: e.target.value })}
+                  />
+                </div>
+              );
+            })}
+
+            <div className="inline-form glass-inset" style={{ alignItems: 'center' }}>
+              <button type="button" className="btn btn--primary" onClick={saveOnb} disabled={!onbDirty || saveOnbText.isPending}>
+                {t('common.save')}
+              </button>
+              {onbDirty && <button type="button" className="btn btn--ghost" onClick={() => setOnbWording({})}>{t('common.cancel')}</button>}
+              <span className="spacer" />
+              <button type="button" className="btn btn--ghost" onClick={resetOnb} disabled={saveOnbText.isPending}>
+                {t('settings.onboardingReset')}
+              </button>
+            </div>
+
+            {/* THE PREVIEW, per channel. Saved wording only — an unsaved edit previewing as though it
+                were live is how an office sends the version they were still drafting. */}
+            <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.onboardingPreview')}</h3>
+            <p className="hint" style={{ marginBlockStart: 0 }}>
+              {t(`settings.onboardingSample_${onbText.data.sample}`)}
+              {onbDirty && ` ${t('settings.onboardingUnsaved')}`}
+            </p>
+            <div className="glass-inset" style={{ padding: '0.7rem 0.8rem' }}>
+              <p className="label" style={{ marginBlockEnd: '0.2rem' }}>{t('settings.onboardingAsEmail')}</p>
+              <p className="hint" style={{ marginBlockStart: 0 }}>{onbText.data.preview.subject}</p>
+              <p style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', margin: 0 }}>{onbText.data.preview.email}</p>
+            </div>
+            <div className="glass-inset" style={{ padding: '0.7rem 0.8rem', marginBlockStart: '0.5rem' }}>
+              <p className="label" style={{ marginBlockEnd: '0.2rem' }}>{t('settings.onboardingAsWhatsApp')}</p>
+              <p style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', margin: 0 }}>{onbText.data.preview.whatsapp}</p>
+            </div>
+            <p className="hint">{t('settings.onboardingClearHint')}</p>
           </>
         )}
       </section>

@@ -10,11 +10,13 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { Pencil, Printer, Trash2 } from 'lucide-react';
+import { Pencil, Printer, Send, Trash2 } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
 import { formatUsPhone, telHref } from '../../lib/phone';
 import { StudentPicker } from '../../components/StudentPicker';
+import { OnboardingSend } from '../../components/OnboardingSend';
+import { useWindows } from '../../components/Windows';
 
 /** What a guardian is to the child. Four choices rather than an open box: an office typing "Dad",
  *  "father" and "Father" into three records made the column unusable for anything. Stored as these
@@ -35,6 +37,22 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const { t } = useTranslation();
   const utils = trpc.useUtils();
   const q = trpc.people.familyGet.useQuery({ id: familyId });
+  const { open } = useWindows();
+
+  /**
+   * The onboarding message for THIS household.
+   *
+   * Passes the household's students rather than a family id, so the one send path is the same one the
+   * roster-wide dialog uses (`kind: 'students'`) and the server collapses it to this household exactly as
+   * it would any other selection — no second route, no second set of gates.
+   */
+  const openOnboarding = () =>
+    open({
+      title: t('onboarding.titleOne', { family: q.data?.family.name ?? '' }),
+      dedupeKey: `onboarding:${familyId}`,
+      icon: <Send size={15} />,
+      node: <OnboardingSend studentIds={(q.data?.students ?? []).map((s) => s.id)} familyLabel={q.data?.family.name ?? ''} />,
+    });
 
   const refresh = async () => {
     await utils.people.familyGet.invalidate({ id: familyId });
@@ -325,6 +343,17 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
           >
             <Printer size={14} /> {t('directory.printSheet')}
           </a>
+          {/* The onboarding message, for THIS household. Beside the sheet button and household-scoped for
+              exactly the same reason spelled out above it: the guardians are the household's, so a
+              message aimed at one child reaches the adults who also pay for their siblings. A button on
+              each student row would have looked like three different sends of one message.
+              Admin only, unlike the sheet — printing something to hand over is finance's job; writing to
+              a family in the madrasah's voice is not (§5). */}
+          {!readOnly && (
+            <button type="button" className="btn btn--ghost btn--sm" onClick={openOnboarding}>
+              <Send size={14} /> {t('onboarding.buttonOne')}
+            </button>
+          )}
           {!readOnly && <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowStudent((v) => !v)}>{t('directory.addStudent')}</button>}
         </div>
         {students.length === 0 ? (

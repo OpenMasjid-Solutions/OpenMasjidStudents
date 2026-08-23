@@ -19,6 +19,7 @@ import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTo
 import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
 import { billFromMonths, currentPeriod } from '../billing/joinMidYear';
 import { schoolYearMonths } from '../billing/schoolYear';
+import { AUDIENCE_CLASS, AUDIENCE_COURSE, AUDIENCE_STUDENTS, resolveAudience } from '../structure/audience';
 import { yearCellsFor } from '../billing/yearCells';
 import { invoiceLines, payableLines } from '../billing/lines';
 import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
@@ -90,13 +91,16 @@ function isoDayOrNull(value: string | undefined, what: string): string | null {
   return value && value.trim() ? isoDay(value, what) : null;
 }
 
-/** Who a bulk apply targets: explicit students, or everyone active in a class or course.
- *  One resolver so the fee-plan and charge-item tabs behave identically. */
-const BULK_TARGET = z.union([
-  z.object({ kind: z.literal('students'), studentIds: z.array(ID).min(1).max(2000) }),
-  z.object({ kind: z.literal('class'), classId: ID }),
-  z.object({ kind: z.literal('course'), courseId: ID }),
-]);
+/**
+ * Who a bulk apply targets: explicit students, or everyone active in a class or course.
+ *
+ * DELIBERATELY NARROWER THAN `AUDIENCE` — there is no `all` here. The resolver these hand off to
+ * (structure/audience.ts) understands "everyone", because the onboarding message needs it; a one-click
+ * "put this charge on every student in the school" is a different proposition from a one-click "write to
+ * every family", and the difference is that this one moves money. Widening it is a decision, not a
+ * convenience: leave the boundary narrow and the one resolver shared.
+ */
+const BULK_TARGET = z.discriminatedUnion('kind', [AUDIENCE_STUDENTS, AUDIENCE_CLASS, AUDIENCE_COURSE]);
 
 /** Where a charge's label + amount come from: a preconfigured item (optionally re-priced for
  *  this application) or a free-typed one-off. */
@@ -196,25 +200,10 @@ function invoiceMonthOptions(): { periodKey: string; label: string }[] {
   return out;
 }
 
-function resolveTarget(target: z.infer<typeof BULK_TARGET>): string[] {
-  if (target.kind === 'students') {
-    // Keep only ids that are real AND active — a stale UI selection must not create rows
-    // pointing at withdrawn students.
-    const rows = db.select({ id: students.id }).from(students).where(eq(students.status, 'active')).all();
-    const live = new Set(rows.map((r) => r.id));
-    return target.studentIds.filter((id) => live.has(id));
-  }
-  if (target.kind === 'class') {
-    return db.select({ id: students.id }).from(students).where(and(eq(students.classId, target.classId), eq(students.status, 'active'))).all().map((r) => r.id);
-  }
-  return db
-    .select({ id: students.id })
-    .from(students)
-    .innerJoin(classes, eq(classes.id, students.classId))
-    .where(and(eq(classes.courseId, target.courseId), eq(students.status, 'active')))
-    .all()
-    .map((r) => r.id);
-}
+/** Kept as a name here because two dozen call sites read better for it, but the RULE lives in
+ *  structure/audience.ts now — shared with the onboarding message, so the two can never disagree about
+ *  whether a withdrawn child is in a course. */
+const resolveTarget = resolveAudience;
 
 /** Invoice rows for a set of students, newest first, each carrying whose bill it is. Shared by the
  *  per-student window and the household one so the two can never disagree about a total. */

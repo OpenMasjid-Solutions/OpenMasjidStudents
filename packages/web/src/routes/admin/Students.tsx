@@ -12,7 +12,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { Printer, Users, Upload } from 'lucide-react';
+import { Printer, Send, Users, Upload } from 'lucide-react';
 import { staggerContainer, staggerItem } from '../../lib/motion';
 import { ageFromDob } from '../../lib/age';
 import { cn } from '../../lib/cn';
@@ -23,6 +23,7 @@ import { SchoolTabs, useSchool } from '../../components/SchoolTabs';
 import { FamilyDetail } from './FamilyDetail';
 import { ImportStudents } from './ImportStudents';
 import { StudentPicker } from '../../components/StudentPicker';
+import { OnboardingSend } from '../../components/OnboardingSend';
 import { SiblingSuggestions } from '../../components/SiblingSuggestions';
 
 type Row = {
@@ -94,6 +95,10 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
 
   const openSiblings = () =>
     open({ title: t('siblings.title'), wide: true, dedupeKey: 'siblings:suggest', icon: <Users size={15} />, node: <SiblingSuggestions /> });
+
+  /** The onboarding message — the explain-what-this-is note, to a class, a course or the whole roster. */
+  const openOnboarding = () =>
+    open({ title: t('onboarding.title'), wide: true, dedupeKey: 'onboarding:send', icon: <Send size={15} />, node: <OnboardingSend /> });
 
   async function submitStudent(e: FormEvent) {
     e.preventDefault();
@@ -210,6 +215,11 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
           <>
             {/* Reachable outside the import too: an install that imported before 0.42.0 has households
                 that were never linked, and this is where someone goes looking for them. */}
+            {/* Admin only (behind `readOnly`, like every other write here): writing to every family at
+                once speaks for the madrasah, which is the wall §5 draws around finance. */}
+            <button type="button" className="btn btn--ghost" onClick={openOnboarding}>
+              <Send size={14} /> {t('onboarding.button')}
+            </button>
             <button type="button" className="btn btn--ghost" onClick={openSiblings}>{t('siblings.title')}</button>
             <button type="button" className="btn btn--ghost no-mobile" onClick={openImport}>{t('students.import')}</button>
             <button type="button" className="btn btn--primary" onClick={() => setAdding((v) => !v)}>{t('directory.addStudent')}</button>

@@ -459,6 +459,32 @@ export function alertEmail(schoolName: string, title: string, body: string, appU
   return { subject, text, html };
 }
 
+/**
+ * The onboarding message (0.51.0) — the one email whose body is the office's, start to finish.
+ *
+ * Every other template here composes its own prose around a figure. This one is handed a rendered body
+ * from people/onboarding.ts and only dresses it: the letterhead, the logo, the school's contact line.
+ * The wording is the madrasah introducing itself, so it is theirs, and the same text goes out on
+ * WhatsApp — which is why it arrives here as plain text with blank lines rather than as HTML.
+ *
+ * THE PARAGRAPH SPLIT IS THE WHOLE OF THE FORMATTING, and it is done after escaping. An office typing a
+ * message with `<` in it (or an ampersand in the school's name) must not be able to put an element into
+ * an email a family opens — the same order-of-operations rule as the printed sheet (people/sheetText.ts).
+ * So: escape, then turn blank lines into paragraphs, and nothing else. No `<b>`, no links beyond what the
+ * body already spells out in full.
+ */
+export function onboardingEmail(subject: string, body: string): Email {
+  const paragraphs = body
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    // A single newline inside a paragraph is a line the office chose to break; keep it.
+    .map((p) => esc(p).replaceAll('\n', '<br />'));
+  // The subject doubles as the heading: it is the office's own summary of the message, and inventing a
+  // second one here would give a family two different descriptions of the same email.
+  return { subject, text: body, html: shell(subject, paragraphs) };
+}
+
 /** Admin "send test" probe. */
 export function testEmail(schoolName: string): Email {
   const subject = `${schoolName}: test email`;

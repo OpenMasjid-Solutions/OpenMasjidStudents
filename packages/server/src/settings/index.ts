@@ -68,6 +68,11 @@ export const SETTING_KEYS = {
   // JSON — the madrasah's own wording for the printed family sheet (0.48.0). A partial map of
   // people/sheetText.ts keys; anything absent uses the shipped sentence.
   sheetText: 'sheet_text',
+  // JSON — the madrasah's own wording for the onboarding message (0.51.0). A partial map of
+  // people/onboarding.ts keys; anything absent uses the shipped sentence. Stored beside the sheet's
+  // wording rather than inside the WhatsApp config on purpose: this message goes out on BOTH channels,
+  // and copy owned by one channel's settings is copy the other channel's screen cannot edit.
+  onboardingText: 'onboarding_text',
   // The color the printed artifacts are ruled in (0.47.0). One hex value; see `getAccentColor`.
   accentColor: 'accent_color',
   // JSON — WhatsApp (0.50.0): the master switch, the parent pause, the per-event toggles, the country
@@ -674,6 +679,47 @@ export function setSheetTextOverrides(patch: Record<string, string | null | unde
     else delete next[k];
   }
   setSetting(SETTING_KEYS.sheetText, Object.keys(next).length ? JSON.stringify(next) : '');
+}
+
+/**
+ * The madrasah's own wording for the onboarding message (0.51.0) — the boxes it changed, and nothing else.
+ *
+ * A LONGER CAP than the sheet's, because one of these boxes is a whole message rather than a sentence on a
+ * page with a two-side budget. Read-side validation is the same shape and exists for the same reason: this
+ * text is interpolated into an email body and a WhatsApp message, so a row edited by hand must come back as
+ * a bounded string or not at all. The registry (people/onboarding.ts) is what decides which keys mean
+ * anything; an unknown one stored here is simply never read.
+ */
+const ONBOARDING_TEXT_CAP = 1200;
+
+export function getOnboardingText(): Record<string, string> {
+  const raw = getSetting(SETTING_KEYS.onboardingText);
+  if (!raw) return {};
+  try {
+    const p = JSON.parse(raw) as unknown;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+      if (typeof v !== 'string') continue;
+      const text = v.trim().slice(0, ONBOARDING_TEXT_CAP);
+      if (text) out[k] = text;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Merge in changed boxes. A key set to `''` or `null` is REMOVED rather than stored blank — clearing the
+ *  field means "use the shipped wording again", and a message with an empty body is not a message. */
+export function setOnboardingText(patch: Record<string, string | null | undefined>): void {
+  const next = getOnboardingText();
+  for (const [k, v] of Object.entries(patch)) {
+    const text = (v ?? '').trim().slice(0, ONBOARDING_TEXT_CAP);
+    if (text) next[k] = text;
+    else delete next[k];
+  }
+  setSetting(SETTING_KEYS.onboardingText, Object.keys(next).length ? JSON.stringify(next) : '');
 }
 
 /** The teal every printed artifact has been ruled in since the first statement. */

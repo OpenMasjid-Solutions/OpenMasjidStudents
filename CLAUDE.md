@@ -1,4 +1,6 @@
+  | which students a bulk action names (a course, a class, everyone) | `structure/audience.ts` — shared by mass-apply and the onboarding send |
 # CLAUDE.md — OpenMasjidStudents
+  | what the onboarding message says, or who one press reaches | `people/onboarding.ts`, `structure/audience.ts` |
 
 > This file is the single source of truth for the OpenMasjidStudents project. Read it fully before writing any
 > code. When in doubt, follow this document over your own assumptions. If something here is ambiguous, ask
@@ -248,6 +250,20 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   `payments/methods.ts` `feeKindOf` — one function for the charge and for the screen describing it, so
   they cannot name different rates; `FEE_EXAMPLE_CENTS` likewise keeps the office’s preview and the
   parent’s sheet on the same bill. See `docs/PAYMENTS.md` §6.
+- **The onboarding message** (0.51.0, `people/onboarding.ts`): the one message that explains what any of
+  this IS — every other parent message is about an event (a bill exists, money landed) and none of them
+  says what a parent portal is or why an unfamiliar number is texting about fees. Sent by an office from
+  the Students tab to everyone / a course / a class / picked students, or from one household's record, on
+  **both channels**. It **carries no detail on purpose and points at the family sheet**: a Student ID may
+  never travel by WhatsApp (§14), fees change while a message does not, and the sheet is handed over in
+  person, which is exactly what makes it the right place. Its tag list has no Student ID, balance or card
+  in it, which is the enforcement rather than a rule in a document. On WhatsApp it appends **which number
+  the madrasah writes from** — a message from an unknown number about a child's fees is indistinguishable
+  from a scam — and that line is its own editable box, absent from the email where it would mean nothing.
+  Wording is the madrasah's in Settings, previewed per channel against a real household. **Bounded at 50
+  households per press with the remainder reported** (the outreach's trade — a burst is how a number gets
+  restricted, and silent truncation is the failure this release removed), no per-event switch because it
+  is a button not an event, and it still honors both pauses and every opt-out.
 - **Refunds** (0.48.0, `payments/refunds.ts`): any transaction, grouped by Stripe PaymentIntent. A card
   payment is refunded at Stripe *and* reversed on the ledger, in that order; cash is reversed on the ledger
   with the screen saying plainly that a person still has to hand the money over. Full refunds only — a
@@ -1367,6 +1383,8 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | a WhatsApp message — whether it goes, to whom, or what it says | `whatsapp/index.ts`, `whatsapp/numbers.ts`, `whatsapp/templates.ts` |
   | which household a pause does NOT apply to (either channel) | `settings/testStudent.ts` |
   | a printed sheet | `billing/statements.ts`, `billing/invoiceDoc.ts`, `people/onboardingSheet.ts`, `people/idSheet.ts` |
+  | what the onboarding message says, or the number it comes from | `people/onboarding.ts` |
+  | which students a bulk action names (everyone, a course, a class), and the households behind them | `structure/audience.ts` — shared by mass-apply and the onboarding send |
   | a date | `settings/dates.ts` |
   | the calendar or the roster tree | `structure/*`, `schools/index.ts` |
 

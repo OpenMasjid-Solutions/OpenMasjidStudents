@@ -417,7 +417,7 @@ describe('it must not promise a payment route this install does not have', () =>
    * So the line has to appear when the fee is real, stay away when it is not, and carry a computed figure
    * rather than a rate an office could mistype into the prose.
    */
-  describe('the processing fee line', () => {
+  describe('the processing fee caveat', () => {
     const feeOn = (patch: Record<string, unknown> = {}) => {
       settingsMod.setProcessingFee({ enabled: true, cardPercentBps: 290, cardFixedCents: 30, bankEnabled: false, ...patch });
     };
@@ -425,34 +425,33 @@ describe('it must not promise a payment route this install does not have', () =>
     it('is absent when the madrasah absorbs the fee — which is every install by default', async () => {
       household();
       child('stu_1', 'Yusuf Ismail');
-      const out = (await html())!;
-      expect(out).not.toContain('processing fee');
-      expect(out).not.toContain('avoids it entirely');
+      expect((await html())!).not.toContain('processing fee');
     });
 
-    it('prints the fee, a worked figure, and that cash at the office avoids it', async () => {
+    /**
+     * ON EACH ONLINE ROUTE, AND NOT ON THE OFFICE ONE. That asymmetry is the whole design: the caveat is
+     * a tail on the lines that can actually charge a fee, so the line that cannot says "not this one" by
+     * simply not carrying it. It was a bullet of its own at first, which gave one incidental fact the same
+     * weight as "here is how you pay".
+     */
+    it('rides on the portal, website and kiosk lines — never on the office line', async () => {
       household();
       child('stu_1', 'Yusuf Ismail');
       feeOn();
       const out = (await html({ ...ALL_ON, fee: true }))!;
-      expect(out).toContain('adds a processing fee');
-      // The figure, not the rate: $100 grossed up at 2.9% + 30¢ is $103.30 (payments/fees.ts). If this
-      // ever reads $103.20 somebody has re-implemented the gross-up as a markup on the net.
-      expect(out).toContain('A bill of $100.00 is charged as $103.30 by card.');
-      expect(out).toContain('not the madrasah’s');
-      expect(out).toContain('avoids it entirely');
+      const items = [...out.matchAll(/<li>(.*?)<\/li>/g)].map((m) => m[1]);
+      const withFee = items.filter((li) => li.includes('processing fee may apply'));
+      expect(withFee).toHaveLength(3);
+      expect(items.find((li) => li.includes('Cash, check, Zelle'))).not.toContain('processing fee');
+      // It is never its own item — that is the shape this replaced.
+      expect(items.some((li) => li.replace(/<[^>]*>/g, '').trim() === 'A payment processing fee may apply.')).toBe(false);
     });
 
-    it('names the bank figure too, but only when that rate is passed on as well', async () => {
+    it('is italic, because it is an aside on the line rather than part of it', async () => {
       household();
       child('stu_1', 'Yusuf Ismail');
       feeOn();
-      expect((await html({ ...ALL_ON, fee: true }))!).not.toContain('from a bank account');
-
-      // 0.8% capped at $5 → $100 becomes $100.81.
-      feeOn({ bankEnabled: true, bankPercentBps: 80, bankFixedCents: 0, bankCapCents: 500 });
-      const both = (await html({ ...ALL_ON, fee: true }))!;
-      expect(both).toContain('$103.30 by card, or $100.81 from a bank account.');
+      expect((await html({ ...ALL_ON, fee: true }))!).toContain('<em>A payment processing fee may apply.</em>');
     });
 
     it('is not printed when there is no online route to charge it on', async () => {
@@ -467,26 +466,30 @@ describe('it must not promise a payment route this install does not have', () =>
       expect(out).not.toContain('processing fee');
     });
 
-    it('sits between the online routes and the office line, because the order is the comparison', async () => {
+    it('is the madrasah’s own wording, and can carry the real figure if they want it', async () => {
       household();
       child('stu_1', 'Yusuf Ismail');
       feeOn();
+      settingsMod.setSheetTextOverrides({ payFee: 'Card fee applies — [fee]' });
       const out = (await html({ ...ALL_ON, fee: true }))!;
-      expect(out.indexOf('At the kiosk')).toBeLessThan(out.indexOf('adds a processing fee'));
-      expect(out.indexOf('adds a processing fee')).toBeLessThan(out.indexOf('Cash, check, Zelle'));
+      expect(out).toContain('Card fee applies —');
+      // The FIGURE still comes from us even inside the office's sentence: $100 grossed up at 2.9% + 30¢
+      // is $103.30. If this ever reads $103.20 somebody has re-implemented the gross-up as a markup on
+      // the net (payments/fees.ts).
+      expect(out).toContain('A bill of $100.00 is charged as $103.30 by card.');
+      settingsMod.setSheetTextOverrides({});
     });
 
-    it('is the madrasah’s own wording, like every other box on the sheet', async () => {
+    it('adds the bank figure to that tag only when the bank rate is passed on too', async () => {
       household();
       child('stu_1', 'Yusuf Ismail');
+      settingsMod.setSheetTextOverrides({ payFee: '[fee]' });
       feeOn();
-      settingsMod.setSheetTextOverrides({ payFee: 'Card payments cost extra: [fee] Bring cash to avoid it.' });
-      const out = (await html({ ...ALL_ON, fee: true }))!;
-      expect(out).toContain('Card payments cost extra:');
-      expect(out).toContain('Bring cash to avoid it.');
-      // The FIGURE still comes from us even inside the office's sentence — that is the whole point of it
-      // being a tag rather than something they type.
-      expect(out).toContain('$103.30 by card.');
+      expect((await html({ ...ALL_ON, fee: true }))!).not.toContain('from a bank account');
+
+      // 0.8% capped at $5 → $100 becomes $100.81.
+      feeOn({ bankEnabled: true, bankPercentBps: 80, bankFixedCents: 0, bankCapCents: 500 });
+      expect((await html({ ...ALL_ON, fee: true }))!).toContain('$103.30 by card, or $100.81 from a bank account.');
       settingsMod.setSheetTextOverrides({});
     });
   });

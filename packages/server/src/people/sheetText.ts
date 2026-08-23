@@ -40,6 +40,8 @@ export const SHEET_TEXT_KEYS = [
   'payCard',
   'payWebsite',
   'payKiosk',
+  // Not a bullet — the italic tail appended to the three above. Ordered here beside them all the same, so
+  // the Settings list reads in the order an office meets the words on the page.
   'payFee',
   'payOffice',
   'payOfficeReceipt',
@@ -73,22 +75,25 @@ export const SHEET_TEXT_DEFAULTS: Record<SheetTextKey, string> = {
   /**
    * THE PROCESSING FEE, when the madrasah has chosen to pass Stripe's cut on (0.51.0).
    *
-   * Printed only on an install that actually charges it, and only where there is a card route to charge it
-   * on (`routes.fee` in onboardingSheet.ts) — the same honesty rule as every other line here: an office may
-   * re-word this, and cannot make it appear on an install that absorbs the fee itself.
+   * A CAVEAT APPENDED TO THE THREE ONLINE ROUTES, not a bullet of its own. It was its own item at first —
+   * a whole paragraph with a worked example and a "cash avoids it" line — which gave one incidental fact
+   * the same weight on the page as "here is how you pay", and made a five-item list read as though the
+   * fee were a payment method. As a short italic tail on the portal, website and kiosk lines it lands
+   * where a parent is actually reading about that route, and the office line simply never carries it,
+   * which says "not this one" without a sentence spent on it.
    *
-   * It sits AFTER the three card routes and immediately BEFORE the office line, because that ordering is
-   * the sentence: these are the ways to pay online, they carry the fee, and the one underneath does not.
-   * A family reading the sheet to decide how to pay is the audience for that comparison, and this is the
-   * only artifact they keep — the portal discloses the fee at the moment of paying, which is after the
-   * decision has been made.
+   * Appended (rather than folded into each of the three) for exactly the reason `payOfficeReceipt` is: an
+   * office rewriting the caveat should not have to rewrite it in three places and keep them in step, and
+   * the three lines still have to make sense on an install that absorbs the fee. `routes.fee` in
+   * onboardingSheet.ts decides whether it appears at all — an office may re-word it and cannot make it
+   * appear on an install that does not charge it.
    *
-   * `[fee]` is COMPUTED (payments/fees.ts), like every other figure on the sheet. That is what lets the
-   * prose be the madrasah's while the numbers stay ours: a settings box that could restate the rate would
-   * be a way to print a fee the app does not charge.
+   * `[fee]` is available and unused by default: an office that wants the actual figure on the sheet can
+   * add the tag, and it is COMPUTED (payments/fees.ts) like every other number here, so the prose stays
+   * the madrasah's while the arithmetic stays ours. A settings box that could restate the rate in words
+   * would be a way to print a fee the app does not charge.
    */
-  payFee:
-    '*Paying by card or bank adds a processing fee.* [fee] The fee is not the madrasah’s — it is what the card networks and the payment processor charge to accept a payment, and it goes straight to them. *Cash or a check handed to the office avoids it entirely.*',
+  payFee: 'A payment processing fee may apply.',
   // No "ask for confirmation before you leave" any more. It asked a parent to police the office, and on an
   // install that emails receipts it asked for something the app already does — see `payOfficeReceipt`,
   // which is appended only when a receipt will genuinely be sent.

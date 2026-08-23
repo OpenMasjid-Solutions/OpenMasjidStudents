@@ -591,7 +591,7 @@ Recorded here so the design starts from it rather than discovering it. Verify ag
   nobody, and the ledger's whole design is that a payment is immutable once written (§9). The sender is
   also re-authorized every turn, so a permission removed mid-conversation takes effect at once.
 
-## 6. The two things an office presses
+## 6. The three things an office presses
 
 **Send a test** — goes to the test student's household, which is the one household that gets through
 the pause, and sends on **both channels**: an email, and a WhatsApp when the gateway is ready. It
@@ -616,6 +616,28 @@ that gets a number restricted.
 
 It respects the pause, and says so with the way out — set a test student and try it on one household
 first.
+
+**Send the onboarding message** (0.51.0, `people/onboarding.ts`) — the explain-what-this-is note, from
+the Students tab to everyone / a course / a class / picked students, or from one household's record.
+Both channels, one message per household, **every adult with a number** on it.
+
+That last part is the one place it deliberately differs from the outreach above, which picks a single
+adult. The outreach asks a question and wants one answer. This is a notice, and on WhatsApp part of the
+notice is **which number the madrasah writes from** — a mother whose handset never got that message
+still has an unknown number texting her about her children's fees, which is what a cautious person
+blocks. That sentence is its own editable box and is appended on WhatsApp only; in an email it would be
+describing a channel the reader is not on.
+
+**What it must not say, and why the design is the enforcement.** It carries no Student ID, no balance
+and no card — not by convention but because the tag list has no tag for any of them (§9's rule), so an
+office cannot put one in even by accident. What it does instead is point at the **family sheet**, which
+carries all of it and is handed over in person. A message that helpfully included the ID would be
+putting the whole payment credential (§14) on the channel this document opens by calling the weakest.
+
+**Bounded at 50 households per press, with the remainder reported** — the same trade and the same
+number as the outreach, for the same reason. No per-event switch, because it is a button and not an
+event (like the test send). It respects **both** pauses independently, and the screen names whichever
+one is on: they are separate switches and either alone means a family hears nothing.
 
 ## 7. Numbers
 

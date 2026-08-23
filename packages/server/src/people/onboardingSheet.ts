@@ -512,15 +512,21 @@ export async function buildFamilySheetHtml(
   // decided here, by what the install actually has. An office may re-word the kiosk item; it cannot make
   // one appear on an install with external payments switched off.
   const payItems: string[] = [];
-  if (routes.card) payItems.push(`<li>${copy('payCard')}</li>`);
+  /**
+   * The fee caveat, as an italic tail on each route that can actually charge one (people/sheetText.ts
+   * `payFee`). The three online routes get it; the office line deliberately does not, which is how the
+   * sheet says "not this one" without spending a sentence on it.
+   *
+   * The `<em>` is ours rather than the office's markup: the italic is presentation — "this is an aside on
+   * the line above" — not part of the wording, and the sheet's own syntax has only `*bold*` on purpose
+   * (people/sheetText.ts). The copy itself is escaped by `sheetHtml` exactly as everywhere else.
+   */
+  const feeNote = routes.fee ? ` <em>${copy('payFee')}</em>` : '';
+  if (routes.card) payItems.push(`<li>${copy('payCard')}${feeNote}</li>`);
   if (routes.external) {
-    payItems.push(`<li>${copy('payWebsite')}</li>`);
-    payItems.push(`<li>${copy('payKiosk')}</li>`);
+    payItems.push(`<li>${copy('payWebsite')}${feeNote}</li>`);
+    payItems.push(`<li>${copy('payKiosk')}${feeNote}</li>`);
   }
-  // The fee, between the routes that carry it and the office line that does not — the order IS the point
-  // (people/sheetText.ts `payFee`). The portal discloses this when a parent is already paying; the sheet is
-  // where they are still choosing how, which is the only moment the comparison is worth anything.
-  if (routes.fee) payItems.push(`<li>${copy('payFee')}</li>`);
   // The receipt promise is a second sentence rather than part of the first, so it can be left off when
   // nothing will actually be emailed (routes.receipts) without the office having to maintain two versions
   // of the paragraph.

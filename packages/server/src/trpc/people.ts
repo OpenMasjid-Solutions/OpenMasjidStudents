@@ -37,11 +37,25 @@ import { generateUniqueStudentCode } from '../billing/studentCodes';
 import { displayName } from '../people/names';
 import { familyLabel, mergeDuplicateGuardians, mergeDuplicateContacts } from '../people/household';
 import { suggestSiblingGroups } from '../people/siblingSuggest';
+import { AUDIENCE, householdsFor, resolveAudience } from '../structure/audience';
+import { familyRecipients } from '../whatsapp';
+import { mailAvailable, sendOnboarding } from '../mail/notify';
+import { getParentMailPaused, getWhatsApp } from '../settings';
 import type { Tx } from '../billing/ledger';
 import { audit } from '../audit';
 import { IMPORT_FIELDS, IMPORT_EXAMPLE_ROWS, validateRows, commitRows, type ImportRow } from '../people/import';
 import { defaultSchoolId, resolveSchoolScope, schoolIdForClass } from '../schools';
 import { billStudentFrom } from '../billing/joinMidYear';
+
+/**
+ * How many households one press of the onboarding button writes to.
+ *
+ * Fifty, the same as the missing-email outreach, and for the same reason: the sending allowance belongs
+ * to the masjid's phone NUMBER and is shared with every other app on the server, so a burst of two
+ * hundred is how that number gets restricted — permanently. A madrasah onboarding its whole roster
+ * presses this a few times over a few hours, which is also closer to how a person would send them.
+ */
+const ONBOARDING_BATCH = 50;
 
 // ── input helpers ────────────────────────────────────────────────────────────
 const REQ_NAME = z.string().trim().min(1).max(120);
@@ -1007,5 +1021,88 @@ export const peopleRouter = router({
     db.delete(emergencyContacts).where(eq(emergencyContacts.id, ec.id)).run();
     audit(auditActor(ctx), 'emergencyContact.remove', { entity: 'family', entityId: ec.familyId });
     return { ok: true as const };
+  }),
+
+  // ── The onboarding message (0.51.0) ───────────────────────────────────────
+  /**
+   * WHAT ONE PRESS WOULD DO, before it does it.
+   *
+   * A mass message to parents is not undoable — this is the one screen in the app where "are you sure?"
+   * has to be answered with numbers rather than a warning triangle. So the dialog asks first and gets:
+   * how many students the target names, how many HOUSEHOLDS that really is (the number that matters, since
+   * one message goes per household), how many can be reached on each channel, and how many the button
+   * would get to on this press.
+   *
+   * The students → households collapse is where "picking a child picks their siblings" is enforced rather
+   * than merely displayed (structure/audience.ts `householdsFor`).
+   */
+  onboardingPreview: adminProcedure.input(z.object({ target: AUDIENCE })).query(({ input }) => {
+    const studentIds = resolveAudience(input.target);
+    const familyIds = householdsFor(studentIds);
+    let withPhone = 0;
+    let withEmail = 0;
+    let optedOut = 0;
+    for (const fid of familyIds) {
+      const rs = familyRecipients(fid);
+      if (rs.some((r) => r.to && !r.optedOut)) withPhone++;
+      if (rs.some((r) => r.hasEmail)) withEmail++;
+      if (rs.length > 0 && rs.every((r) => r.optedOut || !r.to)) optedOut++;
+    }
+    return {
+      students: studentIds.length,
+      households: familyIds.length,
+      /** Households where at least one adult could be messaged / emailed. The rest need the office. */
+      withPhone,
+      withEmail,
+      /** Nobody on the household is reachable by WhatsApp — opted out, or no readable number. */
+      unreachableByPhone: optedOut,
+      batchSize: ONBOARDING_BATCH,
+      /** Both pauses, named separately: they are independent switches and either one alone is a reason
+       *  a family hears nothing (§9). The screen says which. */
+      whatsappPaused: getWhatsApp().paused,
+      mailPaused: getParentMailPaused(),
+      mailReady: mailAvailable(),
+    };
+  }),
+
+  /**
+   * Send it — one message per household, on both channels (mail/notify.ts `sendOnboarding`).
+   *
+   * BOUNDED PER PRESS, and the leftover is reported rather than hidden. Exactly the outreach's trade
+   * (trpc/whatsapp.ts `OUTREACH_BATCH`): handing the queue two hundred messages in one go is the behavior
+   * that gets a masjid's number restricted, and refusing mid-run instead would truncate a roster
+   * silently — the invisible failure this release has spent its time removing. So the bound is visible at
+   * the button, and pressing again sends the next batch.
+   *
+   * Admin only. Finance sees the Students tab in read-only mode and prints sheets from it; writing to
+   * every family at once is an office-policy action, and §5's wall is that finance never gets settings or
+   * anything that speaks for the madrasah.
+   */
+  onboardingSend: adminProcedure.input(z.object({ target: AUDIENCE })).mutation(async ({ ctx, input }) => {
+    const all = householdsFor(resolveAudience(input.target));
+    const batch = all.slice(0, ONBOARDING_BATCH);
+
+    let emailed = 0;
+    let messaged = 0;
+    const skipped: Record<string, number> = {};
+    for (const familyId of batch) {
+      const out = await sendOnboarding(familyId);
+      emailed += out.emailed;
+      messaged += out.messaged;
+      for (const [k, v] of Object.entries(out.skipped)) skipped[k] = (skipped[k] ?? 0) + v;
+    }
+    // Households and counts, never a name or a number — the trail records the decision, not its contents.
+    audit(auditActor(ctx), 'people.onboardingSend', {
+      entity: 'family',
+      detail: { kind: input.target.kind, households: batch.length, emailed, messaged },
+    });
+    return {
+      households: batch.length,
+      emailed,
+      messaged,
+      skipped,
+      /** Households this press did not get to. Reported rather than hidden — see ONBOARDING_BATCH. */
+      remaining: Math.max(0, all.length - batch.length),
+    };
   }),
 });
