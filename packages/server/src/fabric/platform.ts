@@ -433,6 +433,26 @@ export interface WhatsAppGroup {
 export type WhatsAppGroupList = { ok: true; groups: WhatsAppGroup[] } | { ok: false; reason: string };
 
 /**
+ * A stretch of time in which messages this app was told were SENT may never have been delivered
+ * (platform 0.51.2). Epoch ms, and `count` is scoped to our own app id by the platform.
+ */
+export interface WhatsAppSuspectWindow {
+  from: number;
+  to: number;
+  count: number;
+}
+
+/**
+ * Same `ok` discriminator as the group list, for the same reason and it is not a stylistic echo.
+ *
+ * `{ "windows": [] }` is the NORMAL answer and means "nothing to worry about". A 403, a 429 or an
+ * unreachable platform would also give us an empty array if we let it — and reading that as "nothing to
+ * worry about" is the exact failure this endpoint exists to fix, wearing a different hat. Reassurance we
+ * did not actually receive is worse than no reassurance, so "I could not ask" stays a separate answer.
+ */
+export type WhatsAppSuspectList = { ok: true; windows: WhatsAppSuspectWindow[] } | { ok: false; reason: string };
+
+/**
  * The groups an admin has approved for THIS app.
  *
  * The list is authorization, not decoration: an id we did not get from here is refused with 403, and
@@ -467,6 +487,55 @@ export async function whatsappGroups(): Promise<WhatsAppGroupList> {
       .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object' && typeof (g as { id?: unknown }).id === 'string')
       .map((g) => ({ id: String(g.id), label: typeof g.label === 'string' && g.label ? g.label.slice(0, 120) : String(g.id) }));
     return { ok: true, groups };
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+}
+
+/**
+ * WHEN WAS THE PLATFORM WRONG ABOUT "SENT"? (platform 0.51.2)
+ *
+ * A masjid's WhatsApp session expired the way WhatsApp Desktop signs itself out, OpenMasjidOS did not
+ * notice, and for over a day every app kept getting `202 {queued}` and every message was recorded as
+ * `sent` while the gateway delivered none of them. The gap is now detected in about ten minutes, but
+ * there is a residual window between the link dying and the platform noticing — and the platform cannot
+ * resend those, because it deletes a message's contents the moment it hands them over (deliberately: a
+ * child's name and a family's fees should not sit on disk). This endpoint is how it tells us which of
+ * OUR messages fall in that window, so the app that still has the source data can decide what to do.
+ *
+ * On the READ budget (600/min), not the send budget, so polling costs us no messages.
+ *
+ * Reads no body on failure and logs only the status: a window is a pair of timestamps and a count, but
+ * there is no reason to put an unparsed body from any route into this app's log (§14).
+ */
+export async function whatsappSuspect(): Promise<WhatsAppSuspectList> {
+  if (!fabricConfigured()) return { ok: false, reason: 'no_platform' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/whatsapp/suspect`, {
+      headers: { 'X-OpenMasjid-App-Secret': config.omosAppSecret },
+      signal: ctrl.signal,
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      // 404/405 is simply an older platform, which is not a fault and must not read as an alarm.
+      if (res.status === 404 || res.status === 405) return { ok: false, reason: 'unsupported' };
+      log.warn('whatsapp suspect check rejected', { status: res.status });
+      return { ok: false, reason: `http_${res.status}` };
+    }
+    const j = (await res.json().catch(() => null)) as { windows?: unknown } | null;
+    // A 200 whose body is not the documented shape is a failure, not "no windows" — the same rule as the
+    // group list, and here the wrong reading is actively reassuring.
+    if (!j || !Array.isArray(j.windows)) return { ok: false, reason: 'bad_shape' };
+    const windows = j.windows
+      .filter((w): w is Record<string, unknown> => !!w && typeof w === 'object')
+      .map((w) => ({ from: Number(w.from), to: Number(w.to), count: Number(w.count) }))
+      // A window we cannot read as a real interval is dropped rather than guessed at: a NaN bound would
+      // silently select every row in the log, and this decides what an office is told about their families.
+      .filter((w) => Number.isFinite(w.from) && Number.isFinite(w.to) && w.to >= w.from && Number.isFinite(w.count));
+    return { ok: true, windows };
   } catch {
     return { ok: false, reason: 'unreachable' };
   }

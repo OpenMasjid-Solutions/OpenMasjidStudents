@@ -47,6 +47,7 @@ import {
 import { ALERT_EVENTS } from '../alerts';
 import { audit } from '../audit';
 import { sendTestToHousehold } from '../mail/notify';
+import { acknowledgeSuspect, checkSuspectWindows, suspectSummary } from '../whatsapp/suspect';
 import { getCurrency, getSchoolName } from '../settings';
 import { formatDate } from '../settings/dates';
 import { formatMoney } from '../db/money';
@@ -661,5 +662,31 @@ export const whatsappRouter = router({
       reason: r.reason,
       at: r.createdAt,
     }));
+  }),
+
+  // ── Messages that may not have arrived (platform 0.51.2) ──────────────────
+  /**
+   * What the platform has admitted it was wrong about, and who it cost.
+   *
+   * Read-only and derived — nothing here is a stored count. The office acts on it with the buttons they
+   * already have (the missing-email outreach, or the phone), which is why this app resends nothing of its
+   * own accord; the reasoning is in whatsapp/suspect.ts and it is not a shortcut.
+   */
+  suspect: adminProcedure.query(() => suspectSummary()),
+
+  /** Poll now rather than waiting for the hourly tick — the same check, on demand, for an admin who has
+   *  just re-linked a phone and wants to know what it cost them. */
+  suspectCheck: adminProcedure.mutation(async () => checkSuspectWindows()),
+
+  /**
+   * "I have read this." Clears the banner and the marks' reason.
+   *
+   * The rows stay `unknown` rather than going back to `sent`: we still do not know that they arrived, and
+   * rewriting the log to tidy a screen is precisely the dishonesty this whole feature exists to remove.
+   */
+  suspectAck: adminProcedure.mutation(({ ctx }) => {
+    const cleared = acknowledgeSuspect();
+    audit(auditActor(ctx), 'whatsapp.suspectAck', { entity: 'settings', detail: { cleared } });
+    return { cleared };
   }),
 });

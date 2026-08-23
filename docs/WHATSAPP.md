@@ -288,11 +288,57 @@ the platform's own convention, and the same one `media` uses. On an older platfo
 `queued` and the settings screen says why, because a missing outcome otherwise reads as a message that
 never went.
 
+## 2b. A `sent` THAT WAS NOT SENT (platform 0.51.2)
+
+A masjid's WhatsApp session expired on its own — the way WhatsApp Desktop signs itself out. OpenMasjidOS
+did not notice. Apps kept getting `202 {queued}`, the gateway kept accepting messages, and every one was
+recorded **`sent`**. In the gateway's own UI they showed as sent to the right chat and were never
+delivered. It ran for over a day.
+
+The platform now detects that within about ten minutes and **holds** messages instead of losing them. Two
+consequences for this app, and one of them is a correction to something we had wrong:
+
+**`GET /api/fabric/whatsapp/suspect`** hands back the windows it was wrong about — `{from, to, count}` in
+epoch ms, scoped to our app id, on the **read** budget (600/min) so polling costs no sends. We ask hourly
+and once at boot, and again whenever an admin presses Re-check. The platform cannot resend those messages
+itself: it deletes a message's contents the moment it hands them over, deliberately, so a child's name and
+a family's fees are not sitting on disk. We still have the source data, so the decision is ours.
+
+**Our answer is to re-label, not to resend** (`whatsapp/suspect.ts`). A covered row stops saying `Sent`
+and becomes `unknown` — "May not have arrived" in the queue log — and the settings screen says how many
+and about what. Three reasons, and the second is the substantive one:
+
+1. The platform asked callers not to auto-resend, and it is right: whatever we resend goes through the
+   same paced queue on a number that has just been re-linked, which is when it is watched hardest.
+2. **Every parent event here exists on email too**, sent from one place (`mail/notify.ts`). That is the
+   same argument that made a hard send cap affordable (§2a): a suspect WhatsApp is *a notice that arrived
+   on one channel instead of two*. For any household with an address on file, the notice ARRIVED.
+3. **We could not do it faithfully anyway** — `whatsapp_log` never stores a body (§4), so a "resend"
+   would be a freshly rendered *different* message under the same event name.
+
+So the screen names the households with **no email address** separately. For them WhatsApp was the only
+channel and the notice is genuinely lost; that set is usually tiny, and the office already has the
+outreach button and a telephone. It is computed as it stands NOW rather than as it stood then, which the
+screen says rather than hides.
+
+**`unknown` is not `failed`, and that was a real defect of ours.** A 404 from `status/<id>` has always
+meant an evicted record, an id that was never ours, or a platform without the route — never "not
+delivered". The poller wrote `failed`/`outcome_unknown` while its own doc comment said `unknown`, so the
+office's log printed **Failed** beside messages that had most likely arrived, and anybody trusting their
+own screen would chase a family who had already been told. Both producers of `unknown` are now distinct by
+`reason` (`outcome_unknown` for the 404, `link_down` for a suspect window).
+
+**A queued message can now sit for a long time, on purpose.** If the link is down, messages are held until
+an admin re-links the phone and releases them. Nothing here assumes a queued row resolves quickly: the
+outcome poller has no age-based give-up, and the log is pruned at 120 days, which is far beyond any hold.
+That was already true; it is written down now because it stopped being incidental.
+
 ## 3. Where the code lives
 
 | Question | File |
 | --- | --- |
 | the two HTTP calls | `fabric/platform.ts` (`whatsappStatus`, `sendPlatformWhatsApp`) |
+| **what to do about a message reported sent that may not have arrived** | `whatsapp/suspect.ts` — the one place (§2b) |
 | **whether a message goes out at all, and to whom** | `whatsapp/index.ts` — the one place |
 | a stored number → E.164 | `whatsapp/numbers.ts` — the one place |
 | what a message says, and what an office may change | `whatsapp/templates.ts` |

@@ -60,6 +60,21 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **A WhatsApp that says "Sent" now admits when it might not have arrived.** A masjid's WhatsApp can sign
+  itself out on its own, the way WhatsApp Desktop does. When that happened, OpenMasjidOS kept accepting
+  messages and recording them as sent while none of them were delivered — for over a day. The platform
+  now spots it within about ten minutes and tells us which messages it was wrong about, so those rows say
+  **"May not have arrived"** instead of "Sent", and Settings → WhatsApp tells you how many and what they
+  were about. Nothing is resent automatically: sending a family a second copy of a bill they already read
+  risks the very number you need, and every one of these messages also went out by email. What the screen
+  does tell you is **which families have no email address**, because those are the only ones who were
+  genuinely left uninformed — and they are the ones worth a phone call.
+- **"Failed" no longer appears next to messages that probably arrived.** When OpenMasjidOS can no longer
+  say what became of a message — its record has aged out, or your server is older than that feature — the
+  log said *Failed*. It now says *May not have arrived*, because those are different things and the first
+  one had offices chasing families who had already been told.
+- A message can now sit at *Queued* for much longer than before, on purpose: if the WhatsApp link drops,
+  messages are held until somebody re-links the phone rather than being thrown away.
 - **You can now send families a message explaining what all of this is.** Every other message this app
   sends is about something that happened — a bill, a receipt, a reminder — and none of them says what a
   parent portal is, or why an unfamiliar number is suddenly texting about fees. This one does, and then

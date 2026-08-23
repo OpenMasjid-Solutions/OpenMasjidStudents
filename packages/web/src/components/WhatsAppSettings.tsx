@@ -54,6 +54,20 @@ export function WhatsAppSettings() {
     setMsg(null);
     await check.mutateAsync();
     await utils.whatsapp.get.invalidate();
+    // Ask about wrongly-"sent" messages on the same press. An admin re-checking the gateway has almost
+    // always just re-linked the phone, which is exactly when a window is waiting to be found.
+    await suspectCheck.mutateAsync().catch(() => undefined);
+    await utils.whatsapp.suspect.invalidate();
+  }
+
+  // ── Messages the platform admitted it was wrong about (platform 0.51.2) ────
+  const suspect = trpc.whatsapp.suspect.useQuery();
+  const suspectCheck = trpc.whatsapp.suspectCheck.useMutation();
+  const ack = trpc.whatsapp.suspectAck.useMutation();
+
+  async function ackSuspect() {
+    await ack.mutateAsync();
+    await Promise.all([utils.whatsapp.suspect.invalidate(), utils.whatsapp.log.invalidate()]);
   }
 
   // ── The country a number belongs to ────────────────────────────────────────
@@ -125,6 +139,46 @@ export function WhatsAppSettings() {
       </div>
       <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.75rem' }}>{t('settings.waHint')}</p>
       {msg && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{msg}</div>}
+
+      {/*
+        MESSAGES WE WERE TOLD WERE SENT AND MAY NOT HAVE BEEN — first, above everything, whenever there
+        are any. A masjid's WhatsApp link can expire on its own, and until platform 0.51.2 nothing
+        noticed: messages were accepted, recorded as sent, and delivered nowhere for over a day.
+
+        It names the households with NO EMAIL ADDRESS separately because they are the only ones who
+        actually lost the notice — everyone else got it by email, which is the same argument that made a
+        hard send cap affordable (docs/WHATSAPP.md §2a). No resend button, deliberately: the reasoning is
+        in whatsapp/suspect.ts, and the short version is that we do not keep message bodies, so anything
+        we "resent" would be a different message wearing the same name.
+      */}
+      {suspect.data && suspect.data.total > 0 && (
+        <div className="notice notice--warn" style={{ marginBlockEnd: '0.75rem' }}>
+          <p style={{ margin: 0 }}><strong>{t('settings.waSuspect', { count: suspect.data.total })}</strong></p>
+          <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('settings.waSuspectWhy')}</p>
+          {suspect.data.byEvent.length > 0 && (
+            <p className="hint" style={{ marginBlockStart: '0.3rem' }}>
+              {t('settings.waSuspectAbout', { list: suspect.data.byEvent.map((e) => `${e.event} (${e.count})`).join(', ') })}
+            </p>
+          )}
+          {suspect.data.householdsWithoutEmail.length > 0 ? (
+            <>
+              <p className="hint" style={{ marginBlockStart: '0.4rem' }}>
+                <strong>{t('settings.waSuspectNoEmail', { count: suspect.data.householdsWithoutEmail.length })}</strong>
+              </p>
+              <p className="hint" style={{ marginBlockStart: '0.2rem' }}>
+                {suspect.data.householdsWithoutEmail.map((h) => `${h.label} (${h.count})`).join(' · ')}
+              </p>
+            </>
+          ) : (
+            <p className="hint" style={{ marginBlockStart: '0.4rem' }}>{t('settings.waSuspectAllHadEmail')}</p>
+          )}
+          <div className="inline-form" style={{ paddingInline: 0, marginBlockStart: '0.4rem' }}>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => void ackSuspect()} disabled={ack.isPending}>
+              {t('settings.waSuspectAck')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 1. Can this server send? One sentence per reason — each needs a different thing done. */}
       <p style={{ margin: '0 0 0.75rem' }}>

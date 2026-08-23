@@ -656,6 +656,20 @@ Non-negotiable rules:
   real payment and got no message AND no log entry, with nothing anywhere saying which gate did it. A new
   notification type is added to BOTH channels and defaults OFF on both; the two that ship ON by email
   (`receipt`, `autopayFailure`) do so only because an upgraded install was already sending them.
+  **A `sent` IS NOT PROOF, AND `unknown` IS NOT `failed`** (0.51.0-dev.9, platform 0.51.2). A masjid's
+  WhatsApp session expired on its own, the platform did not notice, and for over a day every message was
+  accepted, recorded `sent`, and delivered nowhere. `GET /api/fabric/whatsapp/suspect` now hands back the
+  windows it was wrong about — on the READ budget, so polling costs no sends — and `whatsapp/suspect.ts`
+  is the one place that decides what that means here: **re-label, never resend.** A covered row becomes
+  `unknown` so the office's log stops asserting a delivery nobody can vouch for, and the screen names the
+  households with **no email address**, who are the only ones genuinely left uninformed — for everybody
+  else the email arrived, which is §2a's own argument ("a notice that arrived on one channel instead of
+  two") applied to a different fault. Resending is refused on three grounds and the second is the real
+  one: the paced queue is at its most fragile just after a re-link; every parent event exists on email
+  too; and **no message body is stored**, so a "resend" would be a freshly rendered *different* message
+  under the same event name. The 404 from `status/<id>` was being written as `failed` while the poller's
+  own comment said `unknown` — so the log printed **Failed** beside messages that had most likely
+  arrived, and an office trusting its own screen would chase a family who had already been told.
   `whatsapp_log` records event / recipient id / time / outcome and **never a message body**: a
   tuition message names a child and their fees, and a log is the copy that outlives the conversation.
   Nothing auth-critical (invite, reset, verification) is ever sent this way — a number can be banned
@@ -1384,6 +1398,7 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | which household a pause does NOT apply to (either channel) | `settings/testStudent.ts` |
   | a printed sheet | `billing/statements.ts`, `billing/invoiceDoc.ts`, `people/onboardingSheet.ts`, `people/idSheet.ts` |
   | what the onboarding message says, or the number it comes from | `people/onboarding.ts` |
+  | a message reported sent that may not have arrived | `whatsapp/suspect.ts` |
   | which students a bulk action names (everyone, a course, a class), and the households behind them | `structure/audience.ts` — shared by mass-apply and the onboarding send |
   | a date | `settings/dates.ts` |
   | the calendar or the roster tree | `structure/*`, `schools/index.ts` |

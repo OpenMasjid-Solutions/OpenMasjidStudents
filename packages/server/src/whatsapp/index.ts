@@ -329,8 +329,16 @@ export async function refreshWhatsappOutcomes(limit = 100): Promise<{ checked: n
     const got = await whatsappMessageStatus(row.platformId);
     if (!got.ok) {
       if (!got.unknown) continue; // transient — ask again next pass
-      // The platform can no longer say. Record that rather than asking for ever.
-      db.update(whatsappLog).set({ status: 'failed', reason: 'outcome_unknown' }).where(eq(whatsappLog.id, row.id)).run();
+      /**
+       * The platform can no longer say. Recorded as `unknown`, NOT `failed`.
+       *
+       * A 404 means an evicted record, an id that was never ours, or a platform without the route — it
+       * has never meant "not delivered", and the platform's own 0.51.2 note asks callers not to read it
+       * that way. This wrote `failed`/`outcome_unknown` while the comment above it said `unknown`, so the
+       * office's queue log said "Failed" beside messages that had most likely arrived. Believing our own
+       * screen, somebody would then chase a family who had already been told.
+       */
+      db.update(whatsappLog).set({ status: 'unknown', reason: 'outcome_unknown' }).where(eq(whatsappLog.id, row.id)).run();
       settled++;
       continue;
     }

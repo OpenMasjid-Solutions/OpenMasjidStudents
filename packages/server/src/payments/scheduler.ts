@@ -16,6 +16,7 @@ import { writeSnapshot } from '../db/snapshot';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { runPastDue } from '../billing/pastDue';
 import { pruneWhatsappLog, refreshWhatsAppStatus, refreshWhatsappOutcomes } from '../whatsapp';
+import { checkSuspectWindows } from '../whatsapp/suspect';
 
 const log = makeLog('scheduler');
 let started = false;
@@ -138,6 +139,31 @@ export function startSchedulers(): void {
       log.warn('whatsapp outcome refresh failed', { error: (e as Error).message });
     }
   });
+  /**
+   * HOURLY — "was the platform wrong about anything it told us it sent?" (platform 0.51.2).
+   *
+   * A masjid's WhatsApp link can expire on its own; until 0.51.2 nobody noticed, and messages were
+   * reported `sent` and delivered nowhere for over a day. The platform now spots it in about ten
+   * minutes and hands back the windows it was wrong about — so this asks, and re-labels our own rows
+   * so the office's queue log stops asserting a delivery it cannot vouch for (whatsapp/suspect.ts).
+   *
+   * HOURLY IS THE RIGHT CADENCE, and deliberately not tighter. The read is cheap and on the platform's
+   * 600/min READ budget rather than our send budget, so frequency costs us no messages — but there is
+   * nothing to act on faster: the platform needs its own ~10 minutes to notice, the answer is almost
+   * always an empty array, and what it feeds is a banner a person reads, not an automatic resend.
+   * Polling right after a batch send would be worse than useless, since the window would not exist yet.
+   */
+  new Cron('7 * * * *', async () => {
+    try {
+      await checkSuspectWindows();
+    } catch (e) {
+      log.warn('whatsapp suspect check failed', { error: (e as Error).message });
+    }
+  });
+  // …and once at boot, which is the case that matters: a container restarted after an outage is exactly
+  // when there is a window waiting, and the first cron tick could be an hour away.
+  void checkSuspectWindows().catch(() => {});
+
   // Weekly — trim the WhatsApp queue log. It is an operational trail, not a record anybody bills from
   // (and it holds no message bodies), so an install running for years should not carry every line.
   new Cron('0 3 * * 0', () => {

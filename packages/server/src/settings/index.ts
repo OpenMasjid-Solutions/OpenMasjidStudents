@@ -73,6 +73,9 @@ export const SETTING_KEYS = {
   // wording rather than inside the WhatsApp config on purpose: this message goes out on BOTH channels,
   // and copy owned by one channel's settings is copy the other channel's screen cannot edit.
   onboardingText: 'onboarding_text',
+  // JSON — WhatsApp windows the platform told us it had wrongly reported as sent (0.51.0-dev.9). Kept so
+  // a second poll of the same incident is not re-reported as a new one; see whatsapp/suspect.ts.
+  whatsappSuspect: 'whatsapp_suspect',
   // The color the printed artifacts are ruled in (0.47.0). One hex value; see `getAccentColor`.
   accentColor: 'accent_color',
   // JSON — WhatsApp (0.50.0): the master switch, the parent pause, the per-event toggles, the country
@@ -720,6 +723,46 @@ export function setOnboardingText(patch: Record<string, string | null | undefine
     else delete next[k];
   }
   setSetting(SETTING_KEYS.onboardingText, Object.keys(next).length ? JSON.stringify(next) : '');
+}
+
+/**
+ * The WhatsApp windows the platform reported as wrongly-"sent" (0.51.0-dev.9).
+ *
+ * Validated on read like every other JSON setting here, and for the sharper version of the usual reason:
+ * these numbers become a `WHERE created_at BETWEEN ?` over the message log, so a bound that is not a
+ * finite number would select rows nobody meant to touch. A row that cannot be read as a real interval is
+ * dropped rather than repaired.
+ */
+export interface SuspectWindowStored {
+  from: number;
+  to: number;
+  count: number;
+  seenAt: number;
+  marked: number;
+}
+
+export function getSuspectState(): SuspectWindowStored[] {
+  const raw = getSetting(SETTING_KEYS.whatsappSuspect);
+  if (!raw) return [];
+  try {
+    const p = JSON.parse(raw) as unknown;
+    if (!Array.isArray(p)) return [];
+    const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    return p.flatMap((row) => {
+      if (!row || typeof row !== 'object') return [];
+      const r = row as Record<string, unknown>;
+      const from = num(r.from);
+      const to = num(r.to);
+      if (from === null || to === null || to < from) return [];
+      return [{ from, to, count: num(r.count) ?? 0, seenAt: num(r.seenAt) ?? 0, marked: num(r.marked) ?? 0 }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function setSuspectState(windows: SuspectWindowStored[]): void {
+  setSetting(SETTING_KEYS.whatsappSuspect, windows.length ? JSON.stringify(windows) : '');
 }
 
 /** The teal every printed artifact has been ruled in since the first statement. */

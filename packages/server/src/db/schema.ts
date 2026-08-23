@@ -586,8 +586,22 @@ export const whatsappLog = sqliteTable(
      * more than 24 hours, which an office needs to SEE rather than infer from silence.
      *
      * On an older platform every row stays `queued` for good, which is honest: we still do not know.
+     *
+     * `unknown` IS NOT `failed`, and separating the two is the point of it (0.51.0-dev.9). Two things
+     * produce it, and neither is a delivery failure:
+     *
+     *   • a 404 from `status/<id>` — an evicted record, an id that was never ours, or a platform too old
+     *     to have the route. This was written as `failed`/`outcome_unknown`, which put the word "Failed"
+     *     on the office's screen next to messages that had very likely arrived. The doc comment on the
+     *     poller already said `unknown`; the code said `failed`. The comment was right.
+     *   • a suspect window from `GET /api/fabric/whatsapp/suspect` — the masjid's WhatsApp link had
+     *     silently expired, so the platform reported `sent` for messages the gateway never delivered.
+     *     Those rows genuinely were reported sent, and are genuinely not known to have arrived.
+     *
+     * Plain text with no CHECK constraint, like `PaymentChannel`, so widening it needs no migration and
+     * rows written before this are untouched.
      */
-    status: text('status').$type<'queued' | 'sent' | 'failed' | 'expired' | 'skipped'>().notNull(),
+    status: text('status').$type<'queued' | 'sent' | 'failed' | 'expired' | 'skipped' | 'unknown'>().notNull(),
     /** Why, for the statuses that need one: `opted_out`, `no_number`, `paused`, `http_429`… */
     reason: text('reason'),
     /** The platform's own message id — the handle for asking what happened (0.51.0). Null on a

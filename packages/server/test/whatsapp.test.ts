@@ -1447,12 +1447,30 @@ describe('message outcomes', () => {
     expect(rowById(id)?.status).toBe('queued');
   });
 
-  it('settles a 404 instead of asking the same question every five minutes for ever', async () => {
+  /**
+   * A 404 SETTLES THE ROW, AND SETTLES IT AS `unknown` — NOT `failed`.
+   *
+   * This asserted `failed` until 0.51.0-dev.9, which is the bug rather than the specification: 404 means
+   * an evicted record, an id that was never ours, or a platform without the route, and it has never meant
+   * "not delivered". The poller's own doc comment said `unknown` while the code wrote `failed`, so the
+   * office's queue log printed "Failed" beside messages that had most likely arrived — and somebody
+   * reading their own screen would then chase a family who had already been told. The platform's 0.51.2
+   * note asks callers not to make exactly this reading.
+   *
+   * The settling is still the other half of the point: left `queued` it would be re-asked for ever.
+   */
+  it('settles a 404 as unknown — not as a delivery failure — and stops asking', async () => {
     const id = await queueOne();
     outcomeReply = { http: 404, body: {} };
     await whatsapp.refreshWhatsappOutcomes();
-    expect(rowById(id)?.status).toBe('failed');
+    expect(rowById(id)?.status).toBe('unknown');
+    expect(rowById(id)?.status).not.toBe('failed');
     expect(rowById(id)?.reason).toBe('outcome_unknown');
+
+    // Settled means settled: a second pass does not ask about it again.
+    calls = [];
+    const again = await whatsapp.refreshWhatsappOutcomes();
+    expect(again.checked).toBe(0);
   });
 
   it('asks nothing at all when the platform cannot report outcomes', async () => {
