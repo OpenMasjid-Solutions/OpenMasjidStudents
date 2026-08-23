@@ -14,6 +14,7 @@ import { Pencil, Printer, Send, Trash2 } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
 import { formatUsPhone, telHref } from '../../lib/phone';
+import { parseCents } from '../../lib/money';
 import { StudentPicker } from '../../components/StudentPicker';
 import { OnboardingSend } from '../../components/OnboardingSend';
 import { useWindows } from '../../components/Windows';
@@ -132,7 +133,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
 
   const [showStudent, setShowStudent] = useState(false);
   /** `billFromPeriod` empty means "bill nothing yet", which is what adding a student has always done. */
-  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', billFromPeriod: '' });
+  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', billFromPeriod: '', firstMonth: '' });
   /** The months a mid-year catch-up may start from, and what the last one actually billed (0.48.0). */
   const billFrom = trpc.billing.billFromMonths.useQuery();
   const [billedMsg, setBilledMsg] = useState<string | null>(null);
@@ -144,7 +145,14 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   async function submitStudent(e: FormEvent) {
     e.preventDefault();
     if (!stu.fullName.trim() || !stu.feePlanId) return;
-    const r = await addStudent.mutateAsync({ familyId, fullName: stu.fullName.trim(), dob: stu.dob || undefined, feePlanId: stu.feePlanId, billFromPeriod: stu.billFromPeriod || undefined });
+    const r = await addStudent.mutateAsync({
+      familyId,
+      fullName: stu.fullName.trim(),
+      dob: stu.dob || undefined,
+      feePlanId: stu.feePlanId,
+      billFromPeriod: stu.billFromPeriod || undefined,
+      ...(stu.firstMonth.trim() && stu.billFromPeriod ? { firstMonthCents: parseCents(stu.firstMonth) ?? undefined } : {}),
+    });
     // A catch-up is never silent — five new invoices on a household is news (0.48.0).
     setBilledMsg(
       !r.billed
@@ -153,7 +161,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
           ? t('students.billedFrom', { count: r.billed.created, from: r.billed.periods[0] })
           : t(`students.billedNone_${r.billed.reason ?? 'nothing_to_bill'}`),
     );
-    setStu({ fullName: '', dob: '', feePlanId: '', billFromPeriod: stu.billFromPeriod });
+    setStu({ fullName: '', dob: '', feePlanId: '', billFromPeriod: stu.billFromPeriod, firstMonth: '' });
     setShowStudent(false);
     await refresh();
   }
@@ -441,6 +449,28 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                       : t('students.billFromHint')}
               </p>
             </div>
+            {/* What their FIRST month comes to, when it is not the plan's own amount — a child starting on
+                the 15th is often charged part of it. Offered here as well as on the Students tab for the
+                reason the month field above is: `billFrom` is shared by both add paths, so a child added
+                into an existing household must be treated no differently from one starting a new one. It
+                was missing here in dev.11, which made the feature look like it did not exist depending on
+                which of the two forms an office happened to open. */}
+            {!!stu.billFromPeriod && stu.billFromPeriod <= (billFrom.data?.current ?? '') && (
+              <div className="field" style={{ flex: '0 1 10rem' }}>
+                <label className="label" htmlFor="fd-firstmonth">{t('students.firstMonth')}</label>
+                <input
+                  id="fd-firstmonth"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="input glass-inset"
+                  value={stu.firstMonth}
+                  onChange={(e) => setStu({ ...stu, firstMonth: e.target.value })}
+                  placeholder={t('students.firstMonthPlaceholder')}
+                />
+                <p className="hint">{t('students.firstMonthHint')}</p>
+              </div>
+            )}
             <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>
           </form>
         )}

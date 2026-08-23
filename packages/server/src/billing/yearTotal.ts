@@ -35,17 +35,24 @@
  * charged — quoting the plan's list price to a family on a sibling rate would be quoting a figure the
  * office had already agreed not to charge them (§9).
  *
- * ── FROM A MONTH, FOR A CHILD JOINING MID-YEAR ───────────────────────────────
- * A child starting in February does not owe September to January, so `fromPeriod` narrows the monthly
- * count to the months from then on. The per-term and one-time lines are NOT prorated: a term fee is for a
- * term the child will attend, and there is no honest way to guess which terms remain from a month alone.
- * The result reports both totals, so an office can say "the full year is $1,000, and from February it is
- * $400" without doing either sum themselves.
+ * ── IT RUNS FROM WHERE THIS CHILD IS ACTUALLY BILLED ─────────────────────────
+ * The HEADLINE is `fromTotalCents`: from where this student’s billing begins to the end of the year. The
+ * whole-year figure is kept alongside as context, but it is the wrong number to lead with, and quietly so
+ * — a child who joined in February is not going to be billed September to January, so the full year
+ * overstates what they will pay by half, and it is the office who has to correct it in front of a parent.
+ *
+ * The start month is DERIVED when the caller does not name one (`billingStartFor`), and their earliest
+ * invoice is what tells us: `billStudentFrom` created those from the month the office chose, so a mid-year
+ * joiner comes out right with nobody re-entering anything.
+ *
+ * The per-term and one-time lines are NOT prorated by that month: a term fee is for a term the child will
+ * attend, and a month says nothing about which terms remain.
  */
 import { and, eq, ne } from 'drizzle-orm';
 import { db } from '../db';
 import { feePlans, invoiceItems, invoices, schoolYears, studentFees, students, terms, type FeeCadence } from '../db/schema';
 import { schoolYearMonths } from './schoolYear';
+import { isMonthPeriod } from './period';
 
 export interface YearLine {
   planId: string;
@@ -65,12 +72,61 @@ export interface YearTotal {
   /** Null when this install has no current school year — the projection is then impossible, not zero. */
   year: { label: string; startYear: number; months: number; terms: number } | null;
   lines: YearLine[];
+  /** Every month of the school year, whether or not this child is billed for all of them. Context. */
   totalCents: number;
-  /** The total from `fromPeriod` onward. Equal to `totalCents` when no month was given. */
+  /** THE HEADLINE FIGURE: from where this student's billing actually starts to the end of the year. */
   fromTotalCents: number;
+  /** The month that total runs from — given by the caller, or derived (see `billingStartFor`). */
   fromPeriod: string | null;
-  /** Months of this year still to come from `fromPeriod` (or all of them). */
+  /**
+   * How `fromPeriod` was arrived at, so the screen can say so rather than presenting a number with no
+   * provenance. `given` = the caller named it; `invoices` = this child's earliest bill this year;
+   * `current` = nothing billed yet, so from now; `yearStart` = the year has not begun.
+   */
+  fromSource: 'given' | 'invoices' | 'current' | 'yearStart';
+  /** Months counted in `fromTotalCents`. */
   monthsCounted: number;
+}
+
+/**
+ * WHERE THIS STUDENT'S YEAR ACTUALLY STARTS, when the caller has not said (0.51.0-dev.13).
+ *
+ * The whole-year figure is the wrong headline for most of the children an office asks about. A child who
+ * joined in February is not going to be billed September to January, so quoting the full year overstates
+ * what they will pay by half — and it is the office who would then have to correct it in front of a
+ * parent. So the default runs from where their billing really begins to the end of the year.
+ *
+ * In order of what actually tells us:
+ *
+ *  1. **Their earliest invoice inside this year.** The strongest signal there is, and the one that makes a
+ *     mid-year joiner correct without anybody re-entering their start month: `billStudentFrom` created
+ *     those invoices from the month the office named, so the earliest one IS that month. Non-month periods
+ *     are skipped — a `carry-in` or a stand-alone charge is not a tuition month (billing/period.ts).
+ *  2. **An invoice EARLIER than this year** → the year's own start. A returning student is billed all of
+ *     it, so the two figures coincide, which is correct rather than a special case.
+ *  3. **Nothing billed yet** → this month, if it falls inside the year. A child being added today will be
+ *     picked up by the next run, so "from now to the end of the year" is what a parent is agreeing to.
+ *  4. **The year has not started** → its first month. Nothing has happened yet and the whole year is ahead.
+ */
+function billingStartFor(studentId: string, months: string[], now: Date): { from: string; source: 'invoices' | 'current' | 'yearStart' } {
+  const mine = db
+    .select({ periodKey: invoices.periodKey })
+    .from(invoices)
+    .where(and(eq(invoices.studentId, studentId), ne(invoices.status, 'void')))
+    .all()
+    .map((r) => r.periodKey)
+    .filter(isMonthPeriod)
+    .sort();
+
+  const first = months[0];
+  if (mine.length) {
+    const earliest = mine[0];
+    // Earlier than this year → they are billed all of it (case 2).
+    return { from: earliest < first ? first : earliest, source: 'invoices' };
+  }
+  const thisMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  if (thisMonth >= first && thisMonth <= months[months.length - 1]) return { from: thisMonth, source: 'current' };
+  return { from: first, source: 'yearStart' };
 }
 
 /** Has this one-time plan already been billed to this student on a live invoice? Same rule as the
@@ -91,7 +147,7 @@ function alreadyBilledOnce(studentId: string, feePlanId: string): boolean {
  * the question on a half-set-up install should be told the year is missing, which is actionable, instead
  * of being shown a zero that looks like an answer.
  */
-export function yearTotalFor(studentId: string, fromPeriod?: string | null): YearTotal {
+export function yearTotalFor(studentId: string, fromPeriod?: string | null, now = new Date()): YearTotal {
   const student = db.select({ schoolId: students.schoolId }).from(students).where(eq(students.id, studentId)).get();
   const year = db
     .select()
@@ -99,11 +155,14 @@ export function yearTotalFor(studentId: string, fromPeriod?: string | null): Yea
     .where(student?.schoolId ? and(eq(schoolYears.isCurrent, true), eq(schoolYears.schoolId, student.schoolId)) : eq(schoolYears.isCurrent, true))
     .get();
 
-  const empty: YearTotal = { year: null, lines: [], totalCents: 0, fromTotalCents: 0, fromPeriod: fromPeriod ?? null, monthsCounted: 0 };
+  const empty: YearTotal = { year: null, lines: [], totalCents: 0, fromTotalCents: 0, fromPeriod: fromPeriod ?? null, fromSource: fromPeriod ? 'given' : 'yearStart', monthsCounted: 0 };
   if (!year || year.startYear == null) return empty;
 
   const months = schoolYearMonths(year.startYear, year.startMonth, year.endMonth).map((m) => m.periodKey);
-  const monthsFrom = fromPeriod ? months.filter((k) => k >= fromPeriod) : months;
+  // Where this child's year really starts. Named by the caller, or derived — see `billingStartFor` for
+  // why the whole year is the wrong default headline for a mid-year joiner.
+  const start = fromPeriod ? { from: fromPeriod, source: 'given' as const } : billingStartFor(studentId, months, now);
+  const monthsFrom = months.filter((k) => k >= start.from);
   const termCount = db.select({ id: terms.id }).from(terms).where(eq(terms.schoolYearId, year.id)).all().length;
 
   const rows = db
@@ -156,7 +215,8 @@ export function yearTotalFor(studentId: string, fromPeriod?: string | null): Yea
     lines,
     totalCents: lines.reduce((n, l) => n + l.totalCents, 0),
     fromTotalCents: lines.reduce((n, l) => n + l.fromTotalCents, 0),
-    fromPeriod: fromPeriod ?? null,
+    fromPeriod: start.from,
+    fromSource: start.source,
     monthsCounted: monthsFrom.length,
   };
 }

@@ -1055,13 +1055,17 @@
     "paidFor": "What for",
     "paidForReversal": "Refund",
     "yearTotal": "Full year",
-    "yearTotalFor": "{{year}} — {{months}} months of tuition.",
-    "yearTotalWhole": "Full year",
+    "yearTotalWhole": "Total",
     "yearTotalNoYear": "Set up a school year first — without one there is no way to know how many months you bill.",
-    "yearTotalHint": "A quote, not a bill. Nothing has been charged — this is the figure to tell a parent. Their balance still only counts invoices that exist.",
+    "yearTotalHint": "A quote, not a bill. Nothing has been charged — this is the figure to tell a parent. Their balance still only counts bills that exist.",
     "cadence_monthly": "each month",
     "cadence_per_term": "each term",
-    "cadence_one_time": "once"
+    "cadence_one_time": "once",
+    "yearTotalAll": "The whole year ({{months}} months)",
+    "yearFrom_invoices": "{{year}} — the {{months}} months this student is billed for, from their first bill to the end of the year.",
+    "yearFrom_current": "{{year}} — the {{months}} months from this month to the end of the year. They have not been billed yet.",
+    "yearFrom_yearStart": "{{year}} — all {{months}} months. The year has not started yet.",
+    "yearFrom_given": "{{year}} — {{months}} months from the month you chose."
   },
   "family": {
     "title": "Parent Portal",

@@ -222,3 +222,103 @@ describe('the first month of a mid-year joiner', () => {
     expect(after.invoices.find((i) => i.id === sep!.id)?.totalCents).toBe(6000);
   });
 });
+
+/**
+ * WHERE THE HEADLINE FIGURE STARTS (0.51.0-dev.13).
+ *
+ * The whole-year total is the wrong number to lead with for most children an office asks about: one who
+ * joined in February is not billed September to January, so the full year overstates what they will pay by
+ * half — and it is the office correcting it in front of a parent. So the default runs from where their
+ * billing actually begins to the end of the year, derived rather than re-entered.
+ *
+ * Called DIRECTLY with an injected date, for the reason the first-month tests are: the fixture year is
+ * September 2026 to June 2027, so a test's answer would otherwise depend on the real date it ran on.
+ */
+describe('where the year is counted from', () => {
+  let yt: typeof import('../src/billing/yearTotal');
+  beforeAll(async () => {
+    yt = await import('../src/billing/yearTotal');
+  });
+
+  const IN_OCTOBER = new Date('2026-10-15T00:00:00Z');
+  const BEFORE_THE_YEAR = new Date('2026-08-01T00:00:00Z');
+
+  /** THE CASE THIS EXISTS FOR: their earliest bill says when they started, so nobody re-enters it. */
+  it('starts at a mid-year joiner’s first bill, not at the year’s start', async () => {
+    const { admin, studentId } = await seed({ monthly: 10_000 });
+    // Billed from February onward — five months of a Sep–Jun year.
+    await admin.billing.generatePeriod({ periodKey: '2027-02', label: 'Feb 2027' });
+    await admin.billing.generatePeriod({ periodKey: '2027-03', label: 'Mar 2027' });
+
+    const r = yt.yearTotalFor(studentId, null, IN_OCTOBER);
+    expect(r.fromSource).toBe('invoices');
+    expect(r.fromPeriod).toBe('2027-02');
+    expect(r.monthsCounted).toBe(5);
+    expect(r.fromTotalCents).toBe(50_000);
+    // The whole year is still there as context, and is deliberately a different number.
+    expect(r.totalCents).toBe(100_000);
+  });
+
+  it('starts at this month for a child with nothing billed yet', async () => {
+    const { studentId } = await seed({ monthly: 10_000 });
+    const r = yt.yearTotalFor(studentId, null, IN_OCTOBER);
+    expect(r.fromSource).toBe('current');
+    expect(r.fromPeriod).toBe('2026-10');
+    // Oct–Jun inclusive.
+    expect(r.monthsCounted).toBe(9);
+    expect(r.fromTotalCents).toBe(90_000);
+  });
+
+  /** Before the year begins the whole year IS what is ahead, so the two figures coincide. */
+  it('is the whole year when the year has not started', async () => {
+    const { studentId } = await seed({ monthly: 10_000 });
+    const r = yt.yearTotalFor(studentId, null, BEFORE_THE_YEAR);
+    expect(r.fromSource).toBe('yearStart');
+    expect(r.fromTotalCents).toBe(r.totalCents);
+    expect(r.monthsCounted).toBe(10);
+  });
+
+  /** A returning student billed in a PREVIOUS year is billed all of this one — the earliest invoice must
+   *  not drag the start before the year and quote eighteen months. */
+  it('clamps to the year’s start for a returning student', async () => {
+    const { admin, studentId } = await seed({ monthly: 10_000 });
+    // A bill from last year, which is outside this year's months entirely.
+    await admin.billing.generatePeriod({ periodKey: '2026-05', label: 'May 2026' });
+    const r = yt.yearTotalFor(studentId, null, IN_OCTOBER);
+    expect(r.monthsCounted).toBe(10);
+    expect(r.fromTotalCents).toBe(100_000);
+  });
+
+  /**
+   * A `carry-in` or a stand-alone charge invoice is NOT a tuition month, and must not be read as one — it
+   * would drag the start to whatever that period key sorts as and quote a wrong figure with no clue why.
+   */
+  it('ignores invoices that are not months', async () => {
+    const { admin, studentId } = await seed({ monthly: 10_000 });
+    // A charge billed on its own — period key `charge-<id>`, which is not a month (billing/period.ts).
+    await admin.billing.chargeAdd({ studentId, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 } });
+    const r = yt.yearTotalFor(studentId, null, IN_OCTOBER);
+    // Still "nothing billed for a month yet", so from this month — not from the charge's own key.
+    expect(r.fromSource).toBe('current');
+    expect(r.fromPeriod).toBe('2026-10');
+  });
+
+  /** An explicitly named month always wins — the add form knows the start before any invoice exists. */
+  it('uses the month the caller names, and says so', async () => {
+    const { studentId } = await seed({ monthly: 10_000 });
+    const r = yt.yearTotalFor(studentId, '2027-04', IN_OCTOBER);
+    expect(r.fromSource).toBe('given');
+    expect(r.monthsCounted).toBe(3);
+    expect(r.fromTotalCents).toBe(30_000);
+  });
+
+  /** A voided bill is not a start. */
+  it('does not start at a voided invoice', async () => {
+    const { admin, studentId, familyId } = await seed({ monthly: 10_000 });
+    await admin.billing.generatePeriod({ periodKey: '2026-09', label: 'Sep 2026' });
+    const inv = (await admin.billing.familyBilling({ familyId })).invoices.find((i) => i.periodKey === '2026-09')!;
+    await admin.billing.voidInvoice({ id: inv.id });
+    const r = yt.yearTotalFor(studentId, null, IN_OCTOBER);
+    expect(r.fromSource).toBe('current');
+  });
+});

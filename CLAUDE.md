@@ -236,8 +236,12 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   actually teaches (never twelve, never the calendar), plus per-term × the terms configured (ZERO when
   none are, because the generator would never bill one), plus a one-time fee only if not already billed,
   all at the per-student override rather than the plan's list price. **It is a QUOTE and writes nothing**:
-  a projected year is not a balance, and a family who leaves in March owes March. Reported for the whole
-  year AND from a joining month, so an office can quote both without doing either sum.
+  a projected year is not a balance, and a family who leaves in March owes March. **The headline runs from
+  where THAT student's billing starts to the end of the year**, derived from their earliest month-invoice
+  (`billingStartFor`) — the whole-year figure overstates a February joiner by half, and it is the office
+  who would correct it in front of a parent. A non-month period (`carry-in`, a stand-alone charge) is not a
+  start, a bill from a previous year clamps to this year's first month, and the whole year is still
+  reported alongside for the cases where both are asked for.
 - **A student joining mid-year can have their FIRST month set** (0.51.0-dev.11, `adjustFirstMonth`).
   `billStudentFrom` already backfilled from a chosen month (0.48.0); the agreed figure for that first
   month is an ADJUSTMENT LINE rather than a rewritten tuition line — honest on paper (tuition at the full

@@ -318,21 +318,31 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                 ) : (
                   <>
                     <p className="hint" style={{ marginBlockStart: 0 }}>
-                      {t('billing.yearTotalFor', { year: year.data.year.label, months: year.data.year.months })}
+                      {t(`billing.yearFrom_${year.data.fromSource}`, { year: year.data.year.label, months: year.data.monthsCounted })}
                     </p>
                     <table className="data-table">
                       <tbody>
                         {year.data.lines.map((l) => (
                           <tr key={l.planId}>
                             <td>{l.label}</td>
-                            <td className="muted">{t(`billing.cadence_${l.cadence}`)} × {l.times}</td>
-                            <td className="tnum" style={{ textAlign: 'end' }}>{money(l.totalCents)}</td>
+                            <td className="muted">{t(`billing.cadence_${l.cadence}`)} × {l.timesFrom}</td>
+                            <td className="tnum" style={{ textAlign: 'end' }}>{money(l.fromTotalCents)}</td>
                           </tr>
                         ))}
                         <tr>
                           <td colSpan={2}><strong>{t('billing.yearTotalWhole')}</strong></td>
-                          <td className="tnum" style={{ textAlign: 'end' }}><strong>{money(year.data.totalCents)}</strong></td>
+                          <td className="tnum" style={{ textAlign: 'end' }}><strong>{money(year.data.fromTotalCents)}</strong></td>
                         </tr>
+                        {/* The WHOLE year, only when it differs — i.e. when this child started mid-year and
+                            the two figures are genuinely different numbers. Shown because an office is
+                            sometimes asked both; omitted otherwise, because a second identical row reads
+                            as a mistake rather than as context. */}
+                        {year.data.fromTotalCents !== year.data.totalCents && (
+                          <tr>
+                            <td colSpan={2} className="muted">{t('billing.yearTotalAll', { months: year.data.year.months })}</td>
+                            <td className="tnum muted" style={{ textAlign: 'end' }}>{money(year.data.totalCents)}</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                     <p className="hint">{t('billing.yearTotalHint')}</p>
