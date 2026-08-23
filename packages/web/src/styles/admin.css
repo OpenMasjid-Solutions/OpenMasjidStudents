@@ -372,6 +372,21 @@
   display: flex;
   flex-direction: column;
   gap: 0;
+}
+/*
+ * A width FLOOR, and only inside a wide window — which is the only window it fits in.
+ *
+ * It was on `.win-content` unconditionally at `min(38rem, 82vw)`, while a default `.win` is
+ * `min(34rem, 94vw)` (app.css). So any normal-width window was handed content four rem wider than
+ * itself: clipped text against the frame and a horizontal scrollbar under it. It went unnoticed for
+ * three releases because every window in the app was opened `wide` — the first narrow one exposed it
+ * immediately, which is the usual way a rule that only holds by luck gets found.
+ *
+ * Kept for wide windows so a table-heavy panel still has a sensible minimum, and left OFF for normal
+ * ones so their content is free to be whatever the frame is. The mobile block further down already
+ * zeroes it, which is the same judgment for the same reason.
+ */
+.win--wide .win-content {
   min-width: min(38rem, 82vw);
 }
 

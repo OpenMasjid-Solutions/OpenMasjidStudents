@@ -119,9 +119,14 @@ export function OnboardingSend({ studentIds, familyLabel }: Props) {
     try {
       const r = await send.mutateAsync({ target: target as never });
       setConfirming(false);
+      // Same composition as the preview above: the household count pluralizes the sentence, and each
+      // channel count pluralizes its own fragment.
       setResult(
-        t('onboarding.sent', { households: r.households, emailed: r.emailed, messaged: r.messaged }) +
-          (r.remaining ? ` ${t('onboarding.remaining', { count: r.remaining })}` : ''),
+        t('onboarding.sent', {
+          count: r.households,
+          emails: t('onboarding.nEmails', { count: r.emailed }),
+          messages: t('onboarding.nMessages', { count: r.messaged }),
+        }) + (r.remaining ? ` ${t('onboarding.remaining', { count: r.remaining })}` : ''),
       );
     } catch (e) {
       setErr((e as Error).message);
@@ -207,8 +212,13 @@ export function OnboardingSend({ studentIds, familyLabel }: Props) {
         {/* WHAT THIS PRESS WOULD DO. The numbers are the confirmation. */}
         {ready && p && (
           <div className="notice" style={{ marginBlockStart: '0.75rem' }}>
+            {/* Two counts, two plural keys, composed. i18next pluralizes on `count` and there is only one
+                of those per key, so "1 households (1 students)" is what a single interpolated string gets
+                you — and this panel is read by somebody about to write to real families. */}
             <p style={{ margin: 0 }}>
-              <strong>{t('onboarding.willSend', { households: p.households, students: p.students })}</strong>
+              <strong>
+                {t('onboarding.willSend', { count: p.households })} ({t('onboarding.nStudents', { count: p.students })})
+              </strong>
             </p>
             <p className="hint" style={{ marginBlockEnd: 0 }}>
               {t('onboarding.reach', { phone: p.withPhone, email: p.withEmail })}
