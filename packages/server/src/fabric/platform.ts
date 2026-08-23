@@ -440,6 +440,21 @@ export interface WhatsAppSuspectWindow {
   from: number;
   to: number;
   count: number;
+  /**
+   * WHICH of our messages, by platform id (0.51.1-dev.13). Far better than the timestamps: `from`/`to`
+   * are when the PLATFORM reported them sent, while our own `created_at` is when WE handed them over, and
+   * the queue sits between the two — so a time-range match was always approximate at both edges. An id
+   * match is exact.
+   *
+   * Capped at 500 per app per window, with `truncated` saying so rather than hiding it. Empty on a
+   * platform older than dev.13, which is why the timestamp path has to stay.
+   */
+  ids: string[];
+  /** True when the id list hit the cap — fall back to the time range, which is complete by construction. */
+  truncated: boolean;
+  /** `session-expired | needs-relink | key-rejected | unknown`. Treat anything unrecognized as `unknown`;
+   *  the platform says more may be added. */
+  cause: string;
 }
 
 /**
@@ -525,13 +540,26 @@ export async function whatsappSuspect(): Promise<WhatsAppSuspectList> {
       log.warn('whatsapp suspect check rejected', { status: res.status });
       return { ok: false, reason: `http_${res.status}` };
     }
-    const j = (await res.json().catch(() => null)) as { windows?: unknown } | null;
+    const j = (await res.json().catch(() => null)) as { ok?: unknown; windows?: unknown } | null;
     // A 200 whose body is not the documented shape is a failure, not "no windows" — the same rule as the
     // group list, and here the wrong reading is actively reassuring.
     if (!j || !Array.isArray(j.windows)) return { ok: false, reason: 'bad_shape' };
+    // `ok` arrived in platform 0.51.1-dev.13 (it was this app's request). An explicit `false` is a
+    // refusal dressed as a 200 and must not read as an all-clear; ABSENT is an older platform, where the
+    // 200 plus a well-formed body is all the confirmation available.
+    if (j.ok === false) return { ok: false, reason: 'not_ok' };
     const windows = j.windows
       .filter((w): w is Record<string, unknown> => !!w && typeof w === 'object')
-      .map((w) => ({ from: Number(w.from), to: Number(w.to), count: Number(w.count) }))
+      .map((w) => ({
+        from: Number(w.from),
+        to: Number(w.to),
+        count: Number(w.count),
+        // Bounded and string-filtered: these are matched against our own stored ids, and the platform's
+        // own cap is 500, so anything wildly longer is not a list we should be walking.
+        ids: Array.isArray(w.ids) ? w.ids.filter((id): id is string => typeof id === 'string').slice(0, 1000) : [],
+        truncated: w.truncated === true,
+        cause: typeof w.cause === 'string' && w.cause ? w.cause : 'unknown',
+      }))
       // A window we cannot read as a real interval is dropped rather than guessed at: a NaN bound would
       // silently select every row in the log, and this decides what an office is told about their families.
       .filter((w) => Number.isFinite(w.from) && Number.isFinite(w.to) && w.to >= w.from && Number.isFinite(w.count));

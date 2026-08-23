@@ -25,6 +25,7 @@
  *     they were told; for these, WhatsApp was the only channel and the notice is genuinely lost.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { freshApp, makeCtx } from './harness';
 import { families, feePlans, guardianFamilies, guardians, settings, auditLog, students, studentFees, users, whatsappLog } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
@@ -300,5 +301,79 @@ describe('the remembered windows', () => {
   it('survives a corrupt row without throwing', () => {
     settingsMod.setSetting(settingsMod.SETTING_KEYS.whatsappSuspect, 'not json');
     expect(settingsMod.getSuspectState()).toEqual([]);
+  });
+});
+
+// ── Platform 0.51.1-dev.13: exact ids, a cause, and an explicit ok ──────────
+describe('matching by platform id rather than by clock', () => {
+  /**
+   * WHY IDS BEAT THE TIME RANGE, and it is not a micro-optimization. / are when the PLATFORM
+   * reported those messages sent; our own  is when WE handed them over, with the paced queue
+   * in between. So a message queued just before the window and sent inside it was missed, and one queued
+   * inside it but sent afterwards was marked when it should not have been — wrong at both edges.
+   */
+  it('marks exactly the ids the platform names, ignoring the clock', async () => {
+    const inWindow = await household('Ismail', { at: new Date('2026-08-01T00:00:00Z') });
+    const other = await household('Farooqi', { at: new Date('2026-08-20T12:00:00Z') });
+    // Point the row's platform id at something the window will name.
+    app.dbmod.db.update(whatsappLog).set({ platformId: 'wam_named' }).where(eq(whatsappLog.id, inWindow.rowId)).run();
+
+    reply = { http: 200, body: { ok: true, windows: [{ ...covering(), ids: ['wam_named'], truncated: false, cause: 'session-expired' }] } };
+    await suspect.checkSuspectWindows();
+
+    // Marked despite its timestamp being WEEKS outside the window…
+    expect(rowById(inWindow.rowId)?.status).toBe('unknown');
+    // …and the one sitting inside the window is untouched, because the platform did not name it.
+    expect(rowById(other.rowId)?.status).toBe('sent');
+  });
+
+  /** A truncated list would leave the overflow silently unmarked — the same invisible under-reporting
+   *  this whole feature exists to remove. So a truncated window falls back to the complete time range. */
+  it('falls back to the time range when the id list was capped', async () => {
+    const h = await household('Ismail');
+    reply = { http: 200, body: { ok: true, windows: [{ ...covering(), ids: ['wam_someone_else'], truncated: true, cause: 'unknown' }] } };
+    await suspect.checkSuspectWindows();
+    expect(rowById(h.rowId)?.status).toBe('unknown');
+  });
+
+  /** An older platform sends no ids at all, and the range is all there is. */
+  it('still works on a platform that sends no ids', async () => {
+    const h = await household('Ismail');
+    reply = { http: 200, body: { windows: [covering()] } };
+    await suspect.checkSuspectWindows();
+    expect(rowById(h.rowId)?.status).toBe('unknown');
+  });
+
+  it('remembers what the platform said went wrong', async () => {
+    await household('Ismail');
+    reply = { http: 200, body: { ok: true, windows: [{ ...covering(), ids: [], truncated: false, cause: 'session-expired' }] } };
+    await suspect.checkSuspectWindows();
+    expect(suspect.suspectSummary().windows[0].cause).toBe('session-expired');
+  });
+
+  /** More causes may be added; an unrecognized one must not become a blank or a crash. */
+  it('reads an unknown cause as unknown', async () => {
+    await household('Ismail');
+    reply = { http: 200, body: { ok: true, windows: [{ ...covering(), cause: 'something-new-2027' }] } };
+    await suspect.checkSuspectWindows();
+    expect(suspect.suspectSummary().windows[0].cause).toBe('something-new-2027');
+
+    settingsMod.setSuspectState([]);
+    reply = { http: 200, body: { ok: true, windows: [{ ...covering(), from: 1, to: 2 }] } };
+    await suspect.checkSuspectWindows();
+    expect(suspect.suspectSummary().windows.some((w) => w.cause === 'unknown')).toBe(true);
+  });
+
+  /**
+   *  on a 200 is a refusal wearing a success, and this app asked for the field precisely so
+   * that could not read as an all-clear. An ABSENT  is an older platform and stays trusted.
+   */
+  it('treats an explicit ok:false as unanswered, not as all-clear', async () => {
+    const h = await household('Ismail');
+    reply = { http: 200, body: { ok: false, windows: [] } };
+    const r = await suspect.checkSuspectWindows();
+    expect(r.checked).toBe(false);
+    expect(r.reason).toBe('not_ok');
+    expect(rowById(h.rowId)?.status).toBe('sent');
   });
 });

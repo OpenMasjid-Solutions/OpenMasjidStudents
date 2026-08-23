@@ -60,6 +60,20 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **You can see what a full year of fees comes to.** Open a family’s billing record and there is a Full
+  year figure per child — the monthly plan times however many months you actually teach, plus anything
+  per-term, using that child’s own agreed amount rather than the plan’s list price. It is a **quote, not
+  a bill**: nothing is charged and their balance does not move, so you can tell a parent the number at
+  the enrollment desk without committing anything.
+- **A student joining mid-year can have their first month set to whatever you agreed.** You could already
+  say which month to bill them from; now you can also say what that first month comes to, for a child who
+  starts on the 15th and is charged part of it. It appears on their bill as its own line, so a parent can
+  see why it differs instead of wondering.
+- WhatsApp delivery checking is now exact rather than approximate: OpenMasjidOS names the specific
+  messages it was wrong about, so the right rows are marked and no others. It also says what went wrong
+  — a session that signed itself out, a phone needing re-linking — which is the difference between
+  knowing what to check and going looking.
+
 - **A one-off charge is now billed straight away, without generating the month first.** Adding a book fee
   in the middle of August used to leave it waiting: either you generated August's tuition early —
   committing every child's bill — or you told the parent to wait. Now it becomes a small bill of its own,

@@ -231,6 +231,18 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
 - **Starting mid-year** (`billing/carryIn.ts`, 0.43.0): a madrasah going live in February records what each
   child brings with them ONCE, as real dated ledger rows, and a billing floor stops the months before go-live
   ever being generated on top of it.
+- **What a year comes to** (0.51.0-dev.11, `billing/yearTotal.ts`): the question every enrollment opens
+  with, answered rather than worked out on a calculator — the monthly plan × the months this madrasah
+  actually teaches (never twelve, never the calendar), plus per-term × the terms configured (ZERO when
+  none are, because the generator would never bill one), plus a one-time fee only if not already billed,
+  all at the per-student override rather than the plan's list price. **It is a QUOTE and writes nothing**:
+  a projected year is not a balance, and a family who leaves in March owes March. Reported for the whole
+  year AND from a joining month, so an office can quote both without doing either sum.
+- **A student joining mid-year can have their FIRST month set** (0.51.0-dev.11, `adjustFirstMonth`).
+  `billStudentFrom` already backfilled from a chosen month (0.48.0); the agreed figure for that first
+  month is an ADJUSTMENT LINE rather than a rewritten tuition line — honest on paper (tuition at the full
+  amount, then a named part-month credit under it), and it keeps ONE place writing money instead of
+  teaching the generator a second answer to what a line is worth.
 - **The year view** (`billing/yearCells.ts`, 0.42.0): every child × every month of the school year, at a
   glance, printable — which is how an office actually finds who is behind.
 - **External payments** arrive over Fabric from Donations and Kiosk (§11); **portal and autopay payments**
@@ -1398,6 +1410,7 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | what a bill is made of, or what order money lands in | `billing/lines.ts`, then `billing/ledger.ts` |
   | a balance being wrong | `billing/ledger.ts` (`reallocateStudent` first) |
   | a month showing the wrong state | `billing/yearCells.ts`, `billing/period.ts` |
+  | what a year of fees comes to | `billing/yearTotal.ts` |
   | a card, a refund or a saved method | `payments/*` — and only `payments/stripe.ts` imports the SDK |
   | who pays the processing fee, or an amount read back off a PaymentIntent | `payments/fees.ts` |
   | who gets told | `alerts/index.ts`, then `mail/notify.ts` (which fans out BOTH parent channels) |

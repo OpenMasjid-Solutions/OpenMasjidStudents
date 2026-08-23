@@ -739,6 +739,9 @@ export interface SuspectWindowStored {
   count: number;
   seenAt: number;
   marked: number;
+  /** What the platform said went wrong — , , , 
+   *  (platform 0.51.1-dev.13). Stored so the screen can say WHY rather than only how many. */
+  cause?: string;
 }
 
 export function getSuspectState(): SuspectWindowStored[] {
@@ -754,7 +757,7 @@ export function getSuspectState(): SuspectWindowStored[] {
       const from = num(r.from);
       const to = num(r.to);
       if (from === null || to === null || to < from) return [];
-      return [{ from, to, count: num(r.count) ?? 0, seenAt: num(r.seenAt) ?? 0, marked: num(r.marked) ?? 0 }];
+      return [{ from, to, count: num(r.count) ?? 0, seenAt: num(r.seenAt) ?? 0, marked: num(r.marked) ?? 0, cause: typeof r.cause === 'string' ? r.cause.slice(0, 40) : undefined }];
     });
   } catch {
     return [];

@@ -321,6 +321,19 @@ channel and the notice is genuinely lost; that set is usually tiny, and the offi
 outreach button and a telephone. It is computed as it stands NOW rather than as it stood then, which the
 screen says rather than hides.
 
+**MATCHED BY ID, NOT BY CLOCK** (platform 0.51.1-dev.13). A window now names the specific messages it was
+wrong about, and that removes a whole class of error rather than tidying one: `from`/`to` are when the
+PLATFORM reported those messages sent, while our `created_at` is when WE handed them over, with the paced
+queue sitting between the two — so a message queued just before a window and sent inside it was missed,
+and one queued inside it but sent afterwards was marked when it should not have been. Wrong at both edges.
+The id list is capped at 500 per window, and a `truncated: true` falls back to the time range, which is
+complete by construction; the range path also stays for platforms older than dev.13. The window's `cause`
+(`session-expired`, `needs-relink`, `key-rejected`, `unknown`) is stored and printed, because an office
+that knows the session signed itself out knows what to check, and a bare count sends them looking.
+`ok: true` is read as well: an explicit `false` on a 200 is a refusal wearing a success and must not read
+as an all-clear — the field exists because this app asked for it — while an ABSENT `ok` is simply an older
+platform and stays trusted.
+
 **`unknown` is not `failed`, and that was a real defect of ours.** A 404 from `status/<id>` has always
 meant an evicted record, an id that was never ours, or a platform without the route — never "not
 delivered". The poller wrote `failed`/`outcome_unknown` while its own doc comment said `unknown`, so the

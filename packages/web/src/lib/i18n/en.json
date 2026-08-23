@@ -201,7 +201,10 @@
     "billedNone_future": "Added, but nothing was billed — that month has not happened yet. They will be billed when you generate it.",
     "billedNone_not_a_month": "Added, but nothing was billed — that was not a month this app can bill.",
     "billFromEmpty": "No earlier months to catch up on — your school year hasn’t started, or you bill from a later month. They’ll be billed from the next time you generate.",
-    "billFromFutureHint": "That month hasn’t started, so nothing is billed now — they’ll be billed with everyone else when you generate it."
+    "billFromFutureHint": "That month hasn’t started, so nothing is billed now — they’ll be billed with everyone else when you generate it.",
+    "firstMonth": "First month",
+    "firstMonthPlaceholder": "Normal amount",
+    "firstMonthHint": "Leave blank for the usual amount. If they joined part-way through the month and you agreed less, put that here — it shows on the bill as its own line."
   },
   "import": {
     "title": "Import students",
@@ -862,7 +865,12 @@
     "waCapDay": "Per day",
     "waCapUsed": "{{hourUsed}} of {{hourly}} this hour, {{dayUsed}} of {{daily}} today.",
     "waBlock_cap_hour": "This hour’s send limit is used up. Parent messages resume next hour; email is unaffected.",
-    "waBlock_cap_day": "Today’s send limit is used up. Parent messages resume tomorrow; email is unaffected."
+    "waBlock_cap_day": "Today’s send limit is used up. Parent messages resume tomorrow; email is unaffected.",
+    "waSuspectCause": "OpenMasjidOS says: {{cause}}.",
+    "waSuspectCause_session_expired": "the WhatsApp session had signed itself out",
+    "waSuspectCause_needs_relink": "the phone needs linking again",
+    "waSuspectCause_key_rejected": "the gateway rejected its key",
+    "waSuspectCause_unknown": "the cause was not recorded"
   },
   "relation": {
     "father": "Father",
@@ -1045,7 +1053,15 @@
     "confirmVoidInvoice": "Void the bill “{{label}}” for {{amount}}?\n\nThe amount stops being owed and the bill is kept, marked void. Only bills with nothing paid against them can be voided.",
     "confirmArchiveItem": "Archive “{{name}}”?\n\nIt disappears from the list you apply charges from. Charges already raised from it keep their own label and price.",
     "paidFor": "What for",
-    "paidForReversal": "Refund"
+    "paidForReversal": "Refund",
+    "yearTotal": "Full year",
+    "yearTotalFor": "{{year}} — {{months}} months of tuition.",
+    "yearTotalWhole": "Full year",
+    "yearTotalNoYear": "Set up a school year first — without one there is no way to know how many months you bill.",
+    "yearTotalHint": "A quote, not a bill. Nothing has been charged — this is the figure to tell a parent. Their balance still only counts invoices that exist.",
+    "cadence_monthly": "each month",
+    "cadence_per_term": "each term",
+    "cadence_one_time": "once"
   },
   "family": {
     "title": "Parent Portal",

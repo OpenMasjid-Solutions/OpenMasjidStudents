@@ -155,6 +155,16 @@ export function WhatsAppSettings() {
         <div className="notice notice--warn" style={{ marginBlockEnd: '0.75rem' }}>
           <p style={{ margin: 0 }}><strong>{t('settings.waSuspect', { count: suspect.data.total })}</strong></p>
           <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('settings.waSuspectWhy')}</p>
+          {/* WHY, in the platform's own words (platform 0.51.1-dev.13). An office that knows the session had
+              expired knows what to check; a bare count sends them looking. An unrecognized cause falls back
+              to its own raw value rather than to a blank. */}
+          {suspect.data.windows[0]?.cause && (
+            <p className="hint" style={{ marginBlockStart: '0.2rem' }}>
+              {t('settings.waSuspectCause', {
+                cause: t(`settings.waSuspectCause_${suspect.data.windows[0].cause.replaceAll('-', '_')}`, { defaultValue: suspect.data.windows[0].cause }),
+              })}
+            </p>
+          )}
           {suspect.data.byEvent.length > 0 && (
             <p className="hint" style={{ marginBlockStart: '0.3rem' }}>
               {t('settings.waSuspectAbout', { list: suspect.data.byEvent.map((e) => `${e.event} (${e.count})`).join(', ') })}

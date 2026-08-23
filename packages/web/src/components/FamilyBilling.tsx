@@ -57,6 +57,10 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
   const [charge, setCharge] = useState({ studentId: focusStudentId ?? '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '', bill: 'now' as 'now' | 'period' });
   /** A credit has to reduce a bill, so it can only go ON a period (§ billChargeNow). */
   const isCredit = (parseSignedCents(charge.amount) ?? 0) < 0;
+  /** Which child's year is being quoted, or null when the panel is shut. Asked per child because the
+   *  fees are per child and so is the figure a parent wants. */
+  const [yearFor, setYearFor] = useState<string | null>(null);
+  const year = trpc.billing.yearTotal.useQuery({ studentId: yearFor ?? '' }, { enabled: !!yearFor });
   const [chargeErr, setChargeErr] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
   /** How this masjid writes dates (0.47.0). `settings.display` — admin AND finance, unlike
@@ -276,6 +280,67 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             <button type="button" className="btn btn--ghost" onClick={() => setOverrideForm(null)}>{t('common.cancel')}</button>
             <p className="hint">{t('billing.overrideHint')}</p>
           </form>
+        )}
+
+        {/*
+          WHAT THE YEAR COMES TO — the question every enrollment conversation opens with, which the office
+          was answering with a calculator. One child at a time, because the fees are per child and so is
+          the answer a parent wants.
+
+          IT IS A QUOTE AND THE COPY SAYS SO. A projected year is not a balance: every balance here is
+          `invoiced − paid` (§9), and a family who leaves in March owes March. Nothing is written. An office
+          that wants the year ON the account adds it as a charge deliberately — this is the figure they
+          would use, not a number the app quietly turned into money.
+        */}
+        {feeGroups.length > 0 && (
+          <>
+            <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>
+              {t('billing.yearTotal')}
+              <button type="button" className="btn btn--ghost btn--sm" style={{ marginInlineStart: '0.5rem' }} onClick={() => setYearFor(yearFor ? null : feeGroups[0][0])}>
+                {yearFor ? t('common.close') : t('common.show')}
+              </button>
+            </h3>
+            {yearFor && (
+              <div className="glass-inset" style={{ padding: '0.6rem 0.75rem' }}>
+                {feeGroups.length > 1 && (
+                  <div className="field" style={{ marginBlockEnd: '0.5rem', maxWidth: '16rem' }}>
+                    <label className="label">{t('billing.forStudent')}</label>
+                    <select className="input glass-inset" value={yearFor} onChange={(e) => setYearFor(e.target.value)}>
+                      {feeGroups.map(([id, g]) => <option key={id} value={id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                {!year.data ? (
+                  <p className="muted" style={{ fontSize: '0.9rem', margin: 0 }}>{t('common.loading')}</p>
+                ) : !year.data.year ? (
+                  // Actionable, rather than a zero that looks like an answer.
+                  <p className="muted" style={{ fontSize: '0.9rem', margin: 0 }}>{t('billing.yearTotalNoYear')}</p>
+                ) : (
+                  <>
+                    <p className="hint" style={{ marginBlockStart: 0 }}>
+                      {t('billing.yearTotalFor', { year: year.data.year.label, months: year.data.year.months })}
+                    </p>
+                    <table className="data-table">
+                      <tbody>
+                        {year.data.lines.map((l) => (
+                          <tr key={l.planId}>
+                            <td>{l.label}</td>
+                            <td className="muted">{t(`billing.cadence_${l.cadence}`)} × {l.times}</td>
+                            <td className="tnum" style={{ textAlign: 'end' }}>{money(l.totalCents)}</td>
+                          </tr>
+                        ))}
+                        <tr>
+                          <td colSpan={2}><strong>{t('billing.yearTotalWhole')}</strong></td>
+                          <td className="tnum" style={{ textAlign: 'end' }}><strong>{money(year.data.totalCents)}</strong></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <p className="hint">{t('billing.yearTotalHint')}</p>
+                  </>
+                )}
+              </div>
+            )}
+          </>
         )}
       </section>
 

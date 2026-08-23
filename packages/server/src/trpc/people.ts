@@ -121,16 +121,18 @@ const PERIOD_KEY = z.string().trim().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
  * household gets the same treatment as one starting a new one. Returns the outcome for the form to
  * report: silently creating five invoices, or silently creating none, are both bad answers.
  */
-function billFrom(studentId: string, fromPeriod: string | undefined, actor: ReturnType<typeof auditActor>): { billed?: { created: number; periods: string[]; reason?: string } } {
+function billFrom(studentId: string, fromPeriod: string | undefined, actor: ReturnType<typeof auditActor>, firstMonthCents?: number | null): { billed?: { created: number; periods: string[]; reason?: string; firstMonthAdjusted?: boolean } } {
   if (!fromPeriod) return {};
-  const r = billStudentFrom(studentId, fromPeriod);
+  // The agreed figure for their first month, when the office named one — a child starting on the 15th is
+  // often charged part of that month (`adjustFirstMonth` in billing/joinMidYear.ts).
+  const r = billStudentFrom(studentId, fromPeriod, new Date(), { firstMonthCents });
   // Audited only when it actually billed something — a refused or empty catch-up is the form's business
   // to report, not a money event to record.
   if (r.created) {
     audit(actor, 'invoice.backfillStudent', {
       entity: 'student',
       entityId: studentId,
-      detail: { from: fromPeriod, created: r.created, periods: r.periods },
+      detail: { from: fromPeriod, created: r.created, periods: r.periods, firstMonthCents: firstMonthCents ?? null },
     });
   }
   return { billed: r };
@@ -382,11 +384,14 @@ export const peopleRouter = router({
         classId: ID.optional(),
         /** A month to bill them from, for a child who has been attending a while (§ BILL_FROM). */
         billFromPeriod: PERIOD_KEY.optional(),
+        /** What their FIRST month should come to, when it is not the plan's own amount — a part month.
+         *  Non-negative: a first invoice worth less than nothing is not a thing an office means. */
+        firstMonthCents: z.number().int().min(0).max(100_000_000).optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
       const r = createStudentRow(input, auditActor(ctx));
-      return { ...r, ...billFrom(r.id, input.billFromPeriod, auditActor(ctx)) };
+      return { ...r, ...billFrom(r.id, input.billFromPeriod, auditActor(ctx), input.firstMonthCents) };
     }),
 
   /**
@@ -416,6 +421,9 @@ export const peopleRouter = router({
         linkToStudentId: ID.optional(),
         /** A month to bill them from, for a child who has been attending a while (§ BILL_FROM). */
         billFromPeriod: PERIOD_KEY.optional(),
+        /** What their FIRST month should come to, when it is not the plan's own amount — a part month.
+         *  Non-negative: a first invoice worth less than nothing is not a thing an office means. */
+        firstMonthCents: z.number().int().min(0).max(100_000_000).optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
@@ -439,7 +447,7 @@ export const peopleRouter = router({
       // Outside the transaction above, deliberately: the child existing is not conditional on the
       // catch-up succeeding, and a backfill that hit the billing floor should report that rather than
       // roll back a student the office just added.
-      return { ...r, familyId, familyLabel: familyLabel(familyId), ...billFrom(r.id, input.billFromPeriod, auditActor(ctx)) };
+      return { ...r, familyId, familyLabel: familyLabel(familyId), ...billFrom(r.id, input.billFromPeriod, auditActor(ctx), input.firstMonthCents) };
     }),
 
   /**

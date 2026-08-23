@@ -70,12 +70,24 @@ export const SUSPECT_REASON = 'link_down';
  */
 const MAX_WINDOWS = 20;
 
-export interface SuspectWindowRecord extends WhatsAppSuspectWindow {
+/**
+ * What we KEEP about a window, which is deliberately less than what arrives.
+ *
+ * Not the wire shape: `ids` is up to 500 platform message ids and is used once, at the moment of marking,
+ * to decide which rows this window covers. Persisting it would put a few thousand opaque ids in a settings
+ * row for no later reader — the marks on the log rows are the durable record of what it touched.
+ */
+export interface SuspectWindowRecord {
+  from: number;
+  to: number;
+  count: number;
   /** When we first saw it, so the screen can order and age them. Epoch ms. */
   seenAt: number;
   /** How many of OUR log rows the window actually covered — usually, but not always, the platform's
    *  `count`: it counts what it reported sent, we count what we still have a row for. */
   marked: number;
+  /** What the platform said went wrong (platform 0.51.1-dev.13), so the screen can say why. */
+  cause?: string;
 }
 
 /** One pass: ask the platform, mark anything new, remember the window. Never throws. */
@@ -98,11 +110,11 @@ export async function checkSuspectWindows(now = Date.now()): Promise<{ checked: 
   for (const w of fresh) {
     const n = markWindow(w);
     marked += n;
-    added.push({ ...w, seenAt: now, marked: n });
+    added.push({ from: w.from, to: w.to, count: w.count, cause: w.cause, seenAt: now, marked: n });
   }
   // Newest first, capped. Sorted by the window itself rather than by when we noticed, so two polls of
   // the same incident cannot interleave.
-  const next = [...added, ...known].sort((a, b) => b.from - a.from).slice(0, MAX_WINDOWS);
+  const next: SuspectWindowRecord[] = [...added, ...known].sort((a, b) => b.from - a.from).slice(0, MAX_WINDOWS);
   setSuspectState(next);
   log.info('suspect windows recorded', { windows: fresh.length, marked });
   return { checked: true, newWindows: fresh.length, marked };
@@ -111,15 +123,34 @@ export async function checkSuspectWindows(now = Date.now()): Promise<{ checked: 
 /**
  * Re-label the rows one window covers.
  *
- * ONLY rows we currently believe were `sent`. A row already `failed`, `expired` or `skipped` has a more
- * specific answer than this one and must keep it; a row still `queued` was never claimed to be delivered,
- * so there is nothing to correct — and if it is still held, it may yet go out properly.
+ * BY PLATFORM ID WHEN WE HAVE THEM (platform 0.51.1-dev.13), by time range otherwise. The ids are exact
+ * and the range never was: `from`/`to` are when the PLATFORM reported those messages sent, while our
+ * `created_at` is when WE handed them over, with the paced queue sitting between the two. So a message
+ * queued just before the window and sent inside it fell outside our match, and one queued inside it but
+ * sent after fell inside — wrong at both edges. Matching ids removes the whole class of error.
+ *
+ * `truncated` is why the range path stays for more than backward compatibility: the platform caps the id
+ * list at 500 per window, and a truncated list would leave the overflow silently unmarked — which is the
+ * same invisible under-reporting this feature exists to remove. A truncated window falls back to the
+ * range, which is complete by construction.
+ *
+ * ONLY rows we currently believe were `sent`, either way. A row already `failed`, `expired` or `skipped`
+ * has a more specific answer than this one and must keep it; a row still `queued` was never claimed to be
+ * delivered, so there is nothing to correct — and if it is still held, it may yet go out properly.
  */
 function markWindow(w: WhatsAppSuspectWindow): number {
+  const byId = w.ids.length > 0 && !w.truncated;
   return db
     .update(whatsappLog)
     .set({ status: 'unknown', reason: SUSPECT_REASON })
-    .where(and(eq(whatsappLog.status, 'sent'), gte(whatsappLog.createdAt, new Date(w.from)), lte(whatsappLog.createdAt, new Date(w.to))))
+    .where(
+      and(
+        eq(whatsappLog.status, 'sent'),
+        byId
+          ? inArray(whatsappLog.platformId, w.ids)
+          : and(gte(whatsappLog.createdAt, new Date(w.from)), lte(whatsappLog.createdAt, new Date(w.to))),
+      ),
+    )
     .run().changes;
 }
 

@@ -20,6 +20,7 @@ import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice, bi
 import { billFromMonths, currentPeriod } from '../billing/joinMidYear';
 import { schoolYearMonths } from '../billing/schoolYear';
 import { AUDIENCE_CLASS, AUDIENCE_COURSE, AUDIENCE_STUDENTS, resolveAudience } from '../structure/audience';
+import { yearTotalFor } from '../billing/yearTotal';
 import { yearCellsFor } from '../billing/yearCells';
 import { invoiceLines, payableLines } from '../billing/lines';
 import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
@@ -1025,6 +1026,26 @@ export const billingRouter = router({
   /** Add one charge to a student. If the target period's invoice already exists and is open the
    *  line lands on it immediately (and the invoice status is re-derived); otherwise the charge
    *  waits as `pending` and the next generation for that period picks it up. */
+  /**
+   * WHAT A YEAR OF FEES COMES TO for one student — a quote, not a bill (0.51.0-dev.11).
+   *
+   * The question every enrollment conversation starts with, which the office was answering with a
+   * calculator: the monthly plan times however many months this madrasah teaches, plus the per-term ones
+   * times the number of terms. `billing/yearTotal.ts` is the one place that arithmetic lives.
+   *
+   * IT WRITES NOTHING, and the copy on screen says so. A projected year is not a balance — every balance
+   * here is `invoiced − paid`, derived (§9) — so a family who leaves in March owes March, not this. An
+   * office that wants the year on the account adds it as a charge, deliberately, with a real invoice
+   * behind it.
+   *
+   * Admin OR finance, matching `familyBilling` which is the screen it renders on: finance runs the
+   * billing and is the person most often asked the question. It exposes nothing the ledger does not
+   * already show them.
+   */
+  yearTotal: adminOrFinanceProcedure
+    .input(z.object({ studentId: ID, fromPeriod: PERIOD.optional() }))
+    .query(({ input }) => yearTotalFor(input.studentId, input.fromPeriod ?? null)),
+
   chargeAdd: adminOrFinanceProcedure
     .input(z.object({ studentId: ID, source: CHARGE_SOURCE, note: NOTE.optional(), periodKey: PERIOD.optional(), bill: CHARGE_BILL }))
     .mutation(({ ctx, input }) => {
