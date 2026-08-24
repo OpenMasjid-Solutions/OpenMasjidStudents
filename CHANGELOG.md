@@ -60,6 +60,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **A student who has already been billed can now be deleted for good.** Until now the app refused, and
+  withdrawing was the only option — right nearly always, but useless for a test roster you billed by
+  accident while setting up, which left children on every screen who could never be removed. The refusal
+  is still what you meet first; behind it there is now an option to erase them anyway. It tells you
+  exactly how many bills and payments it will destroy and what they came to, and asks you to type the
+  child’s name, because none of it can be undone. It does not touch Stripe — a card payment or refund
+  stays on your Stripe account exactly as it is; only this app’s record of it goes. Admin only, and the
+  audit trail keeps a note of what was removed.
+- Withdrawing or deleting a child from their family record now updates the Students tab straight away,
+  instead of leaving the old status there until you reloaded the page.
+
 - **You can see what a year of fees comes to.** Open a family’s billing record and there is a Full year
   figure per child — counted **from where that student’s billing actually starts to the end of the year**,
   which for a child who joined in February is five months and not ten. The whole year is shown underneath

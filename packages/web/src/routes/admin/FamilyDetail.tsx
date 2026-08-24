@@ -14,7 +14,7 @@ import { Pencil, Printer, Send, Trash2 } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
 import { formatUsPhone, telHref } from '../../lib/phone';
-import { parseCents } from '../../lib/money';
+import { formatMoney, parseCents } from '../../lib/money';
 import { StudentPicker } from '../../components/StudentPicker';
 import { OnboardingSend } from '../../components/OnboardingSend';
 import { useWindows } from '../../components/Windows';
@@ -55,9 +55,32 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
       node: <OnboardingSend studentIds={(q.data?.students ?? []).map((s) => s.id)} familyLabel={q.data?.family.name ?? ''} />,
     });
 
+  /**
+   * Everything that reads a student, not just this window (0.51.0-dev.14).
+   *
+   * THE BUG THIS FIXES: withdrawing a child here updated the household record and left the Students tab
+   * behind it still showing them **Active** — the roster reads `structure.studentsByClass`, which nothing
+   * here invalidated. Worse than a stale label, because that query filters withdrawn students OUT by
+   * default: the child stayed on the roster, marked active, and would only vanish when something else
+   * happened to refetch. An office reasonably concludes the withdrawal did not take.
+   *
+   * It is in `refresh()` rather than in `toggleWithdraw` because every write in this window can change a
+   * student's standing — withdrawing, reinstating, deleting, adding, unlinking a sibling — and two of
+   * those already remembered to invalidate the roster while two did not. One list, used by all of them.
+   */
   const refresh = async () => {
-    await utils.people.familyGet.invalidate({ id: familyId });
-    await utils.people.directory.invalidate();
+    await Promise.all([
+      utils.people.familyGet.invalidate({ id: familyId }),
+      utils.people.directory.invalidate(),
+      // The roster and its per-class counts.
+      utils.structure.studentsByClass.invalidate(),
+      utils.structure.courseTree.invalidate(),
+      // The sibling picker, which offers active students only.
+      utils.people.studentOptions.invalidate(),
+      // The year grid and the billing screens both list students and their fees.
+      utils.billing.yearGrid.invalidate(),
+      utils.billing.familyBilling.invalidate(),
+    ]);
   };
 
   const addStudent = trpc.people.studentCreate.useMutation();
@@ -87,6 +110,19 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const countries = waCfg.data?.enabled ? waCfg.data.countries : [];
   /** Why a delete was refused — shown as text, since it is the useful half of the interaction. */
   const [deleteErr, setDeleteErr] = useState('');
+  /**
+   * The student a refused delete is offering to erase ANYWAY, with what that would destroy (dev.14).
+   *
+   * Held in state rather than run from a `confirm()` because the numbers matter: a browser dialog that
+   * says "are you sure?" is the kind people click through, and this one takes real invoices and recorded
+   * payments with it. The panel prints the counts and the money, and asks for a typed confirmation.
+   */
+  const [forceDelete, setForceDelete] = useState<{ studentId: string; name: string; info: { invoices: number; payments: number; paidCents: number } } | null>(null);
+  const [forceTyped, setForceTyped] = useState('');
+  /** Only so the erase-anyway panel can state the money it would destroy. `settings.display` carries
+   *  presentation only and is the one read finance shares, so it costs this screen nothing. */
+  const display = trpc.settings.display.useQuery();
+  const money = (cents: number) => formatMoney(cents, display.data?.currency ?? 'usd');
   /** The same, for the guardian and contact rows below. */
   const [guardianErr, setGuardianErr] = useState('');
 
@@ -218,6 +254,21 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     }
   }
 
+  /** Erase a billed student for good. Only reachable from the panel above, which required the child's
+   *  name to be typed — the server refuses without `force`, so nothing here can happen by accident. */
+  async function doForceDelete() {
+    if (!forceDelete) return;
+    setDeleteErr('');
+    try {
+      await deleteStudent.mutateAsync({ studentId: forceDelete.studentId, force: true });
+      setForceDelete(null);
+      setForceTyped('');
+      await refresh();
+    } catch (err) {
+      setDeleteErr((err as Error).message);
+    }
+  }
+
   /** Ask the server whether this student can be deleted, then confirm with the real reason either
    *  way. The precheck exists so the office is never told "no" only after committing to the click. */
   async function askDelete(studentId: string, name: string) {
@@ -233,6 +284,10 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
             ? t('directory.deleteBlockedPaid', { name, count: info.payments })
             : t('directory.deleteBlocked', { name, count: info.invoiceLines + info.invoicedCharges + info.invoices }),
         );
+        // …and the way through it (0.51.0-dev.14). Withdrawing is still the right answer nearly always,
+        // which is why this is a second control behind the refusal rather than a choice offered up front:
+        // an install that billed a test roster by accident has no other way to be rid of it.
+        setForceDelete({ studentId, name, info });
         return;
       }
       const extra = info.feeAssignments + info.pendingCharges;
@@ -399,6 +454,51 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 {deleteErr && (
                   <tr>
                     <td colSpan={5}><p className="form-error" style={{ margin: '0.25rem 0 0' }}>{deleteErr}</p></td>
+                  </tr>
+                )}
+                {/*
+                  ERASE IT ANYWAY (0.51.0-dev.14). Behind the refusal, never beside the Delete button:
+                  withdrawing is the right answer nearly every time, and this one takes real invoices and
+                  recorded payments with it.
+
+                  It prints the counts and the MONEY, and it asks for the child's name to be typed. A
+                  window.confirm would have been less code and is the wrong control — people click those
+                  through, and there is nothing to undo afterwards.
+                */}
+                {forceDelete && (
+                  <tr>
+                    <td colSpan={5}>
+                      <div className="notice notice--warn" style={{ marginBlockStart: '0.4rem' }}>
+                        <p style={{ margin: 0 }}>
+                          <strong>{t('directory.forceDeleteTitle', { name: forceDelete.name })}</strong>
+                        </p>
+                        <p className="hint" style={{ marginBlockStart: '0.3rem' }}>
+                          {t('directory.forceDeleteWhat', {
+                            invoices: forceDelete.info.invoices,
+                            payments: forceDelete.info.payments,
+                            amount: money(forceDelete.info.paidCents),
+                          })}
+                        </p>
+                        <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('directory.forceDeleteStripe')}</p>
+                        <div className="inline-form" style={{ paddingInline: 0, marginBlockStart: '0.4rem' }}>
+                          <div className="field" style={{ flex: '1 1 12rem' }}>
+                            <label className="label" htmlFor="force-confirm">{t('directory.forceDeleteType', { name: forceDelete.name })}</label>
+                            <input id="force-confirm" className="input glass-inset" value={forceTyped} onChange={(e) => setForceTyped(e.target.value)} autoComplete="off" />
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn--danger"
+                            disabled={forceTyped.trim() !== forceDelete.name || deleteStudent.isPending}
+                            onClick={() => void doForceDelete()}
+                          >
+                            {t('directory.forceDeleteAction')}
+                          </button>
+                          <button type="button" className="btn btn--ghost" onClick={() => { setForceDelete(null); setForceTyped(''); setDeleteErr(''); }}>
+                            {t('common.cancel')}
+                          </button>
+                        </div>
+                      </div>
+                    </td>
                   </tr>
                 )}
               </tbody>

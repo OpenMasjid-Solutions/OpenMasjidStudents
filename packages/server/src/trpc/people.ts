@@ -24,6 +24,7 @@ import {
   invoiceItems,
   invoices,
   payments,
+  paymentAllocations,
   charges,
   classes,
   guardianUsers,
@@ -777,6 +778,17 @@ export const peopleRouter = router({
       /** Config rows that will be removed along with them. */
       feeAssignments: db.select({ id: studentFees.id }).from(studentFees).where(eq(studentFees.studentId, s.id)).all().length,
       pendingCharges: db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), ne(charges.status, 'invoiced'))).all().length,
+      /**
+       * What a FORCED delete would destroy, in money (0.51.0-dev.14). Not a blocker — it is what the
+       * confirmation has to be able to say out loud, because "this student has been billed" is not the
+       * same warning as "this erases $1,240 of recorded payments".
+       */
+      paidCents: db
+        .select({ amountCents: payments.amountCents })
+        .from(payments)
+        .where(eq(payments.studentId, s.id))
+        .all()
+        .reduce((n, r) => n + r.amountCents, 0),
     };
   }),
 
@@ -788,12 +800,77 @@ export const peopleRouter = router({
    * Their fee assignments and any not-yet-invoiced charges go with them, in ONE transaction, since the
    * RESTRICT constraints would otherwise block the delete. Audited with the counts (never the name).
    */
-  studentDelete: adminProcedure.input(z.object({ studentId: ID })).mutation(({ ctx, input }) => {
+  studentDelete: adminProcedure.input(z.object({ studentId: ID, force: z.boolean().optional() })).mutation(({ ctx, input }) => {
     const s = requireStudent(input.studentId);
     const invoiceLines = db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.studentId, s.id)).all().length;
     const invoicedCharges = db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), eq(charges.status, 'invoiced'))).all().length;
     const bills = db.select({ id: invoices.id }).from(invoices).where(eq(invoices.studentId, s.id)).all().length;
     const paymentRows = db.select({ id: payments.id }).from(payments).where(eq(payments.studentId, s.id)).all().length;
+
+    /**
+     * ERASE A BILLED STUDENT ANYWAY — a deliberate, admin-only exception to §9 (0.51.0-dev.14).
+     *
+     * §9 says money is soft-deleted and money-path FKs are RESTRICT, and that remains the rule for every
+     * other path in this app. This is the one door out of it, and it exists because the alternative was
+     * worse in practice: an install being set up bills a test roster by accident (the nightly job needs no
+     * help), and a madrasah was then stuck with children who could only ever be *withdrawn* — permanent
+     * clutter on every screen, with real invoices behind them, because the app had no way to say "this was
+     * never a student".
+     *
+     * WHAT MAKES IT SAFE ENOUGH TO OFFER, since it genuinely destroys ledger history:
+     *
+     *  • It is never the default. Without `force` the refusals below are unchanged, so an ordinary Delete
+     *    click cannot do this. The UI only sends `force` from a second dialog that names the counts and
+     *    the money (`studentDeletable.paidCents`).
+     *  • Admin only, like the rest of this procedure. Finance runs the billing and cannot erase it.
+     *  • The AUDIT ENTRY IS WRITTEN FROM A SNAPSHOT TAKEN FIRST, and it carries the child's name and
+     *    Student ID as well as the counts. That row is the only trace left afterwards, so it has to be
+     *    able to answer "what was here?" — a bare `student.delete` with an id that no longer resolves
+     *    would document nothing.
+     *  • It does NOT touch Stripe. A refunded payment's row disappears while the refund at Stripe
+     *    remains, so the office is told that plainly rather than discovering it at reconciliation.
+     *
+     * ORDER IS THE WHOLE IMPLEMENTATION, because `foreign_keys` is ON and these are RESTRICT: allocations
+     * before payments and invoices; charges before invoice items (`charges.invoice_item_id` points at
+     * them); invoices last of the money rows, which cascades their items away. `carry_ins` cascades from
+     * the student. Anything out of order fails loudly inside the transaction rather than half-deleting.
+     */
+    if (input.force && (invoiceLines > 0 || invoicedCharges > 0 || bills > 0 || paymentRows > 0)) {
+      const before = {
+        name: s.fullName,
+        studentCode: s.studentCode,
+        familyId: s.familyId,
+        invoices: bills,
+        invoiceLines,
+        payments: paymentRows,
+        paidCents: db.select({ amountCents: payments.amountCents }).from(payments).where(eq(payments.studentId, s.id)).all().reduce((n, r) => n + r.amountCents, 0),
+        charges: db.select({ id: charges.id }).from(charges).where(eq(charges.studentId, s.id)).all().length,
+        feeAssignments: db.select({ id: studentFees.id }).from(studentFees).where(eq(studentFees.studentId, s.id)).all().length,
+      };
+      // Audited BEFORE the delete: this row outlives the record and is the only thing left that can say
+      // what was removed. (§14 — the trail is append-only and survives what it describes.)
+      audit(auditActor(ctx), 'student.deleteForced', { entity: 'student', entityId: s.id, detail: before });
+
+      const paymentIds = db.select({ id: payments.id }).from(payments).where(eq(payments.studentId, s.id)).all().map((r) => r.id);
+      const invoiceIds = db.select({ id: invoices.id }).from(invoices).where(eq(invoices.studentId, s.id)).all().map((r) => r.id);
+      db.transaction((tx) => {
+        // Allocations by BOTH sides: a row is pinned by its payment and by its invoice, and either one
+        // still standing blocks the delete below.
+        if (paymentIds.length) tx.delete(paymentAllocations).where(inArray(paymentAllocations.paymentId, paymentIds)).run();
+        if (invoiceIds.length) tx.delete(paymentAllocations).where(inArray(paymentAllocations.invoiceId, invoiceIds)).run();
+        tx.delete(payments).where(eq(payments.studentId, s.id)).run();
+        // Charges first: they reference invoice items, which the invoice delete is about to cascade away.
+        tx.delete(charges).where(eq(charges.studentId, s.id)).run();
+        tx.delete(invoices).where(eq(invoices.studentId, s.id)).run();
+        // Any stray line still naming this student on somebody else's invoice. Should be none — items are
+        // written with their invoice's own student — but the student delete is RESTRICT and would block.
+        tx.delete(invoiceItems).where(eq(invoiceItems.studentId, s.id)).run();
+        tx.delete(studentFees).where(eq(studentFees.studentId, s.id)).run();
+        tx.delete(students).where(eq(students.id, s.id)).run();
+      });
+      return { ok: true as const, forced: true as const, removed: before };
+    }
+
     if (invoiceLines > 0 || invoicedCharges > 0 || bills > 0) {
       throw new TRPCError({
         code: 'CONFLICT',

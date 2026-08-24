@@ -164,7 +164,13 @@
     "waStop": "Stop WhatsApp",
     "waStopHint": "Record that this parent asked not to be messaged on WhatsApp. Email is unaffected.",
     "waResume": "Allow WhatsApp",
-    "waResumeHint": "Start messaging this parent on WhatsApp again."
+    "waResumeHint": "Start messaging this parent on WhatsApp again.",
+    "forceDeleteTitle": "Erase {{name}} and their billing history for good?",
+    "forceDeleteWhat": "This permanently removes {{invoices}} bills and {{payments}} recorded payments totalling {{amount}}. It cannot be undone, and those figures will no longer appear in any total, statement or export.",
+    "forceDeleteStripe": "It does not touch Stripe. Any card payment or refund stays on your Stripe account exactly as it is — only this app’s record of it goes.",
+    "forceDeleteType": "Type {{name}} to confirm",
+    "forceDeleteAction": "Erase for good",
+    "forceDeleted": "{{name}} and their billing history have been erased."
   },
   "students": {
     "title": "Students",

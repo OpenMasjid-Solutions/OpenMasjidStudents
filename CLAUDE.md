@@ -407,6 +407,7 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | Schools, school years, terms, courses, classes, rollover — write | ✅ | ❌ | ❌ |
 | Schools / years / courses / classes — read | ✅ | ✅ | ❌ |
 | Students / households / guardians / emergency contacts — write | ✅ | ❌ | ❌ |
+| **Erase a BILLED student for good** (invoices + payments with them) | ✅ *(0.51.0-dev.14, §9's one exception)* | ❌ | ❌ |
 | Students directory — read | ✅ | ✅ | own household only |
 | Guardian contact — read | ✅ | ✅ | own household |
 | Spreadsheet import | ✅ | ❌ | ❌ |
@@ -740,6 +741,21 @@ Non-negotiable rules:
 - **Balances derived, never stored**; **payments immutable** (corrections = reversal rows, refunds = a Stripe
   refund plus those same reversal rows); soft-delete for anything money references; FKs `ON DELETE RESTRICT`
   on money paths.
+- **ONE deliberate exception to that, and it is a door rather than a rule** (0.51.0-dev.14,
+  `people.studentDelete` with `force`). A student who has been billed can be erased for good, along with
+  their invoices, lines, charges, payments and allocations. The refusal it bypasses is unchanged and is
+  still what an ordinary Delete hits; `force` exists because the alternative was worse in practice — an
+  install being set up bills a test roster by accident (the nightly job needs no help), and the madrasah
+  was then stuck with children who could only ever be *withdrawn*, cluttering every screen with real
+  invoices behind them. What keeps it honest: **admin only** (finance runs the billing and cannot erase
+  it); **never the default**, so a mis-click cannot reach it and the UI asks for the child's name to be
+  typed beside the counts and the money; **the audit row is written FIRST and carries the name, the
+  Student ID, the counts and the amount**, because it is the only trace that survives and an id that no
+  longer resolves documents nothing; and **it does not touch Stripe**, which the screen says out loud so a
+  vanished refund is not discovered at reconciliation. Deletion ORDER is the implementation — allocations,
+  payments, charges (they point at invoice items), then invoices, whose items cascade — and a wrong order
+  fails inside the transaction rather than half-erasing, which `test/studentDelete.test.ts` proves by
+  mutation.
 - **An alert must be able to reach a human without the platform's help** (0.44.0). `alerts/index.ts` is the
   ONE place that decides who hears about an event, and it fans out three ways: the addresses the office listed
   (`alert_recipients` → our own email), the OpenMasjidOS alert channel when the event maps to a declared id,
