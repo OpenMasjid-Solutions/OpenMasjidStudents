@@ -3,12 +3,45 @@
 /** Client money helpers. All amounts cross the wire as integer cents (server is the source of
  *  truth); these are for display + parsing the finance forms. */
 
-export function formatMoney(cents: number, currency = 'usd'): string {
+/**
+ * ONE `Intl.NumberFormat` per currency, kept for the life of the page.
+ *
+ * `formatMoney` built a fresh formatter on every call, and it is called once per money cell — which on
+ * the screens that matter is not a handful. A billing record prints every invoice, every line of every
+ * invoice and every payment; the year view is every child times twelve months. So one render was
+ * constructing hundreds of formatters, and CONSTRUCTING one is the expensive half by a wide margin
+ * (locale resolution plus pattern lookup) — an order of magnitude above formatting a number with one
+ * that already exists. That cost was then paid AGAIN on every keystroke in any form on the same
+ * screen, because typing re-renders the tables around it, which is what made those screens feel
+ * jittery rather than merely slow to open.
+ *
+ * Keyed on the currency alone, because the locale cannot change within a page: the first argument is
+ * `undefined`, i.e. the BROWSER's locale, not i18next's language. (That is pre-existing behavior and
+ * deliberately left alone — switching the app's language has never restyled the money, and making it
+ * do so is a display decision, not a performance one.)
+ *
+ * A code the runtime rejects is remembered as a miss too, so a bad currency setting cannot turn every
+ * cell on the screen into a thrown-and-caught constructor call.
+ */
+const formatters = new Map<string, Intl.NumberFormat | null>();
+
+function formatterFor(code: string): Intl.NumberFormat | null {
+  const hit = formatters.get(code);
+  if (hit !== undefined) return hit;
+  let made: Intl.NumberFormat | null = null;
   try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
+    made = new Intl.NumberFormat(undefined, { style: 'currency', currency: code });
   } catch {
-    return `${(cents / 100).toFixed(2)} ${currency.toUpperCase()}`;
+    made = null; // not a currency this runtime knows — the caller falls back to a plain amount
   }
+  formatters.set(code, made);
+  return made;
+}
+
+export function formatMoney(cents: number, currency = 'usd'): string {
+  const code = currency.toUpperCase();
+  const fmt = formatterFor(code);
+  return fmt ? fmt.format(cents / 100) : `${(cents / 100).toFixed(2)} ${code}`;
 }
 
 /** Parse a dollars-and-cents input string to integer cents; null if not a valid positive amount.

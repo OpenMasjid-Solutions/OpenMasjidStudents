@@ -126,3 +126,108 @@ div.menu {
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow-raised);
 }
+
+/* ── WHY SCROLLING A RECORD WAS TERRIBLE (0.51.0-dev.16) ───────────────────────
+ *
+ * `backdrop-filter` is the most expensive property this design uses. Each element carrying one is its
+ * own render surface: the browser has to take everything painted behind it, blur that, and composite
+ * the result — and it has to redo the whole job whenever what is behind it changes. A handful of them
+ * is what the material was designed around. Dozens is a different thing entirely.
+ *
+ * `.glass-inset` is on every input, every select and every inset panel in the staff shell: 286 of them
+ * across the app, 27 in a single family's billing record. So opening that record put roughly thirty
+ * live blur surfaces inside ONE scrolling container, and scrolling it meant recomputing every one of
+ * them on every frame. That is the whole of the reported symptom.
+ *
+ * glass.css already states this rule and the reason for it — "PERFORMANCE CAP: a glass pane inside a
+ * glass pane must not re-blur" — but it caps only `.glass` and `.glass-raised`, and never the inset.
+ * The three fixes below are that same rule applied to the cases it missed. They live here, not in the
+ * ported files, because `glass.css` and `app.css` are kept structurally identical to OpenMasjidOS for
+ * re-sync (§15).
+ */
+
+/*
+ * 1. An inset inside a glass pane must not re-blur either.
+ *
+ * There is nothing left for it to blur. Its parent already tints and frosts the wallpaper, so the inset
+ * is sampling a surface that has been flattened once — a 7px blur of an already-smooth gradient seen
+ * through 45% of near-black. The visible difference is nil; the cost is a render surface per input.
+ *
+ * Two-class selectors so this wins on specificity rather than on import order, and `:not()` honors the
+ * ported file's own opt-out rather than overriding it silently. The last selector catches an inset
+ * inside an inset — an `.input.glass-inset` in an `.inline-form.glass-inset` — which is most of them.
+ */
+.glass .glass-inset:not(.glass-allow-nested-blur),
+.glass-raised .glass-inset:not(.glass-allow-nested-blur),
+.glass-dock .glass-inset:not(.glass-allow-nested-blur),
+.glass-inset .glass-inset:not(.glass-allow-nested-blur) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/*
+ * 2. A window's entrance must not animate `filter`, and must not leave one behind.
+ *
+ * `winIn` (app.css) animates opacity and transform — both compositor-only and free — and also
+ * `filter: blur(6px) → blur(0)`, which is neither. For 240ms it re-blurs the entire window every frame,
+ * at exactly the moment the window is being filled with content. That is "opening a billing record is
+ * terrible" on its own.
+ *
+ * The part worth knowing is what happens AFTER those 240ms. The animation is declared `both`, so the
+ * final keyframe's value stays applied for the life of the window — and `filter: blur(0)` is not the
+ * same as no filter. It keeps a render surface, and it makes `.win` a BACKDROP ROOT, so every frosted
+ * descendant was blurring the window's own scrolling content instead of the page: dirty on every frame
+ * of every scroll, permanently, from a blur of zero pixels that nobody can see.
+ *
+ * So: the same entrance without the filter. Over 240ms the focus-in was already close to subliminal,
+ * and scale + fade is what the eye actually reads.
+ */
+.win.win-enter {
+  animation: winInFlat 0.24s var(--ease-settle) both;
+}
+@keyframes winInFlat {
+  from { opacity: 0; transform: scale(0.965) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+/*
+ * And the entrance still has to disappear entirely when the OS asks for less motion.
+ *
+ * A MEDIA QUERY ADDS NO SPECIFICITY. app.css turns this animation off under
+ * `prefers-reduced-motion` as `.win-enter` — one class — so the override above, at two, would have won
+ * inside the media query as well and quietly handed reduced-motion users back an animation they had
+ * asked not to have. Overriding a ported rule means overriding every branch of it (§18).
+ */
+@media (prefers-reduced-motion: reduce) {
+  .win.win-enter { animation: none; }
+}
+
+/*
+ * 3. A window's scroll stays in the window.
+ *
+ * Reaching the end of a long billing record handed the scroll to the page behind it, which is both the
+ * wrong thing to do — the record is the thing being read — and the expensive one: the page carries the
+ * sticky top bar and its own frosted panels, so the overscroll that felt like a stutter was really the
+ * whole surface behind the window starting to repaint.
+ */
+.win-body {
+  overscroll-behavior: contain;
+}
+
+/*
+ * 4. Ambient motion stops while the page is being scrolled.
+ *
+ * The aurora drifts on a 32-second loop, forever. It is cheap in itself (a transform on a promoted
+ * layer), but it sits BEHIND every frosted surface in the app, so every frame of it marks all of their
+ * blurs stale — a permanent repaint loop that runs whether or not anyone is doing anything, and which
+ * is the baseline cost under all of the above.
+ *
+ * Freezing it during a scroll is the one moment where the trade is free in both directions: the frame
+ * budget is contested precisely then, and a 32-second drift is not something anyone tracks while
+ * moving a list. `animation-play-state` freezes in place and resumes from where it stopped, so there is
+ * no jump either way. `data-scrolling` is set by `lib/scrollIdle.ts`; with no JS the attribute never
+ * appears and the drift simply runs as before.
+ */
+html[data-scrolling] .scene::before,
+html[data-scrolling] .status-dot::after {
+  animation-play-state: paused;
+}

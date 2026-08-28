@@ -1,6 +1,4 @@
-  | which students a bulk action names (a course, a class, everyone) | `structure/audience.ts` — shared by mass-apply and the onboarding send |
 # CLAUDE.md — OpenMasjidStudents
-  | what the onboarding message says, or who one press reaches | `people/onboarding.ts`, `structure/audience.ts` |
 
 > This file is the single source of truth for the OpenMasjidStudents project. Read it fully before writing any
 > code. When in doubt, follow this document over your own assumptions. If something here is ambiguous, ask
@@ -1214,6 +1212,29 @@ skeleton shimmer loaders, staggered grid entrances. The ported files (`tokens.cs
 deviation goes in `shell.css` / `admin.css` instead, and anything that must differ carries a one-line comment
 saying why. Same-org AGPL, so copying these between OpenMasjid-Solutions repos is allowed and encouraged.
 
+**THE MATERIAL HAS A FRAME BUDGET, AND `backdrop-filter` IS ALL OF IT** (0.51.0-dev.16). Every element
+carrying one is its own render surface — the browser blurs everything painted behind it and recomputes
+the whole job whenever that changes — so the count is what matters, not the blur radius. glass.css states
+this itself ("PERFORMANCE CAP — a glass pane inside a glass pane must not re-blur") and caps only `.glass`
+and `.glass-raised`; **`.glass-inset` was never capped**, and it is on every input, select and inset panel
+in the staff shell: 286 across the app, 27 inside ONE family's billing record, all of them in one
+scrolling container. That is the whole of "scrolling a billing record is terrible". The four corrections
+live in **`shell.css`'s paint-cost block**, because the ported files must stay re-syncable, and
+`styles/paintCost.test.ts` fails the build if any of them is lost. Three rules worth carrying forward:
+
+- **An inset inside glass has nothing left to blur.** Its parent already flattened the wallpaper, so the
+  visible delta is nil and the cost is a render surface per input. The same is true of any opaque surface —
+  `ul.picker-list` and `div.menu` reached the same conclusion by their own routes.
+- **`filter` is not free, and `both` makes it permanent.** `winIn` animated `filter: blur(6px) → blur(0)`
+  and was declared `both`, so the final value stayed applied for the life of the window — and
+  `filter: blur(0)` is not no filter: it holds a render surface and makes the element a BACKDROP ROOT, so
+  every frosted descendant re-blurred the window's own scrolling content on every frame, forever, for a
+  blur of zero pixels. Animate opacity and transform; nothing else.
+- **A forever-looping decoration behind glass is a forever-looping repaint.** The aurora is cheap in
+  itself and it dirties every frosted surface above it on every frame. `lib/scrollIdle.ts` stands it down
+  during a scroll. And when overriding a ported rule, override **every branch of it** — a media query adds
+  no specificity, so a two-class override wins inside app.css's `prefers-reduced-motion` block too.
+
 **Madrasa-first, localizable, never hardcoded**: madrasa-native wording ships as **defaults and i18n
 strings**, and the office can rewrite the sentences on a family's printed sheet in Settings. **The parent
 portal is the face of the madrasah** — highest polish bar, phone-first (big tap targets, bottom nav,
@@ -1457,6 +1478,7 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | which students a bulk action names (everyone, a course, a class), and the households behind them | `structure/audience.ts` — shared by mass-apply and the onboarding send |
   | a date | `settings/dates.ts` |
   | the calendar or the roster tree | `structure/*`, `schools/index.ts` |
+  | a screen that stutters, jitters or scrolls badly | `styles/shell.css`'s paint-cost block (§15) — count the `backdrop-filter` surfaces first, then `lib/money.ts` and `lib/scrollIdle.ts` |
 
 - **A fix goes where the rule lives, not where the symptom appeared.** Two places disagreeing about the same
   rule is the recurring shape of this codebase's real bugs — the username case defect, the display order that

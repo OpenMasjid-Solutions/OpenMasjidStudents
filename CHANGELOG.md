@@ -14,19 +14,7 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
      wants all of it, including the fixes too small to announce.
 
      So each release opens with its HEADLINES — the major changes, additions and fixes, and nothing else —
-     and everything after the `- **WhatsApp messages now say whether they actually arrived.** The queue log used to stop at
-  "Queued", which only ever meant OpenMasjidOS had accepted the message — and when a masjid hit a
-  platform fault where nothing was delivered for over a day, neither the office nor this app had
-  anything to look at. Rows now settle to **Sent**, or say plainly that a message failed or expired.
-  (Needs OpenMasjidOS 0.51.1 or later; on anything older a row stops at Queued and the screen says so.)
-- **There are no more quiet hours.** OpenMasjidOS used to hold every message between 9pm and 7am,
-  staff alerts included — so a declined card on a Sunday evening waited until Monday morning, which is
-  the opposite of why anyone puts their number in. A message now goes out when the pacing allows,
-  whatever the hour.
-- **The app writes American English throughout.** "Cheque" is now "check", and the same for every other
-  British spelling in the app, on printed sheets and in emails.
-
-### Also in this release` heading is detail. The app's What's new shows the
+     and everything after the `### Also in this release` heading is detail. The app's What's new shows the
      headlines on a release build and the whole entry on a `-dev.N` one, deciding from the version it is
      actually running (packages/web/src/lib/changelog.ts). On GitHub, where the full history belongs, both
      halves always show.
@@ -48,17 +36,61 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   saying plainly that the money is not the madrasah’s but what Visa, Mastercard and Amex charge to accept
   a card. Bank payments cost a fifth as much, so they have their own switch and their own figure, and the
   screen shows you exactly what a $100 and a $500 bill would come to before you decide.
+- **WhatsApp messages now say whether they actually arrived.** The queue log used to stop at "Queued",
+  which only ever meant OpenMasjidOS had accepted the message — and when a masjid hit a platform fault
+  where nothing was delivered for over a day, neither the office nor this app had anything to look at.
+  Rows now settle to **Sent**, or say plainly that a message failed or expired. (Needs OpenMasjidOS
+  0.51.1 or later; on anything older a row stops at Queued and the screen says so.)
+- **There are no more quiet hours.** OpenMasjidOS used to hold every message between 9pm and 7am, staff
+  alerts included — so a declined card on a Sunday evening waited until Monday morning, which is the
+  opposite of why anyone puts their number in. A message now goes out when the pacing allows, whatever
+  the hour.
 - **The office can record that a parent does not want WhatsApp.** It sits with their name on the family’s
   record. Parents say it at pickup rather than by signing into a portal, and until now the only way to
   honor it was to delete their number — which also lost you the ability to ring them.
+- **The screens that scroll are faster.** Opening a family’s billing record and moving down it used to
+  stutter, worst on an older office PC or a Raspberry Pi. Two things were behind it: the frosted-glass
+  effect was being computed separately for every input box on screen — about thirty of them inside one
+  billing record — and recomputed on every frame of the scroll; and the money on a busy screen was being
+  formatted the slow way, hundreds of times per redraw. **Nothing looks different.** The hover
+  animations, the glass and the window entrance are all still there.
 - **"Which month?" is now a dropdown everywhere it is asked.** Adding a one-off charge, or applying one to
   a whole class, used to want a period key typed as `2026-07`. A typo there put the charge on a month that
   would never be billed, where it sat unnoticed.
 - **A test WhatsApp now tells you which phone it went to.** A household usually has two parents and the
   test goes to whichever number can be read — so if you were watching your own handset, you could wait a
   day and conclude the whole feature was broken.
+- **The app writes American English throughout.** "Cheque" is now "check", and the same for every other
+  British spelling in the app, on printed sheets and in emails.
 
 ### Also in this release
+
+- Four paint-cost fixes behind "the screens that scroll are faster", all in `shell.css` because
+  `glass.css` and `app.css` are verbatim ports (§15). **`backdrop-filter` was uncapped on
+  `.glass-inset`** — glass.css caps a `.glass` nested in a `.glass` and says why, but never the inset,
+  which is on every input, select and inset panel in the staff shell: 286 across the app, 27 inside one
+  billing record, each its own render surface, all inside one scroll container. **A window's entrance
+  animated `filter`**, and being declared `both` it left `filter: blur(0)` applied for the life of the
+  window — not the same as no filter: it holds a render surface and makes `.win` a backdrop root, so
+  every frosted element inside was re-blurring the window's own scrolling content on every frame,
+  permanently, for a blur of zero pixels. **A window's scroll chained into the page** behind it at the
+  ends of a long record, which is both wrong and expensive. **The aurora now stands down during a
+  scroll** (`lib/scrollIdle.ts`) — it is cheap in itself but it sits behind every frosted surface, so
+  looping forever held the whole page's glass in a permanent repaint loop.
+- `formatMoney` builds one `Intl.NumberFormat` per currency instead of one per amount, on both the
+  browser and the server. Constructing one costs an order of magnitude more than formatting with one that
+  exists, and it is called once per money cell — a billing record is every invoice, every line of every
+  invoice and every payment, and the year view is every child times twelve months, with the lot
+  re-rendered on each keystroke in any form beside them. The server pays the same cost per amount in
+  every statement, invoice and CSV export.
+- The window override needed its own `prefers-reduced-motion` branch: a media query adds no specificity,
+  so a two-class override wins inside app.css's reduced-motion block too and would have handed the
+  animation back to the people who asked not to have one. `styles/paintCost.test.ts` fails without it —
+  along with the inset cap, the entrance filter, and the attribute name `scrollIdle.ts` and `shell.css`
+  have to agree on, which is silent on both sides if they drift.
+- Three headlines of this release had been pasted inside the changelog's own explanatory HTML comment, so
+  they reached neither GitHub nor the app's What's new: the WhatsApp delivery status, the end of quiet
+  hours, and American English. Recovered, and the comment's sentence put back together.
 
 - **A family who always pays the same way can now be recorded automatically.** Open a child’s billing
   record, set the channel — cash, check, bank transfer, Zelle — and the day of the month, and the app

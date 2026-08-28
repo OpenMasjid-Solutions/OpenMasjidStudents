@@ -17,6 +17,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { prefsStore } from './lib/prefs';
 import { hydrateAppearance } from './lib/appearance';
 import { installCursorFx } from './lib/cursorFx';
+import { installScrollIdle } from './lib/scrollIdle';
 import { trpc, trpcClient, queryClient } from './lib/trpc';
 import { registerServiceWorker } from './lib/registerSW';
 import { App } from './App';
@@ -31,6 +32,9 @@ prefsStore.patch({ language: 'en' });
 hydrateAppearance();
 // Pointer-reactive light on glass surfaces (off under reduced-motion / touch).
 installCursorFx();
+// Stands the ambient drift down while a list is being scrolled, so the page's frosted surfaces are not
+// re-blurring for a movement nobody is watching (lib/scrollIdle.ts + shell.css).
+installScrollIdle();
 // The service worker, in production only. It caches NOTHING of the app — its whole job is to make the app
 // installable so the portal can offer a one-tap "add to home screen" (lib/registerSW.ts, public/sw.js).
 registerServiceWorker();
