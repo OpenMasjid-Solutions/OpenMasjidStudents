@@ -7,7 +7,7 @@
  *  `focusStudentId` is the child the window was opened FOR — pressing a name in the year view lands
  *  here, so the payment form and the charge form start on that child instead of asking again. The
  *  window still shows the whole household, because one adult pays for all of them. */
-import { Fragment, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Printer, Pencil, Repeat, Users } from 'lucide-react';
 import { describeMethod, methodTitle } from '../lib/paymentMethod';
@@ -61,6 +61,34 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
    *  fees are per child and so is the figure a parent wants. */
   const [yearFor, setYearFor] = useState<string | null>(null);
   const year = trpc.billing.yearTotal.useQuery({ studentId: yearFor ?? '' }, { enabled: !!yearFor });
+
+  /** The standing arrangement panel — which child it is open for, and their current settings. */
+  const [standingFor, setStandingFor] = useState<string | null>(null);
+  const standing = trpc.billing.standingGet.useQuery({ studentId: standingFor ?? '' }, { enabled: !!standingFor });
+  const setStanding = trpc.billing.standingSet.useMutation();
+  /** The memo is held locally and saved on blur — a mutation per keystroke would be one write per letter. */
+  const [standingMemo, setStandingMemo] = useState('');
+  useEffect(() => setStandingMemo(standing.data?.memo ?? ''), [standing.data?.memo]);
+
+  /**
+   * Save one field, sending the whole arrangement.
+   *
+   * The full shape every time rather than a patch: the server upserts one row, and a partial save would
+   * need it to merge — which is a second place holding an opinion about what the arrangement is. The
+   * current values come from the query, so this cannot write a stale channel over a fresh one.
+   */
+  async function saveStanding(patch: { enabled?: boolean; channel?: string; dayOfMonth?: number; memo?: string }) {
+    if (!standingFor || !standing.data) return;
+    const d = standing.data;
+    await setStanding.mutateAsync({
+      studentId: standingFor,
+      enabled: patch.enabled ?? d.enabled,
+      channel: (patch.channel ?? d.channel) as ManualChannel,
+      dayOfMonth: patch.dayOfMonth ?? d.dayOfMonth,
+      memo: patch.memo ?? standingMemo,
+    });
+    await utils.billing.standingGet.invalidate({ studentId: standingFor });
+  }
   const [chargeErr, setChargeErr] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
   /** How this masjid writes dates (0.47.0). `settings.display` — admin AND finance, unlike
@@ -280,6 +308,86 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             <button type="button" className="btn btn--ghost" onClick={() => setOverrideForm(null)}>{t('common.cancel')}</button>
             <p className="hint">{t('billing.overrideHint')}</p>
           </form>
+        )}
+
+        {/*
+          A STANDING ARRANGEMENT — autopay for money that never touches Stripe (0.51.0-dev.15).
+
+          A family who hands over cash every month, or sends a bank transfer: the office sets the channel
+          and the day, and the app records it on that day instead of somebody keying it in twelve times a
+          year. Per child, because a payment belongs to one child (§9).
+
+          THE COPY SAYS WHAT IT ACTUALLY DOES, in the strongest terms the screen allows: it records the
+          money whether or not it arrived. That was a deliberate choice over a confirm-first queue, so the
+          panel has to be honest about the consequence rather than describing it as "automatic payments"
+          and leaving the office to discover it. The amount is never typed here — it is whatever is owed on
+          the day, which is what stops it minting credit — so the panel shows that figure live.
+        */}
+        {feeGroups.length > 0 && (
+          <>
+            <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>
+              {t('billing.standing')}
+              <button type="button" className="btn btn--ghost btn--sm" style={{ marginInlineStart: '0.5rem' }} onClick={() => setStandingFor(standingFor ? null : feeGroups[0][0])}>
+                {standingFor ? t('common.close') : t('common.show')}
+              </button>
+            </h3>
+            {standingFor && (
+              <div className="glass-inset" style={{ padding: '0.6rem 0.75rem' }}>
+                {feeGroups.length > 1 && (
+                  <div className="field" style={{ marginBlockEnd: '0.5rem', maxWidth: '16rem' }}>
+                    <label className="label">{t('billing.forStudent')}</label>
+                    <select className="input glass-inset" value={standingFor} onChange={(e) => setStandingFor(e.target.value)}>
+                      {feeGroups.map(([id, g]) => <option key={id} value={id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <p className="hint" style={{ marginBlockStart: 0 }}>{t('billing.standingIntro')}</p>
+                {/* The warning, above the switch rather than under it — the same placement the processing-fee
+                    panel uses for the same reason: it has to be read before the decision, not after. */}
+                <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{t('billing.standingWarn')}</div>
+                {standing.data && (
+                  <>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer', marginBlockEnd: '0.6rem' }}>
+                      <input
+                        type="checkbox"
+                        style={{ marginBlockStart: '0.2rem' }}
+                        checked={standing.data.enabled}
+                        onChange={(e) => void saveStanding({ enabled: e.target.checked })}
+                        disabled={setStanding.isPending}
+                      />
+                      <span>{t('billing.standingOn')}</span>
+                    </label>
+                    <div className="inline-form glass-inset">
+                      <div className="field" style={{ flex: '0 1 10rem' }}>
+                        <label className="label">{t('billing.channel')}</label>
+                        <select className="input glass-inset" value={standing.data.channel} onChange={(e) => void saveStanding({ channel: e.target.value })}>
+                          {MANUAL_CHANNELS.map((c) => <option key={c} value={c}>{t(`billing.ch_${c}`)}</option>)}
+                        </select>
+                      </div>
+                      <div className="field" style={{ flex: '0 1 8rem' }}>
+                        <label className="label">{t('billing.standingDay')}</label>
+                        <select className="input glass-inset" value={standing.data.dayOfMonth} onChange={(e) => void saveStanding({ dayOfMonth: Number(e.target.value) })}>
+                          {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                      </div>
+                      <div className="field" style={{ flex: '1 1 10rem' }}>
+                        <label className="label">{t('billing.memo')}</label>
+                        <input className="input glass-inset" value={standingMemo} onChange={(e) => setStandingMemo(e.target.value)} onBlur={() => void saveStanding({ memo: standingMemo })} maxLength={200} />
+                      </div>
+                    </div>
+                    {/* The live figure, which is the whole safeguard made visible: no amount is stored, so
+                        this is what the scheduler itself would record today. */}
+                    <p className="hint">
+                      {standing.data.wouldRecord > 0
+                        ? t('billing.standingWould', { amount: money(standing.data.wouldRecord), on: formatDate(standing.data.runsOn, dateFormat) })
+                        : t('billing.standingNothingOwed', { on: formatDate(standing.data.runsOn, dateFormat) })}
+                    </p>
+                    {standing.data.lastPeriod && <p className="hint">{t('billing.standingLast', { period: standing.data.lastPeriod })}</p>}
+                  </>
+                )}
+              </div>
+            )}
+          </>
         )}
 
         {/*

@@ -1071,7 +1071,15 @@
     "yearFrom_invoices": "{{year}} — the {{months}} months this student is billed for, from their first bill to the end of the year.",
     "yearFrom_current": "{{year}} — the {{months}} months from this month to the end of the year. They have not been billed yet.",
     "yearFrom_yearStart": "{{year}} — all {{months}} months. The year has not started yet.",
-    "yearFrom_given": "{{year}} — {{months}} months from the month you chose."
+    "yearFrom_given": "{{year}} — {{months}} months from the month you chose.",
+    "standing": "Standing payment",
+    "standingIntro": "For a family who pays the same way every month — cash at the office, or a bank transfer. The app records it for you on the day you choose, so you are not entering the same payment twelve times a year.",
+    "standingWarn": "This records the payment whether or not the money actually arrived. The bill will show as paid, the family will not be chased for it, and your outstanding total will not include it. If a month is missed, reverse that payment in the history below.",
+    "standingOn": "Record this payment automatically every month",
+    "standingDay": "Day of month",
+    "standingWould": "On {{on}} it would record {{amount}} — whatever is owed that day. The amount is never fixed, so it can never record more than the family owes.",
+    "standingNothingOwed": "As things stand, nothing would be recorded on {{on}} — nothing is owed by then. It records only what is actually due.",
+    "standingLast": "Last recorded for {{period}}."
   },
   "family": {
     "title": "Parent Portal",

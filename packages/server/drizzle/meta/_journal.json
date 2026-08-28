@@ -281,6 +281,13 @@
       "when": 1786196631462,
       "tag": "0039_whatsapp_outcomes",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1787940161835,
+      "tag": "0040_standing_payments",
+      "breakpoints": true
     }
   ]
 }

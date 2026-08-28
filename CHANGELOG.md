@@ -60,6 +60,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **A family who always pays the same way can now be recorded automatically.** Open a child’s billing
+  record, set the channel — cash, check, bank transfer, Zelle — and the day of the month, and the app
+  records the payment for you instead of somebody keying it in twelve times a year. **It records the
+  payment whether or not the money arrived**, which the screen says plainly: the bill shows as paid and
+  the family will not be chased for it, so if a month is missed you reverse that payment in the history
+  below. Two things stop it going wrong quietly — it records only what is actually OWED that day, so it
+  can never mint credit or charge more than the bill, and it can never record the same month twice.
+
 - **A student who has already been billed can now be deleted for good.** Until now the app refused, and
   withdrawing was the only option — right nearly always, but useless for a test roster you billed by
   accident while setting up, which left children on every screen who could never be removed. The refusal

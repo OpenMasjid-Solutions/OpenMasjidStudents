@@ -11,7 +11,7 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, ne, asc, desc, inArray } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
-import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, carryIns, autopayEnrollments, paymentMethods, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
+import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, carryIns, autopayEnrollments, paymentMethods, standingPayments, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { makeLog } from '../logger';
@@ -21,6 +21,7 @@ import { billFromMonths, currentPeriod } from '../billing/joinMidYear';
 import { schoolYearMonths } from '../billing/schoolYear';
 import { AUDIENCE_CLASS, AUDIENCE_COURSE, AUDIENCE_STUDENTS, resolveAudience } from '../structure/audience';
 import { yearTotalFor } from '../billing/yearTotal';
+import { nextRunDate, owedNow } from '../billing/standingPayments';
 import { yearCellsFor } from '../billing/yearCells';
 import { invoiceLines, payableLines } from '../billing/lines';
 import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
@@ -1245,6 +1246,72 @@ export const billingRouter = router({
    *  own invoices absorb it oldest-first; anything left over stays as his credit and the next bill for
    *  him takes it. Paying for several children is several records, which is the honest shape: the
    *  office counted separate amounts for separate kids. */
+  // ── Standing payments (0.51.0-dev.15) ──────────────────────────────────────
+  /**
+   * The standing arrangement on one student, and what it would record right now.
+   *
+   * `wouldRecord` is live rather than stored, and is the number the screen must show: the arrangement holds
+   * no amount at all, because the figure is whatever is OWED on the day (billing/standingPayments.ts). An
+   * office looking at the panel should see the same figure the scheduler would.
+   */
+  standingGet: adminOrFinanceProcedure.input(z.object({ studentId: ID })).query(({ input }) => {
+    const row = db.select().from(standingPayments).where(eq(standingPayments.studentId, input.studentId)).get();
+    const dayOfMonth = row?.dayOfMonth ?? 1;
+    // As of the NEXT RUN, not today. Asking about today told an office setting this up on the 24th that
+    // nothing would be recorded, because the bill was not due until the 1st — true, and indistinguishable
+    // from a broken feature. See `nextRunDate`.
+    const runsOn = nextRunDate(dayOfMonth);
+    return {
+      enabled: !!row?.enabled,
+      channel: (row?.channel ?? 'cash') as (typeof MANUAL_PAYMENT_CHANNELS)[number],
+      dayOfMonth,
+      memo: row?.memo ?? '',
+      lastPeriod: row?.lastPeriod ?? null,
+      /** The day the figure below is for, so the screen can name it rather than implying "now". */
+      runsOn,
+      wouldRecord: owedNow(input.studentId, runsOn),
+    };
+  }),
+
+  /**
+   * Set it up, change it, or switch it off.
+   *
+   * Admin OR finance, matching `recordManualPayment` below: this arrangement does exactly what that button
+   * does, on a schedule, so gating it more tightly would say finance may record a payment by hand but not
+   * arrange for one — a distinction with no reason behind it. Audited either way, because it is a standing
+   * instruction to write money.
+   */
+  standingSet: adminOrFinanceProcedure
+    .input(
+      z.object({
+        studentId: ID,
+        enabled: z.boolean(),
+        channel: z.enum(MANUAL_PAYMENT_CHANNELS),
+        // 1–28: every month has a 28th, so no arrangement silently skips February.
+        dayOfMonth: z.number().int().min(1).max(28),
+        memo: z.string().trim().max(200).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+      }
+      const ts = now();
+      db.insert(standingPayments)
+        .values({ studentId: input.studentId, enabled: input.enabled, channel: input.channel, dayOfMonth: input.dayOfMonth, memo: input.memo || null, createdAt: ts, updatedAt: ts })
+        .onConflictDoUpdate({
+          target: standingPayments.studentId,
+          set: { enabled: input.enabled, channel: input.channel, dayOfMonth: input.dayOfMonth, memo: input.memo || null, updatedAt: ts },
+        })
+        .run();
+      audit(auditActor(ctx), 'standing.set', {
+        entity: 'student',
+        entityId: input.studentId,
+        detail: { enabled: input.enabled, channel: input.channel, dayOfMonth: input.dayOfMonth },
+      });
+      return { ok: true as const };
+    }),
+
   recordManualPayment: adminOrFinanceProcedure
     .input(
       z.object({

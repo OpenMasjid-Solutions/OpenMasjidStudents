@@ -15,6 +15,7 @@ import { refreshSiteInfo } from '../fabric/platform';
 import { writeSnapshot } from '../db/snapshot';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { runPastDue } from '../billing/pastDue';
+import { runStanding } from '../billing/standingPayments';
 import { pruneWhatsappLog, refreshWhatsAppStatus, refreshWhatsappOutcomes } from '../whatsapp';
 import { checkSuspectWindows } from '../whatsapp/suspect';
 
@@ -52,6 +53,29 @@ export function startSchedulers(): void {
       if (r.ran) log.info('auto invoice run', { periodKey: r.periodKey, created: r.created });
     } catch (e) {
       log.error('auto invoice run failed', { error: (e as Error).message });
+    }
+  });
+
+  /**
+   * STANDING PAYMENTS, daily at 05:00 (0.51.0-dev.15) — the offline arrangements an office set up: cash
+   * on the first, a monthly bank transfer. `billing/standingPayments.ts` decides what each records.
+   *
+   * BEFORE the 06:00 autopay run and the 08:00 past-due chase, and that order is the point. A family with
+   * a standing cash arrangement must be recorded as paid before anything chases them for it, and before a
+   * saved card is charged for a bill the cash has now covered. Getting this wrong would double-collect.
+   *
+   * OUTSIDE the `fabricConfigured` guard, deliberately, and for the same reason auto-invoicing is: this is
+   * pure local billing. It writes ledger rows from the masjid's own data, sends nothing, and needs no
+   * platform — so a standalone install gets it too, where an office would otherwise be keying the same
+   * payment in every month with no way to automate it. (The jobs below the guard are there because every
+   * one of their outputs is an email or a Stripe call.)
+   */
+  new Cron('0 5 * * *', () => {
+    try {
+      const r = runStanding();
+      if (r.recorded) log.info('standing payments run', { recorded: r.recorded, skipped: r.skipped });
+    } catch (e) {
+      log.error('standing payments run failed', { error: (e as Error).message });
     }
   });
 

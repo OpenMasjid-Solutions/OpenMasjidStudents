@@ -254,6 +254,19 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   anything.
 - **Manual payments**: channel `cash | check | ach | zelle | other`, amount, date, memo, and optionally the
   exact lines the money was handed over for.
+- **Standing payments** (0.51.0-dev.15, `billing/standingPayments.ts`): autopay for money that never
+  touches Stripe — a family who hands over cash or sends a transfer every month, set per STUDENT on their
+  billing record with a channel and a day. **It records the payment without anybody confirming the money
+  arrived**, which was Hasan's explicit choice over a confirm-first queue, so the panel says so plainly and
+  the two guards are what keep it from becoming a fiction: **the amount is whatever is OWED that day**
+  (never stored — a fixed figure against a smaller bill would mint credit, which the next invoice absorbs
+  in silence, compounding unseen), and **`payments.idempotency_key` is `standing:<student>:<period>` and
+  UNIQUE**, so a re-run, a restart or a catch-up on the 3rd cannot record a month twice. Runs at 05:00,
+  BEFORE autopay (06:00) and the past-due chase (08:00), or a family with a cash arrangement would be
+  chased and card-charged for a bill the cash had covered. Skips a withdrawn child, caps at that
+  student's own balance so a sibling's arrears are never settled by the wrong record, is stamped
+  `recorded_by_name = 'Standing arrangement'` rather than a person, and every row it writes reverses
+  through the ordinary `billing.reversePayment` — which is what makes the whole design tolerable.
 - **Processing fees** (0.51.0, `payments/fees.ts`): off by default, an office can decide the PAYER covers
   Stripe’s cut rather than the school — $100 owed is charged as $103.30 and the madrasah receives $100.
   Card and bank carry SEPARATE rates and separate switches, because 2.9%+30¢ against 0.8%-capped-at-$5 is
@@ -417,6 +430,7 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | Invoices: generate, void; the year view; CSV export | ✅ | ✅ | ❌ (own bills only) |
 | Ledger / all payments — read | ✅ | ✅ | own household only |
 | Record manual payment | ✅ | ✅ | ❌ |
+| **Standing payment** (record cash/ACH on a schedule) | ✅ | ✅ | ❌ |
 | Reverse a CASH payment / **refund any transaction** | ✅ | ✅ | ❌ |
 | Mid-year go-live: preview / commit | ✅ / ✅ | ✅ / ❌ | ❌ |
 | Reconcile with Stripe | ✅ | ✅ | ❌ |
@@ -1431,6 +1445,7 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | a balance being wrong | `billing/ledger.ts` (`reallocateStudent` first) |
   | a month showing the wrong state | `billing/yearCells.ts`, `billing/period.ts` |
   | what a year of fees comes to | `billing/yearTotal.ts` |
+  | a payment the app records on a schedule without Stripe | `billing/standingPayments.ts` |
   | a card, a refund or a saved method | `payments/*` — and only `payments/stripe.ts` imports the SDK |
   | who pays the processing fee, or an amount read back off a PaymentIntent | `payments/fees.ts` |
   | who gets told | `alerts/index.ts`, then `mail/notify.ts` (which fans out BOTH parent channels) |

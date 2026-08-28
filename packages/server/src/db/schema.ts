@@ -913,6 +913,47 @@ export const autopayEnrollments = sqliteTable('autopay_enrollments', {
 });
 export type AutopayEnrollment = typeof autopayEnrollments.$inferSelect;
 
+/**
+ * A STANDING ARRANGEMENT to record an offline payment automatically (0.51.0-dev.15).
+ *
+ * Autopay for money that never touches Stripe: a family who hands over cash or sends a bank transfer
+ * every month, where the office was keying the same payment in twelve times a year. On the chosen day the
+ * scheduler records it.
+ *
+ * PER STUDENT, not per family, unlike `autopay_enrollments`. That table is family-scoped because it drives
+ * ONE card charge that then fans out; this drives a payment, and a payment belongs to exactly one student
+ * (§9). It is also how the office thinks about it — the arrangement is set on a child's billing record.
+ *
+ * IT ASSERTS THAT MONEY ARRIVED, which is the thing to understand before touching it. Hasan chose that
+ * deliberately over a confirm-first queue, and two rules keep it from becoming a fiction:
+ *
+ *   • **The amount is what is OWED on the day, never a stored figure.** So it can never manufacture
+ *     credit, and a family who owes nothing has nothing recorded. See `standingDue`.
+ *   • **`payments.idempotency_key` is `standing:<student>:<period>`**, and that column is UNIQUE — so a
+ *     re-run, a restarted container or a second scheduler cannot record the same month twice.
+ *
+ * `recorded_by_name` on the resulting payment is the arrangement, not a person, so the office reading
+ * "who took this cash?" can see it was the app (§9's split between `recordedBy` and the audit actor).
+ */
+export const standingPayments = sqliteTable('standing_payments', {
+  studentId: text('student_id')
+    .primaryKey()
+    .references(() => students.id, { onDelete: 'cascade' }),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+  /** Which offline channel to record it as. The manual set only — a card is autopay's job (§13.3). */
+  channel: text('channel').$type<ManualPaymentChannel>().notNull(),
+  /** Day of the month to record on, 1–28. Capped at 28 so every month has one. */
+  dayOfMonth: integer('day_of_month').notNull().default(1),
+  /** What the office wants on the payment row, e.g. "standing order". */
+  memo: text('memo'),
+  /** The last period key recorded, so the screen can say when it last ran. The real idempotency is the
+   *  UNIQUE payment key, not this — a stored marker alone would let a restart double-record. */
+  lastPeriod: text('last_period'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+export type StandingPayment = typeof standingPayments.$inferSelect;
+
 /** One autopay attempt for a family on a date (CLAUDE.md §9, §13.3). UNIQUE(family, run_date) is the
  *  scheduler's own idempotency; the Stripe idempotency key for the PI is derived from `id`. */
 export const autopayRuns = sqliteTable(
