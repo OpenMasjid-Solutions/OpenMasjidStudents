@@ -52,6 +52,10 @@ export const SETTING_KEYS = {
   // (0.51.0-dev.6). In the settings table rather than memory so a restart cannot discard it; see
   // alerts/index.ts `STORM_WINDOW_MS` for which alerts and why.
   alertStorm: 'alert_storm',
+  // '1' → the masjid's own webhook may carry the alert text that NAMES the child, instead of the
+  // de-identified one (0.51.0-dev.17). Off by default, and eligibility is per event in
+  // alerts/index.ts `SPEC.webhookMayName` — see `getWebhookNamesStudent`.
+  webhookNamesStudent: 'webhook_names_student',
   // JSON — whether the PAYER covers Stripe's cut rather than the school (0.51.0). Off by default; the
   // math and the reasoning live in payments/fees.ts. See `getProcessingFee`.
   processingFee: 'processing_fee',
@@ -412,6 +416,35 @@ export function getParentMailPaused(): boolean {
 }
 export function setParentMailPaused(on: boolean): void {
   setSetting(SETTING_KEYS.parentMailPaused, on ? '1' : '0');
+}
+
+/**
+ * MAY THE MASJID'S WEBHOOK NAME THE CHILD? (0.51.0-dev.17)
+ *
+ * Every alert carries two texts (alerts/index.ts): `text`, which names the student and the amount and
+ * goes to addresses an admin typed, and `publicText`, which names nobody and is what the webhook and
+ * the OpenMasjidOS alert channel have always received. The reason for the split is that this app cannot
+ * see where the webhook ends up — `notifyPlatform` posts to the platform, which forwards to whatever URL
+ * the masjid configured, and that is usually a Slack or Discord channel with a membership we know
+ * nothing about.
+ *
+ * An office that wants "Yusuf Ismail paid $250" in their own staff channel is making the same deliberate
+ * choice as typing an address into the alert list, so this exists. What it does NOT do is move the
+ * default: off until somebody turns it on, in front of a sentence saying where the message goes.
+ *
+ * `=== '1'`, so a hand-edited or truncated row cannot turn it on — the same strict opt-in coercion
+ * `readGroupAlerts` uses for the WhatsApp group `detail` switch this mirrors. The `!== '0'` idiom is
+ * only for settings whose SAFE value is true, which this one's is not.
+ *
+ * THIS FLAG IS NOT THE WHOLE PERMISSION. An event also has to declare itself eligible
+ * (`SPEC.webhookMayName` in alerts/index.ts), and only `payment-received` does. Consent given for a
+ * payment notice is not consent for the past-due roster.
+ */
+export function getWebhookNamesStudent(): boolean {
+  return getSetting(SETTING_KEYS.webhookNamesStudent) === '1';
+}
+export function setWebhookNamesStudent(on: boolean): void {
+  setSetting(SETTING_KEYS.webhookNamesStudent, on ? '1' : '0');
 }
 
 /**

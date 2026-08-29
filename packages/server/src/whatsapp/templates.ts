@@ -168,12 +168,19 @@ export function waTest(): string {
  * The school name went for the same reason: it is the sender, so saying it again is noise.
  *
  * Carries the SAME text as the alert email — the one that may name a household and an amount — and
- * not the de-identified `publicText` (§14). The line §14 draws is around THIRD-PARTY SINKS: a masjid
- * webhook is usually a Slack channel, and the platform's alert delivery is not ours to reason about.
- * This is a number an admin typed into Settings, on a gateway the masjid runs itself, going to the
- * treasurer's own phone — the same audience and the same actionability requirement as their inbox. An
- * alert that cannot say which family is not worth sending. (A GROUP is the one place that text may be
- * the de-identified one instead — see whatsapp/index.ts `notifyGroups`.)
+ * not the de-identified `publicText` (§14). The line §14 draws is around SINKS THIS APP CANNOT SEE: the
+ * platform's alert delivery is not ours to reason about, and a masjid webhook goes wherever
+ * OpenMasjidOS was pointed, usually a Slack channel whose membership we know nothing about. This is a
+ * number an admin typed into Settings, on a gateway the masjid runs itself, going to the treasurer's own
+ * phone — the same audience and the same actionability requirement as their inbox. An alert that cannot
+ * say which family is not worth sending.
+ *
+ * Two channels DO sit between the two extremes, and both got there the same way — somebody who can see
+ * the audience chose, off by default: a GROUP, via the admin's per-group `detail` switch
+ * (whatsapp/index.ts `notifyGroups`), and since 0.51.0-dev.17 the WEBHOOK for payment notices, via
+ * `webhookNamesStudent` (alerts/index.ts `webhookTextFor`). So this comment's old phrasing — that the
+ * webhook is simply the sink which may not name a family — is no longer the whole truth; it is the sink
+ * that may not, until an office says otherwise for one narrow event.
  *
  * Not editable: it is our own operational wording, not the madrasah's voice to a parent.
  */

@@ -741,10 +741,19 @@ reach their inbox — so the column is back **with** a purpose. A number with on
 satisfied; a number without one is what the old rule forbade, and still is.
 
 A staff WhatsApp carries the alert's `text` — the wording that may name a household and an amount —
-and **not** the de-identified `publicText`. §14's line is around *third-party sinks*: a masjid webhook
-is usually a Slack channel, and the platform's alert delivery is not ours to reason about. A number an
-admin typed, on a gateway the masjid runs itself, is the same audience and the same actionability
-requirement as their inbox. A Student ID and card details are still forbidden, exactly as in the email.
+and **not** the de-identified `publicText`. §14's line is around *third-party sinks*: the platform's own
+alert delivery is not ours to reason about, and a masjid webhook goes wherever OpenMasjidOS was pointed,
+usually a Slack channel whose membership this app cannot see. A number an admin typed, on a gateway the
+masjid runs itself, is the same audience and the same actionability requirement as their inbox. A Student
+ID and card details are still forbidden, exactly as in the email.
+
+Since 0.51.0-dev.17 that argument needs restating, because the webhook is no longer the fixed contrast
+case it was written against. An office may switch **its own webhook** to the naming text for payment
+notices (CLAUDE.md §9). So the frame is not "one channel may name a family and the others may not" — it
+is that **a sink we cannot see is de-identified until somebody who can see it says otherwise**, per
+event, admin-only and audited. Two channels now sit on that footing: a WhatsApp group, where the admin's
+`detail` switch chooses, and the webhook. The platform alert channel is the one that stays absolute,
+because no admin here is in a position to vouch for where it ends up.
 
 The parent pause does **not** apply to staff alerts: it is a switch about writing to families.
 

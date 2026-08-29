@@ -107,6 +107,20 @@ and `updated_at` wherever a row is ever updated.
     would leak a family's name into a chat channel the first time somebody forgot it, and nothing would
     ever surface that. Neither text may carry a **Student ID** (a payment credential), card details, or
     anything from a payment proof. Logs get the event id and a count only, never an address or a body.
+  - **The webhook half of that is now a default, not an absolute** (0.51.0-dev.17). An office may switch
+    its own webhook over to the naming `text` — it is how "Yusuf Ismail paid $250" reaches a masjid's
+    staff channel, which is a thing madāris ask for. The design work is entirely in keeping the grant
+    narrow: `webhookNamesStudent` is off on every install, admin-only, audited both ways, and is only one
+    of THREE conditions — `SPEC[event].webhook && SPEC[event].webhookMayName && the setting`. Eligibility
+    is declared per event and `payment-received` is the only one that has it, so consent to a payment
+    notice is not consent to the past-due roster or to a refund notice naming the invoice lines. The
+    **OpenMasjidOS alert channel is not covered**: `raiseAlert` takes `publicText` unconditionally, and
+    the two sends are deliberately not hoisted into one shared variable. `webhookTextFor` is the single
+    place that decides, and it is an exported function rather than an inline ternary because the
+    eligibility half has no reachable counter-example today — firing an ineligible event posts nothing to
+    the webhook at all, so the obvious test for it is vacuous. `notifyPlatform` also logs a rejected
+    status now, which it never did: an office that opens this channel will reasonably expect to see
+    messages arrive, and silence used to be indistinguishable from success.
   - `platformAlertIds()` exists purely so `test/alerts.test.ts` can hold the code against
     `manifest.yaml`. It only guards the half that lives in this repo — the catalog entry is the other
     half, and a release has to carry it (§19 step 6).

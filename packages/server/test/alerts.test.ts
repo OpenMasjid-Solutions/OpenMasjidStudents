@@ -16,7 +16,7 @@
  *
  * `fetch` is stubbed, so nothing leaves the machine; the assertions are on the requests we build.
  */
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { freshApp, makeCtx } from './harness';
@@ -39,6 +39,15 @@ let calls: Call[] = [];
  *  combination that matters most: a masjid on an older catalog entry must still be told by email. */
 let alertStatus = 400;
 let emailReply: { status: number; json: unknown } = { status: 200, json: { sent: true } };
+/**
+ * What the platform answers a webhook post with — and the default is the REAL contract, not a bare 200.
+ *
+ * `POST /api/fabric/notify` ends `reply.send(result)` where result is `{ delivered: true }` or
+ * `{ delivered: false, reason }`, so a webhook that is disabled, has a bad URL, is rate limited or
+ * answered 404 all come back **HTTP 200**. The stub used to fall through to `json: () => ({})`, which
+ * is a shape the platform never sends and which quietly made every delivery look indeterminate.
+ */
+let notifyReply: { status: number; json: unknown } = { status: 200, json: { delivered: true } };
 const realFetch = globalThis.fetch;
 
 function installFetch(): void {
@@ -48,6 +57,7 @@ function installFetch(): void {
     calls.push({ url, body: i.body ? (JSON.parse(i.body) as Record<string, unknown>) : {} });
     if (url.endsWith('/api/fabric/alert')) return { ok: alertStatus < 300, status: alertStatus, json: async () => ({}) } as unknown as Response;
     if (url.endsWith('/api/fabric/email')) return { ok: emailReply.status < 300, status: emailReply.status, json: async () => emailReply.json } as unknown as Response;
+    if (url.endsWith('/api/fabric/notify')) return { ok: notifyReply.status < 300, status: notifyReply.status, json: async () => notifyReply.json } as unknown as Response;
     return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
   }) as unknown as typeof fetch;
 }
@@ -72,6 +82,7 @@ beforeEach(() => {
   calls = [];
   alertStatus = 400;
   emailReply = { status: 200, json: { sent: true } };
+  notifyReply = { status: 200, json: { delivered: true } };
   installFetch();
 });
 
@@ -166,8 +177,13 @@ describe('dispatch', () => {
    * not ours to reason about — so neither may carry a family's name beside an amount. Our OWN email to
    * an address the admin typed may, and must, or the alert is not actionable. `publicText` is a required
    * field precisely so this cannot be forgotten at a call site.
+   *
+   * This is the DEFAULT half of that rule (the test's name says so since 0.51.0-dev.17). An office may
+   * switch its own webhook to the naming text for payment notices; the describe block below covers that,
+   * and this test must keep passing untouched — if you find yourself relaxing it, the default has
+   * drifted. The platform alert channel has no such switch and this remains absolute for it.
    */
-  it('names the household by email but NEVER on the webhook or the platform alert channel', async () => {
+  it('names the household by email but NOT, BY DEFAULT, on the webhook or the platform alert channel', async () => {
     const admin = caller('admin');
     await admin.settings.alertRecipientSave({ email: 'office@test.org', events: ['payment-received', 'autopay-disabled'] });
     calls = [];
@@ -191,6 +207,213 @@ describe('dispatch', () => {
     });
     expect(String(alertCalls()[0].body.text)).not.toContain('Ismail');
     expect(String(emailCalls()[0].body.text)).toContain('Ismail');
+  });
+
+  /**
+   * THE WEBHOOK MAY BE OPENED, BY THE OFFICE, FOR PAYMENT NOTICES ONLY (0.51.0-dev.17).
+   *
+   * An office wanting "Yusuf paid $250" in their own staff channel is making the same deliberate choice
+   * as typing an address into the alert list. What these pin down is that it is the ONLY thing that
+   * changes: the default is untouched (the test above), the OpenMasjidOS alert channel never sees the
+   * naming text whatever the setting says, and no other event inherits the permission.
+   *
+   * The fixture names share no substring, and that is load-bearing rather than fussy. CLAUDE.md records
+   * a real incident where a past-due test's helper named a child "<household label> child", so an
+   * assertion that the household name was gone passed on a substring of the student's name. 'Yusuf' and
+   * 'Farooqi' cannot alias each other or the channel words.
+   */
+  describe('naming the child on the masjid webhook', () => {
+    const NAMED = {
+      title: 'Tuition payment received',
+      text: '$250.00 paid for Yusuf Farooqi (cash), recorded by the office.',
+      publicText: 'A tuition payment of $250.00 was received (cash).',
+    };
+    const webhookBody = () => String(calls.find((c) => c.url.endsWith('/api/fabric/notify'))!.body.text);
+
+    it('sends the child name once an admin turns it on', async () => {
+      const admin = caller('admin');
+      await admin.settings.webhookNamesSet({ on: true });
+      calls = [];
+      await alerts.alertStaff('payment-received', NAMED);
+      expect(webhookBody()).toContain('Yusuf Farooqi');
+      // The name is the discriminating assertion; the amount appears in BOTH texts, so it is a control
+      // that a message arrived and was parsed — not evidence of WHICH text. Labelling it the other way
+      // round is how the line that does the real work gets weakened later.
+      expect(webhookBody()).toContain('$250.00');
+      expect(webhookBody()).toBe(NAMED.text);
+    });
+
+    it('goes back to the amount alone when it is switched off again', async () => {
+      const admin = caller('admin');
+      await admin.settings.webhookNamesSet({ on: true });
+      await admin.settings.webhookNamesSet({ on: false });
+      calls = [];
+      await alerts.alertStaff('payment-received', NAMED);
+      expect(webhookBody()).not.toContain('Yusuf');
+      expect(webhookBody()).toContain('A tuition payment of $250.00');
+    });
+
+    /**
+     * KEEPING THE TWO CHANNELS UNCONFUSABLE — and this one is worth reading, because the obvious test
+     * for it is vacuous and was written that way first.
+     *
+     * `raiseAlert` sits one line above the webhook send and also takes `publicText`. The hazard is a
+     * future edit that hoists the chosen text into a single shared variable and widens both channels at
+     * once. Firing an alert cannot catch that: no event is both eligible to name on the webhook and
+     * mapped to a platform alert id, so the hoisted value would be `publicText` anyway and an assertion
+     * that "no name reached the alert channel" passes whether or not the bug is present. (Verified by
+     * mutation — that test stayed green with the guard removed.)
+     *
+     * So this pins the REASON it is unobservable, which is the thing that could actually stop being
+     * true: an event eligible to name a child on the webhook must have no platform id. Make one eligible
+     * that has both, and the hoisting bug becomes reachable — so this fails first and says why.
+     */
+    it('never makes one event both webhook-naming and platform-alerting', () => {
+      for (const e of alerts.webhookNamingEvents()) {
+        expect(
+          alerts.platformAlertIdFor(e),
+          `${e} may name a child on the webhook AND raises a platform alert — the two texts can now be confused for one`,
+        ).toBeNull();
+      }
+    });
+
+    /**
+     * ELIGIBILITY IS PER EVENT, and this is the guard on the design rather than on the code path.
+     * `payment-received` is the only event with `webhook: true` today. If a later release adds the flag
+     * to `past-due` (whose text is a roster of every child behind on fees, with amounts) or
+     * `payment-refunded` (which names the invoice lines the money had paid for), it must NOT inherit an
+     * office's consent to see a payment notice. This fails the moment a second event is made eligible,
+     * which is the point: that decision needs its own reading of what the text contains.
+     */
+    it('declares exactly one event eligible to name a child on the webhook', () => {
+      expect(alerts.webhookNamingEvents()).toEqual(['payment-received']);
+    });
+
+    /**
+     * The eligibility half of the gate, asked directly.
+     *
+     * It cannot be reached through `alertStaff` today: `payment-received` is the only event with
+     * `webhook: true`, so firing an ineligible event posts nothing to the webhook and an assertion that
+     * no name arrived would pass because no message did. That is the vacuous shape §20 warns about, so
+     * the rule is asked about the events that matter instead — the two whose text must never go to a
+     * channel we cannot see, with the office's switch fully ON.
+     */
+    it('refuses the naming text for an ineligible event even with the setting on', async () => {
+      await caller('admin').settings.webhookNamesSet({ on: true });
+      const roster = {
+        title: '2 students are past due',
+        text: 'Yusuf Farooqi owes $250.00 and Maryam Farooqi owes $100.00.',
+        publicText: '2 students are past due.',
+      };
+      expect(alerts.webhookTextFor('past-due', roster)).toBe(roster.publicText);
+      const refund = {
+        title: 'A payment was refunded',
+        text: 'A $250.00 refund for Yusuf Farooqi (Book fee) was recorded by the office.',
+        publicText: 'A payment of $250.00 was refunded.',
+      };
+      expect(alerts.webhookTextFor('payment-refunded', refund)).toBe(refund.publicText);
+      // …and the eligible one does take it, so this is not passing because the setting failed to save.
+      expect(alerts.webhookTextFor('payment-received', NAMED)).toBe(NAMED.text);
+    });
+
+    /** Admin only — the same wall as the recipient list (§5). Finance must not be able to widen it. */
+    it('is refused to finance', async () => {
+      await expect(caller('finance').settings.webhookNamesSet({ on: true })).rejects.toThrow();
+    });
+
+    /**
+     * A NOTIFICATION THAT WENT NOWHERE MUST NOT LOOK LIKE ONE THAT ARRIVED.
+     *
+     * These exist because the first version of this release's "we now log a webhook failure" change was
+     * half a fix, and the half it had could never fire. It checked `res.ok` only — but the platform's
+     * notify route ends `reply.send({ delivered, reason })` with an unconditional HTTP 200, so a webhook
+     * that is disabled, misconfigured, rate limited or 404ing all come back 200 and were silently
+     * treated as delivered. Meanwhile the ONE case a status check does catch is a 403 (this app lacking
+     * the `notifications` capability), where blaming "the masjid's webhook" names something that was
+     * never contacted.
+     *
+     * `sendPlatformEmail` in the same file documents this exact trap for the same endpoint family. Two
+     * places disagreeing about one rule is this codebase's recurring bug shape (§20) — so the rule is
+     * now the same in both, and pinned here.
+     */
+    describe('when the notification does not reach the webhook', () => {
+      /**
+       * `alertStaff` sends the webhook with `void notifyPlatform(...)` — fire and forget, deliberately,
+       * because none of this belongs in the caller's critical path. So the log line lands two microtask
+       * hops after `alertStaff` has already returned (past `await fetch` and `await res.json()`), and
+       * asserting straight afterwards reads an empty array.
+       *
+       * Worth knowing what that cost the first draft of these tests: without a flush, one test's warning
+       * landed inside the NEXT test's spy, so a test asserting silence passed on a message that was
+       * merely late, and a test asserting a message passed on the previous one's. Draining before AND
+       * after each test is what keeps each assertion about its own send.
+       */
+      const settle = async () => {
+        for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+      };
+      let warns: string[] = [];
+      beforeEach(async () => {
+        await settle(); // anything still in flight from an earlier test logs before the spy goes on
+        warns = [];
+        vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+          warns.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+        });
+      });
+      afterEach(async () => {
+        await settle(); // …and this test's own sends finish while its spy is still installed
+        vi.mocked(console.warn).mockRestore();
+      });
+
+      it('says so on a 200 that reports it was not delivered', async () => {
+        notifyReply = { status: 200, json: { delivered: false, reason: 'disabled' } };
+        await alerts.alertStaff('payment-received', NAMED);
+        await settle();
+        expect(warns.join('\n')).toContain('disabled');
+      });
+
+      it('stays quiet when it really was delivered', async () => {
+        notifyReply = { status: 200, json: { delivered: true } };
+        await alerts.alertStaff('payment-received', NAMED);
+        await settle();
+        // Positive control first: without it this passes just as well on a send that never happened.
+        expect(calls.some((c) => c.url.endsWith('/api/fabric/notify'))).toBe(true);
+        expect(warns.join('\n')).not.toMatch(/webhook/i);
+      });
+
+      it('does not blame the masjid for a refusal by the platform', async () => {
+        // 403 = this app does not hold the `notifications` capability. The webhook was never contacted.
+        notifyReply = { status: 403, json: {} };
+        await alerts.alertStaff('payment-received', NAMED);
+        await settle();
+        expect(warns.join('\n')).toContain('platform refused');
+        expect(warns.join('\n')).not.toContain('masjid webhook did not receive');
+      });
+
+      /** §14: the reason is a fixed platform enum. The message we sent is never logged — and with the
+       *  naming switch ON, the message is the one thing in this whole feature that names a child. */
+      it('never logs the message body, even when it names a child and delivery failed', async () => {
+        await caller('admin').settings.webhookNamesSet({ on: true });
+        notifyReply = { status: 200, json: { delivered: false, reason: 'http_404' } };
+        await settle();
+        warns = [];
+        await alerts.alertStaff('payment-received', NAMED);
+        await settle();
+        expect(warns.join('\n')).toContain('http_404'); // positive control: it really did log
+        expect(warns.join('\n')).not.toContain('Yusuf');
+        expect(warns.join('\n')).not.toContain('250');
+      });
+    });
+
+    /** Both ways, so "when did this start?" is answerable from the trail. */
+    it('is audited in both directions', async () => {
+      const { db } = app.dbmod;
+      const admin = caller('admin');
+      await admin.settings.webhookNamesSet({ on: true });
+      await admin.settings.webhookNamesSet({ on: false });
+      const rows = db.select().from(auditLog).all().filter((r) => r.action === 'settings.webhookNames');
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => (r.detail as { on: boolean }).on)).toEqual([true, false]);
+    });
   });
 
   it('never throws, even when the transport does', async () => {
@@ -289,6 +512,29 @@ describe('every alert id we can raise is declared in the manifest', () => {
     for (const event of alerts.ALERT_EVENTS) {
       expect(en.settings[`ev_${event}`], `missing i18n key settings.ev_${event}`).toBeTruthy();
     }
+  });
+
+  /**
+   * The webhook toggle's own strings (0.51.0-dev.17), which the loop above cannot reach.
+   *
+   * That loop enumerates a server export, so it only ever covers `ev_*`. A hand-written key is invisible
+   * to it and to every other guard in the repo — nothing fails, and i18next renders the raw key on an
+   * admin's screen, which is precisely how `settings.ev_payment-refunded` once reached a masjid (§9). So
+   * this enumerates them literally: the four keys the screen asks for, listed where somebody deleting one
+   * will be told.
+   *
+   * `webhookNamesOn`/`Off` are the two halves of one sentence that changes with the switch, so a missing
+   * one is a blank line at exactly the moment an admin is deciding whether to open a channel.
+   */
+  it('has the strings the webhook-naming toggle renders', () => {
+    const en = JSON.parse(readFileSync(path.resolve(__dirname, '..', '..', 'web', 'src', 'lib', 'i18n', 'en.json'), 'utf8')) as {
+      settings: Record<string, string>;
+    };
+    for (const key of ['webhookNames', 'webhookNamesLabel', 'webhookNamesOn', 'webhookNamesOff', 'webhookNamesCaveat']) {
+      expect(en.settings[key], `missing i18n key settings.${key}`).toBeTruthy();
+    }
+    // The two states must actually differ, or the switch says the same thing whichever way it is set.
+    expect(en.settings.webhookNamesOn).not.toBe(en.settings.webhookNamesOff);
   });
 });
 

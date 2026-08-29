@@ -429,8 +429,9 @@ money. The invariants that hold it together —
   they do anything, and are **never served to internet-origin requests**.
 - **No PII in logs** — ids and event names only, never a name beside an amount.
 - **Alerts carry two texts**: the office's own copy names the child and the amount, because without
-  that it is unactionable; anything going to a third-party sink (a webhook, the platform alert
-  channel) names nobody.
+  that it is unactionable; anything going to a sink this app cannot see (a webhook, the platform alert
+  channel) names nobody. An admin may lift that for **their own** webhook, for payment notices only —
+  off until they do, and never for the platform alert channel.
 - **WhatsApp is treated as the weakest channel it is.** Nothing auth-critical is ever sent on it —
   no invite, no reset, no one-time code — because the number can be banned overnight and that day
   must not be the day nobody can sign in. No Student ID, no card details, and **no message body is

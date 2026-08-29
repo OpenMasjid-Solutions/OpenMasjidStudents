@@ -33,7 +33,7 @@ import { raiseAlert, notifyPlatform, type AlertId, type AlertLevel } from '../fa
 import { sendAlert } from '../mail/notify';
 import { notifyStaff, notifyGroups } from '../whatsapp';
 import { waStaffAlert } from '../whatsapp/templates';
-import { getSetting, setSetting, SETTING_KEYS } from '../settings';
+import { getSetting, setSetting, getWebhookNamesStudent, SETTING_KEYS } from '../settings';
 import { makeLog } from '../logger';
 
 const log = makeLog('alerts');
@@ -59,6 +59,23 @@ interface EventSpec {
   platform: AlertId | null;
   /** Also post to the masjid webhook? Reserved for the routine, high-volume events. */
   webhook: boolean;
+  /**
+   * May this event's WEBHOOK post carry the naming `text`, if the office has switched that on
+   * (`getWebhookNamesStudent`)? (0.51.0-dev.17)
+   *
+   * Declared per event rather than read as one global switch, and that is the whole care in this
+   * feature. An office asked for the child's name on a payment notice; approving that must not hand
+   * the same permission to whatever event gets `webhook: true` next — and the two likeliest
+   * candidates are the two worst texts in this table. `past-due`'s `text` is a roster of every child
+   * behind on fees with amounts and dates; `payment-refunded`'s names children, the staff member who
+   * refunded, AND the invoice lines the money had paid for. Neither is a payment notice, and neither
+   * inherits this.
+   *
+   * So: `webhook && webhookMayName && the office's switch`. Three conditions, and only the last one is
+   * a setting. Same shape as `platform`, where declaring the id here is necessary and the manifest
+   * still has to declare it too.
+   */
+  webhookMayName: boolean;
   level: AlertLevel;
   /** Does a NEWLY-ADDED recipient get this one by default? */
   defaultOn: boolean;
@@ -73,22 +90,22 @@ interface EventSpec {
  * included. It stays available for the small madrasa that genuinely wants every payment in an inbox.
  */
 const SPEC: Record<AlertEvent, EventSpec> = {
-  'payment-received': { platform: null, webhook: true, level: 'info', defaultOn: false },
-  'autopay-failed': { platform: null, webhook: false, level: 'warning', defaultOn: false },
-  'autopay-disabled': { platform: 'autopay-disabled', webhook: false, level: 'error', defaultOn: true },
-  'lookup-lockout': { platform: 'lookup-lockout', webhook: false, level: 'warning', defaultOn: true },
-  'payment-recovered': { platform: 'reconcile-recovered', webhook: false, level: 'info', defaultOn: true },
-  'payment-short': { platform: 'payment-short', webhook: false, level: 'error', defaultOn: true },
-  'invoices-generated': { platform: null, webhook: false, level: 'info', defaultOn: false },
+  'payment-received': { platform: null, webhook: true, webhookMayName: true, level: 'info', defaultOn: false },
+  'autopay-failed': { platform: null, webhook: false, webhookMayName: false, level: 'warning', defaultOn: false },
+  'autopay-disabled': { platform: 'autopay-disabled', webhook: false, webhookMayName: false, level: 'error', defaultOn: true },
+  'lookup-lockout': { platform: 'lookup-lockout', webhook: false, webhookMayName: false, level: 'warning', defaultOn: true },
+  'payment-recovered': { platform: 'reconcile-recovered', webhook: false, webhookMayName: false, level: 'info', defaultOn: true },
+  'payment-short': { platform: 'payment-short', webhook: false, webhookMayName: false, level: 'error', defaultOn: true },
+  'invoices-generated': { platform: null, webhook: false, webhookMayName: false, level: 'info', defaultOn: false },
   // Who is behind (0.48.0). `defaultOn`, because an unpaid bill nobody chases is the thing this whole
   // app exists to stop — and it is a DIGEST on the office's own cadence, not one email per family, so it
   // cannot flood an inbox the way `payment-received` would.
-  'past-due': { platform: 'past-due', webhook: false, level: 'warning', defaultOn: true },
+  'past-due': { platform: 'past-due', webhook: false, webhookMayName: false, level: 'warning', defaultOn: true },
   // Money leaving (0.48.0). `defaultOn` and `error`-level not because a refund is a fault — it is an
   // ordinary, correct thing for an office to do — but because it is the one action here that sends money
   // OUT, and whoever runs the madrasah's books should learn of it without having to go looking. Volume is
   // no concern: a refund is rare, unlike `payment-received`.
-  'payment-refunded': { platform: 'payment-refunded', webhook: false, level: 'warning', defaultOn: true },
+  'payment-refunded': { platform: 'payment-refunded', webhook: false, webhookMayName: false, level: 'warning', defaultOn: true },
   /**
    * Somebody is grinding one account's password (0.48.0).
    *
@@ -98,7 +115,7 @@ const SPEC: Record<AlertEvent, EventSpec> = {
    * chooses, so keeping it on the channel we control (and that an admin can unsubscribe from in one place)
    * is the right home for it. `defaultOn`, because a password being ground is exactly what nobody notices.
    */
-  'login-blocked': { platform: null, webhook: false, level: 'warning', defaultOn: true },
+  'login-blocked': { platform: null, webhook: false, webhookMayName: false, level: 'warning', defaultOn: true },
 };
 
 /** The events a newly-added recipient starts with. */
@@ -116,6 +133,37 @@ export function defaultEvents(): AlertEvent[] {
  */
 export function platformAlertIds(): AlertId[] {
   return [...new Set(ALERT_EVENTS.map((e) => SPEC[e].platform).filter((id): id is AlertId => id !== null))];
+}
+
+/**
+ * Every event that may name a child on the masjid webhook when the office has switched that on.
+ *
+ * Exported for the same reason as `platformAlertIds` above: so a test can hold the list against the
+ * decision, rather than the list quietly growing. Adding an event here widens what a channel this app
+ * cannot see is told about a family, and `test/alerts.test.ts` fails the moment the list changes —
+ * which is the point. Read what that event's `text` actually contains before you change it; `past-due`
+ * is a roster of every child behind on fees, and `payment-refunded` names the invoice lines.
+ */
+export function webhookNamingEvents(): AlertEvent[] {
+  return ALERT_EVENTS.filter((e) => SPEC[e].webhook && SPEC[e].webhookMayName);
+}
+
+/**
+ * WHICH OF AN ALERT'S TWO TEXTS THE MASJID'S WEBHOOK GETS. The one place that decides.
+ *
+ * A named function rather than a ternary inline at the fan-out, for one reason: the eligibility half of
+ * the gate has no reachable counter-example today. `payment-received` is the only event with
+ * `webhook: true`, so a test that fires an ineligible event and finds no name on the webhook would pass
+ * because nothing was posted at all — vacuous, and worse than nothing (§20). Called directly, the rule
+ * can be asked about any event, including the ones whose text must never go this way.
+ */
+export function webhookTextFor(event: AlertEvent, msg: AlertMessage): string {
+  return SPEC[event].webhookMayName && getWebhookNamesStudent() ? msg.text : msg.publicText;
+}
+
+/** The OpenMasjidOS alert id an event maps to, or null when it reaches only our own channels. */
+export function platformAlertIdFor(event: AlertEvent): AlertId | null {
+  return SPEC[event].platform;
 }
 
 /** Is this a real event id? (Used to filter anything hand-edited or left over from an older build.) */
@@ -216,9 +264,11 @@ export interface AlertMessage {
   /** A short subject line — "Autopay switched off". */
   title: string;
   /**
-   * For the addresses the office listed, by email. One or two plain sentences: what happened, and what
+   * The wording for readers somebody vouched for. One or two plain sentences: what happened, and what
    * to do about it. MAY name a person and the amount — an alert that cannot say who it is about is not
-   * actionable, and these addresses were typed in by an admin.
+   * actionable, and every destination for this text is one an admin chose by hand: the addresses in
+   * Settings, a staff WhatsApp number, a WhatsApp group ticked for `detail`, and — since 0.51.0-dev.17,
+   * for eligible events only — the masjid's own webhook (`webhookTextFor`).
    *
    * The person is the STUDENT: use `studentName` / `studentAmounts` / `childrenOf` above rather than a
    * household label, which names four different households identically and hides the per-child split
@@ -233,6 +283,14 @@ export interface AlertMessage {
    *
    * Required rather than defaulted to `text`, deliberately: a default would leak a family's name into a
    * chat channel the first time somebody forgot this field, and nothing would ever surface it.
+   *
+   * ONE CHANNEL CAN NOW BE OPENED, BY THE OFFICE, DELIBERATELY (0.51.0-dev.17). An admin may switch the
+   * WEBHOOK over to `text` for the events that declare themselves eligible — today only
+   * `payment-received`, so that "Yusuf Ismail paid $250" can reach a masjid's own staff channel. It is
+   * off until they turn it on, it takes an eligible event AND the setting AND `webhook: true`, and it
+   * does not touch the OpenMasjidOS alert channel below, which still only ever sees this field. So write
+   * `publicText` as if nothing had changed: it is still what a sink we cannot see receives by default,
+   * and it is the only thing `raiseAlert` will ever carry.
    */
   publicText: string;
 }
@@ -339,9 +397,23 @@ export async function alertStaff(event: AlertEvent, msg: AlertMessage): Promise<
       const more = ` (and ${held} more like it in the last half hour)`;
       msg = { ...msg, text: msg.text + more, publicText: msg.publicText + more };
     }
-    // Both platform channels get the de-identified text (§14) — only our own email may name a family.
+    /**
+     * The OpenMasjidOS alert channel: `publicText`, always, no switch. It is the platform's own
+     * delivery to a platform admin and none of it is ours to reason about, so it stays where the line
+     * has always been. Deliberately NOT hoisted into a shared variable with the webhook below — one
+     * `const body` covering both is a one-character edit away from widening two channels at once.
+     */
     if (spec.platform) void raiseAlert(spec.platform, msg.publicText, { title: msg.title, level: spec.level });
-    if (spec.webhook) void notifyPlatform(msg.publicText, { title: msg.title, level: spec.level === 'error' ? 'error' : spec.level === 'warning' ? 'warn' : 'info' });
+    /**
+     * The masjid's webhook: `publicText`, unless the office has asked for the naming text AND this
+     * event is eligible for it (`webhookMayName` above). This is the ONE line where that choice is
+     * made, mirroring `notifyGroups`'s per-group `detail` switch — and `notifyPlatform` has exactly one
+     * caller in the repo, which is this. Any future webhook caller must come through `alertStaff` or it
+     * bypasses the switch entirely.
+     *
+     * The title is NOT swapped and needs no switch: no event's title names anybody.
+     */
+    if (spec.webhook) void notifyPlatform(webhookTextFor(event, msg), { title: msg.title, level: spec.level === 'error' ? 'error' : spec.level === 'warning' ? 'warn' : 'info' });
 
     // WhatsApp to the staff who subscribed (0.50.0). It carries `text`, the same wording the alert
     // EMAIL carries — see whatsapp/templates.ts `waStaffAlert` for why that is not a §14 regression:

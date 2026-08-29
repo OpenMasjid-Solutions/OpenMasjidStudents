@@ -185,6 +185,7 @@ export function Settings() {
   const testAlert = trpc.settings.alertTest.useMutation();
   const saveParentEmails = trpc.settings.parentEmailsSet.useMutation();
   const pauseParentMail = trpc.settings.parentMailPauseSet.useMutation();
+  const setWebhookNames = trpc.settings.webhookNamesSet.useMutation();
   const [newRecipient, setNewRecipient] = useState({ email: '', label: '' });
   const [alertMsg, setAlertMsg] = useState<string | null>(null);
 
@@ -224,6 +225,13 @@ export function Settings() {
 
   async function togglePause() {
     await pauseParentMail.mutateAsync({ paused: !alerts.data?.parentMailPaused });
+    await utils.settings.alertsGet.invalidate();
+  }
+
+  /** Let the masjid's webhook name the child on a payment notice (0.51.0-dev.17). Audited server-side
+   *  both ways, so the trail answers "when did this start?" — the reason it is its own procedure. */
+  async function toggleWebhookNames() {
+    await setWebhookNames.mutateAsync({ on: !alerts.data?.webhookNamesStudent });
     await utils.settings.alertsGet.invalidate();
   }
 
@@ -862,6 +870,40 @@ export function Settings() {
           <button type="button" className="btn btn--primary" onClick={() => void addRecipient()} disabled={saveRecipient.isPending || !newRecipient.email.includes('@')}>{t('settings.alertAdd')}</button>
           <p className="hint">{t('settings.alertAddHint')}</p>
         </div>
+
+        {/* ── The masjid's webhook (0.51.0-dev.17) ──────────────────────────────
+            Under the alert list because it is the same question — who is told about a family — reached
+            by a different route. It sits BELOW the addresses on purpose: an address is typed in by a
+            person who then owns it, whereas the webhook's destination was configured once in
+            OpenMasjidOS and this app cannot see where it goes, which is the whole reason the careful
+            text is the default.
+
+            The consequence is spelled out in two states beside the switch, the way the WhatsApp group
+            `detail` toggle does it — the sentence changes when it is on, because "what will now be
+            sent" is a different fact from "what would be sent if you did this". */}
+        {alerts.data && (
+          <>
+            <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.webhookNames')}</h3>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                style={{ marginBlockStart: '0.2rem' }}
+                checked={alerts.data.webhookNamesStudent}
+                onChange={() => void toggleWebhookNames()}
+                disabled={setWebhookNames.isPending}
+              />
+              <span>
+                {t('settings.webhookNamesLabel')}
+                <br />
+                <span className="hint">{t(alerts.data.webhookNamesStudent ? 'settings.webhookNamesOn' : 'settings.webhookNamesOff')}</span>
+              </span>
+            </label>
+            {/* Two standing caveats that are not about the switch's state, so they sit below it rather
+                than inside either sentence: one message per payment (this event has no digest and no
+                storm gate), and the app cannot tell whether the webhook is reaching anything. */}
+            <p className="hint" style={{ marginBlockStart: '0.5rem' }}>{t('settings.webhookNamesCaveat')}</p>
+          </>
+        )}
       </section>
 
       {/* ── WhatsApp (0.50.0) ───────────────────────────────────────────────────

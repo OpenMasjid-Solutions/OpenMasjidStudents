@@ -412,6 +412,7 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | Settings: school name, currency, logo, color, date format, contact, sheet wording | ✅ | ❌ | ❌ |
 | Settings: Stripe account, **who pays the processing fee**, email alerts, parent emails, past-due policy, self-registration | ✅ | ❌ | ❌ |
 | Settings: WhatsApp (on/off, pause, events, country codes, test student, outreach, queue log) | ✅ | ❌ | ❌ |
+| **Let the masjid webhook name the child on a payment notice** | ✅ *(0.51.0-dev.17 — off by default, §9)* | ❌ | ❌ |
 | Staff accounts (create, role, disable, reset password, school limits) | ✅ | ❌ | ❌ |
 | Staff WhatsApp number + which alerts they get on it | ✅ | ❌ | ❌ |
 | **Opt out of WhatsApp** (and back in) | ✅ *(0.51.0 — the office is told in person)* | ❌ | ✅ anyone on their own household |
@@ -783,6 +784,29 @@ Non-negotiable rules:
   name-beside-an-amount, which is where §14's line has always been. Neither may carry a Student ID or card
   details. Parent-facing emails are gated inside `mail/notify.ts` (never per call site: receipts are sent from
   five places).
+- **The WEBHOOK may be opened by the office, for payment notices only, and the shape of that permission is
+  the whole care in it** (0.51.0-dev.17). A madrasah that wants "Yusuf Ismail paid $250" in its own staff
+  channel is making the same deliberate choice as typing an address into the alert list, so
+  `webhookNamesStudent` exists — **off on every install**, admin-only (finance runs the billing and does not
+  decide who is told about families), audited in both directions, and coerced `=== '1'` so a hand-edited row
+  cannot turn it on. What makes it narrow rather than a hole in §14 is that the setting is only ONE of three
+  conditions: `SPEC[event].webhook && SPEC[event].webhookMayName && the setting`. **Eligibility is declared
+  per event and only `payment-received` has it.** A global flag would have been the bug: approving a payment
+  notice would silently have handed the same permission to whatever event got `webhook: true` next, and the
+  two likeliest are the two worst texts in the table — `past-due`'s is a roster of every child behind with
+  amounts and dates, `payment-refunded`'s names children, the staff member who refunded AND the invoice lines
+  the money had paid for. `webhookTextFor` is the one place that decides and is a named function rather than
+  an inline ternary for a specific reason: the eligibility half has no reachable counter-example today, so a
+  test firing an ineligible event would pass because nothing was posted at all. **The OpenMasjidOS alert
+  channel is NOT covered and never will be** — `raiseAlert` keeps `publicText` unconditionally, and
+  `test/alerts.test.ts` pins the reason a hoisting mistake is currently invisible (no event is both
+  webhook-naming and platform-alerting) rather than pretending to catch the mistake itself. Two things ride
+  along and the panel says both: a payment recorded by hand also names **who recorded it**, and there is one
+  notice per payment with no digest and no storm gate, so a busy Sunday is a busy channel. A Student ID still
+  never goes, on any channel, switch or no switch — though note `codePrefix` derives the ID's first three
+  letters from the child's name, so publishing "Yusuf Ismail" publishes `YUS` and leaves 10,000 candidates
+  against a 6-failure/hour lockout. That is bounded, not broken, and it is the case for the default staying
+  off rather than a reason to refuse the feature.
 - **An alert names the STUDENT, never the household** (0.50.0-dev.14). It said "the Ismail family paid $250"
   for six releases, and that is one indirection away from what this app bills: **invoices and payments are
   per student**, so a household label makes an office do a lookup the alert could have done, and it hides the
@@ -1173,6 +1197,15 @@ invariant here is load-bearing:
   overnight and that day must not be the day nobody can sign in. No Student ID, no card details, and **no
   message body is ever logged or stored**, on any path including failures. Both are tested, not assumed.
 - **No PII in logs** — ids, codes and counts only; never names+amounts together; Fabric bodies never logged.
+- **A THIRD-PARTY SINK GETS THE DE-IDENTIFIED TEXT, AND THIS SECTION IS WHERE THE CODE THINKS THAT RULE
+  LIVES.** Eight comments across `alerts/`, `fabric/platform.ts`, `payments/refunds.ts`, `billing/pastDue.ts`
+  and `whatsapp/templates.ts` cite "(§14)" for it, and until 0.51.0-dev.17 there was no sentence here to
+  cite — the rule was written only in §9, so every one of those citations pointed at nothing. It is: an alert
+  reaching a sink this app cannot see carries **no name, and no name beside an amount**. The
+  OpenMasjidOS alert channel (`raiseAlert`) is unconditionally such a sink. The masjid webhook is one **by
+  default**, and is the single exception an office may lift for itself — narrowly, per event, admin-only and
+  audited; see §9 for why eligibility is declared per event rather than as one switch. A **Student ID** and
+  card details are exempt from any exception and never travel on either.
 - Role checks server-side on every procedure; **parent household-scoping enforced in queries**.
 - **Printed documents are minors' records**: served only through the authed route that re-checks the role ×
   origin matrix on every request, with `no-store`, `nosniff`, `no-referrer` and a CSP whose `default-src

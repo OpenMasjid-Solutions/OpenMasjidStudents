@@ -694,7 +694,14 @@ export async function raiseAlert(id: AlertId, text: string, opts: { title?: stri
  * Fire a notification to the masjid webhook via the OS core (CLAUDE.md §4 — payments, autopay
  * failures, Student-ID lookup lockouts). The OS `/api/fabric/notify` contract is
  * `{ title?, text (required), level? }` (verified against the platform code). Best-effort: no-op when
- * the platform isn't wired in, never throws. `text` MUST NOT carry PII (never a name+amount pair, §14).
+ * the platform isn't wired in, never throws.
+ *
+ * WHAT `text` MAY CARRY IS THE CALLER'S DECISION, AND THERE IS EXACTLY ONE CALLER: `alertStaff` in
+ * alerts/index.ts. It sends the de-identified `publicText` by default, because this app cannot see
+ * where the webhook ends up — the platform forwards it to whatever URL the masjid configured, usually
+ * a chat channel with a membership we know nothing about. Since 0.51.0-dev.17 an office may switch the
+ * eligible events over to the naming text deliberately. Do not add a second caller: it would bypass
+ * that switch, and the choice belongs in the one place that decides who hears about an event (§16).
  *
  * Prefer `raiseAlert` for anything security-relevant: this endpoint is webhook-only and silently dead
  * until an admin configures one, whereas an alert can reach their email.
@@ -704,7 +711,7 @@ export async function notifyPlatform(text: string, opts: { title?: string; level
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 4000);
-    await fetch(`${config.omosBaseUrl}/api/fabric/notify`, {
+    const res = await fetch(`${config.omosBaseUrl}/api/fabric/notify`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'X-OpenMasjid-App-Secret': config.omosAppSecret },
       body: JSON.stringify({ text, title: opts.title, level: opts.level }),
@@ -712,6 +719,34 @@ export async function notifyPlatform(text: string, opts: { title?: string; level
       redirect: 'error',
     });
     clearTimeout(timer);
+    /**
+     * SAY SO WHEN IT DID NOT LAND (0.51.0-dev.17). This function used to ignore the response entirely:
+     * no status check, no log line, nothing. So a masjid with a misconfigured or removed webhook got
+     * silence in the one place that could have told them, which is the same invisible-failure shape
+     * `raiseAlert` above already avoids and that the WhatsApp `blockers` list was invented to kill
+     * (§9). It matters more now that an office can deliberately route naming text here and will
+     * reasonably expect to see it arrive.
+     *
+     * A 200 DOES NOT MEAN IT WAS DELIVERED, and checking only the status is the trap this landed in
+     * first. The platform's `/api/fabric/notify` handler ends `return reply.send(result)` — an
+     * unconditional 200 — where `result` is `{ delivered: true }` or `{ delivered: false, reason }`,
+     * because `sendNotification` fails soft: a webhook that is disabled, has a bad URL, is rate
+     * limited, or answered 404 all come back 200. So a status-only check fires for none of the cases
+     * this is actually about, and DOES fire on a 403 (we lack the `notifications` capability), where
+     * "the masjid's webhook rejected it" would blame a webhook that was never contacted.
+     *
+     * Which is exactly the shape `sendPlatformEmail` above documents at length, on the same endpoint
+     * family — so this reads the body the same way. `reason` is a fixed enum from the platform
+     * (`disabled`, `bad_url`, `empty`, `rate_limited`, `http_<status>`, `error`) and carries no message
+     * content, so logging it clears §14; the text we sent is never echoed back and is never logged.
+     */
+    if (!res.ok) {
+      log.warn('platform refused the notification', { status: res.status });
+      return;
+    }
+    const j = (await res.json().catch(() => null)) as { delivered?: unknown; reason?: unknown } | null;
+    if (j?.delivered === true) return;
+    log.warn('masjid webhook did not receive the notification', { reason: typeof j?.reason === 'string' ? j.reason : 'unknown' });
   } catch {
     /* best-effort — a missed notification is never a failure of the operation that triggered it */
   }

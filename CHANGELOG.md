@@ -65,6 +65,21 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **Payment notices to your notification channel can now name the child.** OpenMasjidOS forwards this
+  app's routine notices to whatever channel your masjid set up — usually Slack or Discord. Those notices
+  have always said "A tuition payment of $250.00 was received (cash)" and deliberately no more, because
+  this app cannot see who is in that channel. Under **Settings → Who to tell at the masjid** there is now
+  a switch that sends "$250.00 paid for Yusuf Ismail (cash)" instead. **Off until you turn it on**, admin
+  only, and it covers payment notices and nothing else — no other notice this app sends there will ever
+  name a family, whatever the switch says. Two things the screen tells you before you decide: a payment
+  recorded by hand also names whoever recorded it, and there is one notice per payment, so a busy Sunday
+  is a busy channel.
+- The app now says so in its log when your notification channel rejects a message. It used to ignore the
+  answer completely, so a webhook that had been removed or misconfigured looked exactly like a quiet day.
+- **A Billing button on every child in a family's record.** The billing window could already open the
+  household record; the way back did not exist, so an office looking at a child and asked what they owe
+  had to leave, change tab and find them again. It opens on that child, and finance can use it.
+
 - Four paint-cost fixes behind "the screens that scroll are faster", all in `shell.css` because
   `glass.css` and `app.css` are verbatim ports (§15). **`backdrop-filter` was uncapped on
   `.glass-inset`** — glass.css caps a `.glass` nested in a `.glass` and says why, but never the inset,

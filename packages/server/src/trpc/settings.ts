@@ -10,7 +10,7 @@ import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './t
 import { db } from '../db';
 import { families, guardians, guardianFamilies, paymentMethods, autopayEnrollments, alertRecipients, students } from '../db/schema';
 import { rid } from '../db/ids';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor, getSheetTextOverrides, setSheetTextOverrides, donationUrl, getPastDue, setPastDue, getPastDueStaffLast, getProcessingFee, setProcessingFee, getOnboardingText, setOnboardingText } from '../settings';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getWebhookNamesStudent, setWebhookNamesStudent, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor, getSheetTextOverrides, setSheetTextOverrides, donationUrl, getPastDue, setPastDue, getPastDueStaffLast, getProcessingFee, setProcessingFee, getOnboardingText, setOnboardingText } from '../settings';
 import { SHEET_TEXT_DEFAULTS, SHEET_TEXT_KEYS, SHEET_TEXT_MAX, SHEET_TEXT_TAGS } from '../people/sheetText';
 import { ONBOARDING_DEFAULTS, ONBOARDING_KEYS, ONBOARDING_MAX, ONBOARDING_TAGS, onboardingWhatsApp, renderOnboarding } from '../people/onboarding';
 import { testFamilyId } from '../settings/testStudent';
@@ -279,6 +279,8 @@ export const settingsRouter = router({
     parentEmails: getParentEmails(),
     /** The master stop — nothing at all goes to a parent while it is on (0.48.0). */
     parentMailPaused: getParentMailPaused(),
+    /** May the masjid's webhook name the child on a payment notice (0.51.0-dev.17)? Off by default. */
+    webhookNamesStudent: getWebhookNamesStudent(),
     /** Nothing can be delivered without a transport; the UI says so rather than looking broken. */
     mailAvailable: mailAvailable(),
   })),
@@ -346,6 +348,23 @@ export const settingsRouter = router({
   parentMailPauseSet: adminProcedure.input(z.object({ paused: z.boolean() })).mutation(({ ctx, input }) => {
     setParentMailPaused(input.paused);
     audit(auditActor(ctx), 'settings.parentMailPause', { entity: 'settings', detail: { paused: input.paused } });
+    return { ok: true as const };
+  }),
+
+  /**
+   * Let the masjid's webhook name the child on a payment notice (0.51.0-dev.17).
+   *
+   * Its own procedure, and audited both ways, for the reason the pause above gives: this is not "which
+   * notifications does this madrasah send" but a decision about how much a channel we cannot see is
+   * told about a family. Turning it ON is the entry somebody will want to find later, and turning it
+   * back off equally so.
+   *
+   * Admin, never finance — the same wall as the recipient list, and for the same stated reason: opening
+   * a channel is a standing grant of information about families, which is the office's call (§5).
+   */
+  webhookNamesSet: adminProcedure.input(z.object({ on: z.boolean() })).mutation(({ ctx, input }) => {
+    setWebhookNamesStudent(input.on);
+    audit(auditActor(ctx), 'settings.webhookNames', { entity: 'settings', detail: { on: input.on } });
     return { ok: true as const };
   }),
 

@@ -10,13 +10,14 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { Pencil, Printer, Send, Trash2 } from 'lucide-react';
+import { Pencil, Printer, Send, Trash2, Wallet } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
 import { formatUsPhone, telHref } from '../../lib/phone';
 import { formatMoney, parseCents } from '../../lib/money';
 import { StudentPicker } from '../../components/StudentPicker';
 import { OnboardingSend } from '../../components/OnboardingSend';
+import { FamilyBilling } from '../../components/FamilyBilling';
 import { useWindows } from '../../components/Windows';
 
 /** What a guardian is to the child. Four choices rather than an open box: an office typing "Dad",
@@ -53,6 +54,32 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
       dedupeKey: `onboarding:${familyId}`,
       icon: <Send size={15} />,
       node: <OnboardingSend studentIds={(q.data?.students ?? []).map((s) => s.id)} familyLabel={q.data?.family.name ?? ''} />,
+    });
+
+  /**
+   * THIS CHILD'S BILLING RECORD (0.51.0-dev.17) — the other half of a door that only opened one way.
+   *
+   * The billing window already opens this one (FamilyBilling's Household button), and the Billing tab
+   * and the year view both open billing directly. The one route that was missing is the obvious one: an
+   * office looking at a child, asked what they owe, had to leave, change tab, and find them again.
+   *
+   * PER STUDENT, unlike the onboarding button right below — and the difference is real rather than
+   * inconsistent. A message is one send to the household's adults, so three buttons would have implied
+   * three messages. A billing record is per household too, but it OPENS ON a child (`focusStudentId`
+   * seeds the payment and charge forms with them), so pressing the row you are reading is the whole
+   * point. Same `dedupeKey` as the Billing tab, so this focuses a record already open rather than
+   * stacking a second window on the same household.
+   *
+   * NOT gated on `readOnly`: finance reads the ledger and records the money (§5), so they are exactly
+   * who needs this. It is the ONE control in this window they may use.
+   */
+  const openBilling = (studentId: string, name: string) =>
+    open({
+      title: name,
+      wide: true,
+      dedupeKey: `billing:${familyId}`,
+      icon: <Wallet size={15} />,
+      node: <FamilyBilling familyId={familyId} currency={display.data?.currency ?? 'usd'} focusStudentId={studentId} />,
     });
 
   /**
@@ -434,6 +461,12 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     <td><span className="code">{s.studentCode ?? '—'}</span></td>
                     <td>{s.status === 'withdrawn' ? <span className="chip is-muted">{t('directory.withdrawn')}</span> : <span className="chip">{t('directory.active')}</span>}</td>
                     <td className="actions">
+                      {/* What they owe, without leaving the child you are looking at. First in the row
+                          because it is the question asked most often, and the only one here finance may
+                          press — see `openBilling`. */}
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => openBilling(s.id, s.fullName)}>
+                        <Wallet size={13} /> {t('directory.billing')}
+                      </button>
                       {!readOnly && (
                         <>
                           <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status, s.fullName)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
