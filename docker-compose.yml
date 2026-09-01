@@ -31,7 +31,7 @@ services:
     #
     # Pinned to the multi-arch INDEX digest, not to a per-platform manifest — so a Raspberry Pi and an
     # amd64 box install the same reference and resolve their own architecture from it.
-    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.50.0@sha256:d0d69b33f86c61fc80b8868a8300c4e1c490a609d5dd4b378d07f74a6c5a2110
+    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.51.0@sha256:d5df93e54dfb780fb1e631125356d5887aaf2a3b50e1d74c5f77af43c1fc88af
     restart: unless-stopped
     environment:
       PORT: "8080"
