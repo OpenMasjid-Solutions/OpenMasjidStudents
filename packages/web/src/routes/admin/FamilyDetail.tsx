@@ -137,6 +137,9 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const countries = waCfg.data?.enabled ? waCfg.data.countries : [];
   /** Why a delete was refused — shown as text, since it is the useful half of the interaction. */
   const [deleteErr, setDeleteErr] = useState('');
+  /** Confirmation after an erase. The one action here with nothing left on screen to show it worked —
+   *  the child's row is gone, so without a sentence the office cannot tell an erase from a no-op. */
+  const [deleteMsg, setDeleteMsg] = useState('');
   /**
    * The student a refused delete is offering to erase ANYWAY, with what that would destroy (dev.14).
    *
@@ -286,10 +289,13 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   async function doForceDelete() {
     if (!forceDelete) return;
     setDeleteErr('');
+    setDeleteMsg('');
     try {
+      const erased = forceDelete.name;
       await deleteStudent.mutateAsync({ studentId: forceDelete.studentId, force: true });
       setForceDelete(null);
       setForceTyped('');
+      setDeleteMsg(t('directory.forceDeleted', { name: erased }));
       await refresh();
     } catch (err) {
       setDeleteErr((err as Error).message);
@@ -484,6 +490,11 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     </td>
                   </tr>
                 ))}
+                {deleteMsg && (
+                  <tr>
+                    <td colSpan={5}><p className="notice notice--ok" style={{ margin: '0.25rem 0 0' }}>{deleteMsg}</p></td>
+                  </tr>
+                )}
                 {deleteErr && (
                   <tr>
                     <td colSpan={5}><p className="form-error" style={{ margin: '0.25rem 0 0' }}>{deleteErr}</p></td>

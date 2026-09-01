@@ -476,14 +476,14 @@ of "card-ish channels" cannot disagree with it.
                  ▼                                            ▼
    ┌──────────────────────────────────────────────────────────────────────────┐
    │                OpenMasjidStudents — ONE container                         │
-   │  Fastify + tRPC (+ static built React UI: admin / billing / family)       │
+   │  Fastify + tRPC (+ static built React UI: admin / finance / family)       │
    │  Students · households · schools/years/courses/classes · fee plans        │
    │  Invoices · charges · derived ledger · refunds · past due · year view     │
    │  Printable statements / sheets / invoices / ID sheets (print-CSS HTML)    │
    │  SQLite (WAL) via Drizzle  •  /data volume (db + 30-min snapshot)         │
    │  Auth (argon2id) + roles + ORIGIN POLICY (admin = LAN-only)                │
    │  Stripe: Elements PIs, SetupIntents, off-session autopay, refunds          │
-   │  Scheduler: autopay · reconcile · auto-invoice · past due · snapshot        │
+   │  Scheduler: standing · autopay · reconcile · auto-invoice · past due · snap │
    │  /fabric/billing/*  ← secret-gated provider endpoints (LAN-only)           │
    │  /statements /sheets /invoices (authed)  ·  /api/logo /manifest.webmanifest│
    │  /apple-touch-icon.png /sw.js /api/public/appearance (open, no data)       │
@@ -537,7 +537,7 @@ of "card-ish channels" cannot disagree with it.
 | Icons | **lucide-react** + org masjid glyphs | |
 | i18n | **i18next / react-i18next**, RTL-aware | English first; Arabic/Urdu-ready. |
 | QR | **`qrcode`** (MIT) | Statements, sheets, portal signup links. |
-| Printed documents | **print-CSS HTML**, assembled server-side and escaped | **No PDF renderer and no headless Chromium** — Pi-friendly, and a browser's own print dialog is what an office already knows. `@react-pdf/renderer` was removed with the academics. |
+| Printed documents | **print-CSS HTML**, assembled server-side and escaped | **No PDF renderer and no headless Chromium** — Pi-friendly, and a browser's own print dialog is what an office already knows. `@react-pdf/renderer` outlived the academics as an unused dependency and was dropped in 0.45.0. |
 | Spreadsheets | hand-rolled reader (`web/src/lib/xlsx.ts`) | A .xlsx is a ZIP of XML and the browser has both halves; no spreadsheet dependency. |
 | Build/deploy | Docker multi-stage → one runtime image | Public, multi-arch, digest-pinned per release. |
 
@@ -569,31 +569,36 @@ OpenMasjidStudents/
 │   │       │   ├── structure.ts          # schools, years, terms, courses, classes, rollover
 │   │       │   ├── billing.ts            # fee plans, charges, invoices, ledger, payments, refunds, mid-year
 │   │       │   ├── portal.ts             # parent-scoped reads + pay-now + saved methods + autopay
-│   │       │   └── settings.ts           # settings, alerts, past-due policy, Stripe account, diagnostics
+│   │       │   ├── settings.ts           # settings, alerts, past-due policy, Stripe account, diagnostics
+│   │       │   ├── whatsapp.ts           # WhatsApp settings, texts, groups, queue log, suspect windows
+│   │       │   └── familyAccess.ts       # parent household scoping (§5) — a helper, not a router
 │   │       ├── billing/                  # ledger · invoices · lines · paidFor · period · schoolYear ·
 │   │       │                             # yearCells · carryIn · joinMidYear · autoInvoice · pastDue · stats ·
-│   │       │                             # statements · invoiceDoc · statementRoutes · studentCodes · csv
+│   │       │                             # yearTotal · standingPayments · statements · invoiceDoc ·
+│   │       │                             # statementRoutes · studentCodes · csv
 │   │       ├── payments/                 # stripe (the ONLY SDK importer) · autopay · refunds ·
-│   │       │                             # reconcile · methods · scheduler
+│   │       │                             # reconcile · methods · fees · scheduler
 │   │       ├── fabric/                   # provider.ts (/fabric/billing/*) · commands.ts (/fabric/commands/run) ·
 │   │       │                             # platform.ts (calls to the OS)
 │   │       ├── people/                   # names · household · relations · import · siblingSuggest ·
-│   │       │                             # onboardingSheet · idSheet · sheetText
-│   │       ├── schools/ structure/       # school scope resolution · year rollover
-│   │       ├── settings/                 # settings store · dates (the one date edge)
+│   │       │                             # onboardingSheet · idSheet · sheetText · onboarding
+│   │       ├── schools/ structure/       # school scope · year rollover · audience (who a bulk action names)
+│   │       ├── settings/                 # settings store · dates (the one date edge) · testStudent
 │   │       ├── alerts/ mail/ audit/      # who hears about it · templates + senders · append-only trail
-│   │       ├── whatsapp/                 # index.ts (every gate) · numbers.ts (E.164) · templates.ts
+│   │       ├── whatsapp/                 # index.ts (every gate) · numbers · templates · suspect
 │   │       ├── security/                 # origin.ts (§12.4) · rateLimit.ts
 │   │       ├── auth/                     # passwords · sessions · invites · usernames · firstRun
 │   │       └── http/                     # basePath · manifest (the PWA manifest builder)
-│   │   └── test/                         # vitest: 800+ tests, incl. the security matrix
+│   │   └── test/                         # vitest: 1,100+ tests, incl. the security matrix
 │   └── web/
-│       └── src/
-│           ├── routes/  login/ · admin/ · billing/ · family/
-│           ├── components/  (FirstRunSetup, FamilyBilling, Refunds, MidYearSetup, InstallPrompt, …)
-│           ├── lib/  (trpc, theme, i18n, motion, stripe, money, dates, phone, csv, xlsx, base)
-│           ├── styles/  (tokens.css + app.css + glass.css ported from OpenMasjidOS; shell.css, admin.css ours)
-│           └── public/  (icons, sw.js, apple-touch-icon.png)
+│       ├── src/
+│       │   ├── routes/  Login/Invite/Reset/Register/Setup (flat) · admin/ · finance/ · family/
+│       │   ├── components/  (FirstRunSetup, FamilyBilling, Refunds, MidYearSetup, InstallPrompt, …)
+│       │   ├── lib/  (trpc, i18n, motion, money, dates, phone, csv, xlsx, base, cn, prefs, appearance,
+│       │   │        changelog, cursorFx, scrollIdle, paymentMethod, months, age, password, registerSW)
+│       │   └── styles/  (tokens.css + app.css + glass.css ported from OpenMasjidOS; shell.css, admin.css,
+│       │                  family.css ours; paintCost.test.ts guards §15's paint-cost block)
+│       └── public/  (icons, sw.js, apple-touch-icon.png)   ← beside src/, not inside it
 └── docs/
     ├── FABRIC_BILLING_CONTRACT.md       # §11 extracted verbatim (the cross-repo contract)
     ├── PAYMENTS.md                      # §13 flows, the no-webhook doctrine, the autopay ladder
@@ -610,8 +615,8 @@ The tables, as they actually exist: `settings`, `users`, `sessions`, `invites`, 
 `schools`, `user_schools`, `school_years`, `terms`, `courses`, `classes`, `families`, `students`,
 `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts`, `fee_plans`, `student_fees`,
 `invoices`, `invoice_items`, `charge_items`, `charges`, `payments`, `payment_allocations`, `carry_ins`,
-`past_due_reminders`, `payment_methods`, `autopay_enrollments`, `autopay_runs`, `alert_recipients`,
-`whatsapp_log`, `audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
+`past_due_reminders`, `payment_methods`, `autopay_enrollments`, `autopay_runs`, `standing_payments`,
+`alert_recipients`, `whatsapp_log`, `audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
 printed on statements). That list is the whole schema: `stripe_events` was dropped in 0.48.0 (migration
 0037) because it deduped webhook deliveries and there is no webhook (§13.4) — a money schema with a table
 nobody writes is an invitation to wire the next thing to it. The DB file holds minors' PII and every
@@ -858,7 +863,7 @@ Follows `OpenMasjidOS/docs/APP_MANIFEST_SPEC.md` + `OpenMasjidAPPS/docs/BUILDING
 ```yaml
 id: students
 name: OpenMasjid Students
-version: 0.48.0-dev.N        # X.Y.Z on main — §19
+version: 0.51.0-dev.N        # X.Y.Z on main — §19
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
 icon: icon.svg
@@ -953,7 +958,12 @@ sync). The compose `image:` line is **digest-pinned per release** —
 { "v": 1 }
 → { "v": 2, "enabled": true, "schoolName": "An-Noor Weekend School", "currency": "usd",
     "tagline": "Pay tuition with your child's Student ID",
-    "allowAdvance": true, "minAmountCents": 100 }   // 0.41.0, additive
+    "allowAdvance": true, "minAmountCents": 100,   // 0.41.0, additive
+    // fee (0.51.0, additive): does the PAYER cover Stripe's cut? `enabled: false` is the shape every
+    // consumer written before this already behaves correctly for; a null side means do not add one.
+    "fee": { "enabled": true,
+             "card": { "percentBps": 290, "fixedCents": 30 },
+             "bank": { "percentBps": 80, "fixedCents": 0, "capCents": 500 } } }
 // "enabled": false (setup incomplete or external payments turned off by admin) → consumers hide the campaign
 // allowAdvance: a parent may pay when NOTHING is due (a term up front, a Ramadan lump sum) — consumers
 // must offer the amount field at a zero balance, floored at minAmountCents. See the contract doc §11.0a.
@@ -1006,7 +1016,10 @@ the family id.
   "idempotencyKey": "pi_3PabcDEF",           // REQUIRED, ≤128 chars. Convention: the Stripe PaymentIntent id.
   "familyId": "fam_x1",                       // REQUIRED — from a prior lookup in this session
   "studentId": "stu_1",                       // optional — the matchedStudent from lookup
-  "amountCents": 15000, "currency": "usd",
+  "amountCents": 15000, "currency": "usd",    // the TUITION — what the family owed. NOT the card total
+                                              // when you grossed up for a fee (0.51.0, §11.2 info.fee).
+  "feeCents": 330,                            // optional, 0.51.0: Stripe's cut, if you passed it on.
+                                              // Informational — the ledger holds tuition only.
   "channel": "donations-web",                 // "donations-web" | "kiosk"
   "occurredAt": "2026-07-15T18:03:22Z",
   "externalRef": { "stripePaymentIntentId": "pi_3PabcDEF", "stripeChargeId": "ch_...", "stripeAccountId": "acct_..." },
@@ -1314,8 +1327,9 @@ secrets). Additions:
 
 ```
 npm install         # all workspaces
-npm run dev         # server + web, hot reload (server :8080; Vite :5173 proxying /trpc, /api, /fabric, /statements)
-npm run build       # typecheck + build web and server
+npm run dev         # server + web, hot reload (server :8080; Vite :5173 proxying /trpc, /api,
+                    #   /fabric, /statements, /sheets, /invoices)
+npm run build       # build web (vite — NO typecheck) then server (tsc). Types: npm run lint.
 npm run lint        # tsc --noEmit across both workspaces (there is no eslint in this repo)
 npm run test        # vitest — both workspaces
 npm run image       # build & tag ghcr.io/openmasjid-solutions/openmasjidstudents:local

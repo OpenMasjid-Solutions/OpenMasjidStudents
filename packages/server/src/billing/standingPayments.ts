@@ -25,7 +25,7 @@
  *  2. **`payments.idempotency_key` IS `standing:<student>:<period>`, AND THAT COLUMN IS UNIQUE.** The
  *     idempotency is the DATABASE's, not a marker we keep: a re-run, a container restarted through the
  *     scheduled minute, or two schedulers cannot record the same month twice. `lastPeriod` on the row is
- *     for the screen only — relying on it would be exactly the "trust a stored number" mistake §6 warns
+ *     for the screen only — relying on it would be exactly the "trust a stored number" mistake §9 warns
  *     about.
  *
  * WHAT MAKES IT SURVIVABLE WHEN IT IS WRONG. Every payment it writes is an ordinary manual-channel payment

@@ -24,9 +24,12 @@
  *  • `monthly`  × the months this school year actually teaches. NEVER twelve, and never the calendar:
  *    a madrasah running September to June bills ten months, and using twelve would overstate every quote
  *    by a fifth. `schoolYearMonths` is the one place that knows which months those are.
- *  • `per_term` × the number of terms configured on that year. A year with no terms configured bills
- *    these never (`generateForStudent` only writes them on a term period), so they count as zero rather
- *    than as one — counting them anyway would quote a family for something the app will not charge.
+ *  • `per_term` — ZERO, always, and this is a gap rather than arithmetic. `feeLines` bills a per-term
+ *    plan only on a TERM period, and no screen can ask for one: the period picker offers months, and
+ *    both generate buttons send no `periodKind`. The server half works; the way to reach it was never
+ *    built. So a per-term plan is money this app cannot currently charge, and quoting it would promise a
+ *    family a figure the ledger will never ask for. `perTermExcluded` reports how many were left out so
+ *    the screen can say so — a smaller number with no explanation is the worse failure.
  *  • `one_time` × once, and ONLY if it has not already been billed. `alreadyBilledOnce` mirrors the
  *    generator's own dedupe (on a LIVE invoice, so voiding makes it billable again); a registration fee
  *    the family has already paid is not part of what the rest of the year will cost.
@@ -45,8 +48,8 @@
  * invoice is what tells us: `billStudentFrom` created those from the month the office chose, so a mid-year
  * joiner comes out right with nobody re-entering anything.
  *
- * The per-term and one-time lines are NOT prorated by that month: a term fee is for a term the child will
- * attend, and a month says nothing about which terms remain.
+ * The one-time line is NOT prorated by that month either: a registration fee is charged once whenever the
+ * child joins. (Per-term lines are excluded outright — see the cadence note above.)
  */
 import { and, eq, ne } from 'drizzle-orm';
 import { db } from '../db';
@@ -86,6 +89,14 @@ export interface YearTotal {
   fromSource: 'given' | 'invoices' | 'current' | 'yearStart';
   /** Months counted in `fromTotalCents`. */
   monthsCounted: number;
+  /**
+   * How many of this student's fee plans are per-term and were therefore left OUT of both totals.
+   *
+   * Non-zero means the quote is knowingly incomplete: this app cannot bill a per-term plan yet (see the
+   * cadence branch), so counting one would promise money the ledger will never ask for. The screen says
+   * so rather than quietly showing a smaller number than the office expects.
+   */
+  perTermExcluded: number;
 }
 
 /**
@@ -155,7 +166,7 @@ export function yearTotalFor(studentId: string, fromPeriod?: string | null, now 
     .where(student?.schoolId ? and(eq(schoolYears.isCurrent, true), eq(schoolYears.schoolId, student.schoolId)) : eq(schoolYears.isCurrent, true))
     .get();
 
-  const empty: YearTotal = { year: null, lines: [], totalCents: 0, fromTotalCents: 0, fromPeriod: fromPeriod ?? null, fromSource: fromPeriod ? 'given' : 'yearStart', monthsCounted: 0 };
+  const empty: YearTotal = { year: null, lines: [], totalCents: 0, fromTotalCents: 0, fromPeriod: fromPeriod ?? null, fromSource: fromPeriod ? 'given' : 'yearStart', monthsCounted: 0, perTermExcluded: 0 };
   if (!year || year.startYear == null) return empty;
 
   const months = schoolYearMonths(year.startYear, year.startMonth, year.endMonth).map((m) => m.periodKey);
@@ -179,6 +190,8 @@ export function yearTotalFor(studentId: string, fromPeriod?: string | null, now 
     .all();
 
   const lines: YearLine[] = [];
+  /** How many per-term plans were left out of the quote because nothing can bill them yet. */
+  let perTermExcluded = 0;
   for (const r of rows) {
     const amountCents = r.override ?? r.planAmount;
     if (amountCents === 0) continue; // a zero line is noise in a quote, exactly as on an invoice
@@ -188,11 +201,23 @@ export function yearTotalFor(studentId: string, fromPeriod?: string | null, now 
       times = months.length;
       timesFrom = monthsFrom.length;
     } else if (r.cadence === 'per_term') {
-      // Zero when the year has no terms: the generator would never bill it, so quoting it would be a
-      // figure this app is not going to charge.
-      times = termCount;
-      // Not prorated — a month says nothing about which terms remain. See the header.
-      timesFrom = termCount;
+      /**
+       * ZERO, ALWAYS — because nothing in this app can bill a per-term plan yet (0.51.0).
+       *
+       * The rule this line already followed was right and its reason was too narrow: "the generator
+       * would never bill it, so quoting it would be a figure this app is not going to charge." That was
+       * applied only when the year had no terms configured. It holds whenever there are terms as well:
+       * `feeLines` drops a per-term plan unless the run is a TERM period (`periodKind: 'term'`), and no
+       * screen has ever asked for one — the period picker offers months only, and both generate buttons
+       * send no `periodKind` at all. The server half exists and works; the way to reach it does not.
+       *
+       * So a madrasah could set a per-term fee, be shown its money in this quote, and collect none of
+       * it. Quoting nothing is the honest half of that: `perTermExcluded` below tells the screen to say
+       * why, which is the difference between a wrong number and a missing feature somebody can ask for.
+       */
+      times = 0;
+      timesFrom = 0;
+      perTermExcluded += 1;
     } else if (!alreadyBilledOnce(studentId, r.planId)) {
       times = 1;
       timesFrom = 1;
@@ -218,5 +243,6 @@ export function yearTotalFor(studentId: string, fromPeriod?: string | null, now 
     fromPeriod: start.from,
     fromSource: start.source,
     monthsCounted: monthsFrom.length,
+    perTermExcluded,
   };
 }

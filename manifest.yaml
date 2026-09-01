@@ -4,7 +4,7 @@ id: students
 name: OpenMasjid Students
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
-version: 0.51.0-dev.17
+version: 0.51.0-dev.18
 author: OpenMasjid-Solutions
 license: AGPL-3.0-only
 icon: icon.svg
@@ -47,10 +47,11 @@ email: true
 # WhatsApp through the masjid's own OpenWA gateway (GET/POST /api/fabric/whatsapp). Declaring this is
 # what makes the platform issue the secret for it and allow the calls; without it every send is 403.
 #
-# The platform owns the connection AND the single paced queue every app shares — randomised gaps,
-# per-recipient cooldowns, rolling caps, quiet hours. That queue is the whole defense for a number
-# WhatsApp does not officially permit and can restrict at any time, so this app never goes near a
-# gateway and never designs for volume. Parent messages are OFF and PAUSED until an admin says
+# The platform owns the connection and the one queue every app shares, and this app never goes near a
+# gateway. Since platform 0.51.1 that queue no longer PACES (the gaps, cooldowns, rolling caps and quiet
+# hours are gone; a typing indicator is the only pause left), so the volume budget is OURS now — 12
+# parent messages an hour, 60 a day, enforced in whatsapp/index.ts. The thing being protected is
+# unchanged: a number WhatsApp does not officially permit and can restrict at any time. Parent messages are OFF and PAUSED until an admin says
 # otherwise (Settings → WhatsApp), and nothing auth-critical — invites, resets, verification links —
 # is ever sent this way. Those stay on email, which has a real provider behind it.
 whatsapp: true

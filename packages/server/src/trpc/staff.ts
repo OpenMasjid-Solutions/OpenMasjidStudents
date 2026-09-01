@@ -4,7 +4,8 @@
  * Staff user management (CLAUDE.md §12): admin creates staff accounts with a temporary
  * password (forced change on first login), can change a colleague's role, disable them
  * (revokes live sessions on the next request via getSession's status re-check) and reset
- * passwords. Admin-only; never returns password hashes; audited.
+ * passwords (which signs that account out — see `resetPassword`). Admin-only; never returns
+ * password hashes; audited.
  *
  * A role change needs no session surgery: `getSession` re-reads the backing user on EVERY
  * request and returns the LIVE role, never the copy frozen on the session row
@@ -27,10 +28,11 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { router, adminProcedure, auditActor } from './trpc';
 import { db } from '../db';
-import { users, guardianUsers, userSchools } from '../db/schema';
+import { users, guardianUsers, userSchools, sessions } from '../db/schema';
 import { rid } from '../db/ids';
 import { hashPassword, MIN_PASSWORD_LENGTH } from '../auth/passwords';
 import { usernameTaken } from '../auth/usernames';
+import { hashToken } from '../auth/sessions';
 import { fabricConfigured } from '../config';
 import { audit } from '../audit';
 import { setUserSchools } from '../schools';
@@ -225,9 +227,33 @@ export const staffRouter = router({
     return { ok: true as const };
   }),
 
+  /**
+   * Reset a colleague's password — AND SIGN THAT ACCOUNT OUT (§12, §14).
+   *
+   * The revocation was missing until 0.51.0, and this was the only one of the three password-writing
+   * paths without it: `auth.changePassword` deletes the account's other sessions and `auth.resetConfirm`
+   * signs it out everywhere, while this wrote the new hash and nothing else. Nothing else evicted it
+   * either — `getSession` re-checks the account's status and live role on every request but never the
+   * password — so an existing cookie kept working for the rest of its 12-hour life. That is the wrong
+   * behavior for the gesture: an admin typing a new password for somebody is acting because the old one
+   * should stop working, and often because the account looks compromised. `mustChangePassword` is no
+   * substitute; it steers the honest user's browser and does not gate the API.
+   *
+   * `keep` rather than `resetConfirm`'s unconditional delete, because unlike `setRole` and `setStatus`
+   * this procedure has no self guard and the UI offers it on every row including the caller's own — so a
+   * blanket delete would log an admin out of the tab they are standing in, which is exactly what
+   * `changePassword`'s `keep` exists to prevent. Resetting somebody ELSE'S password spares nothing.
+   */
   resetPassword: adminProcedure.input(z.object({ userId: z.string(), tempPassword: TEMP_PW })).mutation(async ({ ctx, input }) => {
     const u = requireStaffUser(input.userId);
-    db.update(users).set({ passwordHash: await hashPassword(input.tempPassword), mustChangePassword: true, updatedAt: now() }).where(eq(users.id, u.id)).run();
+    const passwordHash = await hashPassword(input.tempPassword); // hash BEFORE the txn (no await inside)
+    const keep = u.id === ctx.session?.userId && ctx.token ? hashToken(ctx.token) : null;
+    db.transaction((tx) => {
+      tx.update(users).set({ passwordHash, mustChangePassword: true, updatedAt: now() }).where(eq(users.id, u.id)).run();
+      tx.delete(sessions)
+        .where(keep ? and(eq(sessions.userId, u.id), ne(sessions.tokenHash, keep)) : eq(sessions.userId, u.id))
+        .run();
+    });
     audit(auditActor(ctx), 'staff.resetPassword', { entity: 'user', entityId: input.userId });
     return { ok: true as const };
   }),

@@ -411,6 +411,12 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
               </select>
             </div>
             <button type="submit" className="btn btn--primary" disabled={planCreate.isPending}>{t('billing.addPlan')}</button>
+            {/* Say it here, while the cadence is being chosen — not after a term's money has failed to
+                appear. Nothing in this app can raise a per-term invoice yet: the generator supports it,
+                but the period picker offers months only, so a per-term plan is configured, quoted at
+                zero in the year figure, and never billed. Better a sentence now than a family's fee
+                quietly uncollected for a term. */}
+            {plan.cadence === 'per_term' && <p className="hint" style={{ color: 'var(--color-warning)' }}>{t('billing.perTermNotBillable')}</p>}
           </form>
         )}
       </section>

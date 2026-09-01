@@ -27,7 +27,7 @@
  *
  * ── WHY THE PAYER'S METHOD IS PICKED BEFORE THE INTENT EXISTS ───────────────
  * A card and a US bank account cost the masjid completely different amounts — 2.9% + 30¢ against
- * 0.8% CAPPED AT $5 — so on a $2,000 term payment the honest fee is either $59.98 or $5.00. A
+ * 0.8% CAPPED AT $5 — so on a $2,000 term payment the honest fee is either $60.05 or $5.00. A
  * PaymentIntent's amount is fixed when it is created, and with `automatic_payment_methods` the payer
  * does not choose until after that. So when fees are on, the portal asks first (trpc/portal.ts). The
  * alternative was charging everybody the card rate, which would have quietly overcharged every bank

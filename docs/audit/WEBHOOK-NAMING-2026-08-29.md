@@ -8,7 +8,7 @@
 
 This is not an audit finding. It is the record of a **§14 invariant being deliberately relaxed**, written
 here because the earlier audits assert the invariant unconditionally
-([`SECURITY_AUDIT.md`](./SECURITY_AUDIT.md) §528, [`AUDIT-2026-08-13.md`](./AUDIT-2026-08-13.md) §248) and
+([`SECURITY_AUDIT.md`](./SECURITY_AUDIT.md) and [`AUDIT-2026-08-13.md`](./AUDIT-2026-08-13.md), both in their "checked and found clean" sections) and
 those are dated findings that must not be edited to match a later decision. If you are reading either of
 those and wondering whether they still hold: they hold as of their date, and this narrows them.
 
@@ -106,9 +106,17 @@ Both are in the panel's own wording, because neither was part of what was asked 
 
 `notifyPlatform` ignored its response entirely: no status check, no log line. A masjid with a
 misconfigured or removed webhook got silence in the one place that could have told them — the same
-invisible-failure shape the WhatsApp `blockers` list was invented to kill (§9). It now logs a rejected
-status. This matters more once an office deliberately routes naming text here and reasonably expects to
-see it arrive.
+invisible-failure shape the WhatsApp `blockers` list was invented to kill (§9). This matters more once an
+office deliberately routes naming text here and reasonably expects to see it arrive.
+
+**The first attempt at that fix was half a fix, and an adversarial review caught it.** It checked
+`res.ok` only — but the platform's notify route ends `reply.send({ delivered, reason })` with an
+unconditional 200, so a webhook that is disabled, misconfigured, rate-limited or 404ing all came back
+`ok` and were silently treated as delivered. The one case a status check DOES catch is a 403 (this app
+lacking the `notifications` capability), where "the masjid's webhook rejected it" names something that
+was never contacted. `sendPlatformEmail` in the same file documents that exact trap for the same
+endpoint family; the rule is now the same in both, and a test proves the message body never reaches the
+log even when it names a child.
 
 ## Known gap, NOT closed here
 

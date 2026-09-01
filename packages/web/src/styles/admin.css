@@ -3,23 +3,6 @@
 /* App-specific admin layout (NOT ported). Uses the ported design tokens + logical
    properties so it works LTR and RTL (CLAUDE.md §15/§16). */
 
-.admin-shell {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.admin-topbar {
-  position: sticky;
-  inset-block-start: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.7rem clamp(0.75rem, 3vw, 1.5rem);
-  border-radius: 0;
-  border-block-end: 1px solid var(--glass-border);
-}
 .admin-brand {
   display: inline-flex;
   align-items: center;
@@ -32,23 +15,6 @@
   color: var(--color-primary);
   display: inline-flex;
 }
-.admin-spacer {
-  flex: 1;
-}
-.admin-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.admin-main {
-  flex: 1;
-  width: 100%;
-  max-width: 1040px;
-  margin-inline: auto;
-  padding: clamp(1rem, 3vw, 2rem);
-}
-
 .admin-header {
   display: flex;
   align-items: center;
@@ -59,41 +25,10 @@
   flex: 1;
 }
 
-.back-link {
-  background: none;
-  border: none;
-  color: var(--color-ink-muted);
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
-  margin-block-end: 0.75rem;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-.back-link:hover {
-  color: var(--color-primary);
-}
-
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
   gap: 1rem;
-}
-.fam-card {
-  text-align: start;
-  cursor: pointer;
-  padding: 1rem 1.1rem;
-  border: none;
-  font: inherit;
-  color: inherit;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.fam-card h3 {
-  margin: 0;
-  font-size: 1.05rem;
 }
 .chip-row {
   display: flex;
@@ -319,15 +254,6 @@
 .btn--sm {
   padding: 0.4rem 0.7rem;
   font-size: 0.85rem;
-}
-
-.admin-nav {
-  display: inline-flex;
-  gap: 0.4rem;
-  margin-inline-start: 0.5rem;
-}
-@media (max-width: 640px) {
-  .admin-nav { display: none; }
 }
 
 .link-btn {
@@ -642,7 +568,7 @@
     --text-on-scene-faint: #555 !important;
   }
 
-  /* The page itself must be WHITE. `.scene-bg` is hidden below, but the shell's wallpaper also lives
+  /* The page itself must be WHITE. `.scene` is hidden below, but the shell's wallpaper also lives
      on `body` as `--scene-base` — a soft gradient — and that kept printing as a gray vignette around
      the sheet. Reset every layer that can carry it, and force dark-on-white text since the shell's
      default ink is light (it is designed against a dark wallpaper). */
@@ -714,7 +640,7 @@
   .no-print,
   .topbar,
   .dock,
-  .scene-bg,
+  .scene,
   .win-pos { display: none !important; }
   .app-main { padding: 0 !important; }
   .print-area { break-inside: avoid; }
@@ -1153,12 +1079,6 @@ ul.picker-list {
   .win-body .field { min-width: 0; flex: 1 1 100% !important; }
   .win-body .field .input,
   .win-body .field select.input { width: 100%; }
-
-  /* A two- or three-up form grid becomes one column; two 50% columns on a phone give
-     two unusable columns rather than one usable one. */
-  .win-body .form-grid,
-  .win-body .grid-2,
-  .win-body .grid-3 { grid-template-columns: 1fr !important; }
 
   /* ── Wide EDITING tables become cards ──────────────────────────────────────
      Opt-in, via `.stack-phone`, and only on the tables where a row is a form: the

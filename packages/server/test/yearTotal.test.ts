@@ -75,7 +75,16 @@ describe('the full-year quote', () => {
     expect(r.totalCents).toBe(60_000);
   });
 
-  it('counts a per-term plan once per term', async () => {
+  /**
+   * A per-term plan is left OUT of the quote — even with terms configured — and the quote says so.
+   *
+   * This test asserted the opposite until 0.51.0, and the number it asserted was money the app could never
+   * collect. `feeLines` bills a per-term plan only on a TERM period, and nothing can ask for one: the
+   * period dropdown offers months, and neither generate button sends a `periodKind`. So a madrasah could
+   * configure a term fee, be quoted it here, and never invoice a penny of it. Quoting zero is the honest
+   * half; `perTermExcluded` is what stops zero from being silent.
+   */
+  it('leaves a per-term plan out of the quote, and reports that it did', async () => {
     const { admin, studentId } = await seed({ monthly: 10_000, perTerm: 5000 });
     const year = app.dbmod.db.select().from(schoolYears).all()[0];
     const ts = new Date();
@@ -83,9 +92,11 @@ describe('the full-year quote', () => {
       app.dbmod.db.insert(terms).values({ id: `trm_${name}`, schoolYearId: year.id, name, startDate: null, endDate: null, sortOrder: 0, createdAt: ts, updatedAt: ts }).run();
     }
     const r = await admin.billing.yearTotal({ studentId });
-    expect(r.year?.terms).toBe(3);
-    // $1,000 tuition + 3 × $50 books.
-    expect(r.totalCents).toBe(115_000);
+    expect(r.year?.terms).toBe(3); // the terms exist…
+    expect(r.perTermExcluded).toBe(1); // …and the per-term plan was still not counted
+    // $1,000 of tuition and nothing else — NOT $1,150.
+    expect(r.totalCents).toBe(100_000);
+    expect(r.lines.some((l) => l.cadence === 'per_term')).toBe(false);
   });
 
   /**

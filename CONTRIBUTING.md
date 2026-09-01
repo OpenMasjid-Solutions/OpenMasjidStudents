@@ -22,10 +22,11 @@ think that should change.
 
 ```bash
 npm install     # all workspaces
-npm run dev     # server on :8080, Vite on :5173 proxying /trpc, /api, /fabric, /statements
+npm run dev     # server on :8080, Vite on :5173 proxying /trpc, /api, /fabric,
+                #   /statements, /sheets, /invoices
 npm run lint    # tsc --noEmit across both workspaces — there is no eslint here
-npm run test    # vitest, both workspaces (~1,070 tests)
-npm run build   # typecheck + build both
+npm run test    # vitest, both workspaces (~1,290 tests)
+npm run build   # build web (vite — no typecheck) then server (tsc). Types: npm run lint.
 ```
 
 No platform, no tunnel, no Stripe and no mail is a **supported** mode: the app runs standalone on a LAN
@@ -93,7 +94,7 @@ authority; this is the short list.
 | Students, households, guardians, import | `packages/server/src/people/` |
 | Schools, years, terms, courses, classes | `packages/server/src/structure/`, `schools/` |
 | Printed statements, sheets, invoices | `packages/server/src/billing/statements.ts`, `people/onboardingSheet.ts` |
-| The three UIs | `packages/web/src/routes/{admin,billing,family}/` |
+| The three UIs | `packages/web/src/routes/{admin,finance,family}/` |
 | Security history: what was audited and what is open | `docs/audit/` |
 
 ## Reporting a security issue

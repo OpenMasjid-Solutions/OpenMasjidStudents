@@ -58,13 +58,31 @@ const MONTH_SHAPED = /^\d{4}-\d{1,2}$/;
  * where two spellings of the same month exist, and `2027-2` alongside `2027-02` bills February twice
  * with nothing on screen to suggest it.
  */
+/**
+ * The RESERVED-NAME half of the check, on its own — because it applies to every kind of period, not just
+ * a month.
+ *
+ * Split out in 0.51.0: `assertBillablePeriod` exempts a TERM period from the month-spelling rule (a term
+ * key comes from a configured term row, not from anybody typing), and it did that by skipping
+ * `periodKeyError` wholesale — which took the two reserved-name guards with it. A term run could then be
+ * aimed at `carry-in` or at `charge-<id>`, landing a whole period's generation on top of the balances
+ * brought forward, or on a single charge's own one-line invoice. The spelling rule is what a term is
+ * exempt from; these two are what nothing is exempt from.
+ */
+export function reservedPeriodError(key: string): string | null {
+  const k = key.trim().toLowerCase();
+  if (k === CARRY_IN_PERIOD) return 'That name is reserved for balances carried in from before you started using the app.';
+  // Reserved for the same reason `carry-in` is: these keys are minted by the app, and an office typing
+  // one by hand could land a whole period's run on top of a single charge's own invoice.
+  if (isImmediateCharge(k)) return 'That name is reserved for charges billed on their own.';
+  return null;
+}
+
 export function periodKeyError(key: string): string | null {
   const k = key.trim();
   if (!k) return 'Enter the month to bill, like 2027-02.';
-  if (k.toLowerCase() === CARRY_IN_PERIOD) return 'That name is reserved for balances carried in from before you started using the app.';
-  // Reserved for the same reason `carry-in` is: these keys are minted by the app, and an office typing
-  // one by hand could land a whole period's run on top of a single charge's own invoice.
-  if (isImmediateCharge(k.toLowerCase())) return 'That name is reserved for charges billed on their own.';
+  const reserved = reservedPeriodError(k);
+  if (reserved) return reserved;
   if (MONTH_SHAPED.test(k) && !PERIOD_RE.test(k)) {
     return 'Write the month as YYYY-MM with the leading zero — February 2027 is 2027-02. Without it this would bill that month a second time.';
   }

@@ -19,11 +19,17 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import { carryIns, invoices } from '../db/schema';
-import { invoicePaid, invoiceTotal } from './ledger';
+import { invoicePaid, invoiceTotal, statusFor } from './ledger';
 import { CARRY_IN_PERIOD } from './period';
 import { getBillingStartPeriod } from '../settings';
 
 export type YearCellStatus = 'paid' | 'partial' | 'open' | 'void' | 'none' | 'before' | 'settled' | 'carried';
+
+/** The ledger's `InvoiceStatus` in the grid's own vocabulary. The only difference is the name of the
+ *  middle one — `partially_paid` is a mouthful in a cell one character wide. */
+function cellStatus(s: 'open' | 'partially_paid' | 'paid' | 'void'): YearCellStatus {
+  return s === 'partially_paid' ? 'partial' : s;
+}
 
 export interface YearCell {
   periodKey: string;
@@ -98,8 +104,11 @@ export function yearCellsFor(studentIds: string[], months: string[]): Map<string
         if (c) {
           // A real invoice always wins, even in a pre-go-live month: one generated before the floor was
           // set is a fact about money and must not be painted over as "not ours".
-          const status: YearCellStatus =
-            c.status === 'void' ? 'void' : c.paidCents >= c.totalCents && c.totalCents > 0 ? 'paid' : c.paidCents > 0 ? 'partial' : 'open';
+          // The ledger's own rule, not a second copy of it (§16). Asking "has anything been paid?"
+          // before "does this bill cost anything?" made a fully-waived month read Open in the grid while
+          // the statement called it Paid — `statusFor` puts the zero test first, and now there is one
+          // answer rather than two.
+          const status: YearCellStatus = c.status === 'void' ? 'void' : cellStatus(statusFor(c.totalCents, c.paidCents));
           return { periodKey, status, totalCents: c.totalCents, paidCents: c.paidCents, invoiceId: c.invoiceId };
         }
         if (!startPeriod || periodKey >= startPeriod) return { periodKey, status: 'none' as const };

@@ -114,6 +114,31 @@ export function feeKindOf(type: string | null | undefined): 'card' | 'bank' {
 }
 
 /**
+ * HOW A SAVED METHOD IS NAMED TO A PARENT — "Visa ···· 4242", "Chase ···· 6789". One place (§16).
+ *
+ * Brand and last four only. Never a PAN, never a routing number, never a holder name; none of the three
+ * is stored (§14). Empty string when there is nothing recognizable to say, so a caller can leave the
+ * clause out of its sentence rather than printing a stub.
+ *
+ * It lives here, beside `feeKindOf` and `orderedMethods`, because `autopay.ts` had its own copy that read
+ * `brand` and `last4` and nothing else — so a household paying by BANK got "card ···· 6789" in the
+ * upcoming-charge and card-declined emails, since a `us_bank_account` row has a null `brand` and keeps
+ * the institution in `bankName`. Telling a family their card was declined when they never gave one is the
+ * kind of message that produces a phone call, and the fee they are being charged is the bank rate, which
+ * the same email may quote. `describePaymentMethod` above already knew the difference; the wording did not.
+ */
+export function methodLabel(pm: { type?: string | null; brand?: string | null; last4?: string | null; bankName?: string | null }): string {
+  const brand = (pm.brand ?? '').trim();
+  const bank = (pm.bankName ?? '').trim();
+  const last4 = (pm.last4 ?? '').trim();
+  const name = brand || bank;
+  if (!name && !last4) return '';
+  // A bank with no name on file reads as "bank account", never as "card" — the old fallback.
+  const nice = name ? name.charAt(0).toUpperCase() + name.slice(1) : feeKindOf(pm.type) === 'bank' ? 'Bank account' : 'Card';
+  return last4 ? `${nice} ···· ${last4}` : nice;
+}
+
+/**
  * Renumber a household's methods 0..n-1 and make everything that reads "which one is default" agree.
  *
  * THREE THINGS HAVE TO MOVE TOGETHER, which is the whole reason this is one function: `sort_order` (the

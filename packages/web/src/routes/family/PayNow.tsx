@@ -7,7 +7,7 @@
  * daily reconcile is the backstop, so success is worded softly. Shown only when card payments are
  * available (keys loaded).
  *
- * `chosen` is the itemised half (0.43.0): a parent who ticked "Book fee" on the home screen pays that
+ * `chosen` is the itemized half (0.43.0): a parent who ticked "Book fee" on the home screen pays that
  * exact amount, and those lines travel through to `confirmPayment` so the book fee is what ends up
  * settled — not whichever bill happens to be oldest. With nothing ticked this behaves exactly as before:
  * one amount against the household balance.
@@ -130,7 +130,7 @@ export function PayNow({ familyId, owedCents, currency, onPaid, chosen = [] }: {
           </div>
         </>
       )}
-      {/* WHAT THEY WILL ACTUALLY BE CHARGED, itemised, before they commit to it — and a plain sentence
+      {/* WHAT THEY WILL ACTUALLY BE CHARGED, itemized, before they commit to it — and a plain sentence
           saying whose money the extra is. A total that appears for the first time on Stripe's own form
           is the version of this feature that generates phone calls. */}
       {fee && fee.feeCents > 0 && (
@@ -183,7 +183,7 @@ function PayForm({ familyId, onPaid, lines }: { familyId: string; onPaid: () => 
   }
 
   const ok = useMemo(() => !!stripe && !!elements, [stripe, elements]);
-  if (status === 'done') return <div className="notice notice--ok">{t('family.paidOptimiztic')}</div>;
+  if (status === 'done') return <div className="notice notice--ok">{t('family.paidOptimistic')}</div>;
 
   return (
     <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>

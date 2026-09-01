@@ -85,7 +85,7 @@ const asDate = (v: unknown): string => {
 };
 
 const CHANNEL_LABELS: Record<string, string> = {
-  cash: 'Cash', zelle: 'Zelle', check: 'Check', other: 'Other',
+  cash: 'Cash', zelle: 'Zelle', check: 'Check', ach: 'Bank transfer', other: 'Other',
   'donations-web': 'Donation site', kiosk: 'Kiosk', portal: 'Portal', autopay: 'Autopay',
 };
 

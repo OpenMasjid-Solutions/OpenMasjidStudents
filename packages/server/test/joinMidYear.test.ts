@@ -123,9 +123,20 @@ describe('billFromMonths — what the dropdown offers', () => {
     await admin.structure.schoolYearCreate({ label: '2026–27', startYear: 2026, startMonth: 9, endMonth: 6, makeCurrent: true });
     expect(join.billFromMonths(null, AUG).map((m) => m.periodKey)).toEqual(['2026-09']);
 
-    // Choosing it bills nothing yet — September has not happened — and says so, rather than pretending.
+    /**
+     * Choosing a month that has not arrived bills nothing, and says so rather than pretending.
+     *
+     * The month is derived from the REAL clock rather than hardcoded, because `people.studentAdd` takes no
+     * injectable date — it asks `new Date()` — so a literal is only "in the future" until the calendar
+     * reaches it. This assertion was written as `'2026-09'` and passed for as long as it was still August
+     * 2026; on 1 September it began failing, with nothing about the change under test to blame. Everything
+     * above this point is date-injected (`AUG`) and stays literal.
+     */
+    const now = new Date();
+    const future = `${now.getUTCFullYear() + 1}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    settingsMod.setBillingStartPeriod(future);
     const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
-    const r = await admin.people.studentAdd({ fullName: 'Starts In September', feePlanId: plan.id, billFromPeriod: '2026-09' });
+    const r = await admin.people.studentAdd({ fullName: 'Starts Next Year', feePlanId: plan.id, billFromPeriod: future });
     expect(r.id).toBeTruthy();
     expect(r.billed).toMatchObject({ created: 0, reason: 'future' });
     settingsMod.setBillingStartPeriod(null);

@@ -59,7 +59,7 @@ Both exist because a *derived* balance of `0` is ambiguous — square, paid ahea
 here" — and a consumer had no way to tell those apart. **Donations and Kiosk should pick both up
 together:** they are the two halves of one screen (what you owe / what you've paid ahead / pay anyway).
 
-### 11.0b Additive since v2 — 0.43.0: ITEMISED BILLS (no version bump, nothing breaks)
+### 11.0b Additive since v2 — 0.43.0: ITEMIZED BILLS (no version bump, nothing breaks)
 
 A bill was one label and one number on the wire, so a consumer had no choice but to make a parent accept
 the whole thing. In practice a February bill is often **$200 of tuition plus a $50 book fee**, and
@@ -81,7 +81,7 @@ parents ask to pay one of the two — which was not expressible at all.
 
 **Notes.** Every line of an open bill is listed, **including ones already settled** (`balanceCents: 0`) —
 show those as done on a part-paid bill, and offer only the lines with a balance as payable. A bill with a
-single line needs no itemised UI; render it exactly as before. Omit `lines` entirely and behavior is
+single line needs no itemized UI; render it exactly as before. Omit `lines` entirely and behavior is
 unchanged (oldest-due-first), so this is safe to adopt screen by screen.
 
 **Also fixed in 0.43.0:** `allocations[]` (invoice-level, in the contract since v1) was parsed and then
@@ -289,7 +289,7 @@ balance, and the child's next invoice absorbs it.
 //     and when lines[] doesn't sum to amountCents or names a line outside this family's open bills.
 ```
 Surplus beyond a child's open invoices becomes **that child's** credit, which their next invoice
-absorbs automatically. A recorded external payment fires a Fabric **notification** and an audit entry.
+absorbs automatically. A recorded external payment fires a Fabric **notification**, an audit entry, and a **receipt to the household's guardians** (gated on the office's parent-email switch, so a masjid that has not turned receipts on sends none).
 
 > **Idempotency, precisely.** A charge covering N children is stored as N rows keyed
 > `${idempotencyKey}:${studentId}`. A replay of the same key writes nothing at all — the app checks for
@@ -310,6 +310,7 @@ its per-child rows, so a consumer always asks with the plain key it sent.
 ```
 purpose            = students-billing        ← the discriminator; REQUIRED
 omos_app           = donations | kiosk | students-portal    ← students-portal is set ONLY by this app (§13)
+students_channel   = portal | autopay        ← set by this app, so reconciliation can tell them apart
 students_family_id = fam_x1                  ← REQUIRED (from lookup / known internally)
 students_student_id = stu_1                  ← optional, the matched student
 students_fee_cents = 330                     ← 0.51.0: REQUIRED whenever you grossed up (§11.2 `info.fee`)
@@ -320,6 +321,6 @@ runs a day later, on a job that never saw your request and may find the setting 
 is not identifying, so this key breaks none of the rules below.
 **Never put a Student ID or a child's name in Stripe metadata, descriptions, or URLs** — metadata is visible in Stripe dashboards and exports. Description: `School balance — <family label>`. **Receipts must say "payment", never "donation"** — tuition is generally not tax-deductible; consumers exclude `purpose=students-billing` from donation totals and year-end letters, and this app's own receipts follow the same wording rule.
 
-### 11.4 Reconciliation (this app's safety net — covers three channels)
+### 11.4 Reconciliation (this app's safety net — covers every channel)
 
-Daily job + on-demand "Reconcile now" button (finance): fetch keys via `GET ${OPENMASJID_BASE_URL}/api/fabric/stripe?account=<STRIPE_ACCOUNT>` (with our secret), list succeeded PaymentIntents where `metadata.purpose == "students-billing"` since the last cursor, and record any whose PI id isn't already an idempotency key — flagged `via: reconciliation`. Covers missed broker calls from Donations/Kiosk **and our own portal/autopay intents whose confirm-on-return never happened** — a browser closed mid-payment, a lost tunnel. (This said "missed webhooks" until 0.50.0. There is no webhook and never was: every payment reaches the ledger by one of four PULL paths — see CLAUDE.md §13.4.) The push paths are optimizations; **money is never lost**, only delayed.
+Daily job + on-demand "Reconcile now" button (finance): fetch keys via `GET ${OPENMASJID_BASE_URL}/api/fabric/stripe?account=<STRIPE_ACCOUNT>` (with our secret), list succeeded PaymentIntents where `metadata.purpose == "students-billing"` since the last cursor, and record any whose PI id isn't already an idempotency key — flagged `via: reconciliation`. Covers missed broker calls from Donations/Kiosk **and our own portal/autopay intents whose confirm-on-return never happened** — a browser closed mid-payment, a lost tunnel. (This said "missed webhooks" until 0.50.0. There is no webhook and never was: every payment reaches the ledger by one of four PULL paths — see CLAUDE.md §13.4.) It is also **the only thing that resolves an autopay run left `pending`** by an indeterminate confirm. The cursor is held back below anything that errored or is still settling, so nothing is skipped. The push paths are optimizations; **money is never lost**, only delayed.

@@ -296,7 +296,7 @@
 .list-row .row-amt.neg { color: var(--color-danger, #e5645b); }
 .list-row .row-amt.pos { color: var(--color-success, #46c99a); }
 
-/* ── An itemised bill (0.43.0) ────────────────────────────────────────────────
+/* ── An itemized bill (0.43.0) ────────────────────────────────────────────────
    A bill that is tuition PLUS something else says so, and each line can be paid on its own. The row
    at the top is the bill; the list under it is what the bill is made of.
 

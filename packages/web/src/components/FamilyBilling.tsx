@@ -428,6 +428,15 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                     <p className="hint" style={{ marginBlockStart: 0 }}>
                       {t(`billing.yearFrom_${year.data.fromSource}`, { year: year.data.year.label, months: year.data.monthsCounted })}
                     </p>
+                    {/* A quote that is knowingly incomplete has to say so. A per-term plan cannot be
+                        billed by this app yet (billing/yearTotal.ts), so it is left out of the figure —
+                        and an office comparing this against the plans they configured would otherwise
+                        just see a number that is too small, with nothing saying why. */}
+                    {year.data.perTermExcluded > 0 && (
+                      <p className="hint" style={{ color: 'var(--color-warning)' }}>
+                        {t('billing.yearPerTermExcluded', { count: year.data.perTermExcluded })}
+                      </p>
+                    )}
                     <table className="data-table">
                       <tbody>
                         {year.data.lines.map((l) => (
@@ -695,9 +704,16 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                     <td>{t(`billing.ch_${p.channel}`, p.channel)}</td>
                     <td>{formatDate(new Date(p.occurredAt as unknown as number).toISOString().slice(0, 10), dateFormat)}</td>
                     <td className="muted">{p.memo ?? ''}</td>
-                    {/* A card payment records itself, so there is no person to name — say so rather
-                        than leaving a blank cell that reads like missing data. */}
-                    <td className="muted">{p.by ?? t('billing.recordedAuto')}</td>
+                    {/*
+                        WHO TOOK THE MONEY — a person, or nobody.
+                        A card or kiosk payment records itself, so there is no person to name. It used to
+                        print `recorded_by_name` regardless, which for those rows is the channel word
+                        ('portal', 'autopay') — telling the office nothing the Channel column had not
+                        already said, and never showing the "Automatic" label written for exactly this.
+                        Keyed on whether the channel is one a PERSON can record, so the standing
+                        arrangement (a manual channel, stamped 'Standing arrangement') still names itself.
+                    */}
+                    <td className="muted">{MANUAL_CHANNELS.includes(p.channel as ManualChannel) && p.by ? p.by : t('billing.recordedAuto')}</td>
                     {/* Reverse is a LEDGER-ONLY action, so it is offered only where that is the whole
                         story. A card payment's money is at Stripe: reversing it here would re-open the
                         bill while the family stayed charged, and would then block the real refund. The

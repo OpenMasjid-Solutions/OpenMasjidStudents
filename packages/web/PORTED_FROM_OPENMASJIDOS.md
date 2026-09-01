@@ -30,7 +30,6 @@ explaining why.
 | `src/components/Glyphs.tsx` | `src/components/Glyphs.tsx` |
 | `src/components/SceneBackground.tsx` | `src/components/SceneBackground.tsx` |
 | `src/components/ErrorBoundary.tsx` | `src/components/ErrorBoundary.tsx` |
-| `src/components/Clock.tsx` | `src/components/Clock.tsx` |
 | `src/components/Windows.tsx` (window manager context) | `src/components/Windows.tsx` |
 | `src/components/WindowManager.tsx` (mac-style window frames) | `src/components/WindowManager.tsx` |
 | `src/assets/logo-mark.png` | `src/assets/logo-mark.png` |
@@ -44,12 +43,17 @@ OpenMasjid's front door. The app's own mark is `src/components/StudentsMark.tsx`
 
 ## Adapted from upstream (structure mirrored, logic simplified)
 
-- **`src/components/AppShell.tsx`**, **`Dock.tsx`**, **`ProfileMenu.tsx`** — modelled on the
+- **`src/components/AppShell.tsx`**, **`Dock.tsx`**, **`ProfileMenu.tsx`** — modeled on the
   OpenMasjidOS equivalents (same `.dock`/`.topbar`/`.menu` classes, same window+dock shell),
   but simplified for an app rather than the platform: nav is a small state-driven section set
   (no react-router, no installed-app pinning/drag), ProfileMenu has no platform `system.info`
   (version from `health`). They intentionally diverge, so they carry a normal SPDX header (not
   the verbatim origin comment).
+- **`src/components/Clock.tsx`** — listed as verbatim until 0.51.0, and it is not: it carries no
+  origin comment, follows the sibling apps' `.topclock` rather than the dashboard's `.clock-widget`
+  (§15: copy the apps, not the platform), and adds the 12/24-hour and time-zone preferences.
+  Re-syncing it from upstream would undo all three.
+- **`modelled`/`modeled`:** the org writes American English; this file said `modelled` until 0.51.0.
 
 ## Adapted from OpenMasjidDonations (the tunnel + appearance family pattern)
 
@@ -69,12 +73,14 @@ OpenMasjidOS Cloudflare-tunnel path, plus inheriting the dashboard's appearance:
 
 - **`public/fonts/Amiri-Regular.ttf`** (+ `LICENSE-Amiri-OFL.txt`) — the OFL **Amiri**
   Naskh face, copied from `OpenMasjidDisplay/server/assets/fonts` (commit `72d0410`).
-  The family **web** UIs bundle no Arabic font (OS ships only Inter + Space Grotesk),
-  but this app needs Arabic-capable rendering for RTL and for report cards/transcripts
-  (`CLAUDE.md` §7/§15). Wired via `src/styles/fonts-arabic.css` (a NEW file, not ported)
-  so the ported CSS stays pristine.
-- **`src/lib/i18n/index.ts`** loads `en` + `ar` + `ur` (upstream ships `en` only). i18n
-  content is app-specific and not part of the re-syncable "theme".
+  **Bundled but NOT WIRED**: there is no `@font-face` for it and nothing references it. This
+  bullet used to say it was wired via `src/styles/fonts-arabic.css` — a file that does not
+  exist — and justified it with report cards and transcripts, which went in the v0.35.0
+  pivot. Kept for the RTL locale work; drop both files from `public/` if that is abandoned.
+- **`src/lib/i18n/index.ts`** ships **English only**, same as upstream. The `ar`/`ur` locale
+  files and the language picker were removed by decision (v0.36.0); every string still goes
+  through i18next, so adding a locale later is dropping in a JSON file. i18n content is
+  app-specific and not part of the re-syncable "theme".
 - **`ambient.mp4`** (OS's 5 MB looping backdrop) was **not** copied — the ambient toggle
   has no default UI here and the scene falls back to the aurora gradient. Copy it later if
   an ambient backdrop is wanted.

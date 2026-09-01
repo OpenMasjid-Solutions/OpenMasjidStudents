@@ -26,6 +26,7 @@ verification, no endpoint registration; `stripe_events` was DROPPED in 0.48.0 (m
 | `portal.confirmPayment` (confirm-on-return) | the parent's browser, after Elements confirms | `portal` | reconciliation |
 | autopay's synchronous confirm | our own scheduler | `autopay` | reconciliation |
 | `billing.recordManualPayment` | the office | `cash` \| `check` \| `ach` \| `zelle` \| `other` | — (a person is standing there) |
+| `runStanding` (05:00 daily) | our own scheduler, on the arrangement the office set | `cash` \| `check` \| `ach` \| `zelle` \| `other` | — (no Stripe leg; the row reverses through `billing.reversePayment`) |
 | the mid-year go-live | the office, once | `carry_in` | — |
 | **reconciliation** (§11.4) | the daily job, or the Reconcile now button | whatever the PI's metadata says | it *is* the backstop |
 
@@ -55,7 +56,7 @@ Only `payments/stripe.ts` imports the SDK. Everything else asks it for a client 
    `MIN_PAYMENT_CENTS`.
 2. The server creates a PaymentIntent with §11.3's metadata (`omos_app=students-portal`,
    `students_channel=portal`, `students_family_id`), the description `School balance — <family label>`, and
-   `automatic_payment_methods` enabled so the household is offered whatever the masjid's Stripe account has
+   `automatic_payment_methods` enabled **when no processing fee applies** (with a fee on, the amount was grossed up for ONE method, so the intent pins `payment_method_types` to it — the parent picks card or bank before the intent is minted) so the household is offered whatever the masjid's Stripe account has
    switched on (cards, and a US bank account where it is enabled).
 3. The browser confirms with Elements. Card details never reach us.
 4. `portal.confirmPayment` retrieves the PI, checks it is **ours** and **this household's** (metadata, not
@@ -81,7 +82,7 @@ Only `payments/stripe.ts` imports the SDK. Everything else asks it for a client 
   ladder (a phantom failure could auto-disable a family early), and a pending run blocks any further charge
   for that household until reconciliation resolves it. Guessing "no charge happened" is how you double-bill.
 
-## 13.4 Refunds (0.48.0)
+## Refunds (0.48.0)
 
 The unit is a **transaction**, not a payment row: one card charge covering three children is three rows
 (§9), so refunds group by PaymentIntent and reverse the group while asking Stripe once. Stripe first, ledger
@@ -137,7 +138,7 @@ feature been switched off — so the figure that was true when the payer agreed 
 charge. It is also what lets Donations and Kiosk mint their own intents and still be read correctly here.
 
 **Two rates, because they are not the same cost.** A card is 2.9% + 30¢ with no ceiling; ACH is 0.8%
-**capped at $5**. On a $2,000 term payment that is $59.79 against $5.00, so the bank rate has its own
+**capped at $5**. On a $2,000 term payment that is $60.05 against $5.00, so the bank rate has its own
 switch (an office may reasonably pass on the card cost and absorb the bank one) and the cap is honored
 — grossing up past it would charge a percentage of a fee that had stopped growing, which is money taken
 for nothing. Because a PaymentIntent's amount is fixed before Stripe asks the payer anything, an install
@@ -181,10 +182,12 @@ footnote.
 - All money in **integer cents**. Balances **derived, never stored**. Payments **immutable** (corrections =
   reversal rows; a refund is a Stripe refund plus those same rows).
 - **One** `recordPayment`/`recordSplit` path, used by the Fabric provider, the portal, autopay,
-  reconciliation, the manual-payment UI and the mid-year go-live.
+  reconciliation, the manual-payment UI, standing payments and the mid-year go-live.
 - Allocation is **per line** and **re-derived** whenever a bill changes, with a payer's stored instruction
   honored before the oldest-due-first sweep.
 - Idempotency at the DB: `payments.idempotency_key` UNIQUE (the Stripe PI id, whatever the channel), suffixed
-  `:studentId` when one charge fans out across siblings. Prefix-match it with `substr`, never `LIKE` — `_` is
+  `:studentId` when one charge fans out across siblings. A standing payment has no PI, so its key is
+  `standing:<studentId>:<period>` — which is what makes a re-run, a restart or a catch-up on the 3rd a
+  no-op rather than a second month's money. Prefix-match it with `substr`, never `LIKE` — `_` is
   a LIKE wildcard and Stripe ids are full of them.
 - Channels: `donations-web | kiosk | portal | autopay | cash | check | ach | zelle | other | carry_in`.

@@ -132,12 +132,61 @@ function writeChargeLine(tx: Tx, invoiceId: string, c: { id: string; studentId: 
   tx.update(charges).set({ status: 'invoiced', invoiceItemId: itemId, updatedAt: ts }).where(eq(charges.id, c.id)).run();
 }
 
+/**
+ * Hand a voided invoice's charges back, so they can be billed again. ONE place decides this (§16).
+ *
+ * A charge is marked `invoiced` and pointed at the line it became. Voiding the invoice left it that
+ * way — so the charge was never picked up again by `pendingCharges` (which selects `status: 'pending'`),
+ * and the money it represented was silently dropped: a book fee voided along with February's tuition
+ * simply stopped being owed, with nothing on any screen saying so. That is the same rule `alreadyBilled`
+ * already states for a one-time FEE plan — "voiding an invoice deliberately makes it billable again" —
+ * and a charge is the one kind of line that was not getting it.
+ *
+ * It also clears the way to delete the row: `charges.invoice_item_id` is ON DELETE RESTRICT, so a
+ * stranded charge would block the regeneration below with an FK error rather than a message.
+ *
+ * Called from `voidInvoice` (the forward fix) and from `generateForStudent` (which covers invoices
+ * voided by an earlier version, where the charge is still stranded).
+ */
+export function releaseChargesFrom(tx: Tx, invoiceId: string): number {
+  const items = tx.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.invoiceId, invoiceId)).all();
+  if (items.length === 0) return 0;
+  const ids = items.map((i) => i.id);
+  const stranded = tx.select({ id: charges.id }).from(charges).where(inArray(charges.invoiceItemId, ids)).all();
+  if (stranded.length === 0) return 0;
+  tx.update(charges)
+    .set({ status: 'pending', invoiceItemId: null, updatedAt: new Date() })
+    .where(inArray(charges.invoiceItemId, ids))
+    .run();
+  return stranded.length;
+}
+
 /** Generate one STUDENT's invoice for a period. Idempotent on (student, periodKey); returns the
  *  existing invoice unchanged if already generated, and skips a student with nothing to bill.
  *  Everything is computed INSIDE the transaction so the one-time dedupe can't race the insert. */
 export function generateForStudent(studentId: string, opts: GenerateOpts): { invoiceId: string | null; created: boolean } {
-  const existing = db.select({ id: invoices.id }).from(invoices).where(and(eq(invoices.studentId, studentId), eq(invoices.periodKey, opts.periodKey))).get();
-  if (existing) return { invoiceId: existing.id, created: false };
+  const existing = db
+    .select({ id: invoices.id, status: invoices.status })
+    .from(invoices)
+    .where(and(eq(invoices.studentId, studentId), eq(invoices.periodKey, opts.periodKey)))
+    .get();
+  /**
+   * A LIVE invoice means this period is already billed — return it untouched, which is the idempotency
+   * every generation path relies on.
+   *
+   * A VOIDED one used to mean the same thing, and that was a trap with no way out of it. `invoices` is
+   * UNIQUE(student, period_key), so the void row kept the slot for good: after an office voided a bill
+   * to correct it, that child could never be billed for that month again — not by hand, not by the
+   * nightly job — and the only feedback was "Generated 0 invoice(s)", which reads like there was nothing
+   * to bill. Voiding is how an office fixes a wrong bill, so it has to be a step they can come back from.
+   *
+   * The void row is REPLACED rather than kept beside the new one. It provably holds no money — `voidInvoice`
+   * refuses while any payment is allocated, and the allocator skips void invoices entirely, so one can never
+   * acquire an allocation afterwards — and the alternative, two rows for one month, would show up twice on
+   * the family's record and make every month-keyed reader (the year grid, the statement) pick between them.
+   * The `invoice.void` audit entry is what survives, which is the record that matters.
+   */
+  if (existing && existing.status !== 'void') return { invoiceId: existing.id, created: false };
 
   const periodKind = opts.periodKind ?? 'month';
   const ts = new Date();
@@ -145,9 +194,21 @@ export function generateForStudent(studentId: string, opts: GenerateOpts): { inv
   let created = false;
 
   db.transaction((tx) => {
+    /**
+     * Release the voided bill's charges BEFORE reading them — that is what makes a charge which was on
+     * the voided invoice show up in `pendingCharges` below, so the replacement carries it instead of
+     * dropping it.
+     *
+     * Deleting the void row waits until we know there is something to replace it with. An early return
+     * out of this callback COMMITS (only a throw rolls back), so deleting up here would destroy the
+     * voided record on a run that then billed nothing. Releasing the charges early is safe either way:
+     * pending is the correct state for a charge whose invoice is void, whether or not this run bills.
+     */
+    if (existing) releaseChargesFrom(tx, existing.id);
     const lines = feeLines(tx, studentId, periodKind);
     const chs = pendingCharges(tx, studentId, opts.periodKey);
     if (lines.length === 0 && chs.length === 0) return; // nothing to bill — no empty invoice
+    if (existing) tx.delete(invoices).where(eq(invoices.id, existing.id)).run(); // items cascade
 
     tx.insert(invoices).values({ id: invId, studentId, label: opts.label, periodKey: opts.periodKey, dueDate: dueDateFor(opts), status: 'open', createdAt: ts, updatedAt: ts }).run();
     for (const l of lines) {

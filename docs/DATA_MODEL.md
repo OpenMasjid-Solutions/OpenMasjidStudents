@@ -16,7 +16,7 @@
 > …), while every table added since was missing. It is now generated from the real
 > `packages/server/src/db/schema.ts`. If you change the schema, change this.
 
-The **33 tables** that exist, grouped by what they are for:
+The **34 tables** that exist, grouped by what they are for:
 
 | Area | Tables |
 | --- | --- |
@@ -25,7 +25,7 @@ The **33 tables** that exist, grouped by what they are for:
 | Structure | `schools`, `user_schools`, `school_years`, `terms`, `courses`, `classes` |
 | People | `families`, `students`, `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts` |
 | Fees | `fee_plans`, `student_fees`, `charge_items`, `charges` |
-| Billing | `invoices`, `invoice_items`, `payments`, `payment_allocations`, `carry_ins`, `past_due_reminders` |
+| Billing | `invoices`, `invoice_items`, `payments`, `payment_allocations`, `carry_ins`, `past_due_reminders`, `standing_payments` |
 | Cards | `payment_methods`, `autopay_enrollments`, `autopay_runs` |
 | Notifications | `alert_recipients`, `whatsapp_log` |
 | Trail | `audit_log` |
@@ -48,21 +48,21 @@ and `updated_at` wherever a row is ever updated.
 
 ## Non-trivial decisions
 
-- **Homework module: dropped.** Per Hasan (2026-07-15), no homework-specific feature. The
-  gradebook's assignments/assessments cover graded work; there is no separate homework entity.
+- **Homework module: dropped.** Per Hasan (2026-07-15), no homework-specific feature. (Moot since
+  v0.35.0 — the whole academic side went with it, gradebook included. Kept as the record of the
+  decision, not as a description of anything that exists.)
 
 - **UI = the family's shared "liquid glass" CSS design system, NOT shadcn/ui.** Per Hasan
   (2026-07-15) and recon: OpenMasjidOS/Display/Kiosk share `styles/{tokens,glass,app}.css` +
   hand-rolled inline-SVG primitives; none use shadcn/Radix/tailwind-merge. We port that system
-  verbatim from OpenMasjidOS `packages/ui` for byte-parity + re-sync (§15). **This deviates from
-  CLAUDE.md §7's "shadcn/ui (copied-in Radix)" and "Tailwind CSS v4" lines** — parity (§15, the
-  harder constraint + Hasan's explicit "ui.ux same as them") wins. Ported files keep their SPDX
+  verbatim from OpenMasjidOS `packages/ui` for byte-parity + re-sync (§15). CLAUDE.md §7 was corrected to match this in 0.50.0 and now records the same decision — parity (§15,
+  the harder constraint + Hasan's explicit "ui.ux same as them") is why. Ported files keep their SPDX
   header + an origin comment and stay structurally identical to upstream so theme fixes re-sync.
 
 - **Default accent = cyan `#22D3EE` + gold `#F59E0B` over deep navy `#030D1A`.** Per Hasan
   (2026-07-15): match the LIVE siblings (Display/Kiosk, and OS's default accent), not the
-  EMERALD described in CLAUDE.md §9 text. The token system supports swappable accents, so this
-  is a one-token change if revisited. **Deviates from §9's emerald language** — deliberate.
+  EMERALD described in CLAUDE.md §15. The token system supports swappable accents, so this is a
+  one-token change if revisited. §15's emerald/gold is the org default; this install ships cyan/gold.
 
 - **Backend = tRPC + Drizzle + npm-workspaces monorepo (per §7/§8), NOT the siblings' pattern.**
   Recon: Donations/Kiosk use plain Fastify REST + raw better-sqlite3 (`Store` class) + a `server/`
@@ -74,7 +74,7 @@ and `updated_at` wherever a row is ever updated.
 - **Repo + image name = `OpenMasjidStudents` → `ghcr.io/openmasjid-solutions/openmasjidstudents`.**
   Per Hasan (2026-07-15): keep the current folder/GitHub name. **App id stays `students`** (locked by
   the Fabric contract — Donations & Kiosk already reference `students/billing`; the docs' canonical
-  example is `students/billing`). **Deviates from CLAUDE.md §2's image `openmasjid-students`.** The
+  example is `students/billing`). CLAUDE.md §2 names the same image. The
   APPS catalog's stale `student-manager` coming-soon teaser must be renamed → `students` when we list
   (an OpenMasjidAPPS-repo change, step 14/release).
 
@@ -86,7 +86,7 @@ and `updated_at` wherever a row is ever updated.
   endpoint `/api/fabric/site` is gated on a `domain:` capability our manifest can add later if needed
   (the injected `OPENMASJID_PUBLIC_URL` path works without it).
 
-- **Alerts fan out to three places, and an ALERT RECIPIENT IS AN ADDRESS, NOT AN ACCOUNT** (0.44.0,
+- **Alerts fan out to five places, and an ALERT RECIPIENT IS AN ADDRESS, NOT AN ACCOUNT** (0.44.0,
   `alerts/index.ts` + `alert_recipients`). There were two channels before, and both could be silently
   dead: `notifyPlatform` posts to a masjid webhook most installs never configure, and `raiseAlert`
   reaches OpenMasjidOS but only for ids declared in the **catalog entry the masjid installed from** — so
@@ -99,7 +99,8 @@ and `updated_at` wherever a row is ever updated.
     queried BY event. `alerts/index.ts` owns the catalog and filters unknown ids on read, so a stale
     row can never widen what it receives.
   - **Two texts per alert, and `publicText` is REQUIRED**: `text` goes by email to the addresses an
-    admin typed and MAY name the household and the amount — without that an alert is unactionable, which
+    admin typed — and, since 0.50.0, to a staff member's own WhatsApp number and to an approved staff
+    GROUP whose admin ticked `detail` — and MAY name the household and the amount — without that an alert is unactionable, which
     is what the old "a family's card failed" wording was. `publicText` goes to the masjid webhook and the
     OpenMasjidOS alert channel, which are third-party sinks (a webhook is usually Slack or Discord), so
     it carries no household and no name-beside-an-amount — an amount alone is fine, which is where §14's
@@ -180,14 +181,18 @@ Working assumptions in force unless/until Hasan says otherwise. **Ask before the
 | 2 | Default host port | `8360` (host) → `8080` (container) | Manifest/compose (step 1) |
 | 3 | Autopay trigger; portal overpay | Charge **on due date**; overpay allowed → family credit | 16 (autopay) |
 | 4 | Parent self-registration default | **ON** (child's Student ID + on-file guardian email + email verify) | 11 (portal) |
-| 5 | Gradebook visibility to parents | Visible **immediately on entry** (publish workflow deferred) | 5 (gradebook) |
-| 6 | SMTP provider | Per-masjid in-app settings only (no house relay) | portal/mail steps |
+| 5 | Gradebook visibility to parents | **CLOSED by the v0.35.0 pivot** — there is no gradebook. Kept as the record of a question that stopped applying. | — |
+| 6 | SMTP provider | **ANSWERED:** mail goes through the platform (`POST /api/fabric/email`); this app holds no mail credentials and degrades to copy/print links when the platform is absent (§4, §7). | done |
 | 7 | PIN policy + name match | **ANSWERED (Hasan, 2026-07-26): no PINs.** Removed in v0.39.0 — the Student ID (`YUS1234`) is the whole credential, because the only thing it authorizes is *paying* someone's tuition. Replaced by a name-confirmation step (`identify`) plus a shared per-ID lockout. Contract → **v2**. | done |
-| 8 | Existing campaign-type enum values `tuition` joins | **ANSWERED (recon):** enum is `donation \| zakat \| tuition` in BOTH Donations (`server` + `web`) and Kiosk (added v0.9.12). `tuition` ALREADY EXISTS — we mirror it, nothing to add. Type drives the card-fee rule (donation=optional cover, zakat=forced cover, tuition=admin-toggle). | 14 (Fabric provider) |
-| 9 | Default madrasa scale + merit categories | Ship the CLAUDE.md defaults (Mumtāz…Rāsib; Ādāb, Sunnah, Hifz milestone, Helping others), admin-editable | 5/6 |
-| 10 | Report cards: scale bands + teacher remark | Show scale band by default; keep optional per-student remark | 7 |
-| 11 | `/apply` default field set | guardian name+contact, child name+DOB, program interest | 12 (admissions) |
-| 12 | Transcripts: terms × classes × final grade | Sufficient for v1 (no credit-hours/GPA) | 8 (transcripts) |
+| 8 | Campaign-type enum values `tuition` joins | **ANSWERED (recon):** the enum is `donation`, `zakat`, `tuition` in BOTH Donations (`server` + `web`) and Kiosk (added v0.9.12). `tuition` ALREADY EXISTS — we mirror it, nothing to add. | done |
+| 9 | Madrasa grading scale + merit categories | **CLOSED by the v0.35.0 pivot** — no grades, no merit. | — |
+| 10 | Report cards | **CLOSED by the v0.35.0 pivot.** | — |
+| 11 | `/apply` field set | **CLOSED by the v0.35.0 pivot** — no admissions pipeline. | — |
+| 12 | Transcripts | **CLOSED by the v0.35.0 pivot.** | — |
+| 13 | Partial refunds through Stripe | A credit (a negative charge) on the next bill; full refunds only (§4 ⭐) | before any partial-refund work |
+| 14 | Saved bank accounts / ACH | Addable, but micro-deposit verification is unfinished — confirm a beta masjid actually takes ACH first | before finishing ACH |
+| 15 | Per-term fee billing | **A LIVE GAP, found in the 0.51.0 audit.** `feeLines` bills a per-term plan only on a `periodKind: 'term'` run, and no screen can ask for one — so a per-term plan is configured and never invoiced. The year quote now excludes it and both screens say so; wiring term periods properly needs a period-key format, a label rule, and a decision about the month-keyed year grid. | before offering per-term billing |
 
-> **Q8 is the one recon must answer.** The real campaign-type enum values in OpenMasjidDonations
-> and OpenMasjidKiosk get pasted here once confirmed, so step 14 registers `tuition` alongside them correctly.
+> **Rows 5 and 9–12 are kept rather than deleted.** They were live questions once, and a log that quietly
+> loses the ones the pivot closed reads as though they were never asked. Rows 13–15 are what is actually
+> open now (CLAUDE.md §20).

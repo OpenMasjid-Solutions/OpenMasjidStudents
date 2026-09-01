@@ -35,7 +35,14 @@ export function invoicePaid(tx: Tx, invoiceId: string): number {
   return tx.select({ a: paymentAllocations.amountCents }).from(paymentAllocations).where(eq(paymentAllocations.invoiceId, invoiceId)).all().reduce((s, r) => s + r.a, 0);
 }
 
-function statusFor(total: number, paid: number): InvoiceStatus {
+/**
+ * THE one rule for what an invoice's total and paid amount mean. Exported since 0.51.0 because a second
+ * place was deciding it and reaching a different answer: `yearCells` re-derived the status for the grid
+ * and asked "has anything been paid?" before "does this cost anything?", so a fully-waived month read
+ * Open in the grid while the ledger and the statement both called it Paid — the exact defect the
+ * ordering below was written to fix, reintroduced one file over (§16, §20).
+ */
+export function statusFor(total: number, paid: number): InvoiceStatus {
   // A bill that costs nothing is settled, not open. This test has to come FIRST: a 100% bursary makes
   // the total 0 (or negative), no payment is possible against it, and asking "has anything been paid?"
   // first left such an invoice reading Open with a $0.00 balance forever — on the statement, in the

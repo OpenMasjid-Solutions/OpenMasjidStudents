@@ -16,7 +16,7 @@ import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { makeLog } from '../logger';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
-import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice, billChargeNow, canBillAlone } from '../billing/invoices';
+import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice, billChargeNow, canBillAlone, releaseChargesFrom } from '../billing/invoices';
 import { billFromMonths, currentPeriod } from '../billing/joinMidYear';
 import { schoolYearMonths } from '../billing/schoolYear';
 import { AUDIENCE_CLASS, AUDIENCE_COURSE, AUDIENCE_STUDENTS, resolveAudience } from '../structure/audience';
@@ -24,7 +24,7 @@ import { yearTotalFor } from '../billing/yearTotal';
 import { nextRunDate, owedNow } from '../billing/standingPayments';
 import { yearCellsFor } from '../billing/yearCells';
 import { invoiceLines, payableLines } from '../billing/lines';
-import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
+import { periodKeyError, reservedPeriodError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
 import { commitCarryIn, defaultGoLivePeriod, midYearPlan, noteCarryIn } from '../billing/carryIn';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { isIsoDay } from '../settings/dates';
@@ -156,10 +156,11 @@ function snapshotCharge(source: z.infer<typeof CHARGE_SOURCE>): { label: string;
  * anybody typing.
  */
 function assertBillablePeriod(periodKey: string, periodKind: 'month' | 'term' = 'month'): void {
-  if (periodKind === 'month') {
-    const err = periodKeyError(periodKey);
-    if (err) throw new TRPCError({ code: 'BAD_REQUEST', message: err });
-  }
+  // A term is exempt from the month SPELLING rule and from nothing else. Skipping the whole check for a
+  // term period also skipped the two RESERVED names, so a term run could be aimed at `carry-in` or at a
+  // single charge's own invoice (billing/period.ts `reservedPeriodError`).
+  const err = periodKind === 'month' ? periodKeyError(periodKey) : reservedPeriodError(periodKey);
+  if (err) throw new TRPCError({ code: 'BAD_REQUEST', message: err });
   const floor = getBillingStartPeriod();
   if (floor && isMonthPeriod(periodKey) && periodBefore(periodKey, floor)) {
     throw new TRPCError({
@@ -648,9 +649,19 @@ export const billingRouter = router({
     // A voided invoice drops out of the invoiced total, but its payments stay counted — voiding a
     // paid bill would understate the family balance. Reverse the payment first (§9: reversals only).
     if (invoicePaid(db, input.id) !== 0) throw new TRPCError({ code: 'CONFLICT', message: 'Reverse the payments on this invoice before voiding it.' });
-    db.update(invoices).set({ status: 'void', updatedAt: now() }).where(eq(invoices.id, input.id)).run();
-    audit(auditActor(ctx), 'invoice.void', { entity: 'invoice', entityId: input.id });
-    return { ok: true as const };
+    let released = 0;
+    db.transaction((tx) => {
+      tx.update(invoices).set({ status: 'void', updatedAt: now() }).where(eq(invoices.id, input.id)).run();
+      /**
+       * Hand back any CHARGE that was on this bill, so it is owed again (billing/invoices.ts
+       * `releaseChargesFrom`). Without this a book fee voided along with the month's tuition stayed
+       * marked `invoiced` against a void invoice: never re-billed, never owed, and invisible — the one
+       * kind of line that was not getting the rule `alreadyBilled` already applies to a one-time fee.
+       */
+      released = releaseChargesFrom(tx, input.id);
+    });
+    audit(auditActor(ctx), 'invoice.void', { entity: 'invoice', entityId: input.id, detail: { chargesReleased: released } });
+    return { ok: true as const, chargesReleased: released };
   }),
 
   // ── Year view (the students × months payment grid) ───────────────────────────

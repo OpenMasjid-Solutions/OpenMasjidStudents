@@ -141,7 +141,7 @@ export function FamilyHome({ onManageAutopay }: { onManageAutopay: () => void })
               )}
             </section>
 
-            {/* Open bills, itemised. A bill of one line reads as it always did; a bill that is tuition
+            {/* Open bills, itemized. A bill of one line reads as it always did; a bill that is tuition
                 PLUS something else says so, and each line can be paid on its own — "just the book fee"
                 is a real thing parents ask for, and it used to be impossible to express. */}
             <section className="fam-section">

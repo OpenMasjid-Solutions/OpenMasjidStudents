@@ -40,8 +40,6 @@ export const users = sqliteTable('users', {
   role: text('role').$type<Role>().notNull(),
   status: text('status').$type<'active' | 'disabled'>().notNull().default('active'),
   displayName: text('display_name'),
-  /** Admin-only notes. */
-  staffNotes: text('staff_notes'),
   /**
    * A staff member's WhatsApp number (0.50.0).
    *

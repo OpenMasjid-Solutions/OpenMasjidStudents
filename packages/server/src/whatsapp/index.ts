@@ -95,10 +95,6 @@ const log = makeLog('whatsapp');
 export const WA_PARENT_EVENTS = ['invoice-ready', 'receipt', 'past-due', 'autopay-upcoming', 'autopay-failed', 'card-expiring', 'payment-refunded'] as const;
 export type WaParentEvent = (typeof WA_PARENT_EVENTS)[number];
 
-export function isParentEvent(v: unknown): v is WaParentEvent {
-  return typeof v === 'string' && (WA_PARENT_EVENTS as readonly string[]).includes(v);
-}
-
 /**
  * Would this event message anybody if it fired right now? (The master switch and the toggle — not the
  * gateway, which needs a network call.)
@@ -133,11 +129,6 @@ export async function refreshWhatsAppStatus(): Promise<WhatsAppStatus> {
 export async function currentWhatsAppStatus(): Promise<WhatsAppStatus> {
   if (statusCache && Date.now() - statusCache.at < STATUS_TTL_MS) return statusCache.status;
   return refreshWhatsAppStatus();
-}
-
-/** For a synchronous caller (a settings read that must not block). Null = we have never asked. */
-export function cachedWhatsAppStatus(): WhatsAppStatus | null {
-  return statusCache?.status ?? null;
 }
 
 /** Only used by tests and by an account switch — never in normal operation. */

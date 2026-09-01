@@ -18,6 +18,7 @@
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getSession, COOKIE } from '../auth/sessions';
+import { portalBase } from '../auth/invites';
 import { classifyOrigin } from '../security/origin';
 import { config } from '../config';
 import { buildFamilyStatementHtml, canServeStatement } from './statements';
@@ -51,9 +52,24 @@ const STATEMENT_CSP = [
   "base-uri 'none'",
 ].join('; ');
 
-/** The origin the QR points at: the tunnel public URL when set, else the LAN host of this request. */
+/**
+ * The origin a printed QR points at.
+ *
+ * `portalBase()` FIRST, which is the same resolver every emailed invite, reset and portal link uses
+ * (auth/invites.ts) — so a sheet handed across the office desk and a link mailed to the same parent can
+ * never name two different addresses. It prefers the LIVE public URL the platform reports over the
+ * `OPENMASJID_PUBLIC_URL` env mirror, which matters because the mirror is written once at install and a
+ * tunnel URL that later changes leaves it stale: this route used to read the env var directly, so the
+ * QR on every printed statement kept pointing at an address that no longer resolved.
+ *
+ * The request's own host stays as the last resort, and only here. `portalBase` deliberately refuses to
+ * fall back to it — emailing a parent an RFC1918 address is worse than sending nothing — but a printed
+ * sheet is different: on a LAN-only install with no tunnel at all, a QR that opens on the masjid wifi is
+ * the correct and only answer.
+ */
 function baseUrlFor(req: FastifyRequest): string {
-  if (config.omosPublicUrl) return config.omosPublicUrl;
+  const shared = portalBase();
+  if (shared) return shared;
   const xfp = req.headers['x-forwarded-proto'];
   const proto = (Array.isArray(xfp) ? xfp[0] : xfp)?.split(',')[0].trim() || req.protocol || 'http';
   const host = req.headers.host || `localhost:${config.port}`;

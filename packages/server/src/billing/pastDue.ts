@@ -212,7 +212,11 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
 
   // EITHER channel wanting to chase is enough to walk the list (0.50.0). Gated on the email switch
   // alone, a madrasah that turned reminders on for WhatsApp only had a job that quietly never ran.
-  if (cfg.parentEmails || parentEventOn('past-due')) {
+  // Computed ONCE and reused by the office digest below: the digest read `cfg.parentEmails` on its own,
+  // so an install chasing families by WhatsApp was told "parent reminders are switched off" in the same
+  // email that reported the reminders it had just sent.
+  const chasing = cfg.parentEmails || parentEventOn('past-due');
+  if (chasing) {
     const lastSent = lastSentByFamily();
     const ts = new Date();
     for (const fam of chase) {
@@ -263,9 +267,9 @@ export async function runPastDue(asOf: string, opts: { force?: boolean } = {}): 
           // The households are still what gets CHASED — one adult pays for all their children, so one
           // reminder goes per household however many of them are behind. Said plainly, because the two
           // counts differ and an office would otherwise wonder why 9 students produced 5 emails.
-          cfg.parentEmails
+          chasing
             ? `Parents are being reminded automatically — one message per household (${chase.length} ${chase.length === 1 ? 'household' : 'households'}), at most once every ${cfg.everyDays} days.`
-            : 'Parent reminders are switched off, so nobody has been told but you (Settings → Email alerts).',
+            : 'Parent reminders are switched off on both channels, so nobody has been told but you (Settings → Email alerts, Settings → WhatsApp).',
         ].join('\n'),
         // No household, no child, no name beside an amount (§14) — this copy goes to the masjid webhook
         // and the OpenMasjidOS alert channel, which are third-party sinks.

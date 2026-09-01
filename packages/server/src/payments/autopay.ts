@@ -25,7 +25,7 @@ import { alertStaff, childrenOf, studentAmounts } from '../alerts';
 import { sendReceipt, sendAutopayFailure, sendAutopayUpcoming, sendCardExpiring } from '../mail/notify';
 import { formatDate } from '../settings/dates';
 import { stripeClient } from './stripe';
-import { feeKindOf, orderedMethods } from './methods';
+import { feeKindOf, methodLabel, orderedMethods } from './methods';
 import { feeMetadata, feeQuote } from './fees';
 
 const log = makeLog('autopay');
@@ -278,16 +278,12 @@ export async function runAutopay(today: string): Promise<{ attempted: number }> 
   return { attempted: due.length };
 }
 
-/** How a card is named to a parent — "Visa ···· 4242", brand and last four only. Never a PAN and never
- *  a holder name; neither is stored (§14). Empty when there is nothing recognizable to say. */
+/** How the method that will be charged is named to a parent. Thin wrapper over the ONE namer
+ *  (`payments/methods.ts` `methodLabel`) — this file used to have its own copy, which read `brand` only
+ *  and so called a saved bank account a "card" (§16). */
 function cardLabelFor(familyId: string): string {
   const pm = orderedMethods(familyId)[0];
-  if (!pm) return '';
-  const brand = (pm.brand ?? '').trim();
-  const last4 = (pm.last4 ?? '').trim();
-  if (!brand && !last4) return '';
-  const nice = brand ? brand.charAt(0).toUpperCase() + brand.slice(1) : 'card';
-  return last4 ? `${nice} ···· ${last4}` : nice;
+  return pm ? methodLabel(pm) : '';
 }
 
 /**
@@ -360,7 +356,12 @@ function findRun(runId: string | null | undefined, paymentIntentId: string) {
  *  backfill its PI id, and reset the family's retry ladder. Idempotent. */
 export function onAutopaySucceeded(paymentIntentId: string, runId?: string | null): void {
   const run = findRun(runId, paymentIntentId);
-  if (!run) return;
+  // Only a run still awaiting an outcome. Without this, a second delivery of the same success — a
+  // reconcile pass over a PaymentIntent already recorded, or a retried confirm — reset `failureCount`
+  // to zero on a family who is meanwhile mid-decline on a LATER run, handing them a fresh three
+  // attempts and pushing back the auto-disable. The failure path has carried this guard from the start
+  // ("Acts ONLY on a still-'pending' run"); the success path is the one that was missing it.
+  if (!run || run.status !== 'pending') return;
   db.update(autopayRuns).set({ status: 'charged', stripePaymentIntentId: paymentIntentId, updatedAt: new Date() }).where(eq(autopayRuns.id, run.id)).run();
   db.update(autopayEnrollments).set({ failureCount: 0, nextAttemptAt: null, updatedAt: new Date() }).where(eq(autopayEnrollments.familyId, run.familyId)).run();
 }

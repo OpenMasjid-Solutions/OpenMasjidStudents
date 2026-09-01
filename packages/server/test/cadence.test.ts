@@ -77,6 +77,53 @@ describe('cadence gates which periods a plan bills on', () => {
     expect(third.created).toBe(0);
   });
 
+  /**
+   * A VOIDED MONTH CAN BE BILLED AGAIN, and the charge that was on it comes back with it (0.51.0).
+   *
+   * Two defects met here. `invoices` is UNIQUE(student, period_key) and `generateForStudent` returned
+   * early on ANY existing row, so a voided invoice kept the slot for good: after an office voided a bill
+   * to correct it, that child could never be billed for that month again — not by hand, not by the
+   * nightly job — and the only feedback was "Generated 0 invoice(s)", which reads like there was nothing
+   * to bill. Voiding is how an office fixes a wrong bill, so it has to be something they can come back
+   * from.
+   *
+   * And a CHARGE on the voided bill stayed marked `invoiced` against it: never re-billed, never owed,
+   * invisible. A book fee voided along with February's tuition simply stopped being money. The existing
+   * test above proves a one-time FEE PLAN becomes billable again; a charge is the line that was not
+   * getting the same rule.
+   */
+  it('bills a voided month again rather than blocking it forever', async () => {
+    const { admin, familyId } = await seed('monthly', 20000);
+    await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
+    const invId = (await admin.billing.familyBilling({ familyId })).invoices[0].id;
+    await admin.billing.voidInvoice({ id: invId });
+
+    // The SAME period, which used to be unbillable for good.
+    const again = await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
+    expect(again.created).toBe(1);
+    expect(await totalOf(admin, familyId, '2026-07')).toBe(20000);
+    // One invoice for the month, not a live one beside a void one.
+    const rows = (await admin.billing.familyBilling({ familyId })).invoices.filter((i) => i.label === 'Jul');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).not.toBe('void');
+  });
+
+  it('hands back a charge that was on a voided bill, so it is owed again', async () => {
+    const { admin, familyId } = await seed('monthly', 20000);
+    const students = (await admin.billing.familyBilling({ familyId })).students;
+    await admin.billing.chargeAdd({ studentId: students[0].id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07', bill: 'period' });
+    await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
+    expect(await totalOf(admin, familyId, '2026-07')).toBe(25000); // tuition + the book fee
+
+    const invId = (await admin.billing.familyBilling({ familyId })).invoices.find((i) => i.label === 'Jul')!.id;
+    const voided = await admin.billing.voidInvoice({ id: invId });
+    expect(voided.chargesReleased).toBe(1); // it says so, rather than dropping it silently
+
+    // Regenerating the month picks the charge back up — it is still owed.
+    await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
+    expect(await totalOf(admin, familyId, '2026-07')).toBe(25000);
+  });
+
   it('voiding the invoice makes a one-time fee billable again (its line stops counting)', async () => {
     const { admin, familyId } = await seed('one_time', 15000);
     await admin.billing.generateFamily({ familyId, periodKey: '2026-07', label: 'Jul' });
