@@ -192,7 +192,7 @@
 }
 
 /* Wallpapers — selectable in Settings (applied via data-wallpaper on <html>).
-   Tuned vivid so the liquid-glass refraction has rich colour to bend. */
+   Tuned vivid so the liquid-glass refraction has rich color to bend. */
 [data-wallpaper="aurora"] {
   --scene-gradient: linear-gradient(150deg, #0c3a4d 0%, #082230 48%, #020a12 100%);
 }
@@ -258,7 +258,7 @@
  * unreadable. Upstream every [data-wallpaper] is a dark gradient, and because those blocks come
  * after [data-theme="light"] with the same specificity they overwrote the light theme's own light
  * scene. The result: light theme painted its glass (white at 55% alpha) over a near-black
- * wallpaper, which composites to mid-grey, and then wrote #0C4A6E dark-blue ink on top of it —
+ * wallpaper, which composites to mid-gray, and then wrote #0C4A6E dark-blue ink on top of it —
  * well under AA, on every tab at once.
  *
  * Rather than force light theme onto a dark scene (and give up its adaptive ink), each wallpaper
@@ -341,7 +341,7 @@
 }
 
 /* Smooth theme transition.
- * Scoped to the surfaces and text that actually re-colour on a theme flip,
+ * Scoped to the surfaces and text that actually re-color on a theme flip,
  * rather than every node in the tree (which put a 4-prop transition — including
  * the paint-heavy box-shadow — on SVG internals, spacers, motion wrappers, etc.
  * permanently). Same fade for the surfaces that already animated; just no longer

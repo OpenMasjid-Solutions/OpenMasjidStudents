@@ -57,9 +57,15 @@ export const config = {
   /** Public HTTPS URL from the OS Cloudflare tunnel; empty when not exposed. */
   omosPublicUrl: str(env.OPENMASJID_PUBLIC_URL),
 
-  // ── Install settings (also editable in-app later) ───────────────────────────
-  schoolName: str(env.SCHOOL_NAME),
-  currency: (str(env.CURRENCY) || 'usd').toLowerCase(),
+  /**
+   * Which OpenMasjidOS Stripe account to charge through, when the install wants to pin it (§13.1).
+   *
+   * The only env-provided install setting left. `SCHOOL_NAME` and `CURRENCY` used to sit here and were
+   * removed in 0.51.0: nothing read them. The school name and currency are collected by the first-run
+   * setup and live in the settings table (`getSchoolName`, `getCurrency`), which is the org rule — the
+   * platform injects no masjid profile and each app owns its own config (§10) — so an env var for either
+   * was a documented knob that did nothing.
+   */
   stripeAccount: str(env.STRIPE_ACCOUNT),
 
   // The URL-path prefix the OS Cloudflare tunnel serves us under (e.g. "/students"),

@@ -35,7 +35,7 @@ import { isPrereleaseVersion, itemsFor, parseChangelog, type Release } from '../
  *  not know about — a stray asterisk is a cosmetic wart; swallowing a sentence is a bug. */
 function inline(text: string, keyBase: string): ReactNode[] {
   const out: ReactNode[] = [];
-  // One pass over both patterns, so `**a `b`**` cannot desynchronise two separate passes.
+  // One pass over both patterns, so `**a `b`**` cannot desynchronize two separate passes.
   const re = /\*\*([^*]+)\*\*|`([^`]+)`/g;
   let last = 0;
   let m: RegExpExecArray | null;

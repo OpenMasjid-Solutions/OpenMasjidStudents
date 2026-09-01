@@ -32,7 +32,7 @@ export const appRouter = router({
   settings: settingsRouter,
   billing: billingRouter,
   portal: portalRouter,
-  /** School year + terms and the course → class grouping (organisational only, no academics). */
+  /** School year + terms and the course → class grouping (organizational only, no academics). */
   structure: structureRouter,
   /** WhatsApp through OpenMasjidOS (0.50.0) — the masjid's policy, not the gateway. */
   whatsapp: whatsappRouter,

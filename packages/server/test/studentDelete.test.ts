@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { freshApp, makeCtx } from './harness';
-import { families, students, feePlans, studentFees, invoices, invoiceItems, payments, paymentAllocations, charges, chargeItems } from '../src/db/schema';
+import { families, students, feePlans, studentFees, invoices, invoiceItems, payments, paymentAllocations, charges, chargeItems, auditLog } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
@@ -27,6 +27,9 @@ beforeEach(() => {
   // Children before parents: `charges.invoice_item_id` references invoice_items, so charges must go
   // first or the RESTRICT constraint refuses the cleanup itself.
   for (const t of [paymentAllocations, payments, charges, chargeItems, invoiceItems, invoices, studentFees, students, feePlans, families]) db.delete(t).run();
+  // The trail too: the forced-delete test looks for its OWN audit row, and rows accumulate otherwise —
+  // it would have matched an earlier test's identical row and passed without proving anything.
+  db.delete(auditLog).run();
 });
 
 async function seed() {
@@ -70,7 +73,7 @@ describe('studentDelete', () => {
   it('takes a pending charge with them, but REFUSES once that charge is on an invoice', async () => {
     const { admin, studentId } = await seed();
     // A pending charge is not yet money — it goes with them.
-    await admin.billing.chargeAdd({ studentId, source: { kind: 'custom', label: 'Books', amountCents: 1000 } });
+    await admin.billing.chargeAdd({ bill: 'period', studentId, source: { kind: 'custom', label: 'Books', amountCents: 1000 } });
     let info = await admin.people.studentDeletable({ studentId });
     expect(info.deletable).toBe(true);
     expect(info.pendingCharges).toBe(1);
@@ -144,5 +147,111 @@ describe('studentDelete', () => {
     await expect(caller('parent').people.studentDelete({ studentId })).rejects.toThrow();
     const overTunnel = app.appRouter.createCaller(makeCtx({ origin: 'tunnel', session: { role: 'admin', source: 'local', username: 'a', userId: 'usr_admin' } }).ctx);
     await expect(overTunnel.people.studentDelete({ studentId })).rejects.toThrow();
+  });
+});
+
+/**
+ * ERASING A BILLED STUDENT FOR GOOD (0.51.0-dev.14) — the deliberate exception to §9.
+ *
+ * Money is soft-deleted everywhere else in this app and money-path FKs are RESTRICT. This is the one door
+ * out, and it exists for a case the refusal made unfixable: an install being set up bills a test roster by
+ * accident (the nightly job needs no help), and the madrasah was then stuck with children who could only
+ * ever be *withdrawn* — permanent clutter with real invoices behind them.
+ *
+ * What has to hold, because it destroys real ledger rows:
+ *
+ *  1. **It never happens without `force`.** An ordinary Delete is refused exactly as before.
+ *  2. **It actually completes.** `foreign_keys` is ON and these are RESTRICT, so a wrong order leaves the
+ *     student behind with half their history gone — the worst outcome available.
+ *  3. **Nobody else's rows move.** A sibling on the same household, sharing the plan, is untouched.
+ *  4. **The audit entry is written FIRST and names what went**, because it is the only trace left.
+ *  5. **Admin only.** Finance runs the billing and cannot erase it.
+ */
+describe('studentDelete — force', () => {
+  /** A student with the full spread: invoice, line, payment, allocation, charge, fee assignment. */
+  async function billed() {
+    const { admin, famId, planId, studentId } = await seed();
+    await admin.billing.generatePeriod({ periodKey: '2026-09', label: 'Sep 2026' });
+    await admin.billing.chargeAdd({ studentId, source: { kind: 'custom', label: 'Book fee', amountCents: 2500 } });
+    await admin.billing.recordManualPayment({ studentId, amountCents: 5000, channel: 'cash', occurredAt: '2026-09-05' });
+    return { admin, famId, planId, studentId };
+  }
+
+  const countFor = (studentId: string) => ({
+    invoices: app.dbmod.db.select().from(invoices).all().filter((r) => r.studentId === studentId).length,
+    lines: app.dbmod.db.select().from(invoiceItems).all().filter((r) => r.studentId === studentId).length,
+    payments: app.dbmod.db.select().from(payments).all().filter((r) => r.studentId === studentId).length,
+    charges: app.dbmod.db.select().from(charges).all().filter((r) => r.studentId === studentId).length,
+    fees: app.dbmod.db.select().from(studentFees).all().filter((r) => r.studentId === studentId).length,
+  });
+
+  it('is still refused without force', async () => {
+    const { admin, studentId } = await billed();
+    await expect(admin.people.studentDelete({ studentId })).rejects.toMatchObject({ code: 'CONFLICT' });
+    // Nothing moved.
+    expect(app.dbmod.db.select().from(students).all().some((r) => r.id === studentId)).toBe(true);
+  });
+
+  /** THE ONE THAT MATTERS: it completes, rather than failing part-way on a RESTRICT. */
+  it('erases the student and every money row of theirs', async () => {
+    const { admin, studentId } = await billed();
+    const before = countFor(studentId);
+    expect(before.invoices).toBeGreaterThan(0);
+    expect(before.payments).toBeGreaterThan(0);
+
+    const r = await admin.people.studentDelete({ studentId, force: true });
+    expect(r.forced).toBe(true);
+
+    expect(app.dbmod.db.select().from(students).all().some((x) => x.id === studentId)).toBe(false);
+    const after = countFor(studentId);
+    expect(after).toEqual({ invoices: 0, lines: 0, payments: 0, charges: 0, fees: 0 });
+    // And no orphaned allocations left pointing at rows that no longer exist.
+    expect(app.dbmod.db.select().from(paymentAllocations).all()).toHaveLength(0);
+  });
+
+  it('leaves a sibling on the same household completely alone', async () => {
+    const { admin, famId, planId, studentId } = await billed();
+    const sib = await admin.people.studentCreate({ familyId: famId, fullName: 'Maryam Ismail', feePlanId: planId });
+    await admin.billing.generatePeriod({ periodKey: '2026-10', label: 'Oct 2026' });
+    await admin.billing.recordManualPayment({ studentId: sib.id, amountCents: 5000, channel: 'cash', occurredAt: '2026-10-05' });
+    const sibBefore = countFor(sib.id);
+
+    await admin.people.studentDelete({ studentId, force: true });
+
+    expect(countFor(sib.id)).toEqual(sibBefore);
+    expect(app.dbmod.db.select().from(students).all().some((x) => x.id === sib.id)).toBe(true);
+    // The household survives too — it still has a child.
+    expect(app.dbmod.db.select().from(families).all().some((f) => f.id === famId)).toBe(true);
+  });
+
+  /**
+   * The audit row is the ONLY thing left afterwards, so it has to answer "what was here?" — an id that no
+   * longer resolves documents nothing. Written before the delete, and carrying the name, the Student ID,
+   * the counts and the money.
+   */
+  it('records what it destroyed, by name and amount', async () => {
+    const { admin, studentId } = await billed();
+    await admin.people.studentDelete({ studentId, force: true });
+
+    const row = app.dbmod.db.select().from(auditLog).all().find((r) => r.action === 'student.deleteForced');
+    expect(row).toBeTruthy();
+    const detail = JSON.stringify(row!.detail ?? {});
+    expect(detail).toContain('Yusuf Ismail');
+    expect(detail).toContain('paidCents');
+    // The figures, not just the fact.
+    expect(row!.detail).toMatchObject({ payments: 1, paidCents: 5000 });
+  });
+
+  it('is admin only', async () => {
+    const { studentId } = await billed();
+    await expect(caller('finance').people.studentDelete({ studentId, force: true })).rejects.toThrow();
+    expect(app.dbmod.db.select().from(students).all().some((x) => x.id === studentId)).toBe(true);
+  });
+
+  /** `force` on a student with no history behaves exactly like an ordinary delete — no special path. */
+  it('is harmless on a student who was never billed', async () => {
+    const { admin, studentId } = await seed();
+    await admin.people.studentDelete({ studentId, force: true });
+    expect(app.dbmod.db.select().from(students).all().some((x) => x.id === studentId)).toBe(false);
   });
 });

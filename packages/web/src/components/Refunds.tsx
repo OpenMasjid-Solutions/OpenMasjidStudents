@@ -117,7 +117,7 @@ export function Refunds() {
                   <span className="muted"> · {t(`billing.ch_${r.channel}`, r.channel)} · {formatDate(r.occurredAt as unknown as string, dateFormat)}</span>
                 </span>
                 {/* Who it was for. A charge covering several children names all of them, because that is
-                    what will be reversed — and it is how the office recognises the payment. */}
+                    what will be reversed — and it is how the office recognizes the payment. */}
                 <span className="refund-sub muted">
                   {r.parts.map((p) => p.studentName).filter(Boolean).join(', ') || t('refund.unknownStudent')}
                   {r.parts.length > 1 ? ` · ${t('refund.acrossChildren', { count: r.parts.length })}` : ''}

@@ -49,7 +49,12 @@ The complete feature set, by area.
 - **Backfill** for Student IDs, so an install that predates them fills every gap once and is a
   no-op forever after.
 - **Deletion is pre-checked, not attempted-and-refused.** The app tells you exactly what a child
-  is attached to *before* anything happens, and money-referencing records make it refuse.
+  is attached to *before* anything happens, and money-referencing records make an ordinary Delete
+  refuse.
+- **An admin — never finance — can still erase a billed child for good**, behind a second dialog that
+  names the invoices, the payments and the money it will destroy and asks for the child's name to be
+  typed. For the install that bills a test roster by accident and was otherwise stuck with children it
+  could only withdraw. The audit row is written first, and it does not touch Stripe.
 
 ### Households, guardians &amp; contacts
 
@@ -72,7 +77,7 @@ The complete feature set, by area.
 
 ### School structure (grouping only)
 
-- **Schools**, for a masjid running more than one programme on different calendars — a weekend
+- **Schools**, for a masjid running more than one program on different calendars — a weekend
   maktab beside a full-time hifz school. A school scopes the **calendar and the class tree, and
   never the household or the money**: a family with a child in each is still one household, one
   balance, one portal login and one printed sheet. A staff account can optionally be limited to some
@@ -84,14 +89,14 @@ The complete feature set, by area.
 - **Optional terms** within a year, so a `per-term` fee cadence means something concrete.
 - **Courses → classes** as a two-level grouping, with archive, delete and a deletability check.
 - **Assign a student to a class**, individually or in bulk, and list students by class.
-- Deliberately **organisational only**: no teachers, no attendance, no grades, no capacity. These
+- Deliberately **organizational only**: no teachers, no attendance, no grades, no capacity. These
   labels drive the roster, the year view, and applying fees to many children at once.
 
 ### Fee plans &amp; assignment
 
 - **Fee plans** — a name, an amount in whole cents, and a cadence: `monthly`, `per-term`, or
   `one-time`. Archive a plan that is no longer offered; delete one nothing has used yet.
-- **Assigned per student** (never per class enrolment), so each child's bill is their own.
+- **Assigned per student** (never per class enrollment), so each child's bill is their own.
 - **Per-child amount override** — which is also how a **bursary, hardship rate or sibling
   discount** is expressed, since with one bill per child a household-level discount has nowhere
   honest to sit.
@@ -100,12 +105,16 @@ The complete feature set, by area.
 
 ### One-off charges
 
-- A **reusable catalogue of charge items** — a book fee, a trip, an exam fee — created once and
+- A **reusable catalog of charge items** — a book fee, a trip, an exam fee — created once and
   applied when needed, rather than retyped each time. Update, archive, or delete an unused one.
 - **Add a charge to one child or to many at once**, list what has been charged, and **void** one
   that was a mistake.
 - Charges appear as their own **lines** on the invoice, so a parent can see and pay them
   separately from tuition.
+- **A charge is billed on its own, straight away, by default** (0.51.0). Its own one-line invoice, due
+  today, payable immediately — because waiting for the month's run meant generating every child's
+  tuition early or telling the parent to come back. Putting it on a period is still there as a choice.
+  A credit is the exception: it has to reduce something, so it goes on a period.
 
 ### Invoicing
 
@@ -117,8 +126,18 @@ The complete feature set, by area.
   school year, and whether it has already run for this period — so **a missed night is caught up
   rather than skipped**, and a period is never billed twice. "Run now" is there too.
 - **Statuses** — open, partly paid, paid, void — all *derived* from what has actually been paid.
-- **Void** an invoice raised in error.
-- **Itemised lines** with one canonical order (tuition → charges → credits), used by both the
+- **Void** an invoice raised in error — and **bill that month again afterwards** (0.51.0), which used to
+  be impossible: the voided row held the slot for good, so the month could never be re-billed and the
+  screen just said "Generated 0". Any charge that was on the voided bill comes back as owed.
+- **What a year comes to**, per child, on their billing record — the question every enrollment opens
+  with. Counted from where that child's billing actually starts to the end of the year, at their own
+  agreed amount, over the months this madrasah really teaches. It is a **quote and writes nothing**.
+- **A child joining mid-year can have their first month set** to whatever was agreed — it appears as its
+  own named line under the full tuition, rather than a rewritten amount nobody can account for.
+- **Per-term fee plans are not billed yet.** The cadence can be configured and assigned, but invoices
+  are generated by month, so nothing raises a per-term line. Both screens say so, and the year quote
+  leaves it out rather than promising money that will not be collected.
+- **Itemized lines** with one canonical order (tuition → charges → credits), used by both the
   display and the allocator, so a balance never appears against the wrong line.
 - **Year view** — a grid of every child against every month of the year, showing at a glance who
   has been billed and who has paid, with **configurable columns**.
@@ -139,7 +158,7 @@ The complete feature set, by area.
   them — and **one card charge covering several children is recorded as one row per child**, keyed
   so that a replay is a no-op per child.
 - **Allocation is per line, and a payer's instruction survives.** When a parent chose lines — "this
-  $50 is the book fee" — that choice is **stored on the payment** and re-honoured every time the
+  $50 is the book fee" — that choice is **stored on the payment** and re-honored every time the
   mapping is recomputed. Without that, the next invoice would silently undo it and the line they
   deliberately settled would read as outstanding again.
 - **Re-allocation is a recompute, not an increment**, so money paid before a bill existed attaches
@@ -157,6 +176,11 @@ The complete feature set, by area.
 - **"Recorded by"** names the staff member on every manual payment. Cash is the one payment nobody
   else can verify — no card, no Stripe record, nothing to reconcile against — so the office can
   answer "who took this?". Card payments say "Automatic". It shows on reversals and in the CSV too.
+- **A family who always pays the same way can be recorded automatically** (0.51.0). Set the channel —
+  cash, check, bank transfer, Zelle — and a day of the month on the child's billing record, and the app
+  writes the payment for you. **It records it whether or not the money arrived**, which the screen says
+  plainly; two things stop that going wrong quietly — it records only what is actually OWED that day, so
+  it can never mint credit, and it can never record the same month twice.
 - **Reverse a payment** — a new row, fully audited, never a rewrite of history.
 - **Refund a transaction**, grouped the way the parent actually paid. A card payment is refunded at
   Stripe *and* reversed on the ledger, in that order; cash is reversed on the ledger with the screen
@@ -172,6 +196,13 @@ The complete feature set, by area.
 
 ### Card payments, saved cards &amp; autopay
 
+- **You can ask the payer to cover the card fee** (0.51.0). Every card payment costs the madrasah about
+  2.9% + 30¢, so a $100 bill has always brought in $96.80. Switch this on and the payer is charged
+  $103.30 instead. **Off until you turn it on**, never applied to cash or checks, with separate rates and
+  separate switches for card and bank — and it is disclosed in three places, because each is a different
+  moment: itemized at pay-now, worked on the household's balance on the autopay tab, and with a worked
+  example on the printed family sheet. The fee rides on the payment and **never enters the ledger**.
+
 - **Pay by card in the parent portal** via Stripe Elements — the full balance, a chosen amount, or
   specific lines. **Paying ahead is allowed** even with nothing due (a term or a year up front),
   floored at a $1 minimum, and the surplus shows as credit.
@@ -184,7 +215,7 @@ The complete feature set, by area.
   Clear consent copy, and the consent timestamp is stored.
 - **Decline handling** — a retry ladder rather than one attempt, an email to the parent on each
   failure with a "pay now / update card" link, and after the third failure autopay **switches
-  itself off**, tells the parent, and **alerts the office**. A disabled enrolment is never charged.
+  itself off**, tells the parent, and **alerts the office**. A disabled enrollment is never charged.
 - **A charge that never resolves is chased.** A run left pending — a lost confirmation, a browser
   closed mid-payment — is resolved against Stripe rather than being silently re-charged or dropped.
 - **Autopay is its own tab**, with an offer on the portal's front page, and once it is on the same
@@ -193,11 +224,13 @@ The complete feature set, by area.
   tuition payment that never reached the ledger — a browser closed at the wrong moment, a dropped
   call from the kiosk — with the date the money actually arrived, flagged as recovered and alerted
   to the office. **Money is never lost, only delayed.**
-- Finance sees autopay status; an admin can force it off; a parent can cancel any time.
+- Finance and admin see autopay status and which card will be charged — but **only the parent can
+  switch it off**. An office asked to stop a charge has to talk to the household; the consent is
+  theirs and so is the card.
 
 ### Parent portal (phone-first)
 
-- **My family** — every child with their Student ID and their own balance, each open **itemised**
+- **My family** — every child with their Student ID and their own balance, each open **itemized**
   bill, and **one unified payment history** whatever channel it came from.
 - A child with nothing due **says so**, rather than vanishing from a page that only lists debts.
 - **Bills read as a statement until you choose to pay part of one** — tick boxes appear only after
@@ -219,7 +252,7 @@ The complete feature set, by area.
   inside it is served from here.
 - The flow is **Student ID → confirm the name shown back → see the balance → pay**, for any of that
   household's children from one screen. The name-confirmation step is what replaced the PIN.
-- **Itemised bills reach those apps too**, so a parent at the kiosk can pay one line.
+- **Itemized bills reach those apps too**, so a parent at the kiosk can pay one line.
 - **Pay-ahead** works there as well, with the same minimum as the portal.
 - The office can **switch external payments off** entirely, and the campaign disappears.
 - Everything crosses through the platform's broker — this app never talks to those apps directly.
@@ -235,7 +268,7 @@ The complete feature set, by area.
   - the **household information sheet**, whose wording the office can rewrite in Settings;
   - the **per-child invoice**;
   - the **Student ID sheet by class**, for handing out at the start of a year.
-  All carry the school's logo and colour, and all are served locked down, since they contain Student
+  All carry the school's logo and color, and all are served locked down, since they contain Student
   IDs and payment history.
 - **CSV export** of billing data, with spreadsheet **formula-injection escaping**.
 - **An append-only audit trail** on every sensitive write — fee assignment, invoices, payments,
@@ -262,7 +295,7 @@ The complete feature set, by area.
 
 ### Settings
 
-- **School name**, **contact details**, an **accent colour**, and a **logo** that appears on
+- **School name**, **contact details**, an **accent color**, and a **logo** that appears on
   statements, on every email, and as the app's icon when it is installed on a phone.
 - **Currency** per install (USD / CAD / GBP / EUR), and the **date format** the whole app displays
   and reads spreadsheet columns in.
@@ -282,6 +315,13 @@ The complete feature set, by area.
 - A **platform link status** panel showing what the app can currently reach.
 
 ### Email &amp; alerts
+
+- **Payment notices to your notification channel can name the child** (0.51.0). OpenMasjidOS forwards
+  this app's routine notices to whatever channel the masjid set up — usually Slack or Discord — and those
+  have always said "A tuition payment of $250.00 was received" and no more, because this app cannot see
+  who is in that channel. A switch under **Who to tell at the masjid** sends the child's name instead.
+  **Off until you turn it on**, admin only, audited both ways, and it covers payment notices and nothing
+  else — no other notice this app sends there will ever name a family, whatever the switch says.
 
 - **Transactional email through the masjid's OpenMasjidOS mail provider.** This app has **no SMTP of
   its own and holds no mail credentials** — the platform owns the provider and the From address. A
@@ -328,13 +368,20 @@ The complete feature set, by area.
 - **Staff alerts on a phone**, per account, and to a **WhatsApp group** an admin approved for this
   app — a finance group that gets every payment. A group is a staff channel: no parent message can
   reach one, and by default a group's alerts name nobody.
-- **Parents opt out themselves** from the portal, for either parent on the household, and nobody in
-  the office can override it.
+- **Parents opt out themselves** from the portal, for either parent on the household — and **the office
+  can record it too**, because a parent says "stop messaging me" at pickup, not by finding a toggle.
+  Whoever sets it, nothing overrides the flag: not the pause exception, not the outreach button, not the
+  test student. The trail records which side decided.
 - **One button asks the families with no email address for one**, naming their children and
   explaining why, with the wording editable and a preview.
+- **One onboarding message explains what any of this IS** (0.51.0) — every other parent message is about
+  an event, and none of them says what a parent portal is or why an unfamiliar number is texting about
+  fees. Sent to everyone, a course, a class or picked students, on both channels, in the madrasah's own
+  wording. It carries **no detail on purpose** and points at the family sheet, and on WhatsApp it says
+  which number the madrasah writes from.
 - **Nothing about signing in ever goes this way** — invites, resets and verification links stay on
   email, which always works.
-- **Ask the app for the numbers by WhatsApp**: an authorised admin messages `!students` and gets this
+- **Ask the app for the numbers by WhatsApp**: an authorized admin messages `!students` and gets this
   month's takings, what is outstanding and how many students are behind. It answers with **counts and
   totals, never names** — a chat keeps its copy forever — and it cannot change anything.
 
@@ -354,7 +401,7 @@ The complete feature set, by area.
 - **Installable on a phone** — a web manifest carrying the masjid's own name and logo, an iOS
   touch icon, and an install prompt on every signed-in surface. Parents get a home-screen icon;
   the office gets one too.
-- Light and dark, RTL-aware layouts, reduced-motion honoured, every string through i18next.
+- Light and dark, RTL-aware layouts, reduced-motion honored, every string through i18next.
 
 ---
 
@@ -429,8 +476,9 @@ money. The invariants that hold it together —
   they do anything, and are **never served to internet-origin requests**.
 - **No PII in logs** — ids and event names only, never a name beside an amount.
 - **Alerts carry two texts**: the office's own copy names the child and the amount, because without
-  that it is unactionable; anything going to a third-party sink (a webhook, the platform alert
-  channel) names nobody.
+  that it is unactionable; anything going to a sink this app cannot see (a webhook, the platform alert
+  channel) names nobody. An admin may lift that for **their own** webhook, for payment notices only —
+  off until they do, and never for the platform alert channel.
 - **WhatsApp is treated as the weakest channel it is.** Nothing auth-critical is ever sent on it —
   no invite, no reset, no one-time code — because the number can be banned overnight and that day
   must not be the day nobody can sign in. No Student ID, no card details, and **no message body is
@@ -454,6 +502,7 @@ Findings and remediation from the August 2026 audit are in [`docs/audit/`](docs/
 ```bash
 npm install          # all workspaces
 npm run dev          # server on :8080, web (Vite) on :5173 proxying /trpc /api /fabric
+                     #   /statements /sheets /invoices
 npm run build        # typecheck + build web and server
 npm run lint         # tsc --noEmit across workspaces
 npm run test         # vitest — the ledger and allocation invariants, the access walls,
@@ -478,7 +527,7 @@ through i18next with RTL-aware layouts; English ships today.
 
 ---
 
-## Acknowledgements
+## Acknowledgments
 
 Created by **Hasan Ismail**, with immense help from **Qari Ijaz** and **Osman Sayed**.
 

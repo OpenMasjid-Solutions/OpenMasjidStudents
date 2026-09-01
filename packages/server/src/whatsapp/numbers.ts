@@ -43,7 +43,7 @@ const MAX_E164_DIGITS = 15;
  *  3. **It starts with a single `0`** — a national trunk prefix (`07911…` in the UK, `0300…` in
  *     Pakistan). The zero is dropped BEFORE the country code goes on, because `+4407911…` is not a
  *     number. This is the rule whose absence would have quietly broken every non-US install.
- *  4. **It already carries the country code** — `15551234567` for `+1`. Recognised only when the
+ *  4. **It already carries the country code** — `15551234567` for `+1`. Recognized only when the
  *     length after the code is still plausible, so a 10-digit US number beginning with 1 (`1234567890`,
  *     area code 123) is NOT mistaken for a country code and truncated.
  *  5. Otherwise the country code goes on the front.

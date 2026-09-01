@@ -4,7 +4,7 @@
  * Usernames are ONE name whatever the case (0.48.0 — found by audit).
  *
  * THE DEFECT. Signing in looks an account up case-insensitively (a parent's username is their email
- * address, and a phone keyboard capitalises it), but every "is this name taken?" check compared exactly —
+ * address, and a phone keyboard capitalizes it), but every "is this name taken?" check compared exactly —
  * and `users.username` is UNIQUE under SQLite's binary collation, so `Office` and `office` were accepted
  * as two accounts. Only one of them could then ever be signed into: the lookup matches both and takes the
  * first row. An admin creating a second admin that way got an account that silently did not work, with no

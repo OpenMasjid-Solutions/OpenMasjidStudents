@@ -11,7 +11,7 @@
  *  - it opens filtered to students **not in a class yet**, because that is who you are almost always
  *    placing. The filter is a visible control, not a hidden assumption, so moving children out of
  *    another class is one click away;
- *  - the children already in this class are listed too, ticked and greyed, so the office can see who is
+ *  - the children already in this class are listed too, ticked and grayed, so the office can see who is
  *    in before adding more — an empty list would look like the class was empty.
  */
 import { useMemo, useState } from 'react';

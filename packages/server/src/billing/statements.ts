@@ -85,7 +85,7 @@ const asDate = (v: unknown): string => {
 };
 
 const CHANNEL_LABELS: Record<string, string> = {
-  cash: 'Cash', zelle: 'Zelle', check: 'Check', other: 'Other',
+  cash: 'Cash', zelle: 'Zelle', check: 'Check', ach: 'Bank transfer', other: 'Other',
   'donations-web': 'Donation site', kiosk: 'Kiosk', portal: 'Portal', autopay: 'Autopay',
 };
 
@@ -196,7 +196,7 @@ export async function buildFamilyStatementHtml(familyId: string, baseUrl: string
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Statement — ${esc(fam.name)}</title>
 <style>
-  /* --teal is the masjid's own colour (Settings → Appearance), defaulting to the original teal, so
+  /* --teal is the masjid's own color (Settings → Appearance), defaulting to the original teal, so
      the statement and the family sheet are ruled in the same ink. Validated as a hex literal before
      it reaches here — this is interpolated into a style block. */
   :root { --ink:#1a1a1a; --teal:${accent}; --wash:${wash}; --line:#cbcbcb; --muted:#666; }

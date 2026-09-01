@@ -22,7 +22,7 @@
  *    the `<b>` we insert — the office's text itself is inert (§14), exactly like a guardian's name.
  *  • `[tags]` are filled in per household: `[names]`, `[is]`, `[child]`, `[school]`, `[website]`, `[date]`.
  *    Every tag works in every box (one tag set is built per sheet and passed to all of them), so nobody
- *    has to remember which line knows about which value. An unrecognised `[thing]` prints as written
+ *    has to remember which line knows about which value. An unrecognized `[thing]` prints as written
  *    rather than vanishing — the same rule as the invoice-label tags (billing/period.ts).
  *
  * `[website]` has one extra rule worth knowing: when the madrasah has no donations address configured, an
@@ -40,6 +40,9 @@ export const SHEET_TEXT_KEYS = [
   'payCard',
   'payWebsite',
   'payKiosk',
+  // Not a bullet — the italic tail appended to the three above. Ordered here beside them all the same, so
+  // the Settings list reads in the order an office meets the words on the page.
+  'payFee',
   'payOffice',
   'payOfficeReceipt',
   'check',
@@ -69,6 +72,28 @@ export const SHEET_TEXT_DEFAULTS: Record<SheetTextKey, string> = {
     '*On the madrasah’s website* ([website]). Go to the tuition section, type any one of your children’s *Student IDs*, check the name it shows you, and pay. You can pay for all of your children from that one screen, and you don’t need an account for it.',
   payKiosk:
     '*At the kiosk in the masjid.* Choose tuition, enter a Student ID, confirm the name, and tap your card — *Apple Pay and Google Pay* work too.',
+  /**
+   * THE PROCESSING FEE, when the madrasah has chosen to pass Stripe's cut on (0.51.0).
+   *
+   * A CAVEAT APPENDED TO THE THREE ONLINE ROUTES, not a bullet of its own. It was its own item at first —
+   * a whole paragraph with a worked example and a "cash avoids it" line — which gave one incidental fact
+   * the same weight on the page as "here is how you pay", and made a five-item list read as though the
+   * fee were a payment method. As a short italic tail on the portal, website and kiosk lines it lands
+   * where a parent is actually reading about that route, and the office line simply never carries it,
+   * which says "not this one" without a sentence spent on it.
+   *
+   * Appended (rather than folded into each of the three) for exactly the reason `payOfficeReceipt` is: an
+   * office rewriting the caveat should not have to rewrite it in three places and keep them in step, and
+   * the three lines still have to make sense on an install that absorbs the fee. `routes.fee` in
+   * onboardingSheet.ts decides whether it appears at all — an office may re-word it and cannot make it
+   * appear on an install that does not charge it.
+   *
+   * `[fee]` is available and unused by default: an office that wants the actual figure on the sheet can
+   * add the tag, and it is COMPUTED (payments/fees.ts) like every other number here, so the prose stays
+   * the madrasah's while the arithmetic stays ours. A settings box that could restate the rate in words
+   * would be a way to print a fee the app does not charge.
+   */
+  payFee: 'A payment processing fee may apply.',
   // No "ask for confirmation before you leave" any more. It asked a parent to police the office, and on an
   // install that emails receipts it asked for something the app already does — see `payOfficeReceipt`,
   // which is appended only when a receipt will genuinely be sent.
@@ -81,7 +106,7 @@ export const SHEET_TEXT_DEFAULTS: Record<SheetTextKey, string> = {
 };
 
 /** The tags a box may contain. One set is built per sheet and passed to every box (see the header). */
-export const SHEET_TEXT_TAGS = ['names', 'is', 'child', 'school', 'website', 'date'] as const;
+export const SHEET_TEXT_TAGS = ['names', 'is', 'child', 'school', 'website', 'date', 'fee'] as const;
 export type SheetTextTag = (typeof SHEET_TEXT_TAGS)[number];
 export type SheetTags = Record<SheetTextTag, string>;
 

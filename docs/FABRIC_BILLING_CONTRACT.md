@@ -59,7 +59,7 @@ Both exist because a *derived* balance of `0` is ambiguous — square, paid ahea
 here" — and a consumer had no way to tell those apart. **Donations and Kiosk should pick both up
 together:** they are the two halves of one screen (what you owe / what you've paid ahead / pay anyway).
 
-### 11.0b Additive since v2 — 0.43.0: ITEMISED BILLS (no version bump, nothing breaks)
+### 11.0b Additive since v2 — 0.43.0: ITEMIZED BILLS (no version bump, nothing breaks)
 
 A bill was one label and one number on the wire, so a consumer had no choice but to make a parent accept
 the whole thing. In practice a February bill is often **$200 of tuition plus a $50 book fee**, and
@@ -81,13 +81,13 @@ parents ask to pay one of the two — which was not expressible at all.
 
 **Notes.** Every line of an open bill is listed, **including ones already settled** (`balanceCents: 0`) —
 show those as done on a part-paid bill, and offer only the lines with a balance as payable. A bill with a
-single line needs no itemised UI; render it exactly as before. Omit `lines` entirely and behaviour is
+single line needs no itemized UI; render it exactly as before. Omit `lines` entirely and behavior is
 unchanged (oldest-due-first), so this is safe to adopt screen by screen.
 
 **Also fixed in 0.43.0:** `allocations[]` (invoice-level, in the contract since v1) was parsed and then
 **silently ignored** — a consumer asking for a specific invoice got oldest-due-first with nothing to say
-so. It now works, normalised into the same line mechanism. `lines` is the better field for new work;
-`allocations` is honoured for what already sends it.
+so. It now works, normalized into the same line mechanism. `lines` is the better field for new work;
+`allocations` is honored for what already sends it.
 
 `allocations` is treated as a **hint**, deliberately: it must still sum to `amountCents`, but if a named
 invoice cannot absorb what you asked for — the office recorded a cash payment against it between your
@@ -114,9 +114,45 @@ app just gave you.
 { "v": 2 }
 → { "v": 2, "enabled": true, "schoolName": "An-Noor Weekend School", "currency": "usd",
     "tagline": "Pay tuition with your child's Student ID",
-    "allowAdvance": true, "minAmountCents": 100 }
+    "allowAdvance": true, "minAmountCents": 100,
+    // fee (0.51.0, additive): does the PAYER cover Stripe's cut? See below — `enabled: false` is the
+    // shape every consumer written before this already behaves correctly for.
+    "fee": { "enabled": true,
+             "card": { "percentBps": 290, "fixedCents": 30 },
+             "bank": { "percentBps": 80, "fixedCents": 0, "capCents": 500 } } }
 // "enabled": false (setup incomplete or external payments turned off by admin) → consumers hide the campaign
 ```
+
+**`fee` (added 0.51.0, additive — no version bump).** A madrasah may decide the payer covers the card
+processing fee rather than the school. `fee.enabled: false` — the default, and what every existing
+install returns — means **change nothing**: charge the tuition, report the tuition, and the masjid
+absorbs Stripe's cut exactly as it does today. `card` is null when the feature is off; `bank` is null
+whenever the office is absorbing the (much smaller, capped) bank fee, and a null means **do not add
+one**.
+
+**What a consumer must do when `fee.enabled` is true.** Three things, and the third is the one that
+matters:
+
+1. **Gross up, and show the payer the breakdown before they commit.** The fee is a percentage of the
+   GROSS, not of the tuition, so the arithmetic is `gross = (tuition + fixedCents) / (1 − percentBps/10000)`,
+   rounded UP, and `fee = gross − tuition`. Where a `capCents` is present, if that implied fee exceeds
+   it the answer is simply `tuition + capCents`. A naive markup — percentage of the tuition — leaves the
+   school ten cents short on every $100 and is the mistake this formula exists to prevent.
+2. **Say whose money it is, in words.** The payer must be told plainly that the extra is not the
+   madrasah's: it is what Visa, Mastercard and American Express charge to accept a card and it goes to
+   the payment processor. This app's own wording is *"The processing fee is not the madrasah's — it is
+   what Visa, Mastercard and American Express charge to accept a card, and it goes straight to the
+   payment processor. Paying by cash or check at the office avoids it."* Match the substance.
+3. **Write `students_fee_cents` onto the PaymentIntent, and report the NET in `record-payment`.**
+   This is the load-bearing one. `amountCents` has always meant *the tuition* and still does — see
+   §11.2 `record-payment`. Reporting a GROSS there credits Stripe's cut to the family as though they
+   had overpaid, which leaves a credit that silently eats into their next bill, compounding for as long
+   as the setting is on. The metadata key is what lets this app's daily reconciliation (§11.4) get the
+   same answer a day later, when it never saw your request.
+
+The failure directions are deliberately lopsided. Forget the metadata key and reconciliation credits
+the full charge — a small credit on one family's account. Put a gross in `amountCents` and the ledger
+is wrong until somebody notices by hand. So when in doubt, send the tuition.
 
 **`allowAdvance` (added 0.41.0, additive — no version bump).** A parent may pay **any amount at any
 time, including when nothing is due**. Tuition is not a donation appeal: families pay a term up front,
@@ -135,12 +171,12 @@ ask "is this the right child?" before showing a balance or taking money. **Call 
 confirmation step that replaced the PIN, not an optional nicety.
 ```jsonc
 // request — the ID printed on the statement: first 3 letters of the first name + 4 digits.
-// Input is normalised here (case, spaces, hyphens), so "yus-1234" is fine.
+// Input is normalized here (case, spaces, hyphens), so "yus-1234" is fine.
 { "v": 2, "studentCode": "YUS1234" }
 // 200 (found) — a first name + last initial and NOTHING else
 { "v": 2, "found": true, "student": { "studentCode": "YUS1234", "firstName": "Yusuf", "lastInitial": "I" } }
 // NOTE (no contract change): this app now stores ONE name per student rather than a first/last
-// pair, because plenty of the names a madrasa enrols do not split into two western halves. The wire
+// pair, because plenty of the names a madrasa enrolls do not split into two western halves. The wire
 // fields are unchanged and still mean the same thing — `firstName` is the first word of that name
 // and `lastInitial` is the first letter of the last word, so a consumer needs no update and the
 // promise that a full family name is never returned still holds. A child recorded under a single
@@ -150,7 +186,7 @@ confirmation step that replaced the PIN, not an optional nicety.
 ```
 > **A Student ID is NOT a secret and is not treated as one.** Its letters are derived from the child's
 > first name and it is printed on statements. It is nonetheless the whole credential, because of how
-> narrow what it authorises is: see a balance and pay it (§11.0). `identify` stays deliberately thin —
+> narrow what it authorizes is: see a balance and pay it (§11.0). `identify` stays deliberately thin —
 > **no balance, no invoices, no sibling list, not even the family id** — which is what makes it safe to
 > answer *before* the parent has confirmed anything. The one disclosure, a first name plus an initial,
 > is exactly what `lookup`'s sibling list already exposes. 6 failed probes per code per hour, then that
@@ -159,7 +195,7 @@ confirmation step that replaced the PIN, not an optional nicety.
 **`POST /fabric/billing/lookup`** — resolve a Student ID to a family + balance + the siblings it can be
 paid alongside. **Breaking at v2:** `name` and `pin` are gone (§11.0).
 ```jsonc
-// request — the Student ID alone, normalised as in `identify`.
+// request — the Student ID alone, normalized as in `identify`.
 { "v": 2, "studentCode": "YUS1234" }
 // 200 (found)
 { "v": 2, "found": true,
@@ -223,7 +259,10 @@ balance, and the child's next invoice absorbs it.
   "idempotencyKey": "pi_3PabcDEF",           // REQUIRED, ≤128 chars. Convention: the Stripe PaymentIntent id.
   "familyId": "fam_x1",                       // REQUIRED — from a prior lookup in this session
   "studentId": "stu_1",                       // optional — the matchedStudent from lookup
-  "amountCents": 15000, "currency": "usd",    // the ONE amount actually charged to the card
+  "amountCents": 15000, "currency": "usd",    // the TUITION — what the family owed. NOT the card total
+                                              // when you grossed up for a fee (0.51.0, §11.2 info.fee).
+  "feeCents": 330,                            // optional, 0.51.0: Stripe's cut, if you passed it on.
+                                              // Informational — the ledger holds tuition only.
   "channel": "donations-web",                 // "donations-web" | "kiosk"
   "occurredAt": "2026-07-15T18:03:22Z",
   "externalRef": { "stripePaymentIntentId": "pi_3PabcDEF", "stripeChargeId": "ch_...", "stripeAccountId": "acct_..." },
@@ -233,7 +272,7 @@ balance, and the child's next invoice absorbs it.
   "students": [{ "studentId": "stu_1", "amountCents": 10000 }, { "studentId": "stu_2", "amountCents": 5000 }],
   // NEW at 0.43.0, optional and preferred: the exact LINES the parent ticked (ids from lookup's
   // openInvoices[].items). Must sum EXACTLY to amountCents. SUPERSEDES students[] — a line already says
-  // whose bill it is — and it is HONOURED, not just accepted: the ticked line is the one that ends up
+  // whose bill it is — and it is HONORED, not just accepted: the ticked line is the one that ends up
   // settled, and stays settled when this app later recomputes its allocations. See §11.0b.
   "lines": [{ "itemId": "iti_2", "amountCents": 5000 }],
   "allocations": [{ "invoiceId": "inv_9", "amountCents": 15000 }],   // invoice-level, v1; works from 0.43.0 (ignored before)
@@ -250,7 +289,7 @@ balance, and the child's next invoice absorbs it.
 //     and when lines[] doesn't sum to amountCents or names a line outside this family's open bills.
 ```
 Surplus beyond a child's open invoices becomes **that child's** credit, which their next invoice
-absorbs automatically. A recorded external payment fires a Fabric **notification** and an audit entry.
+absorbs automatically. A recorded external payment fires a Fabric **notification**, an audit entry, and a **receipt to the household's guardians** (gated on the office's parent-email switch, so a masjid that has not turned receipts on sends none).
 
 > **Idempotency, precisely.** A charge covering N children is stored as N rows keyed
 > `${idempotencyKey}:${studentId}`. A replay of the same key writes nothing at all — the app checks for
@@ -271,11 +310,17 @@ its per-child rows, so a consumer always asks with the plain key it sent.
 ```
 purpose            = students-billing        ← the discriminator; REQUIRED
 omos_app           = donations | kiosk | students-portal    ← students-portal is set ONLY by this app (§13)
+students_channel   = portal | autopay        ← set by this app, so reconciliation can tell them apart
 students_family_id = fam_x1                  ← REQUIRED (from lookup / known internally)
 students_student_id = stu_1                  ← optional, the matched student
+students_fee_cents = 330                     ← 0.51.0: REQUIRED whenever you grossed up (§11.2 `info.fee`)
 ```
+**`students_fee_cents` is how a processing fee survives the trip.** Omit it and this app has no way to
+tell a $103.30 charge covering $100 of tuition from a family who genuinely paid $103.30 — reconciliation
+runs a day later, on a job that never saw your request and may find the setting switched off. An amount
+is not identifying, so this key breaks none of the rules below.
 **Never put a Student ID or a child's name in Stripe metadata, descriptions, or URLs** — metadata is visible in Stripe dashboards and exports. Description: `School balance — <family label>`. **Receipts must say "payment", never "donation"** — tuition is generally not tax-deductible; consumers exclude `purpose=students-billing` from donation totals and year-end letters, and this app's own receipts follow the same wording rule.
 
-### 11.4 Reconciliation (this app's safety net — covers three channels)
+### 11.4 Reconciliation (this app's safety net — covers every channel)
 
-Daily job + on-demand "Reconcile now" button (finance): fetch keys via `GET ${OPENMASJID_BASE_URL}/api/fabric/stripe?account=<STRIPE_ACCOUNT>` (with our secret), list succeeded PaymentIntents where `metadata.purpose == "students-billing"` since the last cursor, and record any whose PI id isn't already an idempotency key — flagged `via: reconciliation`. Covers missed broker calls from Donations/Kiosk **and our own portal/autopay intents whose confirm-on-return never happened** — a browser closed mid-payment, a lost tunnel. (This said "missed webhooks" until 0.50.0. There is no webhook and never was: every payment reaches the ledger by one of four PULL paths — see CLAUDE.md §13.4.) The push paths are optimizations; **money is never lost**, only delayed.
+Daily job + on-demand "Reconcile now" button (finance): fetch keys via `GET ${OPENMASJID_BASE_URL}/api/fabric/stripe?account=<STRIPE_ACCOUNT>` (with our secret), list succeeded PaymentIntents where `metadata.purpose == "students-billing"` since the last cursor, and record any whose PI id isn't already an idempotency key — flagged `via: reconciliation`. Covers missed broker calls from Donations/Kiosk **and our own portal/autopay intents whose confirm-on-return never happened** — a browser closed mid-payment, a lost tunnel. (This said "missed webhooks" until 0.50.0. There is no webhook and never was: every payment reaches the ledger by one of four PULL paths — see CLAUDE.md §13.4.) It is also **the only thing that resolves an autopay run left `pending`** by an indeterminate confirm. The cursor is held back below anything that errored or is still settling, so nothing is skipped. The push paths are optimizations; **money is never lost**, only delayed.

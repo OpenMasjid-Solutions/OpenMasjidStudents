@@ -40,8 +40,6 @@ export const users = sqliteTable('users', {
   role: text('role').$type<Role>().notNull(),
   status: text('status').$type<'active' | 'disabled'>().notNull().default('active'),
   displayName: text('display_name'),
-  /** Admin-only notes. */
-  staffNotes: text('staff_notes'),
   /**
    * A staff member's WhatsApp number (0.50.0).
    *
@@ -49,7 +47,7 @@ export const users = sqliteTable('users', {
    * contacts staff by phone, so holding one would be personal data collected for no purpose". That
    * reasoning was right and it is what changed — the app now CAN reach a person on WhatsApp, and the
    * whole point of a staff alert is that it finds the treasurer while they are away from an inbox. A
-   * number with a purpose is minimisation satisfied, not broken (§14); a number without one is what
+   * number with a purpose is minimization satisfied, not broken (§14); a number without one is what
    * the old rule forbade, and still is. Optional, always — an account with no number simply never
    * gets a message.
    */
@@ -88,7 +86,7 @@ export type Session = typeof sessions.$inferSelect;
 // ── Schools (0.47.0) ─────────────────────────────────────────────────────────
 
 /**
- * A school within the masjid — a maktab that runs Sep→Jun beside a hifz programme that runs
+ * A school within the masjid — a maktab that runs Sep→Jun beside a hifz program that runs
  * year-round, each with its own calendar and its own classes.
  *
  * ONE INSTALL IS STILL ONE MASJID (CLAUDE.md §4 ❌ multi-tenant). This is not tenancy: schools share
@@ -191,7 +189,7 @@ export const terms = sqliteTable(
 );
 export type Term = typeof terms.$inferSelect;
 
-/** A course / programme (e.g. Hifz, Nazrah, ʿĀlim). Purely an ORGANISATIONAL grouping for the
+/** A course / program (e.g. Hifz, Nazrah, ʿĀlim). Purely an ORGANIZATIONAL grouping for the
  *  student directory, the year view, and mass fee/charge apply — explicitly NOT academics:
  *  no teachers, attendance, grades, or capacity live here. That scope was removed at v0.35.0
  *  and stays out (CLAUDE.md §4 ❌). */
@@ -203,7 +201,7 @@ export const courses = sqliteTable(
      *  `school_years.school_id` — added to a populated table, backfilled at boot.
      *
      *  Uniqueness moved WITH it: "Level 1" is a perfectly ordinary name for a course in the maktab
-     *  and another in the hifz programme, so the unique index is now (school_id, name). */
+     *  and another in the hifz program, so the unique index is now (school_id, name). */
     schoolId: text('school_id').references(() => schools.id, { onDelete: 'restrict' }),
     name: text('name').notNull(),
     sortOrder: integer('sort_order').notNull().default(0),
@@ -240,7 +238,7 @@ export type Class = typeof classes.$inferSelect;
  *  (money references it). `name` is the display label (e.g. "Ismail family").
  *
  *  It carries no money of its own: since 0.39.0 invoices and payments are PER STUDENT, and the
- *  family-level discount was dropped in favour of the per-student fee override that already
+ *  family-level discount was dropped in favor of the per-student fee override that already
  *  existed (`student_fees.override_amount_cents`). What remains here is grouping — siblings, and
  *  the guardians they share — plus the Stripe Customer, which belongs to the family because it is
  *  one adult's card paying for all their children. */
@@ -292,7 +290,7 @@ export const students = sqliteTable(
      * Nullable only because the column was added to a populated table; `ensureDefaultSchool()`
      * backfills it at boot and every writer sets it. It is kept consistent with `classId`: placing a
      * child in a class moves them to that class's school, because a child cannot be in a maktab class
-     * while filed under the hifz programme.
+     * while filed under the hifz program.
      */
     schoolId: text('school_id').references(() => schools.id, { onDelete: 'restrict' }),
     /** Current class — grouping only (see `classes`). Nullable: a student can be unplaced. */
@@ -303,7 +301,7 @@ export const students = sqliteTable(
      *
      * This is the ONLY identifier in the payment flow; there is no PIN (removed in 0.39.0). It is not
      * a secret and is not treated as one — it is printed on statements and guessable by anyone who
-     * knows a child's first name. What it authorises is deliberately narrow: seeing a balance and
+     * knows a child's first name. What it authorizes is deliberately narrow: seeing a balance and
      * *paying* it. The threat model says so explicitly — the worst a stranger can do with someone
      * else's ID is settle their tuition — so the compensating controls are a per-code lockout
      * (security/rateLimit.ts) and an on-screen name confirmation, not a shared secret (§11.2, §14).
@@ -469,7 +467,7 @@ export type AuditEntry = typeof auditLog.$inferSelect;
  * often not the person who logs in — the imām, the treasurer, a trustee who never opens the app. So
  * this is deliberately not a column on `users`, and adding a recipient grants no access to anything.
  *
- * `events` is the list of alert ids that address gets (see alerts/index.ts, which owns the catalogue
+ * `events` is the list of alert ids that address gets (see alerts/index.ts, which owns the catalog
  * and validates against it on every write). Storing it as JSON rather than a join table is the right
  * trade here: it is a handful of rows read whole, always written whole, and never queried BY event.
  *
@@ -577,9 +575,36 @@ export const whatsappLog = sqliteTable(
     recipientId: text('recipient_id').notNull(),
     /** The household this was about, when it was about one. */
     familyId: text('family_id'),
-    status: text('status').$type<'queued' | 'failed' | 'skipped'>().notNull(),
-    /** Why, for the two statuses that need one: `opted_out`, `no_number`, `paused`, `http_429`… */
+    /**
+     * What became of it (widened in 0.51.0).
+     *
+     * `queued` used to be the last word this app could ever say, because a 202 was the end of the
+     * platform's story. OpenMasjidOS 0.51.1 reports outcomes, so `sent` and `expired` are now real
+     * states the scheduler fills in — `expired` being the platform dropping a message it held for
+     * more than 24 hours, which an office needs to SEE rather than infer from silence.
+     *
+     * On an older platform every row stays `queued` for good, which is honest: we still do not know.
+     *
+     * `unknown` IS NOT `failed`, and separating the two is the point of it (0.51.0-dev.9). Two things
+     * produce it, and neither is a delivery failure:
+     *
+     *   • a 404 from `status/<id>` — an evicted record, an id that was never ours, or a platform too old
+     *     to have the route. This was written as `failed`/`outcome_unknown`, which put the word "Failed"
+     *     on the office's screen next to messages that had very likely arrived. The doc comment on the
+     *     poller already said `unknown`; the code said `failed`. The comment was right.
+     *   • a suspect window from `GET /api/fabric/whatsapp/suspect` — the masjid's WhatsApp link had
+     *     silently expired, so the platform reported `sent` for messages the gateway never delivered.
+     *     Those rows genuinely were reported sent, and are genuinely not known to have arrived.
+     *
+     * Plain text with no CHECK constraint, like `PaymentChannel`, so widening it needs no migration and
+     * rows written before this are untouched.
+     */
+    status: text('status').$type<'queued' | 'sent' | 'failed' | 'expired' | 'skipped' | 'unknown'>().notNull(),
+    /** Why, for the statuses that need one: `opted_out`, `no_number`, `paused`, `http_429`… */
     reason: text('reason'),
+    /** The platform's own message id — the handle for asking what happened (0.51.0). Null on a
+     *  `skipped` row, which never reached the platform, and on everything written before this. */
+    platformId: text('platform_id'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => ({ atIdx: index('whatsapp_log_at_idx').on(t.createdAt), recipientIdx: index('whatsapp_log_recipient_idx').on(t.recipientKind, t.recipientId) }),
@@ -885,6 +910,47 @@ export const autopayEnrollments = sqliteTable('autopay_enrollments', {
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
 export type AutopayEnrollment = typeof autopayEnrollments.$inferSelect;
+
+/**
+ * A STANDING ARRANGEMENT to record an offline payment automatically (0.51.0-dev.15).
+ *
+ * Autopay for money that never touches Stripe: a family who hands over cash or sends a bank transfer
+ * every month, where the office was keying the same payment in twelve times a year. On the chosen day the
+ * scheduler records it.
+ *
+ * PER STUDENT, not per family, unlike `autopay_enrollments`. That table is family-scoped because it drives
+ * ONE card charge that then fans out; this drives a payment, and a payment belongs to exactly one student
+ * (§9). It is also how the office thinks about it — the arrangement is set on a child's billing record.
+ *
+ * IT ASSERTS THAT MONEY ARRIVED, which is the thing to understand before touching it. Hasan chose that
+ * deliberately over a confirm-first queue, and two rules keep it from becoming a fiction:
+ *
+ *   • **The amount is what is OWED on the day, never a stored figure.** So it can never manufacture
+ *     credit, and a family who owes nothing has nothing recorded. See `standingDue`.
+ *   • **`payments.idempotency_key` is `standing:<student>:<period>`**, and that column is UNIQUE — so a
+ *     re-run, a restarted container or a second scheduler cannot record the same month twice.
+ *
+ * `recorded_by_name` on the resulting payment is the arrangement, not a person, so the office reading
+ * "who took this cash?" can see it was the app (§9's split between `recordedBy` and the audit actor).
+ */
+export const standingPayments = sqliteTable('standing_payments', {
+  studentId: text('student_id')
+    .primaryKey()
+    .references(() => students.id, { onDelete: 'cascade' }),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+  /** Which offline channel to record it as. The manual set only — a card is autopay's job (§13.3). */
+  channel: text('channel').$type<ManualPaymentChannel>().notNull(),
+  /** Day of the month to record on, 1–28. Capped at 28 so every month has one. */
+  dayOfMonth: integer('day_of_month').notNull().default(1),
+  /** What the office wants on the payment row, e.g. "standing order". */
+  memo: text('memo'),
+  /** The last period key recorded, so the screen can say when it last ran. The real idempotency is the
+   *  UNIQUE payment key, not this — a stored marker alone would let a restart double-record. */
+  lastPeriod: text('last_period'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+export type StandingPayment = typeof standingPayments.$inferSelect;
 
 /** One autopay attempt for a family on a date (CLAUDE.md §9, §13.3). UNIQUE(family, run_date) is the
  *  scheduler's own idempotency; the Stripe idempotency key for the PI is derived from `id`. */

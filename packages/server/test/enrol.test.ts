@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
- * Mass class enrolment (0.42.0). The per-student dropdown was the only way to place a child, which made
+ * Mass class enrollment (0.42.0). The per-student dropdown was the only way to place a child, which made
  * September an hour of dropdowns; this is the same write, done once for a list.
  *
- * The behaviours worth pinning: it is one transaction, it silently skips students who are no longer
+ * The behaviors worth pinning: it is one transaction, it silently skips students who are no longer
  * active (a stale browser tab is not a reason to fail the whole action), it refuses an archived class,
  * and it audits ONE entry with a count rather than thirty rows — it was one decision by one person.
  */
@@ -62,7 +62,7 @@ describe('setStudentClassBulk', () => {
     expect(rows.find((s) => s.id === kids[2].id)!.classId).toBe(classId);
   });
 
-  it('skips a student who is no longer active instead of failing the whole enrolment', async () => {
+  it('skips a student who is no longer active instead of failing the whole enrollment', async () => {
     const { admin, classId, kids } = await seed();
     await admin.people.studentUpdate({ id: kids[2].id, status: 'withdrawn' });
     const r = await admin.structure.setStudentClassBulk({ studentIds: kids.map((k) => k.id), classId });

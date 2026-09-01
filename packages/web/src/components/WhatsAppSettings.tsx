@@ -18,8 +18,10 @@
  *   5. **Which events**, all starting off.
  *   6. **What was actually queued**, afterwards.
  *
- * Nothing here says "sent". The platform's queue paces every message and holds it through the masjid's
- * quiet hours, so what this screen can honestly report is that a message was handed over.
+ * "Queued" is not "sent", and the log now says which (0.51.0). The platform paces every message and
+ * reports the outcome afterwards, so a row settles to Sent, Not sent or expired — on OpenMasjidOS
+ * 0.51.1+. On anything older it stops at Queued, which is the honest answer: we handed it over and
+ * cannot know more. There are no longer any quiet hours; a message sent at night goes out at night.
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -52,6 +54,20 @@ export function WhatsAppSettings() {
     setMsg(null);
     await check.mutateAsync();
     await utils.whatsapp.get.invalidate();
+    // Ask about wrongly-"sent" messages on the same press. An admin re-checking the gateway has almost
+    // always just re-linked the phone, which is exactly when a window is waiting to be found.
+    await suspectCheck.mutateAsync().catch(() => undefined);
+    await utils.whatsapp.suspect.invalidate();
+  }
+
+  // ── Messages the platform admitted it was wrong about (platform 0.51.2) ────
+  const suspect = trpc.whatsapp.suspect.useQuery();
+  const suspectCheck = trpc.whatsapp.suspectCheck.useMutation();
+  const ack = trpc.whatsapp.suspectAck.useMutation();
+
+  async function ackSuspect() {
+    await ack.mutateAsync();
+    await Promise.all([utils.whatsapp.suspect.invalidate(), utils.whatsapp.log.invalidate()]);
   }
 
   // ── The country a number belongs to ────────────────────────────────────────
@@ -93,7 +109,11 @@ export function WhatsAppSettings() {
       // Reports BOTH channels: the test student governs the email pause too, so "the email went and
       // the WhatsApp did not" is a real and useful outcome rather than a failure.
       const r = await testSend.mutateAsync();
-      setMsg(t('settings.waTestDone', { emailed: r.emailed, whatsapp: t(`settings.waTestWa_${r.whatsapp}`) }));
+      // WHICH phone, said out loud. A household usually has two guardians and the test goes to
+      // whichever one has a readable number — so an admin watching their own handset needs to be told
+      // it was somebody else's, or they spend a day concluding the feature is broken.
+      const to = r.whatsappTo && r.whatsapp === 'queued' ? ` ${t('settings.waTestTo', { name: r.whatsappTo.name, mask: r.whatsappTo.masked })}` : '';
+      setMsg(t('settings.waTestDone', { emailed: r.emailed, whatsapp: t(`settings.waTestWa_${r.whatsapp}`) }) + to);
       await utils.whatsapp.log.invalidate();
     } catch (e) {
       setMsg((e as Error).message);
@@ -119,6 +139,56 @@ export function WhatsAppSettings() {
       </div>
       <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.75rem' }}>{t('settings.waHint')}</p>
       {msg && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{msg}</div>}
+
+      {/*
+        MESSAGES WE WERE TOLD WERE SENT AND MAY NOT HAVE BEEN — first, above everything, whenever there
+        are any. A masjid's WhatsApp link can expire on its own, and until platform 0.51.2 nothing
+        noticed: messages were accepted, recorded as sent, and delivered nowhere for over a day.
+
+        It names the households with NO EMAIL ADDRESS separately because they are the only ones who
+        actually lost the notice — everyone else got it by email, which is the same argument that made a
+        hard send cap affordable (docs/WHATSAPP.md §2a). No resend button, deliberately: the reasoning is
+        in whatsapp/suspect.ts, and the short version is that we do not keep message bodies, so anything
+        we "resent" would be a different message wearing the same name.
+      */}
+      {suspect.data && suspect.data.total > 0 && (
+        <div className="notice notice--warn" style={{ marginBlockEnd: '0.75rem' }}>
+          <p style={{ margin: 0 }}><strong>{t('settings.waSuspect', { count: suspect.data.total })}</strong></p>
+          <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('settings.waSuspectWhy')}</p>
+          {/* WHY, in the platform's own words (platform 0.51.1-dev.13). An office that knows the session had
+              expired knows what to check; a bare count sends them looking. An unrecognized cause falls back
+              to its own raw value rather than to a blank. */}
+          {suspect.data.windows[0]?.cause && (
+            <p className="hint" style={{ marginBlockStart: '0.2rem' }}>
+              {t('settings.waSuspectCause', {
+                cause: t(`settings.waSuspectCause_${suspect.data.windows[0].cause.replaceAll('-', '_')}`, { defaultValue: suspect.data.windows[0].cause }),
+              })}
+            </p>
+          )}
+          {suspect.data.byEvent.length > 0 && (
+            <p className="hint" style={{ marginBlockStart: '0.3rem' }}>
+              {t('settings.waSuspectAbout', { list: suspect.data.byEvent.map((e) => `${e.event} (${e.count})`).join(', ') })}
+            </p>
+          )}
+          {suspect.data.householdsWithoutEmail.length > 0 ? (
+            <>
+              <p className="hint" style={{ marginBlockStart: '0.4rem' }}>
+                <strong>{t('settings.waSuspectNoEmail', { count: suspect.data.householdsWithoutEmail.length })}</strong>
+              </p>
+              <p className="hint" style={{ marginBlockStart: '0.2rem' }}>
+                {suspect.data.householdsWithoutEmail.map((h) => `${h.label} (${h.count})`).join(' · ')}
+              </p>
+            </>
+          ) : (
+            <p className="hint" style={{ marginBlockStart: '0.4rem' }}>{t('settings.waSuspectAllHadEmail')}</p>
+          )}
+          <div className="inline-form" style={{ paddingInline: 0, marginBlockStart: '0.4rem' }}>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => void ackSuspect()} disabled={ack.isPending}>
+              {t('settings.waSuspectAck')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 1. Can this server send? One sentence per reason — each needs a different thing done. */}
       <p style={{ margin: '0 0 0.75rem' }}>
@@ -248,7 +318,11 @@ export function WhatsAppSettings() {
           </label>
           {c.paused && <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{t('settings.waPausedNotice')}</div>}
 
-          <div className="inline-form glass-inset" style={{ alignItems: 'flex-end' }}>
+          {/* No `align-items` override here any more. It was compensating for a CSS bug, not expressing a
+              layout: `.inline-form .field` was handing StudentPicker's own nested field a 12rem flex-basis
+              that a column parent read as a HEIGHT, so bottom-aligning was the only way to get the button
+              anywhere near the control. Fixed in admin.css — the row now aligns like every other one. */}
+          <div className="inline-form glass-inset">
             <div className="field" style={{ flex: '1 1 16rem' }}>
               <StudentPicker
                 students={roster.data ?? []}
@@ -270,6 +344,41 @@ export function WhatsAppSettings() {
           {/* A test student that no longer resolves is the silent failure this line exists to stop:
               the household is set, the pause is on, and nothing gets through. */}
           {c.testStudentId && !c.testFamilyId && <p className="form-error">{t('settings.waTestStudentGone')}</p>}
+
+          {/* HOW MANY, which became this app's problem in 0.51.0-dev.5: the platform stopped capping
+              anything, and an invoice run messages every household. Placed BEFORE the event switches
+              on purpose — it is the sentence that should be read before turning on `invoice-ready`
+              for a roster of two hundred. */}
+          <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.waCaps')}</h3>
+          <p className="hint" style={{ marginBlockEnd: '0.5rem' }}>{t('settings.waCapsHint')}</p>
+          <div className="inline-form glass-inset">
+            <div className="field" style={{ flex: '0 1 8rem' }}>
+              <label className="label" htmlFor="wa-cap-hour">{t('settings.waCapHour')}</label>
+              <input
+                id="wa-cap-hour"
+                className="input glass-inset"
+                type="number"
+                min={1}
+                max={200}
+                value={c.cap.hourly}
+                onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n >= 1) void patch({ hourlyCap: n }); }}
+              />
+            </div>
+            <div className="field" style={{ flex: '0 1 8rem' }}>
+              <label className="label" htmlFor="wa-cap-day">{t('settings.waCapDay')}</label>
+              <input
+                id="wa-cap-day"
+                className="input glass-inset"
+                type="number"
+                min={1}
+                max={1000}
+                value={c.cap.daily}
+                onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n >= 1) void patch({ dailyCap: n }); }}
+              />
+            </div>
+            {/* What is actually left, so the limit is a live figure rather than a policy. */}
+            <p className="hint" style={{ alignSelf: 'end', margin: 0 }}>{t('settings.waCapUsed', { ...c.cap })}</p>
+          </div>
 
           {/* 5. Which messages. All off until somebody says otherwise. */}
           <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>{t('settings.waEvents')}</h3>
@@ -660,6 +769,9 @@ function QueueLog() {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const q = trpc.whatsapp.log.useQuery({ limit: 100 }, { enabled: open });
+  /** Only to answer "why does nothing get past Queued?" — asked once the log is actually open, and
+   *  already cached by the panel above it, so this costs nothing. */
+  const cfg = trpc.whatsapp.get.useQuery(undefined, { enabled: open });
 
   return (
     <>
@@ -670,11 +782,13 @@ function QueueLog() {
         </button>
       </h3>
       <p className="hint">{t('settings.waLogHint')}</p>
-      {/* WHAT "QUEUED" ACTUALLY MEANS, where somebody reads the word and starts wondering. A receipt
-          queued at three in the morning does not arrive at three in the morning — the platform holds
-          everything through the masjid's quiet hours — and a screen that leaves that to be discovered
-          reads as "it doesn't work". */}
+      {/* WHAT "QUEUED" ACTUALLY MEANS, where somebody reads the word and starts wondering. Paced
+          delivery looks exactly like a broken feature if nobody says so, which is how this screen
+          earned the sentence. */}
       {open && <p className="hint">{t('settings.waQueuedMeaning')}</p>}
+      {/* And on an older platform, why a row never gets past Queued — otherwise the missing outcome
+          reads as a message that never went. */}
+      {open && cfg.data?.status && !cfg.data.status.outcomes && <p className="hint">{t('settings.waOutcomesOff')}</p>}
       {open && q.data && (q.data.length === 0 ? (
         <p className="muted" style={{ fontSize: '0.9rem' }}>{t('settings.waLogEmpty')}</p>
       ) : (
@@ -695,7 +809,10 @@ function QueueLog() {
                   <td data-label={t('settings.waLogWhat')}>{r.event}</td>
                   <td data-label={t('settings.waWho')}>{r.who}{r.household ? <><br /><span className="hint">{r.household}</span></> : null}</td>
                   <td data-label={t('directory.status')}>
-                    <span className={`chip ${r.status === 'queued' ? '' : 'is-muted'}`}>{t(`settings.waStatus_${r.status}`)}</span>
+                    {/* `sent` is the only row that is actually good news, so it is the only accented
+                        one (0.51.0). `queued` is neutral — it means "accepted, still waiting" — and
+                        everything else is muted, because a skip and a failure are both just facts. */}
+                    <span className={`chip ${r.status === 'sent' ? 'is-accent' : r.status === 'queued' ? '' : 'is-muted'}`}>{t(`settings.waStatus_${r.status}`)}</span>
                     {r.reason && <span className="hint" style={{ display: 'block' }}>{t(`settings.waReasonShort_${r.reason}`, { defaultValue: r.reason })}</span>}
                   </td>
                 </tr>

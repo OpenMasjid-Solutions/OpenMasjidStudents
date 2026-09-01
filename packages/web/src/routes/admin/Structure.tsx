@@ -8,7 +8,7 @@
  * makes the course-grouped roster, the year view's grouping, and mass-apply-by-class all inert. The
  * server has had these procedures since v0.36.0; this is the surface that reaches them.
  *
- * Organisational only, on purpose: a class here carries no teacher, attendance or grades (that scope
+ * Organizational only, on purpose: a class here carries no teacher, attendance or grades (that scope
  * was removed at v0.35.0 and stays out). Terms exist purely so `fee_plans.cadence = 'per_term'` has
  * something to mean for a madrasah that bills per term.
  *
@@ -59,7 +59,7 @@ export function Structure() {
       ),
     });
 
-  /** Mass enrolment opens as its own window: it is a list of the whole school, which does not belong
+  /** Mass enrollment opens as its own window: it is a list of the whole school, which does not belong
    *  inline under a class chip. */
   const openEnrol = (classId: string, classLabel: string) =>
     open({ title: t('enrol.title'), wide: true, dedupeKey: `enrol:${classId}`, icon: <UserPlus size={15} />, node: <ClassEnrol classId={classId} classLabel={classLabel} /> });
@@ -313,7 +313,7 @@ export function Structure() {
       {note && <div className="notice">{note}</div>}
 
       {/* ── Schools (0.47.0) ────────────────────────────────────────────────
-          A masjid may run a maktab on one calendar beside a hifz programme on another. Each school
+          A masjid may run a maktab on one calendar beside a hifz program on another. Each school
           gets its own school year and its own courses; everything else — fee plans, staff, the
           Stripe account, and above all the HOUSEHOLD — stays shared, so a family with a child in
           each is still one family with one balance and one sheet. */}

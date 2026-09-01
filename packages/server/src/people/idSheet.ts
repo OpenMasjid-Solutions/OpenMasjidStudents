@@ -9,7 +9,7 @@
  * sheets of paper. That is not a fixable amount of print CSS — a screen is laid out for a screen. Every
  * other printable in this app is HTML built here and served through one authed route
  * (billing/statementRoutes.ts), and this now is too, which also gets it the masjid's letterhead, its
- * accent colour and its contact details for free.
+ * accent color and its contact details for free.
  *
  * IT IS NOT SCOPED TO ONE IMPORT, and that is deliberate. The obvious version — "print the IDs of the
  * 36 children just added" — means putting 36 opaque ids in a URL, and it is the less useful artifact:
@@ -209,7 +209,7 @@ export function buildIdSheetHtml(scope: string, reader: IdSheetScope, now: Date 
 <title>Student IDs — ${esc(schoolLabel)}</title>
 <style>
   @page { size: letter; margin: 0.5in; }
-  /* --teal is the masjid's own colour (Settings → How you appear to parents). Validated as a hex
+  /* --teal is the masjid's own color (Settings → How you appear to parents). Validated as a hex
      literal before it reaches here, because this is interpolated into a style block. */
   :root { --ink:#1a1a1a; --teal:${accent}; --wash:${wash}; --line:#cbcbcb; --muted:#666; }
   * { box-sizing: border-box; }
@@ -240,7 +240,7 @@ export function buildIdSheetHtml(scope: string, reader: IdSheetScope, now: Date 
   @media print {
     body { padding: 0; font-size: 10.5pt; }
     .toolbar { display: none; }
-    /* A solid block of colour is what drains a masjid's toner. */
+    /* A solid block of color is what drains a masjid's toner. */
     .note { background: #fff; }
   }
 ${SHEET_PHONE_CSS}

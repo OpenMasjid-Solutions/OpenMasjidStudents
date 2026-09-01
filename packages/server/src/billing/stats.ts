@@ -12,7 +12,7 @@
  *
  * EVERYTHING IS AN AGGREGATE, ON PURPOSE. Alerts name children now (§9) because they go to addresses
  * and numbers an admin configured, one event at a time. A command reply is different: it lands in a
- * WhatsApp thread that keeps a copy forever, on whichever phone is authorised today, and the platform
+ * WhatsApp thread that keeps a copy forever, on whichever phone is authorized today, and the platform
  * refuses to expose app logs for precisely that reason. So this counts and totals; it never lists who.
  * "Who is behind" is a question for a screen behind a login, or the past-due digest that already goes
  * to people the office chose.

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 OpenMasjid-Solutions
 /**
  * The phone formatter is used as an as-you-type mask, so the partial states matter as much as the
- * finished one — and the load-bearing rule is that it never eats a number it doesn't recognise.
+ * finished one — and the load-bearing rule is that it never eats a number it doesn't recognize.
  */
 import { describe, it, expect } from 'vitest';
 import { formatUsPhone, telHref } from './phone';

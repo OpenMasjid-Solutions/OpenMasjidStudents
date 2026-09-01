@@ -34,8 +34,10 @@
  */
 import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
-import { schoolYears, students } from '../db/schema';
-import { generateForStudent } from './invoices';
+import { charges, invoices, schoolYears, students } from '../db/schema';
+import { rid } from '../db/ids';
+import { invoiceTotal } from './ledger';
+import { attachChargeToExistingInvoice, generateForStudent } from './invoices';
 import { isMonthPeriod, resolveInvoiceLabel } from './period';
 import { schoolYearMonths } from './schoolYear';
 import { getBillingStartPeriod, getInvoiceLabelTemplate } from '../settings';
@@ -120,6 +122,9 @@ export interface JoinResult {
   periods: string[];
   /** Why nothing happened, when nothing did. */
   reason?: 'not_a_month' | 'before_floor' | 'no_school_year' | 'future' | 'nothing_to_bill';
+  /** Whether the first month was brought to an agreed figure (0.51.0-dev.11). False when none was asked
+   *  for, when it already matched, or when that month was not one this call created. */
+  firstMonthAdjusted?: boolean;
 }
 
 /**
@@ -129,7 +134,55 @@ export interface JoinResult {
  * for (UNIQUE on student + period), so running it twice cannot double-bill, and a student who was
  * already billed for some of the range only gains the missing months.
  */
-export function billStudentFrom(studentId: string, fromPeriod: string, now = new Date()): JoinResult {
+/**
+ * Bring the FIRST month of a catch-up to a stated amount (0.51.0-dev.11).
+ *
+ * A child who starts on the 15th is often charged part of that month, and sometimes an office simply
+ * agrees a different figure for it. The rest of the year is the plan's own amount, so this is about ONE
+ * invoice, which is why it is not a per-student override (that would change every month) and not a new
+ * fee plan (a plan per joining date is a catalog nobody can read).
+ *
+ * DONE AS AN ADJUSTMENT LINE, not by rewriting the tuition line. Two reasons, and the second is the one
+ * that decided it:
+ *
+ *  1. It is honest on paper. The invoice reads "Monthly tuition $100" then "Joined part-way through the
+ *     month −$40", which is a bill a parent can check against what they were told. A single silently
+ *     reduced line invites "why is this one different?" at the exact moment trust is being established.
+ *  2. It keeps ONE place writing money. The adjustment is an ordinary charge (§4 — a negative charge is
+ *     how a credit or correction is expressed) attached by the ordinary path, so it allocates, re-derives
+ *     and reverses exactly like everything else. Teaching `generateForStudent` to take an amount override
+ *     would put a second answer to "what is this line worth?" inside the generator.
+ *
+ * Works upward too: if the agreed figure is HIGHER than the plan, the adjustment is positive. And it is
+ * a no-op when the figure already matches, so an office confirming the normal amount writes no line.
+ */
+function adjustFirstMonth(studentId: string, periodKey: string, targetCents: number, ts: Date): boolean {
+  const inv = db.select({ id: invoices.id, status: invoices.status }).from(invoices).where(and(eq(invoices.studentId, studentId), eq(invoices.periodKey, periodKey))).get();
+  if (!inv || inv.status === 'void') return false;
+  const current = invoiceTotal(db, inv.id);
+  const delta = targetCents - current;
+  if (delta === 0) return false;
+
+  const chargeId = rid('chg');
+  db.insert(charges)
+    .values({
+      id: chargeId,
+      studentId,
+      chargeItemId: null,
+      label: delta < 0 ? 'Joined part-way through the month' : 'First month adjustment',
+      amountCents: delta,
+      note: null,
+      periodKey,
+      status: 'pending',
+      createdByUserId: null,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+    .run();
+  return attachChargeToExistingInvoice(chargeId).attached;
+}
+
+export function billStudentFrom(studentId: string, fromPeriod: string, now = new Date(), opts: { firstMonthCents?: number | null } = {}): JoinResult {
   if (!isMonthPeriod(fromPeriod)) return { created: 0, periods: [], reason: 'not_a_month' };
 
   const floor = getBillingStartPeriod();
@@ -163,5 +216,11 @@ export function billStudentFrom(studentId: string, fromPeriod: string, now = new
   }
   // A child on nothing but a per-term or one-time plan has no monthly line to bill, so `generateForStudent`
   // correctly writes no empty invoices — worth saying out loud rather than reporting a silent success.
-  return created ? { created, periods } : { created: 0, periods: [], reason: 'nothing_to_bill' };
+  if (!created) return { created: 0, periods: [], reason: 'nothing_to_bill' };
+
+  // The agreed figure for their first month, if the office named one. Applied only to the month they
+  // actually STARTED — `periods[0]` is the oldest created — and only when that month was created by this
+  // call, so re-running the catch-up cannot adjust it a second time.
+  const adjusted = opts.firstMonthCents != null && periods[0] === fromPeriod ? adjustFirstMonth(studentId, fromPeriod, opts.firstMonthCents, now) : false;
+  return { created, periods, firstMonthAdjusted: adjusted };
 }

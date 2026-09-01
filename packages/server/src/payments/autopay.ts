@@ -25,7 +25,8 @@ import { alertStaff, childrenOf, studentAmounts } from '../alerts';
 import { sendReceipt, sendAutopayFailure, sendAutopayUpcoming, sendCardExpiring } from '../mail/notify';
 import { formatDate } from '../settings/dates';
 import { stripeClient } from './stripe';
-import { orderedMethods } from './methods';
+import { feeKindOf, methodLabel, orderedMethods } from './methods';
+import { feeMetadata, feeQuote } from './fees';
 
 const log = makeLog('autopay');
 
@@ -103,7 +104,7 @@ export const AUTOPAY_NOTICE_DAYS = 3;
  * subtle thing here: a household qualifies only when it has an open invoice whose due date is
  * EXACTLY `today + AUTOPAY_NOTICE_DAYS`. Selecting on "something is due soon" instead would message a
  * family with an older overdue bill every single day until they paid it — which is not a courtesy,
- * it is the behaviour that gets a school's messages muted.
+ * it is the behavior that gets a school's messages muted.
  *
  * The amount quoted is what autopay would actually take on that day, capped by the household's real
  * balance, so it is the same figure `autopayDue` will compute when the run happens.
@@ -183,17 +184,27 @@ export async function chargeFamily(familyId: string, amountCents: number, today:
   }
   const runId = createAutopayRun(familyId, amountCents, today, (enr.failureCount ?? 0) + 1);
   if (!runId) return; // already attempted today
+  /**
+   * THE PROCESSING FEE, QUOTED FOR THE METHOD THIS ATTEMPT WILL ACTUALLY USE (0.51.0).
+   *
+   * `amountCents` stays the tuition throughout — it is what `autopay_runs` stores, what the ledger
+   * records, and what the parent's notices quote — and the gross is used for the Stripe charge alone.
+   * Keeping the two apart is what makes the retry ladder safe: attempt 2 may fall through to a bank
+   * account, which costs the masjid a fifth of what the card did, and re-quoting per attempt means the
+   * family is charged the cost of the method that actually paid rather than the one that declined.
+   */
+  const quote = feeQuote(amountCents, feeKindOf(ordered.find((m) => m.id === chosenPmId)?.type));
   try {
     const pi = await stripe.paymentIntents.create(
       {
-        amount: amountCents,
+        amount: quote.grossCents,
         currency: getCurrency(),
         customer: fam.stripeCustomerId,
         payment_method: chosenPmId,
         off_session: true,
         confirm: true,
         description: 'Autopay tuition',
-        metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: familyId, students_channel: 'autopay', students_autopay_run_id: runId },
+        metadata: { purpose: 'students-billing', omos_app: 'students-portal', students_family_id: familyId, students_channel: 'autopay', students_autopay_run_id: runId, ...feeMetadata(quote) },
       },
       { idempotencyKey: `autopay:${runId}` },
     );
@@ -267,16 +278,12 @@ export async function runAutopay(today: string): Promise<{ attempted: number }> 
   return { attempted: due.length };
 }
 
-/** How a card is named to a parent — "Visa ···· 4242", brand and last four only. Never a PAN and never
- *  a holder name; neither is stored (§14). Empty when there is nothing recognisable to say. */
+/** How the method that will be charged is named to a parent. Thin wrapper over the ONE namer
+ *  (`payments/methods.ts` `methodLabel`) — this file used to have its own copy, which read `brand` only
+ *  and so called a saved bank account a "card" (§16). */
 function cardLabelFor(familyId: string): string {
   const pm = orderedMethods(familyId)[0];
-  if (!pm) return '';
-  const brand = (pm.brand ?? '').trim();
-  const last4 = (pm.last4 ?? '').trim();
-  if (!brand && !last4) return '';
-  const nice = brand ? brand.charAt(0).toUpperCase() + brand.slice(1) : 'card';
-  return last4 ? `${nice} ···· ${last4}` : nice;
+  return pm ? methodLabel(pm) : '';
 }
 
 /**
@@ -349,7 +356,12 @@ function findRun(runId: string | null | undefined, paymentIntentId: string) {
  *  backfill its PI id, and reset the family's retry ladder. Idempotent. */
 export function onAutopaySucceeded(paymentIntentId: string, runId?: string | null): void {
   const run = findRun(runId, paymentIntentId);
-  if (!run) return;
+  // Only a run still awaiting an outcome. Without this, a second delivery of the same success — a
+  // reconcile pass over a PaymentIntent already recorded, or a retried confirm — reset `failureCount`
+  // to zero on a family who is meanwhile mid-decline on a LATER run, handing them a fresh three
+  // attempts and pushing back the auto-disable. The failure path has carried this guard from the start
+  // ("Acts ONLY on a still-'pending' run"); the success path is the one that was missing it.
+  if (!run || run.status !== 'pending') return;
   db.update(autopayRuns).set({ status: 'charged', stripePaymentIntentId: paymentIntentId, updatedAt: new Date() }).where(eq(autopayRuns.id, run.id)).run();
   db.update(autopayEnrollments).set({ failureCount: 0, nextAttemptAt: null, updatedAt: new Date() }).where(eq(autopayEnrollments.familyId, run.familyId)).run();
 }
@@ -368,7 +380,7 @@ export function onAutopayFailed(paymentIntentId: string, runId?: string | null):
  * an id, and a metadata search confirms no PaymentIntent for this run exists.
  *
  * Marked `failed` so it stops blocking the family's future charges, but WITHOUT advancing the retry
- * ladder: nothing was ever presented to the card, so counting it as a strike would penalise the
+ * ladder: nothing was ever presented to the card, so counting it as a strike would penalize the
  * family for our own network error and could auto-disable autopay on three bad nights of
  * connectivity. Idempotent, and only ever acts on a still-pending run.
  */
@@ -406,7 +418,7 @@ function markRunFailed(runId: string, runDate: string): void {
     // must reach a person — the office's own alert list, and the admin's email via OpenMasjidOS —
     // rather than only the masjid webhook, which most installs never configure.
     //
-    // The children, not a household label. A card and an autopay enrolment DO belong to the household
+    // The children, not a household label. A card and an autopay enrollment DO belong to the household
     // — one adult holds the card for all of them — so this names the children it pays FOR rather than
     // claiming a child owns the card. Either way the office gets the names their records are keyed by.
     void alertStaff('autopay-disabled', {

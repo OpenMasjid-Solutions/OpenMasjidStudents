@@ -7,7 +7,7 @@
  *  `focusStudentId` is the child the window was opened FOR — pressing a name in the year view lands
  *  here, so the payment form and the charge form start on that child instead of asking again. The
  *  window still shows the whole household, because one adult pays for all of them. */
-import { Fragment, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Printer, Pencil, Repeat, Users } from 'lucide-react';
 import { describeMethod, methodTitle } from '../lib/paymentMethod';
@@ -16,7 +16,7 @@ import { formatMoney, parseCents, parseSignedCents } from '../lib/money';
 import { formatDate, type DateFormat } from '../lib/dates';
 import { withBase } from '../lib/base';
 import { useWindows } from './Windows';
-import { InvoiceGenFields, useInvoiceGen } from './InvoiceGenFields';
+import { InvoiceGenFields, PeriodMonthSelect, useInvoiceGen } from './InvoiceGenFields';
 import { FamilyDetail } from '../routes/admin/FamilyDetail';
 
 /** The channels the office can record by hand. Kept in step with the server's
@@ -53,7 +53,42 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
   const [payment, setPayment] = useState<{ studentId: string; amount: string; channel: ManualChannel; occurredAt: string; memo: string }>({ studentId: focusStudentId ?? '', amount: '', channel: 'cash', occurredAt: new Date().toISOString().slice(0, 10), memo: '' });
   /** Which fee assignment is having its per-student amount edited, if any. */
   const [override, setOverrideForm] = useState<{ feeId: string; amount: string; note: string } | null>(null);
-  const [charge, setCharge] = useState({ studentId: focusStudentId ?? '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
+  /** `bill: 'now'` is the default — its own bill, due today, rather than waiting on a period's run. */
+  const [charge, setCharge] = useState({ studentId: focusStudentId ?? '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '', bill: 'now' as 'now' | 'period' });
+  /** A credit has to reduce a bill, so it can only go ON a period (§ billChargeNow). */
+  const isCredit = (parseSignedCents(charge.amount) ?? 0) < 0;
+  /** Which child's year is being quoted, or null when the panel is shut. Asked per child because the
+   *  fees are per child and so is the figure a parent wants. */
+  const [yearFor, setYearFor] = useState<string | null>(null);
+  const year = trpc.billing.yearTotal.useQuery({ studentId: yearFor ?? '' }, { enabled: !!yearFor });
+
+  /** The standing arrangement panel — which child it is open for, and their current settings. */
+  const [standingFor, setStandingFor] = useState<string | null>(null);
+  const standing = trpc.billing.standingGet.useQuery({ studentId: standingFor ?? '' }, { enabled: !!standingFor });
+  const setStanding = trpc.billing.standingSet.useMutation();
+  /** The memo is held locally and saved on blur — a mutation per keystroke would be one write per letter. */
+  const [standingMemo, setStandingMemo] = useState('');
+  useEffect(() => setStandingMemo(standing.data?.memo ?? ''), [standing.data?.memo]);
+
+  /**
+   * Save one field, sending the whole arrangement.
+   *
+   * The full shape every time rather than a patch: the server upserts one row, and a partial save would
+   * need it to merge — which is a second place holding an opinion about what the arrangement is. The
+   * current values come from the query, so this cannot write a stale channel over a fresh one.
+   */
+  async function saveStanding(patch: { enabled?: boolean; channel?: string; dayOfMonth?: number; memo?: string }) {
+    if (!standingFor || !standing.data) return;
+    const d = standing.data;
+    await setStanding.mutateAsync({
+      studentId: standingFor,
+      enabled: patch.enabled ?? d.enabled,
+      channel: (patch.channel ?? d.channel) as ManualChannel,
+      dayOfMonth: patch.dayOfMonth ?? d.dayOfMonth,
+      memo: patch.memo ?? standingMemo,
+    });
+    await utils.billing.standingGet.invalidate({ studentId: standingFor });
+  }
   const [chargeErr, setChargeErr] = useState<string | null>(null);
   const money = (c: number) => formatMoney(c, currency);
   /** How this masjid writes dates (0.47.0). `settings.display` — admin AND finance, unlike
@@ -127,10 +162,11 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
         source: charge.chargeItemId
           ? { kind: 'item', chargeItemId: charge.chargeItemId, amountCents: cents }
           : { kind: 'custom', label: charge.label.trim(), amountCents: cents },
+        bill: cents < 0 ? 'period' : charge.bill,
         ...(charge.periodKey.trim() ? { periodKey: charge.periodKey.trim() } : {}),
         ...(charge.note.trim() ? { note: charge.note.trim() } : {}),
       });
-      setCharge({ studentId: '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '' });
+      setCharge({ studentId: '', chargeItemId: '', label: '', amount: '', periodKey: '', note: '', bill: 'now' });
       await refresh();
     } catch (err) {
       setChargeErr((err as Error).message);
@@ -192,7 +228,7 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
         )}
         {/* AUTOPAY, where the volunteer is standing (0.48.0). Nothing in the office ever showed this, so a
             family whose card pays them on Friday looked exactly like one that had ignored two reminders.
-            Worded as the HOUSEHOLD's, because that is what the enrolment is (§13.3) — the parent's own
+            Worded as the HOUSEHOLD's, because that is what the enrollment is (§13.3) — the parent's own
             screen has one switch for the family, and implying it belongs to one child would be a lie the
             office would repeat down the phone. */}
         {autopay?.enabled ? (
@@ -273,6 +309,166 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             <p className="hint">{t('billing.overrideHint')}</p>
           </form>
         )}
+
+        {/*
+          A STANDING ARRANGEMENT — autopay for money that never touches Stripe (0.51.0-dev.15).
+
+          A family who hands over cash every month, or sends a bank transfer: the office sets the channel
+          and the day, and the app records it on that day instead of somebody keying it in twelve times a
+          year. Per child, because a payment belongs to one child (§9).
+
+          THE COPY SAYS WHAT IT ACTUALLY DOES, in the strongest terms the screen allows: it records the
+          money whether or not it arrived. That was a deliberate choice over a confirm-first queue, so the
+          panel has to be honest about the consequence rather than describing it as "automatic payments"
+          and leaving the office to discover it. The amount is never typed here — it is whatever is owed on
+          the day, which is what stops it minting credit — so the panel shows that figure live.
+        */}
+        {feeGroups.length > 0 && (
+          <>
+            <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>
+              {t('billing.standing')}
+              <button type="button" className="btn btn--ghost btn--sm" style={{ marginInlineStart: '0.5rem' }} onClick={() => setStandingFor(standingFor ? null : feeGroups[0][0])}>
+                {standingFor ? t('common.close') : t('common.show')}
+              </button>
+            </h3>
+            {standingFor && (
+              <div className="glass-inset" style={{ padding: '0.6rem 0.75rem' }}>
+                {feeGroups.length > 1 && (
+                  <div className="field" style={{ marginBlockEnd: '0.5rem', maxWidth: '16rem' }}>
+                    <label className="label">{t('billing.forStudent')}</label>
+                    <select className="input glass-inset" value={standingFor} onChange={(e) => setStandingFor(e.target.value)}>
+                      {feeGroups.map(([id, g]) => <option key={id} value={id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <p className="hint" style={{ marginBlockStart: 0 }}>{t('billing.standingIntro')}</p>
+                {/* The warning, above the switch rather than under it — the same placement the processing-fee
+                    panel uses for the same reason: it has to be read before the decision, not after. */}
+                <div className="notice notice--warn" style={{ marginBlockEnd: '0.6rem' }}>{t('billing.standingWarn')}</div>
+                {standing.data && (
+                  <>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', cursor: 'pointer', marginBlockEnd: '0.6rem' }}>
+                      <input
+                        type="checkbox"
+                        style={{ marginBlockStart: '0.2rem' }}
+                        checked={standing.data.enabled}
+                        onChange={(e) => void saveStanding({ enabled: e.target.checked })}
+                        disabled={setStanding.isPending}
+                      />
+                      <span>{t('billing.standingOn')}</span>
+                    </label>
+                    <div className="inline-form glass-inset">
+                      <div className="field" style={{ flex: '0 1 10rem' }}>
+                        <label className="label">{t('billing.channel')}</label>
+                        <select className="input glass-inset" value={standing.data.channel} onChange={(e) => void saveStanding({ channel: e.target.value })}>
+                          {MANUAL_CHANNELS.map((c) => <option key={c} value={c}>{t(`billing.ch_${c}`)}</option>)}
+                        </select>
+                      </div>
+                      <div className="field" style={{ flex: '0 1 8rem' }}>
+                        <label className="label">{t('billing.standingDay')}</label>
+                        <select className="input glass-inset" value={standing.data.dayOfMonth} onChange={(e) => void saveStanding({ dayOfMonth: Number(e.target.value) })}>
+                          {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                      </div>
+                      <div className="field" style={{ flex: '1 1 10rem' }}>
+                        <label className="label">{t('billing.memo')}</label>
+                        <input className="input glass-inset" value={standingMemo} onChange={(e) => setStandingMemo(e.target.value)} onBlur={() => void saveStanding({ memo: standingMemo })} maxLength={200} />
+                      </div>
+                    </div>
+                    {/* The live figure, which is the whole safeguard made visible: no amount is stored, so
+                        this is what the scheduler itself would record today. */}
+                    <p className="hint">
+                      {standing.data.wouldRecord > 0
+                        ? t('billing.standingWould', { amount: money(standing.data.wouldRecord), on: formatDate(standing.data.runsOn, dateFormat) })
+                        : t('billing.standingNothingOwed', { on: formatDate(standing.data.runsOn, dateFormat) })}
+                    </p>
+                    {standing.data.lastPeriod && <p className="hint">{t('billing.standingLast', { period: standing.data.lastPeriod })}</p>}
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/*
+          WHAT THE YEAR COMES TO — the question every enrollment conversation opens with, which the office
+          was answering with a calculator. One child at a time, because the fees are per child and so is
+          the answer a parent wants.
+
+          IT IS A QUOTE AND THE COPY SAYS SO. A projected year is not a balance: every balance here is
+          `invoiced − paid` (§9), and a family who leaves in March owes March. Nothing is written. An office
+          that wants the year ON the account adds it as a charge deliberately — this is the figure they
+          would use, not a number the app quietly turned into money.
+        */}
+        {feeGroups.length > 0 && (
+          <>
+            <h3 className="label" style={{ marginBlockStart: '1.1rem', marginBlockEnd: '0.4rem' }}>
+              {t('billing.yearTotal')}
+              <button type="button" className="btn btn--ghost btn--sm" style={{ marginInlineStart: '0.5rem' }} onClick={() => setYearFor(yearFor ? null : feeGroups[0][0])}>
+                {yearFor ? t('common.close') : t('common.show')}
+              </button>
+            </h3>
+            {yearFor && (
+              <div className="glass-inset" style={{ padding: '0.6rem 0.75rem' }}>
+                {feeGroups.length > 1 && (
+                  <div className="field" style={{ marginBlockEnd: '0.5rem', maxWidth: '16rem' }}>
+                    <label className="label">{t('billing.forStudent')}</label>
+                    <select className="input glass-inset" value={yearFor} onChange={(e) => setYearFor(e.target.value)}>
+                      {feeGroups.map(([id, g]) => <option key={id} value={id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                {!year.data ? (
+                  <p className="muted" style={{ fontSize: '0.9rem', margin: 0 }}>{t('common.loading')}</p>
+                ) : !year.data.year ? (
+                  // Actionable, rather than a zero that looks like an answer.
+                  <p className="muted" style={{ fontSize: '0.9rem', margin: 0 }}>{t('billing.yearTotalNoYear')}</p>
+                ) : (
+                  <>
+                    <p className="hint" style={{ marginBlockStart: 0 }}>
+                      {t(`billing.yearFrom_${year.data.fromSource}`, { year: year.data.year.label, months: year.data.monthsCounted })}
+                    </p>
+                    {/* A quote that is knowingly incomplete has to say so. A per-term plan cannot be
+                        billed by this app yet (billing/yearTotal.ts), so it is left out of the figure —
+                        and an office comparing this against the plans they configured would otherwise
+                        just see a number that is too small, with nothing saying why. */}
+                    {year.data.perTermExcluded > 0 && (
+                      <p className="hint" style={{ color: 'var(--color-warning)' }}>
+                        {t('billing.yearPerTermExcluded', { count: year.data.perTermExcluded })}
+                      </p>
+                    )}
+                    <table className="data-table">
+                      <tbody>
+                        {year.data.lines.map((l) => (
+                          <tr key={l.planId}>
+                            <td>{l.label}</td>
+                            <td className="muted">{t(`billing.cadence_${l.cadence}`)} × {l.timesFrom}</td>
+                            <td className="tnum" style={{ textAlign: 'end' }}>{money(l.fromTotalCents)}</td>
+                          </tr>
+                        ))}
+                        <tr>
+                          <td colSpan={2}><strong>{t('billing.yearTotalWhole')}</strong></td>
+                          <td className="tnum" style={{ textAlign: 'end' }}><strong>{money(year.data.fromTotalCents)}</strong></td>
+                        </tr>
+                        {/* The WHOLE year, only when it differs — i.e. when this child started mid-year and
+                            the two figures are genuinely different numbers. Shown because an office is
+                            sometimes asked both; omitted otherwise, because a second identical row reads
+                            as a mistake rather than as context. */}
+                        {year.data.fromTotalCents !== year.data.totalCents && (
+                          <tr>
+                            <td colSpan={2} className="muted">{t('billing.yearTotalAll', { months: year.data.year.months })}</td>
+                            <td className="tnum muted" style={{ textAlign: 'end' }}>{money(year.data.totalCents)}</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                    <p className="hint">{t('billing.yearTotalHint')}</p>
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
       </section>
 
       {/* One-off charges for this family's students */}
@@ -345,10 +541,44 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
             <div className="field"><label className="label">{t('billing.chargeLabel')}</label><input className="input glass-inset" value={charge.label} onChange={(e) => setCharge({ ...charge, label: e.target.value })} maxLength={120} /></div>
           )}
           <div className="field" style={{ flex: '0 1 8rem' }}><label className="label">{t('billing.amount')}</label><input type="number" step="0.01" className="input glass-inset" value={charge.amount} onChange={(e) => setCharge({ ...charge, amount: e.target.value })} /></div>
-          <div className="field" style={{ flex: '0 1 7rem' }}><label className="label">{t('billing.periodKey')}</label><input className="input glass-inset" value={charge.periodKey} onChange={(e) => setCharge({ ...charge, periodKey: e.target.value })} placeholder="2026-07" /></div>
+          {/*
+            WHEN it becomes payable (0.51.0-dev.10). "Bill it now" is the default and the common case: a
+            book fee added in the middle of August used to wait for somebody to generate August's tuition,
+            so the office had to bill the whole month early or tell the parent to wait. Now it becomes its
+            own one-line bill, due today.
+
+            A CREDIT cannot be billed on its own — its whole job is to reduce a bill — so a negative
+            amount switches to the month picker and says why, rather than offering a choice the server
+            would quietly override.
+          */}
+          <div className="field" style={{ flex: '0 1 12rem' }}>
+            <label className="label">{t('billing.chargeWhen')}</label>
+            <select
+              className="input glass-inset"
+              value={isCredit ? 'period' : charge.bill}
+              disabled={isCredit}
+              onChange={(e) => setCharge({ ...charge, bill: e.target.value as 'now' | 'period' })}
+            >
+              <option value="now">{t('billing.chargeWhen_now')}</option>
+              <option value="period">{t('billing.chargeWhen_period')}</option>
+            </select>
+          </div>
+          {/* The same month picker as the invoice form two clicks away, not a box wanting `2026-07`
+              (components/InvoiceGenFields). Blank still means "the next invoice generated". Only asked
+              for when it is what will actually be used. */}
+          {(charge.bill === 'period' || isCredit) && (
+            <PeriodMonthSelect id={`chg-${familyId}-period`} value={charge.periodKey} onChange={(v) => setCharge({ ...charge, periodKey: v })} />
+          )}
           <div className="field"><label className="label">{t('billing.memo')}</label><input className="input glass-inset" value={charge.note} onChange={(e) => setCharge({ ...charge, note: e.target.value })} maxLength={200} /></div>
           <button type="submit" className="btn btn--primary" disabled={chargeAdd.isPending}>{t('billing.addCharge')}</button>
-          <p className="hint">{t('billing.chargeHint')}</p>
+          {/* What the chosen option will actually do, then the standing caveat about credits and voiding.
+              Said per choice rather than as one paragraph covering both: the old single hint described the
+              period behavior as though it were the only one. */}
+          <p className="hint">
+            {isCredit ? t('billing.chargeWhenCreditHint') : charge.bill === 'now' ? t('billing.chargeWhenNowHint') : t('billing.chargeWhenPeriodHint')}
+            {' '}
+            {t('billing.chargeHint')}
+          </p>
         </form>
       </section>
 
@@ -474,9 +704,16 @@ export function FamilyBilling({ familyId, currency, focusStudentId }: { familyId
                     <td>{t(`billing.ch_${p.channel}`, p.channel)}</td>
                     <td>{formatDate(new Date(p.occurredAt as unknown as number).toISOString().slice(0, 10), dateFormat)}</td>
                     <td className="muted">{p.memo ?? ''}</td>
-                    {/* A card payment records itself, so there is no person to name — say so rather
-                        than leaving a blank cell that reads like missing data. */}
-                    <td className="muted">{p.by ?? t('billing.recordedAuto')}</td>
+                    {/*
+                        WHO TOOK THE MONEY — a person, or nobody.
+                        A card or kiosk payment records itself, so there is no person to name. It used to
+                        print `recorded_by_name` regardless, which for those rows is the channel word
+                        ('portal', 'autopay') — telling the office nothing the Channel column had not
+                        already said, and never showing the "Automatic" label written for exactly this.
+                        Keyed on whether the channel is one a PERSON can record, so the standing
+                        arrangement (a manual channel, stamped 'Standing arrangement') still names itself.
+                    */}
+                    <td className="muted">{MANUAL_CHANNELS.includes(p.channel as ManualChannel) && p.by ? p.by : t('billing.recordedAuto')}</td>
                     {/* Reverse is a LEDGER-ONLY action, so it is offered only where that is the whole
                         story. A card payment's money is at Stripe: reversing it here would re-open the
                         bill while the family stayed charged, and would then block the real refund. The

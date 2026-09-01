@@ -3,7 +3,7 @@ dist/
 packages/*/dist/
 packages/server/public/
 
-# Local data volume (SQLite DB, attachments, generated report/transcript PDFs — minors' PII)
+# Local data volume (the SQLite DB and its 30-minute snapshots — minors' PII and every payment record)
 data/
 packages/server/data/
 

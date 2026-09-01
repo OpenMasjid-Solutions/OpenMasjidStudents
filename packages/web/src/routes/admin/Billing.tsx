@@ -56,7 +56,7 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
   const reconcileStatusQ = trpc.billing.reconcileStatus.useQuery();
   const reconcileNow = trpc.billing.reconcileNow.useMutation();
 
-  // Charge items: the catalogue the one-off charges are applied from. A charge snapshots its label
+  // Charge items: the catalog the one-off charges are applied from. A charge snapshots its label
   // and amount when applied, so editing an item here never rewrites a charge already raised.
   const items = trpc.billing.chargeItemList.useQuery();
   const itemCreate = trpc.billing.chargeItemCreate.useMutation();
@@ -411,11 +411,17 @@ export function Billing({ canManagePlans }: { canManagePlans: boolean }) {
               </select>
             </div>
             <button type="submit" className="btn btn--primary" disabled={planCreate.isPending}>{t('billing.addPlan')}</button>
+            {/* Say it here, while the cadence is being chosen — not after a term's money has failed to
+                appear. Nothing in this app can raise a per-term invoice yet: the generator supports it,
+                but the period picker offers months only, so a per-term plan is configured, quoted at
+                zero in the year figure, and never billed. Better a sentence now than a family's fee
+                quietly uncollected for a term. */}
+            {plan.cadence === 'per_term' && <p className="hint" style={{ color: 'var(--color-warning)' }}>{t('billing.perTermNotBillable')}</p>}
           </form>
         )}
       </section>
 
-      {/* Charge items — the catalogue one-off charges are applied from (uniform, exam fee, trip…). */}
+      {/* Charge items — the catalog one-off charges are applied from (uniform, exam fee, trip…). */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head"><h2>{t('billing.items')}</h2></div>
         <p className="muted" style={{ fontSize: '0.88rem', marginBlockEnd: '0.6rem' }}>{t('billing.itemsHint')}</p>

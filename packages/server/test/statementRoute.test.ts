@@ -142,7 +142,7 @@ describe('GET /statements/family/:id — the access wall', () => {
     expect((await get(fam, { cookie: `${sessionsMod.COOKIE}=not-a-real-token` })).statusCode).toBe(403);
   });
 
-  it('404s an unknown family for an authorised caller', async () => {
+  it('404s an unknown family for an authorized caller', async () => {
     household();
     expect((await get('fam_nope', { cookie: cookieFor('finance') })).statusCode).toBe(404);
   });

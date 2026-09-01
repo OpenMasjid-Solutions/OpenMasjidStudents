@@ -42,7 +42,10 @@ export async function freshApp(opts: { fabric?: boolean; publicUrl?: string } = 
   dbmod.runMigrations(path.resolve(process.cwd(), 'drizzle'));
   const { appRouter } = await import('../src/trpc/router');
   const trpc = await import('../src/trpc/trpc');
-  return { appRouter, trpc, dbmod };
+  // Session minting/reading, for the tests that assert an account was actually SIGNED OUT — a revocation
+  // has no other observable effect, so `createSession` + `getSession` is the only way to see it.
+  const sessionsMod = await import('../src/auth/sessions');
+  return { appRouter, trpc, dbmod, sessionsMod };
 }
 
 export interface CtxOpts {

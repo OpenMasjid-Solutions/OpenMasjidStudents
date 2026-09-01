@@ -5,13 +5,13 @@
 
 **Branch:** `audit/security-2026-08-04` · **Audited at:** `66b75e9` (`main`, v0.44.0) · **Rebased onto:** `3a06857` · **Rollback tag:** `pre-audit-2026-08-04`
 
-`main` advanced during the audit (`3a06857` "Add acknowledgements and resource sponsors" — README only, no code). The branch was rebased onto it cleanly, and the full ship gate was re-run afterwards: `npm ci` exit 0, lint clean, 527 tests passing, build clean. Commit SHAs below are post-rebase.
+`main` advanced during the audit (`3a06857` "Add acknowledgments and resource sponsors" — README only, no code). The branch was rebased onto it cleanly, and the full ship gate was re-run afterwards: `npm ci` exit 0, lint clean, 527 tests passing, build clean. Commit SHAs below are post-rebase.
 
 **Not merged to `main` by me.** Pushing to `main` triggers `build-image.yml`, which pushes a multi-arch image to GHCR tagged both `:0.44.0` and `:latest` — a published artifact, and it would move the `:0.44.0` tag off the code actually released as v0.44.0. That is the one condition that overrides the instruction to push, so this is a PR.
 
 ---
 
-## Read this first — Tier 2 changes (behaviour-visible)
+## Read this first — Tier 2 changes (behavior-visible)
 
 ### 1. Changing a password now signs you out on your other devices — `1ddd980` [OMS-005]
 
@@ -23,9 +23,9 @@
 
 ### 2. A mismatched `currency` on `record-payment` now logs a warning — `77250d6` [OMS-015]
 
-**What changes:** one `WARN fabric:` line when a Fabric consumer sends a currency that isn't the school's. **No behaviour change on the money path** — the payment is still recorded exactly as before, deliberately (see the finding). If Donations or Kiosk send a currency at all, expect log noise; that noise *is* the finding.
+**What changes:** one `WARN fabric:` line when a Fabric consumer sends a currency that isn't the school's. **No behavior change on the money path** — the payment is still recorded exactly as before, deliberately (see the finding). If Donations or Kiosk send a currency at all, expect log noise; that noise *is* the finding.
 
-Nothing else in this batch alters an API response, a schema, or user-visible behaviour. **There are no database migrations in this run**, so there is no reverse migration to supply.
+Nothing else in this batch alters an API response, a schema, or user-visible behavior. **There are no database migrations in this run**, so there is no reverse migration to supply.
 
 ---
 
@@ -87,7 +87,7 @@ Audit count: **15 → 14**, high **7 → 6**.
 
 **Why it works:** the old code selected every row and dropped all but the target's on the next line, so >99% of the read was waste and the index (`payment_allocations_payment_idx`, already in the schema) could not be used. The predicate names exactly the payments the JS filter kept, so the selected set is identical by construction — and now it's an index seek. This matters because `generatePeriod` calls `reallocateStudent` once *per student*, making the nightly 02:00 run cost *students × all-allocations-ever* on a Raspberry Pi.
 
-**Verified — and I checked the test has teeth.** Added `test/reallocateScope.test.ts` (4 tests). Because the old code was behaviourally *correct* (just slow), this is not a fails-before/passes-after case; instead the test pins the invariant that makes SQL scoping safe. To prove it isn't vacuous I widened the predicate back to the whole table:
+**Verified — and I checked the test has teeth.** Added `test/reallocateScope.test.ts` (4 tests). Because the old code was behaviorally *correct* (just slow), this is not a fails-before/passes-after case; instead the test pins the invariant that makes SQL scoping safe. To prove it isn't vacuous I widened the predicate back to the whole table:
 
 ```
 $ # with the predicate removed (the dangerous mistake this guards against):
@@ -113,7 +113,7 @@ The test compares **row ids**, not totals — a delete-and-rebuild would produce
 
 **Changed:** all five actions in `build-image.yml` now reference full commit SHAs, with the resolved version in a trailing comment.
 
-**Why it works:** a tag is mutable and every step in that job holds `packages: write` plus a GHCR-scoped `GITHUB_TOKEN`. A SHA is immutable, so a repointed tag can no longer change what runs. Pinned to the SHAs the tags resolved to *today*, so behaviour is byte-for-byte what the last green run used — immutability only, no version change.
+**Why it works:** a tag is mutable and every step in that job holds `packages: write` plus a GHCR-scoped `GITHUB_TOKEN`. A SHA is immutable, so a repointed tag can no longer change what runs. Pinned to the SHAs the tags resolved to *today*, so behavior is byte-for-byte what the last green run used — immutability only, no version change.
 
 ```
 actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -137,7 +137,7 @@ Each SHA was resolved from the GitHub API (`repos/<a>/git/ref/tags/<t>`, derefer
    [SHA]  contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
 ```
 
-I did **not** also upgrade to the newer majors available (checkout v7, docker/* v4). That is a behaviour change I cannot verify here, since `build-image.yml` only runs on pushes to `main`.
+I did **not** also upgrade to the newer majors available (checkout v7, docker/* v4). That is a behavior change I cannot verify here, since `build-image.yml` only runs on pushes to `main`.
 
 ---
 
@@ -181,7 +181,7 @@ verify  Build      > tsc -p tsconfig.json
 
 PR checks: `verify` **pass**, `cla` **pass**. `build-image` correctly did **not** run — it triggers only on pushes to `main` and `v*` tags, never on a pull request.
 
-**One annotation, non-blocking:** `actions/checkout@v4.4.0` targets Node 20, which GitHub has deprecated, so the runner forces it onto Node 24. It works today. I pinned to the *current* `v4` SHA deliberately rather than jumping to `v5`/`v7`, because a major action bump is a behaviour change I could not verify before the workflow existed. Now that it does, bumping is a safe follow-up — noted in `ACTION_REQUIRED.md`.
+**One annotation, non-blocking:** `actions/checkout@v4.4.0` targets Node 20, which GitHub has deprecated, so the runner forces it onto Node 24. It works today. I pinned to the *current* `v4` SHA deliberately rather than jumping to `v5`/`v7`, because a major action bump is a behavior change I could not verify before the workflow existed. Now that it does, bumping is a safe follow-up — noted in `ACTION_REQUIRED.md`.
 
 **Known limitation, stated in the workflow itself:** this does not yet *block* a bad release. GitHub does not order independent workflows, so a red `verify` does not stop `build-image` from publishing. Gating needs a branch-protection rule requiring the `verify` check — admin-only, in `ACTION_REQUIRED.md`.
 
@@ -263,7 +263,7 @@ fast-uri         4.1.0 → 4.1.2    high      same, under fast-json-stringify
 brace-expansion  5.0.7 → 5.0.9    high      unbounded expansion OOM
 ```
 
-`find-my-way` is the only one touching runtime behaviour, and it is covered — the fabric provider tests and the new statement-route tests both drive real Fastify routing.
+`find-my-way` is the only one touching runtime behavior, and it is covered — the fabric provider tests and the new statement-route tests both drive real Fastify routing.
 
 **Verified from a clean `npm ci`:** exit 0, lint PASS, 475 + 52 tests passing, build PASS.
 
@@ -273,13 +273,13 @@ brace-expansion  5.0.7 → 5.0.9    high      unbounded expansion OOM
 
 I rated this Low and gated `setupRequired` to LAN origin. **I then reverted it**, because [`App.tsx:126`](../../packages/web/src/App.tsx#L126) reads the flag together with the origin to render `SetupOnLanNotice` — a purpose-built component with dedicated i18n copy ("*Set up the admin account from a device on the masjid's own Wi-Fi — for safety, the first admin can't be created over the internet*"). My change would have replaced that with a generic login form on a fresh install: no accounts to sign in with, no explanation.
 
-The disclosed bit is unactionable — `setup` refuses every non-LAN origin at the top of the handler. Trading it for a first-run screen that explains itself is the better call, and it was made deliberately. **Behaviour is identical to v0.44.0.** The commit adds only a comment recording that this was reviewed and kept, so the next reader doesn't repeat my mistake, and downgrades the finding to Info.
+The disclosed bit is unactionable — `setup` refuses every non-LAN origin at the top of the handler. Trading it for a first-run screen that explains itself is the better call, and it was made deliberately. **Behavior is identical to v0.44.0.** The commit adds only a comment recording that this was reviewed and kept, so the next reader doesn't repeat my mistake, and downgrades the finding to Info.
 
 ---
 
 ## Deferred, and why
 
-Each of these is a real finding I chose not to ship. In every case the reason is that I could not verify the fix, or the fix would break something, or the correct behaviour is a judgement call that is yours.
+Each of these is a real finding I chose not to ship. In every case the reason is that I could not verify the fix, or the fix would break something, or the correct behavior is a judgment call that is yours.
 
 | Finding | Severity | Why deferred |
 |---|---|---|
@@ -329,7 +329,7 @@ git revert c232305   # OMS-022  transitive dependency bumps  (then: npm install)
 git revert 77250d6   # OMS-015  currency warning
 git revert 0477f4f   # OMS-014  invite redirect through withBase
 git revert c39b714   # OMS-011 + OMS-012  statement escaping + CSP headers
-git revert 07a959c   # OMS-008  comment only (no behaviour to restore)
+git revert 07a959c   # OMS-008  comment only (no behavior to restore)
 git revert 1ddd980   # OMS-005  ← the Tier 2 one: restores sessions surviving a password change
 git revert b79d3d4   # OMS-016  removes the CI workflow
 git revert 1a991a0   # OMS-006  un-pins the Actions

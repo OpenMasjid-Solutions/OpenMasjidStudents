@@ -21,10 +21,12 @@ number can be restricted or banned. There is no way to make that risk zero.
 Everything below follows from that sentence. It is not boilerplate and it is not a caveat — it is the
 reason this app is built the way it is:
 
-- **We never touch the gateway.** OpenMasjidOS owns the connection and runs **one paced queue shared
-  by every app** — randomised gaps, typing indicators, per-recipient cooldowns, rolling hourly and
-  daily caps, quiet hours. That single queue is the entire defence for the masjid's number, and it
-  only works because no app goes around it.
+- **We never touch the gateway.** OpenMasjidOS owns the connection and the one queue every app shares,
+  and no app goes around it. **Since platform 0.51.1 that queue no longer PACES**, though: the
+  randomized gaps, per-recipient cooldowns, rolling caps and quiet hours are gone, and a typing
+  indicator is the only pause left. So the volume budget is now OURS (§2a, `WA_CAP_DEFAULTS`: 12
+  parent messages an hour, 60 a day) — a change of owner, not of the rule: the masjid's number is
+  still the thing being protected.
 - **The caps belong to the NUMBER, not to us.** Every other installed app draws on the same allowance.
   Nothing here is designed as a broadcast, and the one bulk action we do have (§6) is capped per press
   and says so on screen.
@@ -117,33 +119,248 @@ Also possible: `400` (bad number, empty text, WhatsApp not set up, queue full), 
 declare `whatsapp: true`), `429` (slow down). None is retried here — all four are the platform
 protecting the masjid's number, and a retry loop is the opposite of what they are asking for.
 
-**`queued` is not `sent`**, and the gap is bigger than "a moment". The platform serialises every
-sender — OS alerts and every app — behind one queue and applies, in this order:
+**`queued` is not `sent`.** The platform serializes every sender — OS alerts and every app — behind one
+queue.
+
+> **The table below is HISTORY as of platform 0.51.1**, kept because it is what the caps we now enforce
+> ourselves were modeled on, and because an install on an older platform still meets it. Everything in
+> it except the typing indicator has been removed platform-side; the volume budget is ours now (§2a).
+
 
 | | Default |
 | --- | --- |
-| **Quiet hours** — checked FIRST, queued never dropped | **21:00–07:00** |
-| Warm-up ramp on a freshly linked number | 7 days, scaling the caps |
-| Rate caps | 12/hour, 60/day · groups 4/hour, 10/day |
-| Per-recipient cooldown | 60s (per group: its own) |
-| Gap between messages | 6–20s, randomised |
+| Warm-up ramp on a freshly linked number | 7 days, in thirds: ×0.25 to day 2.33, ×0.5 to 4.67, ×0.75 to 7, then full |
+| Rate caps — individuals | 12/hour, 60/day |
+| Rate caps — groups | 4/hour, 10/day, tracked separately and global across apps |
+| Per-recipient cooldown | 60s |
+| Per-group cooldown | 1800s (30 min) |
+| Gap between messages | 6–20s randomized (6 + up to 14 jitter, 3s floor) |
 
-So **a receipt queued at 03:00 arrives at 07:00**, not at 03:05 — which looks exactly like "it doesn't
-send" if a screen has implied minutes. That is why the settings copy names quiet hours explicitly
-rather than saying "give it a minute", and why the log's hint spells out what *Queued* means. Nothing
-blocks on a send, no screen says "sent", and no flow waits for one to arrive.
+The caps are a **range an admin can move in either direction**, not a ratchet: they can be raised as
+well as lowered, to a hard ceiling of 60/hour and 500/day. Plus a typing indicator scaled to the
+message length, presence set online while working, and a contacts check before a first contact.
 
-The status endpoint returns only `{available, reason}` — the limits are not exposed to apps, so this
-app cannot show the masjid's actual window and says "9pm–7am unless your admin changed it".
+**THERE ARE NO QUIET HOURS** (platform 0.51.1). There were — 21:00–07:00 — and they were removed for
+two reasons, one of them a real outage on a live install.
+
+The design reason: the window applied to every message on the shared queue, **including staff
+alerts**, and there is no per-message urgency flag in the contract (`{to, text}` is the whole of it).
+So a declined card at nine on a Sunday evening was held until seven the next morning — the exact
+scenario §9 of CLAUDE.md gives as the *reason* staff carry a number at all ("it reaches a treasurer's
+phone and does not reach their inbox"). Our doctrine and the platform's default contradicted each
+other, and the platform was the one holding the message.
+
+The outage: the window was evaluated in **UTC** while the masjid was not (the container's `TZ` was
+unset), so for a US-Eastern masjid it landed at 16:00–02:00 local and held every afternoon and evening
+message. And the queue was **memory-only**, so each container restart destroyed whatever was waiting.
+Either alone is survivable; together they produced messages accepted, logged as `queued`, and never
+delivered — for over a day, with no error anywhere. One test message that happened to dodge a restart
+arrived at 03:00 local, which is 07:00 UTC: the end of the window, and the signature of the whole bug.
+
+What the platform changed in 0.51.1: the window is gone entirely (no setting, no held state), the
+queue is **persisted** and restored at boot, the pacing history is persisted too (it is the ban-risk
+budget, and a restart loop that forgot its own sends did not really have caps), and the pacer is
+clock-agnostic beyond `now`. Held messages older than 24 hours are dropped as `expired` rather than
+sent stale. **The backlog from before the fix is gone** — it was never durable — so anything a masjid
+was waiting on has to be re-triggered.
+
+A COMMAND REPLY BYPASSES THE QUEUE and always did (`replyTo` → `sendImmediate`), skipping the
+cooldown and, formerly, quiet hours — though it still spends the hour's and the day's budget. Worth
+knowing because it is a diagnostic: "`!stats` replies but nothing else arrives" localises a fault to
+the queue rather than the gateway, which is exactly how the outage above was narrowed down.
+
+**A send to the gateway's own linked number is refused** at the door now (0.51.1). It used to be
+accepted and delivered nowhere, because WhatsApp treats it as the phone's own notes — so an admin
+testing against the masjid's own number got silence that looked identical to a broken feature.
+
+**There is no "send this one immediately" flag, and asking for one is settled** (0.51.0-dev.6). We
+asked; the answer was no, and it was the right answer. With all pacing gone the only delay left is a
+typing indicator sized to the message, which is already a few seconds — and the flag could only either
+skip that (the last thing making the traffic look human) or jump a queue every app shares, which every
+app would then set. If urgency ever needs expressing it belongs on the shared queue where the total
+traffic is visible, never as a per-caller privilege.
+
+## 2a. VOLUME IS OURS NOW (0.51.0-dev.5)
+
+**The platform stopped pacing anything in 0.51.1.** Gone: quiet hours, the hourly and daily caps, the
+per-recipient cooldown, the 30-minute group cooldown, the group caps, the warm-up ramp, and the random
+6–20s gap. A typing indicator sized to the message is the only pause left. Anything handed over goes
+out within seconds.
+
+That was right for the platform — its own pacing was causing head-of-line blocking across every app,
+which is what made one group image able to stall every masjid notification for half an hour — and it
+moves the entire responsibility here. **This app is the shape that gets a number banned if nobody is
+holding it:** `billing/invoices.ts` loops every household on an invoice run, and `billing/pastDue.ts`
+loops the whole chase list. Two hundred messages to two hundred numbers in one burst, from a client
+WhatsApp does not permit, is how a masjid loses the number their families reach them on — permanently.
+
+So `whatsapp/index.ts` holds its own budget:
+
+| | Default | Where |
+| --- | --- | --- |
+| Parent messages per hour | 12 | `WA_CAP_DEFAULTS`, overridable per install |
+| Parent messages per day | 60 | same |
+
+**The defaults are the platform’s own former figures, deliberately.** They were its considered
+judgment about what a linked number tolerates, so inheriting them means the platform removing its cap
+changed nothing about what this app actually sends until an office decides otherwise.
+
+**The ledger is `whatsapp_log`**, not a counter. Every send is already a row with a timestamp, so
+counting them is the rate limit and there is no second place for the two to disagree — and it survives
+a restart for free, which is not incidental: half of the platform’s own outage was pacing state that a
+container restart discarded.
+
+**What a capped message costs is small, and it is why a hard cap is affordable here.** Every parent
+event exists on EMAIL too and defaults there (§9). A refused WhatsApp is a notice that arrived on one
+channel instead of two — a degraded nicety, not a lost notification.
+
+**What is NOT capped, and why:**
+
+- **Staff and group alerts.** A handful of recipients. A declined card must never be dropped because
+  an invoice run spent the budget first; starving the alert channel to protect the bulk one is exactly
+  the wrong way round. Tested.
+- **A test send and the missing-email outreach.** Both are a person pressing a button, and the outreach
+  is already bounded at 50 per press with the screen saying so. They COUNT toward the budget — real
+  traffic on the number — but are never refused, because a control whose purpose is to prove the
+  channel works must not be silently disabled by a quota. Tested.
+
+A spent budget appears in the settings screen’s "why is nothing sending?" list (`cap_hour` /
+`cap_day`) and writes a log row per household. A cap that silently truncates an invoice run is the
+same invisible-failure shape this release spent its time removing.
+
+**A STORM-PRONE ALERT SPEAKS ONCE PER HALF HOUR, AND SAYS HOW MANY IT HELD** (0.51.0-dev.6,
+`alerts/index.ts` `STORM_WINDOW_MS`). The platform removed the 60-second per-recipient cooldown that
+had been absorbing per-external-failure alerts — Kiosk found out what that had been hiding when an
+expired key meant one message per person who tried to give, all through jummah. Three of ours are the
+same shape:
+
+| Alert | Why it can storm |
+| --- | --- |
+| `lookup-lockout` | One per Student ID locked. The per-ID guard is no bound against the very thing it detects — a sweep locks a new ID every few minutes, so fifty locked IDs was fifty alerts. |
+| `payment-recovered` | Raised **per PaymentIntent** inside the reconcile loop, and a first reconcile looks back 35 days. A masjid whose broker path had been broken gets one per recovered payment. |
+| `login-blocked` | One per account name. Bounded by the number of real staff accounts, so small — same class, cheap to include. |
+
+Not a blanket cooldown: two refunds in an afternoon are two things an office needs to see, so only
+events that can fire faster than a person can cause them are listed. The gate is applied before ANY
+fan-out — email, platform channel, webhook, staff WhatsApp and groups — because all five have the same
+problem with fifty copies of one sentence, and gating one channel would leave an inbox filling while
+the phone stayed quiet.
+
+**The held count is the point, not a consolation.** For a sweep the number IS the signal — "one ID was
+locked" and "forty-seven were" call for different reactions — so a suppressed alert increments a
+counter and the next one through reports it, on the public text as well as the private one (a count
+names nobody). The state lives in the settings table rather than memory, because holding pacing state
+in memory across restarts is precisely the mistake that cost the platform a week.
+
+**A refusal keeps the platform’s own sentence.** A 400 or 403 carries a plain-language `error` — "That
+phone number needs a country code", "That is the number WhatsApp is linked to", "That group has not
+been approved" — and each names something an admin can fix in a minute. This used to reduce all of
+them to `http_400`; the sentence now goes in the log row, because recording the code and discarding
+the reason is how a diagnosable refusal becomes indistinguishable from a lost message.
 
 **One recipient per call**, by the API's design. We loop where we must and the queue paces it — but
 the shape of every feature here is "one parent at a time", never a broadcast.
+
+**What became of it** (0.51.0 here, needs platform **0.51.1+**):
+
+```
+POST /api/fabric/whatsapp        → 202 { "queued": true, "id": "wam_…" }   ← `id` is new
+GET  /api/fabric/whatsapp/status/<id>
+                                 → 200 { id, state, reason?, at, target }
+                                        state = queued | sent | failed | expired
+                                 → 404   past the end of the platform's 200-message buffer, or not ours
+```
+
+This is what finally lets the queue log finish its sentences, and it exists because the outage above
+was undiagnosable from this side: our records said we handed the message over and there was nothing
+anywhere able to contradict them. `whatsapp_log.platform_id` stores the id and
+`refreshWhatsappOutcomes` polls every **15 minutes**. It was five, to beat a 200-record ring shared
+across every app that a single invoice run could fill on its own — our own reports are what surfaced
+that, and platform 0.51.1-dev.8 made it **500 per app, kept 24 hours**, with **reads on their own
+600/minute budget** so a polling burst can no longer refuse a send. A day of this app's traffic is
+capped at 60 parent messages, so it fits several times over and the race is gone.
+
+Three rules in that poller, each one earned:
+
+- **Oldest first, bounded per pass.** The rows about to fall off the end of the buffer are the old
+  ones, and a cap stops a backlog turning one tick into hundreds of requests at a platform that may
+  already be unwell.
+- **A 404 settles the row as `unknown`** (`reason: outcome_unknown`), never as `failed` — see §2b. It
+  means an evicted record, an id that was never ours, or a platform without the route, and has never
+  meant "not delivered"; writing `failed` printed **Failed** beside messages that had most likely
+  arrived. Settling it is still right: left alone the row would be re-asked every few minutes forever.
+- **Anything else leaves the row alone.** An unreachable platform must never be written down as a
+  delivery failure.
+
+Support is advertised as `outcomes: true` on the capability GET, and **an absent field means false** —
+the platform's own convention, and the same one `media` uses. On an older platform every row stops at
+`queued` and the settings screen says why, because a missing outcome otherwise reads as a message that
+never went.
+
+## 2b. A `sent` THAT WAS NOT SENT (platform 0.51.2)
+
+A masjid's WhatsApp session expired on its own — the way WhatsApp Desktop signs itself out. OpenMasjidOS
+did not notice. Apps kept getting `202 {queued}`, the gateway kept accepting messages, and every one was
+recorded **`sent`**. In the gateway's own UI they showed as sent to the right chat and were never
+delivered. It ran for over a day.
+
+The platform now detects that within about ten minutes and **holds** messages instead of losing them. Two
+consequences for this app, and one of them is a correction to something we had wrong:
+
+**`GET /api/fabric/whatsapp/suspect`** hands back the windows it was wrong about — `{from, to, count}` in
+epoch ms, scoped to our app id, on the **read** budget (600/min) so polling costs no sends. We ask hourly
+and once at boot, and again whenever an admin presses Re-check. The platform cannot resend those messages
+itself: it deletes a message's contents the moment it hands them over, deliberately, so a child's name and
+a family's fees are not sitting on disk. We still have the source data, so the decision is ours.
+
+**Our answer is to re-label, not to resend** (`whatsapp/suspect.ts`). A covered row stops saying `Sent`
+and becomes `unknown` — "May not have arrived" in the queue log — and the settings screen says how many
+and about what. Three reasons, and the second is the substantive one:
+
+1. The platform asked callers not to auto-resend, and it is right: whatever we resend goes through the
+   same paced queue on a number that has just been re-linked, which is when it is watched hardest.
+2. **Every parent event here exists on email too**, sent from one place (`mail/notify.ts`). That is the
+   same argument that made a hard send cap affordable (§2a): a suspect WhatsApp is *a notice that arrived
+   on one channel instead of two*. For any household with an address on file, the notice ARRIVED.
+3. **We could not do it faithfully anyway** — `whatsapp_log` never stores a body (§4), so a "resend"
+   would be a freshly rendered *different* message under the same event name.
+
+So the screen names the households with **no email address** separately. For them WhatsApp was the only
+channel and the notice is genuinely lost; that set is usually tiny, and the office already has the
+outreach button and a telephone. It is computed as it stands NOW rather than as it stood then, which the
+screen says rather than hides.
+
+**MATCHED BY ID, NOT BY CLOCK** (platform 0.51.1-dev.13). A window now names the specific messages it was
+wrong about, and that removes a whole class of error rather than tidying one: `from`/`to` are when the
+PLATFORM reported those messages sent, while our `created_at` is when WE handed them over, with the paced
+queue sitting between the two — so a message queued just before a window and sent inside it was missed,
+and one queued inside it but sent afterwards was marked when it should not have been. Wrong at both edges.
+The id list is capped at 500 per window, and a `truncated: true` falls back to the time range, which is
+complete by construction; the range path also stays for platforms older than dev.13. The window's `cause`
+(`session-expired`, `needs-relink`, `key-rejected`, `unknown`) is stored and printed, because an office
+that knows the session signed itself out knows what to check, and a bare count sends them looking.
+`ok: true` is read as well: an explicit `false` on a 200 is a refusal wearing a success and must not read
+as an all-clear — the field exists because this app asked for it — while an ABSENT `ok` is simply an older
+platform and stays trusted.
+
+**`unknown` is not `failed`, and that was a real defect of ours.** A 404 from `status/<id>` has always
+meant an evicted record, an id that was never ours, or a platform without the route — never "not
+delivered". The poller wrote `failed`/`outcome_unknown` while its own doc comment said `unknown`, so the
+office's log printed **Failed** beside messages that had most likely arrived, and anybody trusting their
+own screen would chase a family who had already been told. Both producers of `unknown` are now distinct by
+`reason` (`outcome_unknown` for the 404, `link_down` for a suspect window).
+
+**A queued message can now sit for a long time, on purpose.** If the link is down, messages are held until
+an admin re-links the phone and releases them. Nothing here assumes a queued row resolves quickly: the
+outcome poller has no age-based give-up, and the log is pruned at 120 days, which is far beyond any hold.
+That was already true; it is written down now because it stopped being incidental.
 
 ## 3. Where the code lives
 
 | Question | File |
 | --- | --- |
 | the two HTTP calls | `fabric/platform.ts` (`whatsappStatus`, `sendPlatformWhatsApp`) |
+| **what to do about a message reported sent that may not have arrived** | `whatsapp/suspect.ts` — the one place (§2b) |
 | **whether a message goes out at all, and to whom** | `whatsapp/index.ts` — the one place |
 | a stored number → E.164 | `whatsapp/numbers.ts` — the one place |
 | what a message says, and what an office may change | `whatsapp/templates.ts` |
@@ -226,7 +443,7 @@ of them.
 
 That is why it lives in `settings/` rather than in `whatsapp/`: `mail/notify.ts` and
 `whatsapp/index.ts` both ask the same module, and neither has to know about the other. The exception
-is honoured in **two** places on the email side — at each sender, and again in
+is honored in **two** places on the email side — at each sender, and again in
 `guardianEmailsForFamily`, which is the deliberate second line of the mail pause and would otherwise
 quietly cancel the exception the first one granted.
 
@@ -239,15 +456,20 @@ fails closed, and the settings screen says so rather than leaving it looking con
 `whatsapp.get` awaits `currentWhatsAppStatus()`, which answers from the five-minute cache and only
 crosses the network when that is cold or stale. It read the cache *alone* at first, and nothing primed
 the cache except a 15-minute cron — so for the first quarter of an hour after a container start the
-panel said "Not ready" and greyed out the Send-a-test button on an install that was working perfectly.
+panel said "Not ready" and grayed out the Send-a-test button on an install that was working perfectly.
 The scheduler now also primes it once at boot.
 
 ### The opt-out
 
 Stored on the **guardian** (`guardians.wa_opt_out`), set by a parent in the portal. The VALUE is per
 person, because it is a decision about a phone and a household has two of them: a mother opting out
-must not silence her husband's number. Nothing in the app overrides it — not the pause exception, not
-the office's outreach button, not an admin screen.
+must not silence her husband's number. **The office may set it too, from 0.51.0**
+(`people.guardianWhatsApp`, admin-only, its own procedure so the trail records `by: 'office'`) — because
+a parent says "stop messaging me" at pickup or down the phone, not by signing into a portal and finding a
+toggle, and an office that could not act on being told had only two options: keep messaging them, or
+delete the number and lose the ability to ring them at all. Whichever side sets it, it is the same one
+flag, and nothing overrides it — not the pause exception, not the office's outreach button, not the test
+student.
 
 **Any adult on the household can set it, for anyone on that household.** The parent portal is a
 HOUSEHOLD, not a personal account: a father activates it, a mother activates it with her own email,
@@ -266,7 +488,7 @@ GET  /api/fabric/whatsapp/groups   → { "groups": [{ "id": "…@g.us", "label":
 POST /api/fabric/whatsapp          → { "group": "…@g.us", "text": "…" }   (`group` in place of `to`)
 ```
 
-The list **is** the authorisation: an id we did not get from it is refused `403`, approval can be
+The list **is** the authorization: an id we did not get from it is refused `403`, approval can be
 withdrawn at any moment, and a *confirmed* empty list means the feature is hidden rather than shown
 broken.
 
@@ -295,12 +517,11 @@ per-alert round trip would draw on that same shared 120/min budget. A refusal la
 `failed` with the status. `groupIsApproved()` is the one place the question is answered for the paths
 that *do* ask (`groupSet`, and the per-group test, which used to skip it).
 
-**What a group post costs.** Groups have their own budget — **4 an hour and 10 a day**, one post to the
-same group every **30 minutes**, shared with every other app on the masjid's number — and the platform
-**delays** rather than drops. So the failure to warn an office about is not "the alert vanished" but
-"Monday's alert arrived Wednesday, behind Sunday's receipts", which looks like nothing at all. The
-screen says so next to the matrix, and names `payment-received` as the one event that will fill a day's
-budget by itself.
+**What a group post costs.** The platform's own group caps and its 30-minute per-group cooldown went
+with the rest of its pacing in 0.51.1 (§2a), so a group post is no longer delayed — and it is
+deliberately not capped on our side either, because a handful of staff recipients must not be starved by
+an invoice run. What remains worth warning an office about is VOLUME rather than delay: the screen names
+`payment-received` as the one event that will fill a group with one message per payment on a busy Sunday.
 
 **A group is a STAFF channel in this app** — a masjid's finance group getting every payment alert. It
 is the fifth fan-out of `alertStaff` (alerts/index.ts), beside the office's email addresses, the
@@ -311,7 +532,7 @@ other 199 members'.*
 
 - **No parent event can reach a group, and nothing free-typed can either.** There is no composer. The
   seven parent events are each about one household, so none of them is offered here; a group's
-  subscription list is the staff alert catalogue and nothing else.
+  subscription list is the staff alert catalog and nothing else.
 - **Its own path, all the way down.** Per-family messages call `sendPlatformWhatsApp`, which has no
   parameter that can name a group; group alerts call `sendPlatformWhatsAppGroup`, which has no
   parameter that can name a person. A receipt cannot reach a group by mistake because there is no
@@ -346,7 +567,7 @@ nothing honest to send:
 - §7 forbids a PDF renderer and headless Chromium (this runs on a Pi), so the statements, invoices and
   ID sheets — the only documents we have — **cannot be rasterised**. They are print-CSS HTML by design.
 - What is left is a bill, and a bill as an image is worse than a bill as a sentence: it names a child
-  and their fees inside a 2 MB blob that sits in the platform's memory through quiet hours, on a queue
+  and their fees inside a 2 MB blob that sits in the platform's memory until the queue drains, on a queue
   capped at four images **platform-wide**, and **a failed image is never downgraded to its caption** —
   so the notice simply does not arrive, and we were told `202` and cannot know.
 
@@ -355,7 +576,7 @@ already the place the bill lives.
 
 ## 5b. Admin commands — one command, and it only reads (0.50.0-dev.15)
 
-An authorised admin messages the masjid's own number with `!students` and OpenMasjidOS runs a command we
+An authorized admin messages the masjid's own number with `!students` and OpenMasjidOS runs a command we
 declared. **The platform owns everything except the doing**: who may run what, the numbered menu, the
 confirmation step, the formatting. We are handed a command id and asked to answer in plain text.
 
@@ -386,7 +607,7 @@ Open the app to see who is behind.
 **EVERY LINE IS A COUNT OR A TOTAL, and that is the invariant rather than a style choice.** Alerts name
 children now (§5a, §9) because they go to addresses and numbers an admin configured, one event at a
 time. A command reply is a different animal: it lands in a WhatsApp thread that keeps a copy forever, on
-whichever phone is authorised *today*. That is the platform's own stated reason for refusing to expose
+whichever phone is authorized *today*. That is the platform's own stated reason for refusing to expose
 app logs, and it applies just as well to a roster of families who are behind — so the reply says how
 many and how much, and points at a screen behind a login for who. `test/commands.test.ts` asserts a
 child's name never appears in it, however overdue they are.
@@ -440,9 +661,9 @@ Recorded here so the design starts from it rather than discovering it. Verify ag
   with our own expiry. For this app that is not a nicety: a flow like "record a payment → which student?
   → how much?" that wrote a row at step two and then went silent would leave money attributed to
   nobody, and the ledger's whole design is that a payment is immutable once written (§9). The sender is
-  also re-authorised every turn, so a permission removed mid-conversation takes effect at once.
+  also re-authorized every turn, so a permission removed mid-conversation takes effect at once.
 
-## 6. The two things an office presses
+## 6. The three things an office presses
 
 **Send a test** — goes to the test student's household, which is the one household that gets through
 the pause, and sends on **both channels**: an email, and a WhatsApp when the gateway is ready. It
@@ -462,11 +683,33 @@ channel can only carry a short note), and is **editable** by the office with `[s
 parents to ask for one email address doubles the cost to the masjid's number for nothing.
 
 Capped at **50 households per press**, and the screen reports how many are left. That cap is stated out
-loud rather than hidden: handing the queue two hundred messages in one go is precisely the behaviour
+loud rather than hidden: handing the queue two hundred messages in one go is precisely the behavior
 that gets a number restricted.
 
 It respects the pause, and says so with the way out — set a test student and try it on one household
 first.
+
+**Send the onboarding message** (0.51.0, `people/onboarding.ts`) — the explain-what-this-is note, from
+the Students tab to everyone / a course / a class / picked students, or from one household's record.
+Both channels, one message per household, **every adult with a number** on it.
+
+That last part is the one place it deliberately differs from the outreach above, which picks a single
+adult. The outreach asks a question and wants one answer. This is a notice, and on WhatsApp part of the
+notice is **which number the madrasah writes from** — a mother whose handset never got that message
+still has an unknown number texting her about her children's fees, which is what a cautious person
+blocks. That sentence is its own editable box and is appended on WhatsApp only; in an email it would be
+describing a channel the reader is not on.
+
+**What it must not say, and why the design is the enforcement.** It carries no Student ID, no balance
+and no card — not by convention but because the tag list has no tag for any of them (§9's rule), so an
+office cannot put one in even by accident. What it does instead is point at the **family sheet**, which
+carries all of it and is handed over in person. A message that helpfully included the ID would be
+putting the whole payment credential (§14) on the channel this document opens by calling the weakest.
+
+**Bounded at 50 households per press, with the remainder reported** — the same trade and the same
+number as the outreach, for the same reason. No per-event switch, because it is a button and not an
+event (like the test send). It respects **both** pauses independently, and the screen names whichever
+one is on: they are separate switches and either alone means a family hears nothing.
 
 ## 7. Numbers
 
@@ -507,14 +750,23 @@ the feature not existing. It says when the ticks will not fire yet instead.
 `users.phone` was deliberately dropped once, with the schema comment saying why: "the app never
 contacts staff by phone, so holding one would be personal data collected for no purpose". That reason
 no longer holds — a declined card at nine on a Sunday evening reaches a treasurer's phone and does not
-reach their inbox — so the column is back **with** a purpose. A number with one is minimisation
+reach their inbox — so the column is back **with** a purpose. A number with one is minimization
 satisfied; a number without one is what the old rule forbade, and still is.
 
 A staff WhatsApp carries the alert's `text` — the wording that may name a household and an amount —
-and **not** the de-identified `publicText`. §14's line is around *third-party sinks*: a masjid webhook
-is usually a Slack channel, and the platform's alert delivery is not ours to reason about. A number an
-admin typed, on a gateway the masjid runs itself, is the same audience and the same actionability
-requirement as their inbox. A Student ID and card details are still forbidden, exactly as in the email.
+and **not** the de-identified `publicText`. §14's line is around *third-party sinks*: the platform's own
+alert delivery is not ours to reason about, and a masjid webhook goes wherever OpenMasjidOS was pointed,
+usually a Slack channel whose membership this app cannot see. A number an admin typed, on a gateway the
+masjid runs itself, is the same audience and the same actionability requirement as their inbox. A Student
+ID and card details are still forbidden, exactly as in the email.
+
+Since 0.51.0-dev.17 that argument needs restating, because the webhook is no longer the fixed contrast
+case it was written against. An office may switch **its own webhook** to the naming text for payment
+notices (CLAUDE.md §9). So the frame is not "one channel may name a family and the others may not" — it
+is that **a sink we cannot see is de-identified until somebody who can see it says otherwise**, per
+event, admin-only and audited. Two channels now sit on that footing: a WhatsApp group, where the admin's
+`detail` switch chooses, and the webhook. The platform alert channel is the one that stays absolute,
+because no admin here is in a position to vouch for where it ends up.
 
 The parent pause does **not** apply to staff alerts: it is a switch about writing to families.
 
@@ -550,12 +802,13 @@ could not resolve is not offered at all, since one that renders empty leaves a h
 | `[balance]` | what the household owes right now — **derived**, computed at send time (§9) |
 | `[portal]` | a pay-here line, or nothing when there is no public address yet |
 | `[email]` | the "we've emailed you the full details" line — only for a recipient who has one |
+| `[behind]` | only the children whose bills are past due, by first name — offered on `past-due` alone, and never a substitute for `[children]` (whatsapp/templates.ts) |
 
 `autopay-failed` and `autopay-stopped` are two texts behind one event switch. They are genuinely
 different messages, and an office rewriting one almost always wants to rewrite the other differently;
 merging them behind a tag would have made both worse.
 
-The test message and the staff alert are **not** editable: the first exists to be recognisable as a
+The test message and the staff alert are **not** editable: the first exists to be recognizable as a
 test, and the second is our own operational wording rather than the madrasah's voice to a parent.
 
 ### The seven parent events

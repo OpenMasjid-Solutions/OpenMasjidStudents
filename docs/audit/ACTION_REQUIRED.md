@@ -127,7 +127,7 @@ The first CI run emitted one non-blocking annotation:
 
 > Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: `actions/checkout@11d5960a…`
 
-I pinned every action to the SHA its **existing** tag resolved to, so this branch changed immutability and nothing else — a major action bump is a behaviour change, and before `ci.yml` existed there was no way to verify one. Now there is. Current majors at audit time: `checkout` v7.0.1, `docker/setup-qemu-action` v4.2.0, `docker/setup-buildx-action` v4.2.0, `docker/login-action` v4.6.0, `docker/build-push-action` v7.3.0. Bump them on a branch, let `verify` run, and for `build-image.yml` confirm the multi-arch push still works before tagging a release.
+I pinned every action to the SHA its **existing** tag resolved to, so this branch changed immutability and nothing else — a major action bump is a behavior change, and before `ci.yml` existed there was no way to verify one. Now there is. Current majors at audit time: `checkout` v7.0.1, `docker/setup-qemu-action` v4.2.0, `docker/setup-buildx-action` v4.2.0, `docker/login-action` v4.6.0, `docker/build-push-action` v7.3.0. Bump them on a branch, let `verify` run, and for `build-image.yml` confirm the multi-arch push still works before tagging a release.
 
 ### 4.4 Consider a `renovate.json` or Dependabot config
 
@@ -257,4 +257,4 @@ State these back to me if any is wrong — a couple change my conclusions.
 4. **Donations and Kiosk are the only Fabric consumers**, and both are same-org and trusted-ish. I treated a valid app secret as a trusted caller, which is why [OMS-020] and the `lines` duplicate-id edge are rated Info/low rather than higher.
 5. **The masjid LAN is semi-trusted.** Admin is LAN-only *by design*, so anyone on the Wi-Fi is in the admin threat surface. Your compose comments already flag firewalling the published port on an internet-facing host; I assumed that is understood and did not raise it as a finding.
 6. **English-only is intentional for v1.** I treated the forced `language: 'en'` as correct (it is — it guards against a stale `ar`/`ur` setting `dir="rtl"` on an English UI) and reported only that CLAUDE.md claims shipped RTL support. If Arabic is on the near roadmap, [OMS-019] is a planning item rather than a docs fix.
-7. **No runtime verification was possible.** I did not run the container, drive a browser, or touch Stripe test mode. Everything shipped is verified by the test suite, the typechecker, and the build — which is why anything needing observed runtime behaviour was deferred rather than guessed.
+7. **No runtime verification was possible.** I did not run the container, drive a browser, or touch Stripe test mode. Everything shipped is verified by the test suite, the typechecker, and the build — which is why anything needing observed runtime behavior was deferred rather than guessed.

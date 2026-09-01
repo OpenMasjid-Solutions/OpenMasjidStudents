@@ -24,6 +24,7 @@ import {
   invoiceItems,
   invoices,
   payments,
+  paymentAllocations,
   charges,
   classes,
   guardianUsers,
@@ -37,11 +38,25 @@ import { generateUniqueStudentCode } from '../billing/studentCodes';
 import { displayName } from '../people/names';
 import { familyLabel, mergeDuplicateGuardians, mergeDuplicateContacts } from '../people/household';
 import { suggestSiblingGroups } from '../people/siblingSuggest';
+import { AUDIENCE, householdsFor, resolveAudience } from '../structure/audience';
+import { familyRecipients } from '../whatsapp';
+import { mailAvailable, sendOnboarding } from '../mail/notify';
+import { getParentMailPaused, getWhatsApp } from '../settings';
 import type { Tx } from '../billing/ledger';
 import { audit } from '../audit';
 import { IMPORT_FIELDS, IMPORT_EXAMPLE_ROWS, validateRows, commitRows, type ImportRow } from '../people/import';
 import { defaultSchoolId, resolveSchoolScope, schoolIdForClass } from '../schools';
 import { billStudentFrom } from '../billing/joinMidYear';
+
+/**
+ * How many households one press of the onboarding button writes to.
+ *
+ * Fifty, the same as the missing-email outreach, and for the same reason: the sending allowance belongs
+ * to the masjid's phone NUMBER and is shared with every other app on the server, so a burst of two
+ * hundred is how that number gets restricted — permanently. A madrasah onboarding its whole roster
+ * presses this a few times over a few hours, which is also closer to how a person would send them.
+ */
+const ONBOARDING_BATCH = 50;
 
 // ── input helpers ────────────────────────────────────────────────────────────
 const REQ_NAME = z.string().trim().min(1).max(120);
@@ -107,16 +122,18 @@ const PERIOD_KEY = z.string().trim().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
  * household gets the same treatment as one starting a new one. Returns the outcome for the form to
  * report: silently creating five invoices, or silently creating none, are both bad answers.
  */
-function billFrom(studentId: string, fromPeriod: string | undefined, actor: ReturnType<typeof auditActor>): { billed?: { created: number; periods: string[]; reason?: string } } {
+function billFrom(studentId: string, fromPeriod: string | undefined, actor: ReturnType<typeof auditActor>, firstMonthCents?: number | null): { billed?: { created: number; periods: string[]; reason?: string; firstMonthAdjusted?: boolean } } {
   if (!fromPeriod) return {};
-  const r = billStudentFrom(studentId, fromPeriod);
+  // The agreed figure for their first month, when the office named one — a child starting on the 15th is
+  // often charged part of that month (`adjustFirstMonth` in billing/joinMidYear.ts).
+  const r = billStudentFrom(studentId, fromPeriod, new Date(), { firstMonthCents });
   // Audited only when it actually billed something — a refused or empty catch-up is the form's business
   // to report, not a money event to record.
   if (r.created) {
     audit(actor, 'invoice.backfillStudent', {
       entity: 'student',
       entityId: studentId,
-      detail: { from: fromPeriod, created: r.created, periods: r.periods },
+      detail: { from: fromPeriod, created: r.created, periods: r.periods, firstMonthCents: firstMonthCents ?? null },
     });
   }
   return { billed: r };
@@ -368,11 +385,14 @@ export const peopleRouter = router({
         classId: ID.optional(),
         /** A month to bill them from, for a child who has been attending a while (§ BILL_FROM). */
         billFromPeriod: PERIOD_KEY.optional(),
+        /** What their FIRST month should come to, when it is not the plan's own amount — a part month.
+         *  Non-negative: a first invoice worth less than nothing is not a thing an office means. */
+        firstMonthCents: z.number().int().min(0).max(100_000_000).optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
       const r = createStudentRow(input, auditActor(ctx));
-      return { ...r, ...billFrom(r.id, input.billFromPeriod, auditActor(ctx)) };
+      return { ...r, ...billFrom(r.id, input.billFromPeriod, auditActor(ctx), input.firstMonthCents) };
     }),
 
   /**
@@ -382,7 +402,7 @@ export const peopleRouter = router({
    * family, which is what makes the guardians and emergency contacts already on file apply to them
    * too. Nothing is copied per-student; they hang off the family, so linking IS the sharing.
    *
-   * With no link, a fresh family is created for this child and labelled from their surname. Nobody is
+   * With no link, a fresh family is created for this child and labeled from their surname. Nobody is
    * asked to name it: a family is plumbing that connects siblings, not a record an office maintains.
    */
   studentAdd: adminProcedure
@@ -402,6 +422,9 @@ export const peopleRouter = router({
         linkToStudentId: ID.optional(),
         /** A month to bill them from, for a child who has been attending a while (§ BILL_FROM). */
         billFromPeriod: PERIOD_KEY.optional(),
+        /** What their FIRST month should come to, when it is not the plan's own amount — a part month.
+         *  Non-negative: a first invoice worth less than nothing is not a thing an office means. */
+        firstMonthCents: z.number().int().min(0).max(100_000_000).optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
@@ -425,7 +448,7 @@ export const peopleRouter = router({
       // Outside the transaction above, deliberately: the child existing is not conditional on the
       // catch-up succeeding, and a backfill that hit the billing floor should report that rather than
       // roll back a student the office just added.
-      return { ...r, familyId, familyLabel: familyLabel(familyId), ...billFrom(r.id, input.billFromPeriod, auditActor(ctx)) };
+      return { ...r, familyId, familyLabel: familyLabel(familyId), ...billFrom(r.id, input.billFromPeriod, auditActor(ctx), input.firstMonthCents) };
     }),
 
   /**
@@ -755,6 +778,17 @@ export const peopleRouter = router({
       /** Config rows that will be removed along with them. */
       feeAssignments: db.select({ id: studentFees.id }).from(studentFees).where(eq(studentFees.studentId, s.id)).all().length,
       pendingCharges: db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), ne(charges.status, 'invoiced'))).all().length,
+      /**
+       * What a FORCED delete would destroy, in money (0.51.0-dev.14). Not a blocker — it is what the
+       * confirmation has to be able to say out loud, because "this student has been billed" is not the
+       * same warning as "this erases $1,240 of recorded payments".
+       */
+      paidCents: db
+        .select({ amountCents: payments.amountCents })
+        .from(payments)
+        .where(eq(payments.studentId, s.id))
+        .all()
+        .reduce((n, r) => n + r.amountCents, 0),
     };
   }),
 
@@ -766,12 +800,77 @@ export const peopleRouter = router({
    * Their fee assignments and any not-yet-invoiced charges go with them, in ONE transaction, since the
    * RESTRICT constraints would otherwise block the delete. Audited with the counts (never the name).
    */
-  studentDelete: adminProcedure.input(z.object({ studentId: ID })).mutation(({ ctx, input }) => {
+  studentDelete: adminProcedure.input(z.object({ studentId: ID, force: z.boolean().optional() })).mutation(({ ctx, input }) => {
     const s = requireStudent(input.studentId);
     const invoiceLines = db.select({ id: invoiceItems.id }).from(invoiceItems).where(eq(invoiceItems.studentId, s.id)).all().length;
     const invoicedCharges = db.select({ id: charges.id }).from(charges).where(and(eq(charges.studentId, s.id), eq(charges.status, 'invoiced'))).all().length;
     const bills = db.select({ id: invoices.id }).from(invoices).where(eq(invoices.studentId, s.id)).all().length;
     const paymentRows = db.select({ id: payments.id }).from(payments).where(eq(payments.studentId, s.id)).all().length;
+
+    /**
+     * ERASE A BILLED STUDENT ANYWAY — a deliberate, admin-only exception to §9 (0.51.0-dev.14).
+     *
+     * §9 says money is soft-deleted and money-path FKs are RESTRICT, and that remains the rule for every
+     * other path in this app. This is the one door out of it, and it exists because the alternative was
+     * worse in practice: an install being set up bills a test roster by accident (the nightly job needs no
+     * help), and a madrasah was then stuck with children who could only ever be *withdrawn* — permanent
+     * clutter on every screen, with real invoices behind them, because the app had no way to say "this was
+     * never a student".
+     *
+     * WHAT MAKES IT SAFE ENOUGH TO OFFER, since it genuinely destroys ledger history:
+     *
+     *  • It is never the default. Without `force` the refusals below are unchanged, so an ordinary Delete
+     *    click cannot do this. The UI only sends `force` from a second dialog that names the counts and
+     *    the money (`studentDeletable.paidCents`).
+     *  • Admin only, like the rest of this procedure. Finance runs the billing and cannot erase it.
+     *  • The AUDIT ENTRY IS WRITTEN FROM A SNAPSHOT TAKEN FIRST, and it carries the child's name and
+     *    Student ID as well as the counts. That row is the only trace left afterwards, so it has to be
+     *    able to answer "what was here?" — a bare `student.delete` with an id that no longer resolves
+     *    would document nothing.
+     *  • It does NOT touch Stripe. A refunded payment's row disappears while the refund at Stripe
+     *    remains, so the office is told that plainly rather than discovering it at reconciliation.
+     *
+     * ORDER IS THE WHOLE IMPLEMENTATION, because `foreign_keys` is ON and these are RESTRICT: allocations
+     * before payments and invoices; charges before invoice items (`charges.invoice_item_id` points at
+     * them); invoices last of the money rows, which cascades their items away. `carry_ins` cascades from
+     * the student. Anything out of order fails loudly inside the transaction rather than half-deleting.
+     */
+    if (input.force && (invoiceLines > 0 || invoicedCharges > 0 || bills > 0 || paymentRows > 0)) {
+      const before = {
+        name: s.fullName,
+        studentCode: s.studentCode,
+        familyId: s.familyId,
+        invoices: bills,
+        invoiceLines,
+        payments: paymentRows,
+        paidCents: db.select({ amountCents: payments.amountCents }).from(payments).where(eq(payments.studentId, s.id)).all().reduce((n, r) => n + r.amountCents, 0),
+        charges: db.select({ id: charges.id }).from(charges).where(eq(charges.studentId, s.id)).all().length,
+        feeAssignments: db.select({ id: studentFees.id }).from(studentFees).where(eq(studentFees.studentId, s.id)).all().length,
+      };
+      // Audited BEFORE the delete: this row outlives the record and is the only thing left that can say
+      // what was removed. (§14 — the trail is append-only and survives what it describes.)
+      audit(auditActor(ctx), 'student.deleteForced', { entity: 'student', entityId: s.id, detail: before });
+
+      const paymentIds = db.select({ id: payments.id }).from(payments).where(eq(payments.studentId, s.id)).all().map((r) => r.id);
+      const invoiceIds = db.select({ id: invoices.id }).from(invoices).where(eq(invoices.studentId, s.id)).all().map((r) => r.id);
+      db.transaction((tx) => {
+        // Allocations by BOTH sides: a row is pinned by its payment and by its invoice, and either one
+        // still standing blocks the delete below.
+        if (paymentIds.length) tx.delete(paymentAllocations).where(inArray(paymentAllocations.paymentId, paymentIds)).run();
+        if (invoiceIds.length) tx.delete(paymentAllocations).where(inArray(paymentAllocations.invoiceId, invoiceIds)).run();
+        tx.delete(payments).where(eq(payments.studentId, s.id)).run();
+        // Charges first: they reference invoice items, which the invoice delete is about to cascade away.
+        tx.delete(charges).where(eq(charges.studentId, s.id)).run();
+        tx.delete(invoices).where(eq(invoices.studentId, s.id)).run();
+        // Any stray line still naming this student on somebody else's invoice. Should be none — items are
+        // written with their invoice's own student — but the student delete is RESTRICT and would block.
+        tx.delete(invoiceItems).where(eq(invoiceItems.studentId, s.id)).run();
+        tx.delete(studentFees).where(eq(studentFees.studentId, s.id)).run();
+        tx.delete(students).where(eq(students.id, s.id)).run();
+      });
+      return { ok: true as const, forced: true as const, removed: before };
+    }
+
     if (invoiceLines > 0 || invoicedCharges > 0 || bills > 0) {
       throw new TRPCError({
         code: 'CONFLICT',
@@ -826,8 +925,9 @@ export const peopleRouter = router({
       if (input.name !== undefined) patch.name = input.name;
       if (input.phone !== undefined) patch.phone = blankToNull(input.phone);
       if (input.email !== undefined) patch.email = blankToNull(input.email);
-      // Which country this number belongs to (0.50.0). Deliberately NOT `waOptOut`: that is the
-      // guardian's own answer, given in the parent portal, and no office screen overrides it.
+      // Which country this number belongs to (0.50.0). Still deliberately NOT `waOptOut` — that has a
+      // procedure of its own (`guardianWhatsApp`) so the trail records who decided it, which a field
+      // buried in a general edit could never do.
       if (input.phoneCountry !== undefined) patch.phoneCountry = blankToNull(input.phoneCountry);
       db.update(guardians).set(patch).where(eq(guardians.id, g.id)).run();
       if (input.relation !== undefined) {
@@ -846,6 +946,35 @@ export const peopleRouter = router({
       audit(auditActor(ctx), 'guardian.update', { entity: 'guardian', entityId: g.id });
       return { ok: true as const };
     }),
+
+  /**
+   * Stop messaging this guardian on WhatsApp, or start again — from the OFFICE (0.51.0).
+   *
+   * Until now this was the parent's switch alone, and the reasoning was sound as far as it went: it is
+   * a decision about somebody's own phone, so it belongs to them. What that missed is how a parent
+   * actually says it. They say it at pickup, or down the phone, or to whoever is standing at the desk —
+   * not by signing into a portal and finding a toggle. An office that could not act on being told
+   * "please stop messaging me" had two options, both bad: keep messaging them, or delete the number and
+   * lose the ability to ring them at all.
+   *
+   * A PROCEDURE OF ITS OWN rather than a field on `guardianUpdate`, for the same reason a payment
+   * reversal is not an edit: the question "who decided this?" has to be answerable. The audit detail
+   * carries `by: 'office'`, and the portal's own `messagingSet` stays exactly as it was, so the trail
+   * distinguishes a parent's choice from the office's record of one.
+   *
+   * The RULE THIS DOES NOT BREAK: nothing overrides an opt-out (§9). This sets the same one flag the
+   * parent sets, so the effect of turning it on is identical however it got there — the pause exception,
+   * the outreach button and the test student still do not reach an opted-out person. Turning it back ON
+   * is allowed for the same reason it is allowed in the portal (an office asked to resume, a number
+   * changed hands), and it is audited just as loudly.
+   */
+  guardianWhatsApp: adminProcedure.input(z.object({ id: ID, optOut: z.boolean() })).mutation(({ ctx, input }) => {
+    const g = db.select({ id: guardians.id }).from(guardians).where(eq(guardians.id, input.id)).get();
+    if (!g) throw new TRPCError({ code: 'NOT_FOUND', message: 'Guardian not found.' });
+    db.update(guardians).set({ waOptOut: input.optOut, updatedAt: now() }).where(eq(guardians.id, g.id)).run();
+    audit(auditActor(ctx), 'guardian.whatsapp', { entity: 'guardian', entityId: g.id, detail: { optOut: input.optOut, by: 'office' } });
+    return { ok: true as const };
+  }),
 
   /** Link an existing guardian to another family (guardians can span families). */
   guardianLinkFamily: adminProcedure
@@ -977,5 +1106,88 @@ export const peopleRouter = router({
     db.delete(emergencyContacts).where(eq(emergencyContacts.id, ec.id)).run();
     audit(auditActor(ctx), 'emergencyContact.remove', { entity: 'family', entityId: ec.familyId });
     return { ok: true as const };
+  }),
+
+  // ── The onboarding message (0.51.0) ───────────────────────────────────────
+  /**
+   * WHAT ONE PRESS WOULD DO, before it does it.
+   *
+   * A mass message to parents is not undoable — this is the one screen in the app where "are you sure?"
+   * has to be answered with numbers rather than a warning triangle. So the dialog asks first and gets:
+   * how many students the target names, how many HOUSEHOLDS that really is (the number that matters, since
+   * one message goes per household), how many can be reached on each channel, and how many the button
+   * would get to on this press.
+   *
+   * The students → households collapse is where "picking a child picks their siblings" is enforced rather
+   * than merely displayed (structure/audience.ts `householdsFor`).
+   */
+  onboardingPreview: adminProcedure.input(z.object({ target: AUDIENCE })).query(({ input }) => {
+    const studentIds = resolveAudience(input.target);
+    const familyIds = householdsFor(studentIds);
+    let withPhone = 0;
+    let withEmail = 0;
+    let optedOut = 0;
+    for (const fid of familyIds) {
+      const rs = familyRecipients(fid);
+      if (rs.some((r) => r.to && !r.optedOut)) withPhone++;
+      if (rs.some((r) => r.hasEmail)) withEmail++;
+      if (rs.length > 0 && rs.every((r) => r.optedOut || !r.to)) optedOut++;
+    }
+    return {
+      students: studentIds.length,
+      households: familyIds.length,
+      /** Households where at least one adult could be messaged / emailed. The rest need the office. */
+      withPhone,
+      withEmail,
+      /** Nobody on the household is reachable by WhatsApp — opted out, or no readable number. */
+      unreachableByPhone: optedOut,
+      batchSize: ONBOARDING_BATCH,
+      /** Both pauses, named separately: they are independent switches and either one alone is a reason
+       *  a family hears nothing (§9). The screen says which. */
+      whatsappPaused: getWhatsApp().paused,
+      mailPaused: getParentMailPaused(),
+      mailReady: mailAvailable(),
+    };
+  }),
+
+  /**
+   * Send it — one message per household, on both channels (mail/notify.ts `sendOnboarding`).
+   *
+   * BOUNDED PER PRESS, and the leftover is reported rather than hidden. Exactly the outreach's trade
+   * (trpc/whatsapp.ts `OUTREACH_BATCH`): handing the queue two hundred messages in one go is the behavior
+   * that gets a masjid's number restricted, and refusing mid-run instead would truncate a roster
+   * silently — the invisible failure this release has spent its time removing. So the bound is visible at
+   * the button, and pressing again sends the next batch.
+   *
+   * Admin only. Finance sees the Students tab in read-only mode and prints sheets from it; writing to
+   * every family at once is an office-policy action, and §5's wall is that finance never gets settings or
+   * anything that speaks for the madrasah.
+   */
+  onboardingSend: adminProcedure.input(z.object({ target: AUDIENCE })).mutation(async ({ ctx, input }) => {
+    const all = householdsFor(resolveAudience(input.target));
+    const batch = all.slice(0, ONBOARDING_BATCH);
+
+    let emailed = 0;
+    let messaged = 0;
+    const skipped: Record<string, number> = {};
+    for (const familyId of batch) {
+      const out = await sendOnboarding(familyId);
+      emailed += out.emailed;
+      messaged += out.messaged;
+      for (const [k, v] of Object.entries(out.skipped)) skipped[k] = (skipped[k] ?? 0) + v;
+    }
+    // Households and counts, never a name or a number — the trail records the decision, not its contents.
+    audit(auditActor(ctx), 'people.onboardingSend', {
+      entity: 'family',
+      detail: { kind: input.target.kind, households: batch.length, emailed, messaged },
+    });
+    return {
+      households: batch.length,
+      emailed,
+      messaged,
+      skipped,
+      /** Households this press did not get to. Reported rather than hidden — see ONBOARDING_BATCH. */
+      remaining: Math.max(0, all.length - batch.length),
+    };
   }),
 });

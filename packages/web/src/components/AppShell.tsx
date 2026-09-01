@@ -18,7 +18,7 @@ import { Dock, type DockItem } from './Dock';
 import { useWindows } from './Windows';
 
 /**
- * Loaded on demand, and that is not a micro-optimisation: WhatsNew inlines the whole CHANGELOG.md
+ * Loaded on demand, and that is not a micro-optimization: WhatsNew inlines the whole CHANGELOG.md
  * (~80 KB of text across 43 releases). In the main bundle that would be downloaded by every login on
  * every device — including a parent on a phone, who has no release notes button at all — to be read
  * roughly once per update. As its own chunk it costs nothing until someone opens the menu item.

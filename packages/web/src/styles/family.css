@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Copyright (C) 2026 OpenMasjid-Solutions */
-/* The parent portal — phone-first (CLAUDE.md §15): a single centred column, big tap targets,
+/* The parent portal — phone-first (CLAUDE.md §15): a single centered column, big tap targets,
    generous spacing. Reuses the org tokens + glass so it stays on-brand with the platform. */
 
 .family-shell {
@@ -59,9 +59,9 @@
 }
 .fam-tab {
   flex: 1 1 0;
-  /* Centred BY LAYOUT rather than by line-height (0.48.0): the tabs are equal widths, so the longest
+  /* Centered BY LAYOUT rather than by line-height (0.48.0): the tabs are equal widths, so the longest
      label decides the height of the row, and a label that wrapped to two lines used to sit high in a pill
-     sized for one. Flex centring holds whether a label takes one line or two, which also means a longer
+     sized for one. Flex centering holds whether a label takes one line or two, which also means a longer
      translation cannot break the bar. */
   display: inline-flex;
   align-items: center;
@@ -119,7 +119,7 @@
    A pop-up, on every signed-in surface — the parent portal AND the staff shells, since a finance manager
    taking cash on their phone wants it on their home screen too.
 
-   A BOTTOM SHEET rather than a centred box: it only ever appears on a phone, where the thumb is at the
+   A BOTTOM SHEET rather than a centered box: it only ever appears on a phone, where the thumb is at the
    bottom of the screen and every native equivalent of this slides up from there. `--fam-safe-b` carries the
    iOS home-bar inset so the buttons are not under it. */
 .install-scrim {
@@ -296,7 +296,7 @@
 .list-row .row-amt.neg { color: var(--color-danger, #e5645b); }
 .list-row .row-amt.pos { color: var(--color-success, #46c99a); }
 
-/* ── An itemised bill (0.43.0) ────────────────────────────────────────────────
+/* ── An itemized bill (0.43.0) ────────────────────────────────────────────────
    A bill that is tuition PLUS something else says so, and each line can be paid on its own. The row
    at the top is the bill; the list under it is what the bill is made of.
 
@@ -387,7 +387,7 @@
 }
 .year-chip-mark { font-size: 1.05rem; line-height: 1; font-weight: 700; }
 
-/* The same four meanings the office's grid uses, in the same colours, so a parent on the phone and the
+/* The same four meanings the office's grid uses, in the same colors, so a parent on the phone and the
    volunteer at the desk are describing one thing. `settled` is a month paid before this app arrived and
    `carried` is one still inside a carried-forward bill — both hollow, because neither is an invoice this
    app raised and collected. */
@@ -401,3 +401,11 @@
 .year-chip.is-void .year-chip-mark,
 .year-chip.is-none .year-chip-mark,
 .year-chip.is-before .year-chip-mark { color: var(--color-ink-faint); }
+
+/* The processing-fee breakdown on Pay now (0.51.0). A receipt shape rather than a paragraph: a parent
+   is checking three numbers add up, and the rule above the total is what makes it read as arithmetic
+   they can follow rather than a figure we asserted. Tokens only — see §15. */
+.pay-fee { padding: 0.6rem 0.75rem; border-radius: var(--radius-button); }
+.pay-fee-row { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.2rem 0; font-size: 0.9rem; }
+.pay-fee-row .tnum { font-variant-numeric: tabular-nums; }
+.pay-fee-total { border-block-start: 1px solid var(--glass-border); margin-block-start: 0.3rem; padding-block-start: 0.4rem; }

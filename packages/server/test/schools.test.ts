@@ -84,7 +84,7 @@ describe('two schools', () => {
   async function twoSchools() {
     const admin = caller('admin');
     const maktab = theOneSchool();
-    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz programme' })).id;
+    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz program' })).id;
     return { admin, maktab, hifz };
   }
 
@@ -202,7 +202,7 @@ describe('a household spans schools', () => {
   it('keeps siblings in different schools on ONE family with ONE balance', async () => {
     const admin = caller('admin');
     const maktab = theOneSchool();
-    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz programme' })).id;
+    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz program' })).id;
     const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 10000, cadence: 'monthly' });
 
     const yusuf = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: plan.id, schoolId: maktab });
@@ -239,7 +239,7 @@ describe('staff school access', () => {
 
   it('defaults to every school, so adding a second one locks nobody out', async () => {
     const admin = caller('admin');
-    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz programme' })).id;
+    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz program' })).id;
     const id = await staffUser('aisha');
 
     const list = await caller('finance', id).structure.schoolList();
@@ -250,7 +250,7 @@ describe('staff school access', () => {
   it('narrows the view when set, and clears back to all when emptied', async () => {
     const admin = caller('admin');
     const maktab = theOneSchool();
-    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz programme' })).id;
+    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz program' })).id;
     const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 35000, cadence: 'monthly' });
     await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: plan.id, schoolId: maktab });
     await admin.people.studentAdd({ fullName: 'Bilal Farooqi', feePlanId: plan.id, schoolId: hifz });
@@ -272,7 +272,7 @@ describe('staff school access', () => {
   it('refuses a write aimed at a school outside the restriction', async () => {
     const admin = caller('admin');
     const maktab = theOneSchool();
-    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz programme' })).id;
+    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz program' })).id;
     const id = await staffUser('umar', 'admin');
     await admin.staff.setSchools({ userId: id, schoolIds: [hifz] });
 
@@ -304,7 +304,7 @@ describe('removing a school', () => {
 
   it('refuses to delete one that still has students, and says what is in the way', async () => {
     const admin = caller('admin');
-    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz programme' })).id;
+    const hifz = (await admin.structure.schoolCreate({ name: 'Hifz program' })).id;
     const plan = await admin.billing.feePlanCreate({ name: 'Tuition', amountCents: 35000, cadence: 'monthly' });
     await admin.people.studentAdd({ fullName: 'Bilal Farooqi', feePlanId: plan.id, schoolId: hifz });
 

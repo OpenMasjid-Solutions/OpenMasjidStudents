@@ -31,6 +31,7 @@ import { familyBalance, studentBalance, familyStudentIds, splitAcrossFamily, rec
 import { invoiceLines } from '../billing/lines';
 import { formatMoney, MIN_PAYMENT_CENTS } from '../db/money';
 import { getSchoolName, getCurrency, getExternalPaymentsEnabled } from '../settings';
+import { feePolicyForConsumers } from '../payments/fees';
 import { audit } from '../audit';
 import { alertStaff, studentAmounts } from '../alerts';
 import { sendReceipt } from '../mail/notify';
@@ -78,7 +79,7 @@ const CONTRACT_V = 2 as const;
 
 /**
  * Turn an invoice-level allocation into the per-child split and the line-level instruction the ledger
- * honours — a best-effort HINT, never a reason to refuse money.
+ * honors — a best-effort HINT, never a reason to refuse money.
  *
  * The contract has taken `allocations: [{invoiceId, amountCents}]` since v1, and until 0.43.0 this app
  * parsed it and threw it away: a consumer asking for money to land on a particular bill got
@@ -175,6 +176,18 @@ export function registerFabricProvider(app: FastifyInstance): void {
       tagline: 'Pay tuition with your child’s Student ID',
       allowAdvance: true,
       minAmountCents: MIN_PAYMENT_CENTS,
+      /**
+       * The PROCESSING FEE POLICY (0.51.0, additive — `enabled: false` is the shape every existing
+       * consumer already behaves correctly for).
+       *
+       * The rule rather than a quote, because a consumer mints its own PaymentIntent and cannot ask us
+       * per keystroke. Two obligations come with reading it, both spelled out in
+       * docs/FABRIC_BILLING_CONTRACT.md §11.3: write the fee onto the intent as `students_fee_cents`,
+       * and report the NET in `record-payment`. A consumer that ignores this field entirely stays
+       * correct — it charges the tuition, reports the tuition, and the masjid absorbs Stripe's cut,
+       * which is exactly what happens today.
+       */
+      fee: feePolicyForConsumers(),
     });
   });
 
@@ -187,7 +200,7 @@ export function registerFabricProvider(app: FastifyInstance): void {
    * Returns a first name + last initial and NOTHING ELSE — no balance, no invoices, no siblings, no
    * family id. Keeping the confirm step this thin is what makes it safe to answer before the parent
    * has confirmed anything; `lookup` is where a balance appears. Capped per code by
-   * `codeLookupLimiter`, which is now the app's only defence on this surface.
+   * `codeLookupLimiter`, which is now the app's only defense on this surface.
    *
    * Also gated on the admin's external-payments toggle: with tuition payments switched off there is
    * no reason for this to answer at all.
@@ -348,12 +361,12 @@ export function registerFabricProvider(app: FastifyInstance): void {
    * stores it still gets something meaningful; `payments[]` carries the full per-child truth.
    *
    * 0.43.0 — `lines`: the parent ticked specific things to pay ("just the book fee"). It supersedes
-   * `students`, because the lines say whose bills they are, and it is HONOURED rather than merely
+   * `students`, because the lines say whose bills they are, and it is HONORED rather than merely
    * accepted: the choice is stored on the payment and re-applied every time allocation is recomputed,
    * so the line the parent chose still reads as settled on next month's statement.
    *
    * `allocations` (invoice-level, in the contract since v1) was parsed and then IGNORED before 0.43.0 —
-   * every such payment was silently allocated oldest-due-first instead. It now works, normalised into
+   * every such payment was silently allocated oldest-due-first instead. It now works, normalized into
    * the same line mechanism by filling the invoice's own lines in order.
    */
   app.post('/fabric/billing/record-payment', async (req, reply) => {
@@ -364,7 +377,21 @@ export function registerFabricProvider(app: FastifyInstance): void {
         idempotencyKey: z.string().min(1).max(128),
         familyId: z.string().min(1).max(64),
         studentId: z.string().min(1).max(64).optional(),
+        /**
+         * THE TUITION — what the family owed, never what the card was charged.
+         *
+         * Unchanged in meaning since v1, and saying so is the whole safety argument for how the
+         * processing fee (0.51.0) was added. A consumer that grosses up reports the NET here and the
+         * fee separately in `feeCents`; a consumer that knows nothing about fees keeps sending exactly
+         * what it always sent. The failure directions are deliberately lopsided: forgetting `feeCents`
+         * loses a statistic, whereas putting a GROSS in this field would credit Stripe's cut to the
+         * family as tuition and leave a credit that eats into next month's bill.
+         */
         amountCents: z.number().int().min(1).max(100_000_000),
+        /** Stripe's cut, if the consumer passed it to the payer. Recorded nowhere and allocated to
+         *  nothing — the ledger holds tuition only (payments/fees.ts) — so this is accepted for the
+         *  contract's sake and to keep a consumer honest about which figure `amountCents` is. */
+        feeCents: z.number().int().min(0).max(100_000_000).optional(),
         currency: z.string().max(10).optional(),
         channel: z.enum(['donations-web', 'kiosk']),
         occurredAt: z.string().max(40).optional(),

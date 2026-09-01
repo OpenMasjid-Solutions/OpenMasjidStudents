@@ -121,6 +121,29 @@ describe('retry ladder', () => {
     expect(enr(familyId).failureCount).toBe(1);
   });
 
+  /**
+   * A SECOND DELIVERY OF THE SAME SUCCESS MUST NOT HEAL A FAMILY WHO IS MEANWHILE DECLINING (0.51.0).
+   *
+   * `onAutopaySucceeded` had no status guard, while its mirror image `onAutopayFailed` has carried one
+   * from the start ("acts ONLY on a still-'pending' run"). So replaying a success that was already
+   * recorded — a reconcile pass over a PaymentIntent already in the ledger, or a retried confirm — reset
+   * `failureCount` to zero. On a family whose LATER run is mid-decline that hands them a fresh three
+   * attempts and pushes back the auto-disable, so a dead card keeps being presented.
+   */
+  it('ignores a replayed success on an already-charged run', async () => {
+    const { familyId } = await familyDue();
+    const runId = ap.createAutopayRun(familyId, 5000, '2026-07-01', 1)!;
+    ap.onAutopaySucceeded('pi_first', runId);
+    expect(app.dbmod.db.select().from(autopayRuns).where(eq(autopayRuns.id, runId)).get()!.status).toBe('charged');
+
+    // The family is now two failures into a LATER attempt.
+    app.dbmod.db.update(autopayEnrollments).set({ failureCount: 2, nextAttemptAt: '2026-08-05' }).where(eq(autopayEnrollments.familyId, familyId)).run();
+    // Reconciliation sees that first PaymentIntent again and reports it succeeded.
+    ap.onAutopaySucceeded('pi_first', runId);
+    // The ladder is untouched: this run was resolved long ago and says nothing about the current one.
+    expect(enr(familyId)).toMatchObject({ failureCount: 2, nextAttemptAt: '2026-08-05' });
+  });
+
   it('links a late success by run id and backfills the PI id, resetting an inflated ladder', async () => {
     const { familyId, studentId } = await familyDue();
     const runId = ap.createAutopayRun(familyId, 5000, '2026-07-01', 1)!; // pending, no PI id

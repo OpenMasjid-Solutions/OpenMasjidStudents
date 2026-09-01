@@ -9,11 +9,13 @@
  *     one but does not get to re-write what it says.
  *  2. THE REGISTRY IS THE ALLOW-LIST. An unknown box is refused at the boundary rather than stored and
  *     silently ignored — a client that made up a key would otherwise look like it had worked.
- *  3. The catalogue is SERVED, not hard-coded in the browser: keys, shipped defaults, tags and the length
+ *  3. The catalog is SERVED, not hard-coded in the browser: keys, shipped defaults, tags and the length
  *     cap all come from the server, so adding a sentence needs no change on the UI side.
  *  4. Reset means reset — every box, back to the shipped sentence.
  */
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { freshApp, makeCtx } from './harness';
 import { settings, auditLog, users, studentFees, feePlans, guardianFamilies, guardians, students, families } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
@@ -49,6 +51,27 @@ describe('settings.sheetText', () => {
     expect(r.overrides).toEqual({});
     expect(r.tags).toContain('website');
     expect(r.maxLength).toBeGreaterThan(300); // room for the longest shipped sentence
+  });
+
+  /**
+   * …and every box has a LABEL on the settings screen (0.51.0).
+   *
+   * The same gap the alert catalog had, in the same shape: Settings generates one field per key in the
+   * registry and titles it `settings.sheetText_<key>`, i18next renders a missing key AS the key rather
+   * than failing, and nothing anywhere fails a build. So adding a sentence here — `payFee` was the
+   * first since the convention existed — silently puts "settings.sheetText_payFee" in front of an admin.
+   *
+   * Reaching into the web package's `en.json` is deliberate: the registry lives on this side, the label
+   * lives on that one, and a test is the only place the two can be held together. See the equivalent in
+   * alerts.test.ts, which exists because `settings.ev_payment-refunded` reached a masjid's screen.
+   */
+  it('has a settings label for every box in the registry', () => {
+    const en = JSON.parse(readFileSync(path.resolve(__dirname, '..', '..', 'web', 'src', 'lib', 'i18n', 'en.json'), 'utf8')) as {
+      settings: Record<string, string>;
+    };
+    for (const key of text.SHEET_TEXT_KEYS) {
+      expect(en.settings[`sheetText_${key}`], `missing i18n key settings.sheetText_${key}`).toBeTruthy();
+    }
   });
 
   it('saves a box, reports it as this madrasah’s, and reverts it when cleared', async () => {

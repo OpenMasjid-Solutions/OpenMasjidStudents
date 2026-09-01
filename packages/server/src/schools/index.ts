@@ -7,7 +7,7 @@
  * WHY THIS IS NOT MULTI-TENANCY. CLAUDE.md §4 rules out multi-tenant anything, and this does not
  * breach it: one install is still one masjid, and schools share every setting, every staff account,
  * every fee plan, the Stripe account and the alert list. What a school scopes is deliberately just two
- * things — the school YEAR (a maktab on Sep→Jun beside a hifz programme running year-round) and the
+ * things — the school YEAR (a maktab on Sep→Jun beside a hifz program running year-round) and the
  * COURSE tree under it (so "Level 1" can name a room in each). A masjid that runs one school never has
  * to think about any of this.
  *
@@ -46,7 +46,7 @@ export type SchoolRow = { id: string; name: string; sortOrder: number; status: '
  * The tiebreak is creation, deliberately not name. Alphabetical ordering would mean adding a second
  * school could silently change which one is "first" — and since `defaultSchoolId()` is the first one,
  * that would repoint every student created without an explicit school. A masjid adding "Hifz
- * programme" beside its existing maktab must not find new children landing in the new school because
+ * program" beside its existing maktab must not find new children landing in the new school because
  * H sorts before M.
  */
 export function listSchools(includeArchived = false): SchoolRow[] {
@@ -64,7 +64,7 @@ export function listSchools(includeArchived = false): SchoolRow[] {
  * This exists because the first row of this list is the default school — the one every unscoped student,
  * year and course belongs to — so what decides the order decides that. Ordering ends in a name tie-break,
  * and with every school sharing `sortOrder: 0` a second school created in the same MILLISECOND as the
- * first would be sorted by name: "Hifz programme" beats "Main school", and adding it would silently move
+ * first would be sorted by name: "Hifz program" beats "Main school", and adding it would silently move
  * the default. That is the exact bug 0.47.0 fixed, coming back through the tie-break rather than through
  * the primary sort. CI found it; a fast machine is all it takes.
  *

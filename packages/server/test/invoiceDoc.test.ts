@@ -120,7 +120,7 @@ describe('the figures', () => {
     expect(d.lines.reduce((n, l) => n + l.balanceCents, 0)).toBe(d.outstandingCents);
   });
 
-  it('honours a payment directed at a specific line', () => {
+  it('honors a payment directed at a specific line', () => {
     const id = seed();
     pay('pay_1', 5000, { itemId: 'iti_2' }); // "this $50 is the book fee"
     const d = doc.collectInvoiceDoc(id)!;
@@ -215,7 +215,7 @@ describe('the masjid on the invoice', () => {
     expect(/<header>[\s\S]*contactline[\s\S]*<\/header>/.test(html)).toBe(false);
   });
 
-  it('uses the masjid’s colour and date format, like the other printed artifacts', () => {
+  it('uses the masjid’s color and date format, like the other printed artifacts', () => {
     const id = seed();
     expect(doc.buildInvoiceHtml(id, NOW)!).toContain('--teal:#0f766e');
     settingsMod.setAccentColor('#7c3aed');
@@ -225,7 +225,7 @@ describe('the masjid on the invoice', () => {
     expect(html).toContain('05/09/2026'); // the due date, written the masjid's way
   });
 
-  it('never lets a hand-edited colour row escape the style block', () => {
+  it('never lets a hand-edited color row escape the style block', () => {
     const id = seed();
     settingsMod.setSetting(settingsMod.SETTING_KEYS.accentColor, 'red; } body { display:none } .x{');
     const html = doc.buildInvoiceHtml(id, NOW)!;

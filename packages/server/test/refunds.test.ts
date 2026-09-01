@@ -243,7 +243,7 @@ describe('the list', () => {
      * The route describes how the money ARRIVED; it must not flip with the connection.
      *
      * It used to read `pi && stripeReady()`, so losing the Stripe keys for a minute (they come from the
-     * platform, §13.1) relabelled every card charge `manual` — and `manual` is the row that tells the
+     * platform, §13.1) relabeled every card charge `manual` — and `manual` is the row that tells the
      * office "the money still has to be handed back". Follow that and the family is paid twice.
      */
     const { familyId } = await household();

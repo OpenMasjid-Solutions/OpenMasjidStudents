@@ -181,7 +181,7 @@ describe('studentAdd — student-first, no family naming', () => {
     expect(b.familyId).not.toBe(a.familyId);
   });
 
-  it('a household of step-siblings is labelled with both surnames, not one of them', async () => {
+  it('a household of step-siblings is labeled with both surnames, not one of them', async () => {
     const admin = caller('admin');
     const planId = await aPlan(admin);
     const first = await admin.people.studentAdd({ fullName: 'Yusuf Ismail', feePlanId: planId });

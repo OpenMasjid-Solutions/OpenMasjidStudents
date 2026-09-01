@@ -33,7 +33,7 @@ export interface SuggestedStudent {
   fullName: string;
   studentCode: string | null;
   familyId: string;
-  /** The adults on that child's household — what the office recognises the family by. */
+  /** The adults on that child's household — what the office recognizes the family by. */
   guardianNames: string[];
   /** The shared detail, so the office can see WHY these two are together. */
   phone: string | null;
@@ -44,7 +44,7 @@ export interface SuggestedGroup {
   /** Stable id for React keys and for the "already handled" set: the sorted student ids. */
   key: string;
   reason: 'contact' | 'surname';
-  /** What the office will recognise: the shared number/email, or the surname. */
+  /** What the office will recognize: the shared number/email, or the surname. */
   label: string;
   students: SuggestedStudent[];
 }

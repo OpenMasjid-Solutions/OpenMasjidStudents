@@ -23,6 +23,7 @@ import {
   approvedGroups,
   groupIsApproved,
   testGroup,
+  capState,
   currentWhatsAppStatus,
   familyRecipients,
   familyVars,
@@ -46,6 +47,7 @@ import {
 import { ALERT_EVENTS } from '../alerts';
 import { audit } from '../audit';
 import { sendTestToHousehold } from '../mail/notify';
+import { acknowledgeSuspect, checkSuspectWindows, suspectSummary } from '../whatsapp/suspect';
 import { getCurrency, getSchoolName } from '../settings';
 import { formatDate } from '../settings/dates';
 import { formatMoney } from '../db/money';
@@ -56,7 +58,7 @@ import { fabricConfigured } from '../config';
  *
  * A real cap, stated out loud rather than hidden: the sending allowance belongs to the masjid's NUMBER
  * and is shared with every other app on the server, so handing the queue two hundred messages in one
- * go is precisely the behaviour that gets a number restricted. The screen reports how many are left so
+ * go is precisely the behavior that gets a number restricted. The screen reports how many are left so
  * nothing is silently dropped — press it again tomorrow.
  */
 const OUTREACH_BATCH = 50;
@@ -122,7 +124,7 @@ export const whatsappRouter = router({
    * cache and only crosses the network when that is cold or stale (0.50.0-dev.4). It read the cache
    * alone at first, which produced a real fault rather than a slow screen: nothing primed the cache
    * except a 15-minute cron, so for the first quarter of an hour after a container start the panel
-   * said "Not ready" and greyed out the Send-a-test button on an install that was working perfectly.
+   * said "Not ready" and grayed out the Send-a-test button on an install that was working perfectly.
    * One request on an admin settings render is the right trade for that.
    */
   get: adminProcedure.query(async () => {
@@ -132,6 +134,8 @@ export const whatsappRouter = router({
       ? db.select({ id: students.id, fullName: students.fullName, familyId: students.familyId, status: students.status }).from(students).where(eq(students.id, cfg.testStudentId)).get()
       : null;
     const status = await currentWhatsAppStatus();
+    /** What is left of today's and this hour's send budget (0.51.0-dev.5). */
+    const cap = capState();
 
     /**
      * WHY NOTHING IS SENDING (0.50.0-dev.5) — the diagnostic this screen should have had from the start.
@@ -152,6 +156,9 @@ export const whatsappRouter = router({
       if (!status.available) blockers.push(`gateway_${status.reason}`);
       if (!WA_PARENT_EVENTS.some((e) => cfg.events[e])) blockers.push('no_events');
       if (cfg.paused && !testFam) blockers.push('paused_no_test');
+      // A spent send budget stops every parent message just as completely as a switch being off, and
+      // it is the one blocker that appears on its own halfway through an invoice run (0.51.0-dev.5).
+      if (cap.blocked) blockers.push(`cap_${cap.blocked}`);
     }
 
     return {
@@ -161,7 +168,7 @@ export const whatsappRouter = router({
       /** True when the pause is on but a test household is set: not a blocker, but the screen should
        *  say plainly that only that household will hear anything. */
       pausedWithTest: cfg.paused && !!testFam,
-      /** The catalogues, so the UI hard-codes no event list (same rule as the alert screen). */
+      /** The catalogs, so the UI hard-codes no event list (same rule as the alert screen). */
       parentEvents: WA_PARENT_EVENTS,
       staffEvents: ALERT_EVENTS,
       status,
@@ -172,6 +179,9 @@ export const whatsappRouter = router({
        *  Said explicitly, because "paused, and the exception silently stopped working" is invisible. */
       testFamilyId: testFam,
       emailRequest: { text: getWhatsAppEmailRequest(), fallback: WA_EMAIL_REQUEST_DEFAULT, tags: [...WA_EMAIL_REQUEST_TAGS], maxLength: WA_TEXT_MAX },
+      /** The send budget and what is left of it — the platform caps nothing now, so this is the only
+       *  place an office can see the limit that is actually in force. */
+      cap,
     };
   }),
 
@@ -184,12 +194,16 @@ export const whatsappRouter = router({
       z.object({
         enabled: z.boolean().optional(),
         paused: z.boolean().optional(),
-        /** One event at a time, validated against the catalogue so a stale client cannot invent one. */
+        /** One event at a time, validated against the catalog so a stale client cannot invent one. */
         event: z.object({ id: z.enum(WA_PARENT_EVENTS), on: z.boolean() }).optional(),
         defaultCountry: z.string().trim().max(5).optional(),
         countries: z.array(z.string().trim().max(5)).max(20).optional(),
         /** '' clears it — the household stops being the exception to the pause. */
         testStudentId: z.string().trim().max(64).optional(),
+        /** The send budget. Bounded here AND clamped in the settings store — this is the setting whose
+         *  worst case is a number the masjid can never get back. */
+        hourlyCap: z.number().int().min(1).max(200).optional(),
+        dailyCap: z.number().int().min(1).max(1000).optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
@@ -205,6 +219,8 @@ export const whatsappRouter = router({
         if (!input.countries.every(isCountryCode)) throw new TRPCError({ code: 'BAD_REQUEST', message: 'A country code looks like +1 or +44.' });
         patch.countries = input.countries;
       }
+      if (input.hourlyCap !== undefined) patch.hourlyCap = input.hourlyCap;
+      if (input.dailyCap !== undefined) patch.dailyCap = input.dailyCap;
       if (input.testStudentId !== undefined) {
         if (input.testStudentId && !db.select({ id: students.id }).from(students).where(eq(students.id, input.testStudentId)).get()) {
           throw new TRPCError({ code: 'NOT_FOUND', message: 'That student isn’t on the roll.' });
@@ -273,7 +289,7 @@ export const whatsappRouter = router({
 
   // ── What each message says (0.50.0-dev.4) ─────────────────────────────────
   /**
-   * The wording of every parent message: the catalogue, the shipped sentences, this madrasah's own
+   * The wording of every parent message: the catalog, the shipped sentences, this madrasah's own
    * versions, the tags each one may use, and a live preview against a real household.
    *
    * The whole registry comes from the server (whatsapp/templates.ts owns it), so the UI hard-codes no
@@ -439,10 +455,21 @@ export const whatsappRouter = router({
     const emailed = await sendTestToHousehold(famId);
 
     let whatsapp: 'queued' | 'paused' | 'opted_out' | 'no_number' | 'failed' | 'not_ready' = 'not_ready';
+    /**
+     * WHICH PHONE SHOULD RING (0.51.0). The button reported only "queued", and a household routinely
+     * has two guardians — so an admin watching their own phone could be waiting on a number that was
+     * never written to, with the screen agreeing that everything worked. It goes to whichever guardian
+     * has a readable number, and now it says who and the last four digits.
+     *
+     * Live response only, never the log: §14 keeps numbers out of the trail, and this is being read by
+     * an admin who can already see the guardian's full number on their record.
+     */
+    let whatsappTo: { name: string; masked: string } | null = null;
     const status = await currentWhatsAppStatus();
     if (getWhatsApp().enabled && status.available) {
       const to = familyRecipients(famId).filter((r) => !!r.to && !r.optedOut);
       whatsapp = to.length ? await notifyGuardian('test', to[0], waTest()) : 'no_number';
+      if (to.length) whatsappTo = { name: to[0].name, masked: maskNumber(to[0].to) };
     }
 
     audit(auditActor(ctx), 'whatsapp.test', { entity: 'settings', detail: { emailed, whatsapp } });
@@ -455,7 +482,7 @@ export const whatsappRouter = router({
             : 'That didn’t reach anybody. Check that the household has an email address or a WhatsApp number we can read.',
       });
     }
-    return { emailed, whatsapp };
+    return { emailed, whatsapp, whatsappTo };
   }),
 
   // ── Staff alerts to a group (0.50.0) ──────────────────────────────────────
@@ -490,13 +517,13 @@ export const whatsappRouter = router({
     const subs = (id: string) => {
       const sub = cfg.groupAlerts[id];
       return {
-        // Filtered against the catalogue so a stale or hand-edited row cannot widen what a group hears.
+        // Filtered against the catalog so a stale or hand-edited row cannot widen what a group hears.
         events: (sub?.events ?? []).filter((e): e is (typeof ALERT_EVENTS)[number] => (ALERT_EVENTS as readonly string[]).includes(e)),
         detail: sub?.detail === true,
       };
     };
     return {
-      /** The catalogue, so the UI never hard-codes the event list (same rule as every other screen). */
+      /** The catalog, so the UI never hard-codes the event list (same rule as every other screen). */
       events: ALERT_EVENTS,
       /** Did OpenMasjidOS actually answer? False means "could not ask", never "you have none". */
       reachable: list.ok,
@@ -526,7 +553,7 @@ export const whatsappRouter = router({
     .input(
       z.object({
         groupId: z.string().trim().min(1).max(200),
-        /** Validated against the catalogue, so a stale client can never subscribe to an unknown id. */
+        /** Validated against the catalog, so a stale client can never subscribe to an unknown id. */
         events: z.array(z.enum(ALERT_EVENTS)).max(ALERT_EVENTS.length),
         detail: z.boolean().optional(),
       }),
@@ -635,5 +662,31 @@ export const whatsappRouter = router({
       reason: r.reason,
       at: r.createdAt,
     }));
+  }),
+
+  // ── Messages that may not have arrived (platform 0.51.2) ──────────────────
+  /**
+   * What the platform has admitted it was wrong about, and who it cost.
+   *
+   * Read-only and derived — nothing here is a stored count. The office acts on it with the buttons they
+   * already have (the missing-email outreach, or the phone), which is why this app resends nothing of its
+   * own accord; the reasoning is in whatsapp/suspect.ts and it is not a shortcut.
+   */
+  suspect: adminProcedure.query(() => suspectSummary()),
+
+  /** Poll now rather than waiting for the hourly tick — the same check, on demand, for an admin who has
+   *  just re-linked a phone and wants to know what it cost them. */
+  suspectCheck: adminProcedure.mutation(async () => checkSuspectWindows()),
+
+  /**
+   * "I have read this." Clears the banner and the marks' reason.
+   *
+   * The rows stay `unknown` rather than going back to `sent`: we still do not know that they arrived, and
+   * rewriting the log to tidy a screen is precisely the dishonesty this whole feature exists to remove.
+   */
+  suspectAck: adminProcedure.mutation(({ ctx }) => {
+    const cleared = acknowledgeSuspect();
+    audit(auditActor(ctx), 'whatsapp.suspectAck', { entity: 'settings', detail: { cleared } });
+    return { cleared };
   }),
 });

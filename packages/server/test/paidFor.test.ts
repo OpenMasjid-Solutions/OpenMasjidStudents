@@ -42,7 +42,7 @@ async function seed() {
   const fam = await admin.people.familyCreate({ name: 'Ismail' });
   const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
   const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
-  await admin.billing.chargeAdd({ studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
+  await admin.billing.chargeAdd({ bill: 'period', studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
   await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
   return { admin, familyId: fam.id, studentId: s.id };
 }

@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { freshApp, makeCtx } from './harness';
-import { users, guardians, guardianUsers, guardianFamilies, families } from '../src/db/schema';
+import { users, guardians, guardianUsers, guardianFamilies, families, sessions } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
@@ -30,7 +30,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   const { db } = app.dbmod;
-  for (const t of [guardianUsers, guardianFamilies, guardians, families, users]) db.delete(t).run();
+  for (const t of [sessions, guardianUsers, guardianFamilies, guardians, families, users]) db.delete(t).run();
 });
 
 /** The primary admin every install has, plus a caller acting as them. */
@@ -170,5 +170,51 @@ describe('role walls still hold', () => {
       makeCtx({ origin: 'tunnel', session: { role: 'admin', source: 'local', username: 'admin', userId: 'usr_admin1' } }).ctx,
     );
     await expect(overTunnel.staff.setRole({ userId: 'usr_x', role: 'finance' })).rejects.toThrow();
+  });
+});
+
+/**
+ * A PASSWORD RESET SIGNS THAT ACCOUNT OUT (§12, §14).
+ *
+ * `staff.resetPassword` was the only one of the three password-writing paths that did not revoke:
+ * `auth.changePassword` deletes the account's other sessions and `auth.resetConfirm` signs it out
+ * everywhere, while this wrote the new hash and stopped. Nothing else evicted it either — `getSession`
+ * re-checks the account's status and live role per request but never the password — so a cookie held by
+ * whoever the admin was locking out kept full API authority for the rest of its 12-hour life.
+ * `mustChangePassword` is not a substitute: it steers the honest user's browser and gates nothing.
+ */
+describe('resetting a password revokes that account', () => {
+  it('signs the target out everywhere', async () => {
+    const { caller } = seedAdmin();
+    const target = await caller.staff.create({ username: 'fatima', role: 'finance', tempPassword: PW });
+    const { token } = app.sessionsMod.createSession({ userId: target.id, role: 'finance', source: 'local', username: 'fatima' });
+    expect(app.sessionsMod.getSession(token)).not.toBeNull(); // control: it was live to begin with
+
+    await caller.staff.resetPassword({ userId: target.id, tempPassword: 'another-long-temp-password' });
+    expect(app.sessionsMod.getSession(token)).toBeNull();
+  });
+
+  it('does not sign OTHER accounts out', async () => {
+    const { caller } = seedAdmin();
+    const a = await caller.staff.create({ username: 'fatima', role: 'finance', tempPassword: PW });
+    const b = await caller.staff.create({ username: 'yusuf', role: 'finance', tempPassword: PW });
+    const other = app.sessionsMod.createSession({ userId: b.id, role: 'finance', source: 'local', username: 'yusuf' }).token;
+
+    await caller.staff.resetPassword({ userId: a.id, tempPassword: 'another-long-temp-password' });
+    expect(app.sessionsMod.getSession(other)).not.toBeNull();
+  });
+
+  /**
+   * Unlike `setRole` and `setStatus`, this procedure has no self guard and the UI offers it on every row
+   * including the caller's own — so an unconditional delete would log an admin out of the tab they are
+   * standing in. Same `keep` reasoning as `auth.changePassword`.
+   */
+  it("spares the admin's own cookie when they reset their own password", async () => {
+    const { id } = seedAdmin();
+    const { token } = app.sessionsMod.createSession({ userId: id, role: 'admin', source: 'local', username: 'admin' });
+    const self = app.appRouter.createCaller(makeCtx({ origin: 'lan', session: { role: 'admin', source: 'local', username: 'admin', userId: id }, token }).ctx);
+
+    await self.staff.resetPassword({ userId: id, tempPassword: 'another-long-temp-password' });
+    expect(app.sessionsMod.getSession(token)).not.toBeNull();
   });
 });

@@ -151,7 +151,7 @@ describe('the sheet itself', () => {
 describe('school scope', () => {
   it('shows one school’s roster when a school is asked for', async () => {
     const { admin } = await roster();
-    const hifz = await admin.structure.schoolCreate({ name: 'Hifz programme' });
+    const hifz = await admin.structure.schoolCreate({ name: 'Hifz program' });
     const other = await admin.structure.courseCreate({ name: 'Hifz', schoolId: hifz.id });
     await admin.structure.classCreate({ courseId: other.id, name: 'Group A' });
     await admin.people.importCommit({
@@ -164,7 +164,7 @@ describe('school scope', () => {
     expect(hifzOnly).toContain('Hafiza Child');
     expect(hifzOnly).not.toContain('Abrar Aadi');
     // …and the school is named, because with more than one there is something to disambiguate.
-    expect(hifzOnly).toContain('Hifz programme');
+    expect(hifzOnly).toContain('Hifz program');
 
     const everyone = idSheet.buildIdSheetHtml('all', unrestricted)!;
     expect(everyone).toContain('Hafiza Child');
@@ -174,15 +174,15 @@ describe('school scope', () => {
   /** A restriction narrows a view; it must not be widenable by editing a URL. */
   it('refuses a school the reader is not allowed, and narrows "all" to the ones they are', async () => {
     const { admin } = await roster();
-    const hifz = await admin.structure.schoolCreate({ name: 'Hifz programme' });
+    const hifz = await admin.structure.schoolCreate({ name: 'Hifz program' });
     const restricted = { allowed: [hifz.id], restricted: true };
 
-    // The default school holds the roster above; this reader may only see the hifz programme.
+    // The default school holds the roster above; this reader may only see the hifz program.
     const defaultSchool = (await admin.structure.schoolList()).schools.find((s) => s.id !== hifz.id)!;
     expect(idSheet.buildIdSheetHtml(defaultSchool.id, restricted)).toBeNull();
 
     const asAll = idSheet.buildIdSheetHtml('all', restricted)!;
     expect(asAll).not.toContain('Abrar Aadi');
-    expect(asAll).toContain('Hifz programme');
+    expect(asAll).toContain('Hifz program');
   });
 });

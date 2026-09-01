@@ -34,13 +34,15 @@ import {
   refundEmail,
   resetEmail,
   testEmail,
+  onboardingEmail,
   alertEmail,
   setEmailLogoUrl,
   setEmailContactLine,
 } from './templates';
 import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
-import { notifyFamily } from '../whatsapp';
+import { familyRecipients, familyVars, notifyFamily, notifyGuardian } from '../whatsapp';
+import { onboardingWhatsApp, renderOnboarding } from '../people/onboarding';
 import { pausedFor } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
 
@@ -303,7 +305,7 @@ export async function sendRefund(familyId: string, amountFormatted: string): Pro
  * Deliberately a test message rather than a fake receipt: a family who gets a realistic-looking
  * receipt for a payment nobody made will ring the office, which is the opposite of helpful.
  *
- * It goes through `guardianEmailsForFamily`, which honours the test-household exception — so this
+ * It goes through `guardianEmailsForFamily`, which honors the test-household exception — so this
  * proves the whole pause-exception path an office is trying to verify, not just the transport.
  */
 export async function sendTestToHousehold(familyId: string): Promise<number> {
@@ -315,6 +317,58 @@ export async function sendTestToHousehold(familyId: string): Promise<number> {
   let n = 0;
   for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) n++;
   return n;
+}
+
+/**
+ * THE ONBOARDING MESSAGE, on both channels, to one household (0.51.0).
+ *
+ * Here rather than in the router for the reason the whole file exists: a message that has to go out on
+ * email AND WhatsApp must fan out in one place, or the second channel is the one somebody forgets when
+ * the next call site is added (§9). The office presses one button; this is what "sent" means.
+ *
+ * WHY IT WRITES TO EVERY ADULT WITH A NUMBER, unlike the missing-email outreach, which deliberately picks
+ * just one. The outreach is a question — it wants one answer, and asking both parents doubles the cost to
+ * the masjid's number for nothing. This is a notice, and on WhatsApp part of the notice is *which number
+ * the madrasah writes from*. A mother whose phone never got that message still has an unknown number
+ * texting her about her children's fees, which is indistinguishable from a scam and gets blocked.
+ *
+ * NO PER-EVENT SWITCH ON EITHER CHANNEL, because this is not an event — it is a person pressing a button,
+ * like the test send and the outreach (whatsapp/index.ts `notifyGuardian`). It still honors the pause and
+ * the opt-out on both channels: `guardianEmailsForFamily` applies the mail pause and the test-household
+ * exception, and `notifyGuardian` applies the WhatsApp pause and refuses anyone who has opted out. A
+ * button in an admin screen does not outrank a parent saying no.
+ *
+ * It is NOT subject to the hourly/daily send budget, and it is bounded by the CALLER instead — the router
+ * sends a fixed number of households per press and reports what is left (trpc/people.ts). That is the same
+ * trade the outreach makes: refusing mid-run would truncate a roster silently, which is the invisible
+ * failure this release spent its time removing, so the bound is made visible at the button instead. These
+ * sends still COUNT toward the budget, because they are real traffic on the number.
+ */
+export async function sendOnboarding(familyId: string): Promise<{ emailed: number; messaged: number; skipped: Record<string, number> }> {
+  const vars = familyVars(familyId);
+  const out = { emailed: 0, messaged: 0, skipped: {} as Record<string, number> };
+
+  // WhatsApp first, and not for any technical reason: if only one channel is going to work, the office
+  // should see the phone result, which is the one they cannot check themselves.
+  for (const r of familyRecipients(familyId)) {
+    const outcome = await notifyGuardian('onboarding', r, onboardingWhatsApp(vars));
+    if (outcome === 'queued') out.messaged++;
+    else out.skipped[outcome] = (out.skipped[outcome] ?? 0) + 1;
+  }
+
+  if (mailAvailable()) {
+    const emails = guardianEmailsForFamily(familyId);
+    if (emails.length) {
+      refreshEmailLogo();
+      const m = onboardingEmail(renderOnboarding('subject', vars), renderOnboarding('body', vars));
+      for (const e of emails) if (await deliver(e, m.subject, m.text, m.html)) out.emailed++;
+    } else {
+      out.skipped.no_email = (out.skipped.no_email ?? 0) + 1;
+    }
+  } else {
+    out.skipped.no_transport = (out.skipped.no_transport ?? 0) + 1;
+  }
+  return out;
 }
 
 /** "Yusuf", "Yusuf and Maryam", "Yusuf, Maryam and Bilal" — a sentence, not a list dump. Mirrors the

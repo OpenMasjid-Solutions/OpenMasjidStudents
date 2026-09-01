@@ -44,7 +44,7 @@ import { DATE_FORMAT_SAMPLES, getDateFormat, parseDateInput, type DateFormat } f
  *  happen to share one, matching on a typed group key means the office maintains a second name for
  *  something it never names anywhere else, and either way a mistake is buried in a 200-row file
  *  instead of visible on a record. Linking two children takes one click and is unambiguous, so the
- *  import does the part a spreadsheet is good at and leaves the judgement to a person.
+ *  import does the part a spreadsheet is good at and leaves the judgment to a person.
  *
  *  The aliases are the headers real exports use, not the ones we would have chosen — "Birthday",
  *  "Homeroom" and "Relationship" are all QuickSchools' words, and matching them is the difference
@@ -53,6 +53,9 @@ export const IMPORT_FIELDS = [
   { key: 'fullName', label: 'Full name', required: true, aliases: ['name', 'full name', 'fullname', 'student', 'student name', 'first name', 'child', 'child name'] },
   { key: 'dob', label: 'Date of birth', required: false, aliases: ['dob', 'birthdate', 'birthday', 'date of birth', 'birth date'] },
   { key: 'className', label: 'Class', required: false, aliases: ['class', 'section', 'level', 'grade', 'homeroom'] },
+  // `programme` stays as an alias deliberately, even though this app writes American English
+  // throughout (0.51.0): an alias matches what the OFFICE typed in their own spreadsheet, not our
+  // wording, and a column headed "Programme" is one an unhelpfully large number of schools export.
   { key: 'courseName', label: 'Course', required: false, aliases: ['course', 'program', 'programme'] },
   { key: 'feePlanName', label: 'Fee plan', required: false, aliases: ['fee plan', 'plan', 'tuition plan'] },
   { key: 'amount', label: 'Amount', required: false, aliases: ['amount', 'paying', 'fee', 'tuition', 'monthly'] },
@@ -284,7 +287,7 @@ function resolveContacts(list: ImportContact[], placements: Placements): Resolve
 
 /** How a guardian's relation is STORED: the canonical code when the word is one the guardian form
  *  itself offers, else exactly what the file said. Free text is expected in this column and always
- *  has been; normalising the obvious cases just makes an imported record read like a typed one. */
+ *  has been; normalizing the obvious cases just makes an imported record read like a typed one. */
 function storedRelation(relation: string): string | null {
   const k = key(relation);
   if (!k) return null;
@@ -443,7 +446,7 @@ function resolveClass(L: ReturnType<typeof lookups>, className: string, courseNa
 export interface ImportOpts {
   defaultFeePlanId?: string | null;
   schoolId?: string | null;
-  /** Where each unrecognised relation label goes, keyed by the lowercased label. */
+  /** Where each unrecognized relation label goes, keyed by the lowercased label. */
   placements?: Placements;
 }
 
@@ -620,7 +623,7 @@ export function commitRows(rows: ImportRow[], opts: ImportOpts): CommitResult {
       // The kiosk ID is always generated here and never taken from the spreadsheet — an imported ID
       // could collide with an existing child's or be chosen to impersonate one.
       const studentCode = generateUniqueStudentCode(fullName);
-      // Normalised to ISO on the way in — storage is always ISO whatever the office types (dates.ts).
+      // Normalized to ISO on the way in — storage is always ISO whatever the office types (dates.ts).
       const dob = importDob(r.dob, getDateFormat()).iso;
       tx.insert(students)
         .values({

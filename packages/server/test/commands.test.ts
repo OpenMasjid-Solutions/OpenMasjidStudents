@@ -12,7 +12,7 @@
  * platform makes `commands` a reserved capability that cannot appear in `fabric.provides`.
  *
  * WHAT THE ANSWER MAY CONTAIN. The reply lands in a WhatsApp thread that keeps a copy forever, on
- * whichever phone is authorised today. So it is counts and totals and NEVER a list of who is behind —
+ * whichever phone is authorized today. So it is counts and totals and NEVER a list of who is behind —
  * the opposite of the alert emails, which name children now (§9) because an admin chose those
  * addresses one event at a time. That difference is the whole design and it is what these tests pin.
  */

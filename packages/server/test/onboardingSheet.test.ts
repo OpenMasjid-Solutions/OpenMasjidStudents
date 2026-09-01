@@ -54,9 +54,15 @@ beforeEach(() => {
   ]) db.delete(t).run();
   settingsMod.setSetting(settingsMod.SETTING_KEYS.externalPayments, '1');
   settingsMod.setSetting(settingsMod.SETTING_KEYS.selfRegistration, '1');
+  // Back to the shipped default between tests: the madrasah absorbs the processing fee. Without this a
+  // test that switches it on leaks a fee line into every sheet rendered after it.
+  settingsMod.setProcessingFee({ enabled: false, bankEnabled: false });
 });
 
-const ALL_ON = { card: true, external: true, selfRegister: true, receipts: true };
+// `fee: false` is the shipped default (the madrasah absorbs Stripe's cut), so every existing expectation
+// below is about a sheet with no fee line — which is what almost every install prints. The fee line has
+// its own describe block.
+const ALL_ON = { card: true, external: true, selfRegister: true, receipts: true, fee: false };
 const TS = new Date('2026-01-15T00:00:00Z');
 const NOW = new Date('2026-06-01T00:00:00Z');
 
@@ -168,7 +174,7 @@ describe('one sheet for the household', () => {
     child('stu_1', 'Yusuf Ismail', { code: 'YUS1234' });
     child('stu_2', 'Maryam Ismail', { code: 'MAR5678' });
     const out = (await html())!;
-    // One box per child, labelled with their first name so you can tell whose code is whose.
+    // One box per child, labeled with their first name so you can tell whose code is whose.
     expect(out.split('class="idcard"').length - 1).toBe(2);
     expect(out).toContain('<div class="lbl">Yusuf</div><div class="code">YUS1234</div>');
     expect(out).toContain('<div class="lbl">Maryam</div><div class="code">MAR5678</div>');
@@ -377,7 +383,7 @@ describe('it must not promise a payment route this install does not have', () =>
   it('always offers the office routes — they need no integration, only a person', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
-    const out = (await html({ card: false, external: false, selfRegister: false, receipts: true }))!;
+    const out = (await html({ card: false, external: false, selfRegister: false, receipts: true, fee: false }))!;
     expect(out).toContain('Cash, check, Zelle or bank transfer (ACH)');
     expect(out).toContain('through the office');
     // 0.48.0 wording: a parent is told a receipt is coming, not told to police the office. Both of the
@@ -391,7 +397,7 @@ describe('it must not promise a payment route this install does not have', () =>
     household();
     child('stu_1', 'Yusuf Ismail');
     // Receipts off (or no mail, or parent mail paused) — the office line still appears, without the
-    // sentence this install cannot honour.
+    // sentence this install cannot honor.
     const out = (await html({ ...ALL_ON, receipts: false }))!;
     expect(out).toContain('through the office');
     expect(out).not.toContain('receipt by email');
@@ -400,9 +406,92 @@ describe('it must not promise a payment route this install does not have', () =>
   it('does not describe a payment history the family could never have had', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
-    const out = (await html({ card: false, external: false, selfRegister: false, receipts: false }))!;
+    const out = (await html({ card: false, external: false, selfRegister: false, receipts: false, fee: false }))!;
     expect(out).toContain('Every payment the office has recorded for you');
     expect(out).not.toContain('the kiosk or the madrasah’s website');
+  });
+
+  /**
+   * THE PROCESSING FEE ON PAPER (0.51.0). The sheet is the artifact a family keeps and the only place
+   * they meet the cost while still CHOOSING how to pay — the portal discloses it once they already are.
+   * So the line has to appear when the fee is real, stay away when it is not, and carry a computed figure
+   * rather than a rate an office could mistype into the prose.
+   */
+  describe('the processing fee caveat', () => {
+    const feeOn = (patch: Record<string, unknown> = {}) => {
+      settingsMod.setProcessingFee({ enabled: true, cardPercentBps: 290, cardFixedCents: 30, bankEnabled: false, ...patch });
+    };
+
+    it('is absent when the madrasah absorbs the fee — which is every install by default', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      expect((await html())!).not.toContain('processing fee');
+    });
+
+    /**
+     * ON EACH ONLINE ROUTE, AND NOT ON THE OFFICE ONE. That asymmetry is the whole design: the caveat is
+     * a tail on the lines that can actually charge a fee, so the line that cannot says "not this one" by
+     * simply not carrying it. It was a bullet of its own at first, which gave one incidental fact the same
+     * weight as "here is how you pay".
+     */
+    it('rides on the portal, website and kiosk lines — never on the office line', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      feeOn();
+      const out = (await html({ ...ALL_ON, fee: true }))!;
+      const items = [...out.matchAll(/<li>(.*?)<\/li>/g)].map((m) => m[1]);
+      const withFee = items.filter((li) => li.includes('processing fee may apply'));
+      expect(withFee).toHaveLength(3);
+      expect(items.find((li) => li.includes('Cash, check, Zelle'))).not.toContain('processing fee');
+      // It is never its own item — that is the shape this replaced.
+      expect(items.some((li) => li.replace(/<[^>]*>/g, '').trim() === 'A payment processing fee may apply.')).toBe(false);
+    });
+
+    it('is italic, because it is an aside on the line rather than part of it', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      feeOn();
+      expect((await html({ ...ALL_ON, fee: true }))!).toContain('<em>A payment processing fee may apply.</em>');
+    });
+
+    it('is not printed when there is no online route to charge it on', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      feeOn();
+      // `payRoutes()` is the gate: the fee is switched on, but with no Stripe account and external
+      // payments off there is no way for a family to incur it, so telling them about it is a lie.
+      settingsMod.setSetting(settingsMod.SETTING_KEYS.externalPayments, '0');
+      expect(sheet.payRoutes().fee).toBe(false);
+      const out = (await html({ ...ALL_ON, card: false, external: false, fee: sheet.payRoutes().fee }))!;
+      expect(out).not.toContain('processing fee');
+    });
+
+    it('is the madrasah’s own wording, and can carry the real figure if they want it', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      feeOn();
+      settingsMod.setSheetTextOverrides({ payFee: 'Card fee applies — [fee]' });
+      const out = (await html({ ...ALL_ON, fee: true }))!;
+      expect(out).toContain('Card fee applies —');
+      // The FIGURE still comes from us even inside the office's sentence: $100 grossed up at 2.9% + 30¢
+      // is $103.30. If this ever reads $103.20 somebody has re-implemented the gross-up as a markup on
+      // the net (payments/fees.ts).
+      expect(out).toContain('A bill of $100.00 is charged as $103.30 by card.');
+      settingsMod.setSheetTextOverrides({});
+    });
+
+    it('adds the bank figure to that tag only when the bank rate is passed on too', async () => {
+      household();
+      child('stu_1', 'Yusuf Ismail');
+      settingsMod.setSheetTextOverrides({ payFee: '[fee]' });
+      feeOn();
+      expect((await html({ ...ALL_ON, fee: true }))!).not.toContain('from a bank account');
+
+      // 0.8% capped at $5 → $100 becomes $100.81.
+      feeOn({ bankEnabled: true, bankPercentBps: 80, bankFixedCents: 0, bankCapCents: 500 });
+      expect((await html({ ...ALL_ON, fee: true }))!).toContain('$103.30 by card, or $100.81 from a bank account.');
+      settingsMod.setSheetTextOverrides({});
+    });
   });
 
   it('points the QR at signup when self-registration is on, and says one account covers all', async () => {
@@ -544,7 +633,7 @@ describe('the madrasah’s own wording (0.48.0)', () => {
     expect(at('https://madani.test', '/donate')).toBe('madani.test/donate');
     expect(at('madani.test/', 'donate')).toBe('madani.test/donate'); // a missing slash is not an error
     expect(at('madani.test', '')).toBe('madani.test');
-    // Somewhere else entirely — not glued onto the school's homepage. Recognised by the dot before the
+    // Somewhere else entirely — not glued onto the school's homepage. Recognized by the dot before the
     // first slash, so the scheme is optional.
     expect(at('madani.test', 'https://donate.other.test/tuition')).toBe('donate.other.test/tuition');
     expect(at('madani.test', 'donate.other.test/tuition')).toBe('donate.other.test/tuition');
@@ -594,7 +683,7 @@ describe('GET /sheets/family/:id — the access wall', () => {
     expect((await get('fam_1', { cookie: `${sessionsMod.COOKIE}=nope` })).statusCode).toBe(403);
   });
 
-  it('404s an unknown household for an authorised caller', async () => {
+  it('404s an unknown household for an authorized caller', async () => {
     household();
     expect((await get('fam_nope', { cookie: cookieFor('finance') })).statusCode).toBe(404);
   });
@@ -640,7 +729,7 @@ describe('escaping — the sheet renders user input as text', () => {
 });
 
 /**
- * What 0.47.0 added to the sheet: the masjid's own contact details, the masjid's own colour, dates
+ * What 0.47.0 added to the sheet: the masjid's own contact details, the masjid's own color, dates
  * written the way the office writes them, and a relation that reads like a word rather than a
  * database value.
  */
@@ -682,7 +771,7 @@ describe('the masjid on the sheet (0.47.0)', () => {
     expect(/<header>[\s\S]*contactline[\s\S]*<\/header>/.test(out)).toBe(false);
   });
 
-  it('rules the sheet in the masjid’s colour, defaulting to the original teal', async () => {
+  it('rules the sheet in the masjid’s color, defaulting to the original teal', async () => {
     expect(await render()).toContain('--teal:#0f766e');
     settingsMod.setAccentColor('#7c3aed');
     const out = await render();
@@ -690,7 +779,7 @@ describe('the masjid on the sheet (0.47.0)', () => {
     expect(out).not.toContain('--teal:#0f766e');
   });
 
-  it('never lets a hand-edited colour row escape the style block', async () => {
+  it('never lets a hand-edited color row escape the style block', async () => {
     // Written straight into <style>, so a row edited outside the app must not be able to close the
     // declaration and add its own CSS (§14). Invalid values fall back rather than being passed on.
     // Set through the low-level writer on purpose — `setAccentColor` would reject it, and the point
@@ -709,7 +798,7 @@ describe('the masjid on the sheet (0.47.0)', () => {
     expect(uk).not.toContain('2016-03-04');
   });
 
-  it('capitalises a guardian’s relation without rewriting what the office typed', async () => {
+  it('capitalizes a guardian’s relation without rewriting what the office typed', async () => {
     household();
     child('stu_1', 'Yusuf Ismail');
     fee('fp_1', 'stu_1', 'Tuition', 20000, 'monthly');

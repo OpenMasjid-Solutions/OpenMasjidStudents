@@ -75,6 +75,7 @@ import {
   getExternalPaymentsEnabled,
   getParentEmails,
   getParentMailPaused,
+  getProcessingFee,
   getSchoolContact,
   getSchoolLogo,
   getSchoolName,
@@ -85,6 +86,7 @@ import { relationLabel } from './relations';
 import { sheetHtml, type SheetTags } from './sheetText';
 import { mailAvailable } from '../mail/notify';
 import { stripeReady } from '../payments/stripe';
+import { FEE_EXAMPLE_CENTS, feeQuote } from '../payments/fees';
 
 const asDate = (v: unknown): string => {
   if (v == null) return '';
@@ -93,7 +95,7 @@ const asDate = (v: unknown): string => {
 };
 
 /** Whole years between an ISO date and today. Returns null for absent or unparseable input — DOB is
- *  optional by design (§14 data minimisation), and a child without one just shows a blank. */
+ *  optional by design (§14 data minimization), and a child without one just shows a blank. */
 export function ageFromDob(dob: string | null | undefined, today = new Date()): number | null {
   if (!dob || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) return null;
   const d = new Date(`${dob}T00:00:00Z`);
@@ -102,6 +104,34 @@ export function ageFromDob(dob: string | null | undefined, today = new Date()): 
   const m = today.getUTCMonth() - d.getUTCMonth();
   if (m < 0 || (m === 0 && today.getUTCDate() < d.getUTCDate())) age -= 1;
   return age >= 0 && age < 150 ? age : null;
+}
+
+/**
+ * The `[fee]` tag's value — a worked example of the processing fee, in words (0.51.0).
+ *
+ * WHY A FIGURE AND NOT A RATE. "2.9% plus 30¢" is arithmetic a parent has to do standing at the office
+ * counter, and it is also the number most likely to be misread — the percentage is of the GROSS, so the
+ * obvious multiplication gives the wrong answer (payments/fees.ts). A bill and what it comes to is the
+ * same fact with nothing left to work out.
+ *
+ * Computed by `feeQuote`, against `FEE_EXAMPLE_CENTS[0]` — the same bill the office's own Settings panel
+ * shows before they switch this on. So the sheet, the settings screen and the actual charge are three
+ * views of one function, which is the only reason a printed artifact is safe to put a fee on at all.
+ *
+ * The bank clause appears only when the office is passing that rate on too. `feeQuote` returns a zero fee
+ * when it is not, so the check is on the result rather than on a second reading of the config — the two
+ * could not disagree even if the bank switch moved between them.
+ */
+export function feeExampleSentence(currency = getCurrency()): string {
+  const net = FEE_EXAMPLE_CENTS[0];
+  const card = feeQuote(net, 'card');
+  const bank = feeQuote(net, 'bank');
+  if (card.feeCents <= 0 && bank.feeCents <= 0) return '';
+  const money = (c: number) => formatMoney(c, currency);
+  const parts: string[] = [];
+  if (card.feeCents > 0) parts.push(`${money(card.grossCents)} by card`);
+  if (bank.feeCents > 0) parts.push(`${money(bank.grossCents)} from a bank account`);
+  return `A bill of ${money(net)} is charged as ${parts.join(', or ')}.`;
 }
 
 const CADENCE_LABELS: Record<FeeCadence, string> = {
@@ -280,14 +310,26 @@ export type PayRoutes = {
    * when it does not arrive.
    */
   receipts: boolean;
+  /**
+   * Is the payer covering Stripe's cut? (0.51.0) A route, not a setting, because it belongs to the same
+   * honesty rule as the rest: the fee line appears only where there is a card or bank route for it to
+   * apply to, so an install that absorbs the fee — or takes no online payments at all — never prints a
+   * charge it does not make. An office may re-word that line; it cannot conjure it.
+   */
+  fee: boolean;
 };
 
 export function payRoutes(): PayRoutes {
+  const card = stripeReady();
+  const external = getExternalPaymentsEnabled();
   return {
-    card: stripeReady(),
-    external: getExternalPaymentsEnabled(),
+    card,
+    external,
     selfRegister: getSelfRegistrationEnabled(),
     receipts: mailAvailable() && getParentEmails().receipt && !getParentMailPaused(),
+    // Switched on AND somewhere for it to be charged. Passing the fee on with no online route open is a
+    // policy with nothing to apply to, and printing it would tell a family about a cost they cannot incur.
+    fee: getProcessingFee().enabled && (card || external),
   };
 }
 
@@ -340,6 +382,10 @@ export async function buildFamilySheetHtml(
     // `renderSheetText` then removes the empty brackets along with it.
     website: donationUrl(contact),
     date: printedOn,
+    // The worked example behind the fee line, computed by the function that will charge the card
+    // (payments/fees.ts) against the same bill the office's own Settings panel shows. Empty when the
+    // madrasah absorbs the fee, which is also when the line carrying it is not printed at all.
+    fee: routes.fee ? feeExampleSentence() : '',
   };
   const copy = (key: Parameters<typeof sheetHtml>[0]) => sheetHtml(key, tags);
 
@@ -466,10 +512,20 @@ export async function buildFamilySheetHtml(
   // decided here, by what the install actually has. An office may re-word the kiosk item; it cannot make
   // one appear on an install with external payments switched off.
   const payItems: string[] = [];
-  if (routes.card) payItems.push(`<li>${copy('payCard')}</li>`);
+  /**
+   * The fee caveat, as an italic tail on each route that can actually charge one (people/sheetText.ts
+   * `payFee`). The three online routes get it; the office line deliberately does not, which is how the
+   * sheet says "not this one" without spending a sentence on it.
+   *
+   * The `<em>` is ours rather than the office's markup: the italic is presentation — "this is an aside on
+   * the line above" — not part of the wording, and the sheet's own syntax has only `*bold*` on purpose
+   * (people/sheetText.ts). The copy itself is escaped by `sheetHtml` exactly as everywhere else.
+   */
+  const feeNote = routes.fee ? ` <em>${copy('payFee')}</em>` : '';
+  if (routes.card) payItems.push(`<li>${copy('payCard')}${feeNote}</li>`);
   if (routes.external) {
-    payItems.push(`<li>${copy('payWebsite')}</li>`);
-    payItems.push(`<li>${copy('payKiosk')}</li>`);
+    payItems.push(`<li>${copy('payWebsite')}${feeNote}</li>`);
+    payItems.push(`<li>${copy('payKiosk')}${feeNote}</li>`);
   }
   // The receipt promise is a second sentence rather than part of the first, so it can be left off when
   // nothing will actually be emailed (routes.receipts) without the office having to maintain two versions
@@ -514,8 +570,8 @@ export async function buildFamilySheetHtml(
   /* Sized for ONE DOUBLE-SIDED LETTER SHEET: front is who + what, back is how. The margin and the type
      scale are set together — dropping either loosens the fit enough to push a third side. */
   @page { size: letter; margin: 0.5in; }
-  /* --teal is the masjid's own colour (Settings → Appearance), defaulting to the original teal. Every
-     rule, heading and box on this sheet reads from it, so one setting re-colours the whole page.
+  /* --teal is the masjid's own color (Settings → Appearance), defaulting to the original teal. Every
+     rule, heading and box on this sheet reads from it, so one setting re-colors the whole page.
      Validated as a hex literal before it gets here — this is interpolated into a style block. */
   :root { --ink:#1a1a1a; --teal:${accent}; --wash:${wash}; --line:#cbcbcb; --muted:#666; }
   * { box-sizing: border-box; }
@@ -578,7 +634,7 @@ export async function buildFamilySheetHtml(
     body { padding: 0; font-size: 10.5pt; }
     .toolbar { display: none; }
     .signup { border-color: #999; }
-    /* Tinted panels print as white — a solid block of colour is what drains a masjid's toner. */
+    /* Tinted panels print as white — a solid block of color is what drains a masjid's toner. */
     .balance, .check, .idcard { background: #fff; }
   }
 ${SHEET_PHONE_CSS}

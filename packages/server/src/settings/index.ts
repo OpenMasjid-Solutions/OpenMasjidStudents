@@ -48,6 +48,17 @@ export const SETTING_KEYS = {
   pastDue: 'past_due',
   // ISO date of the last past-due digest sent to the office, so a daily job does not become a daily email.
   pastDueStaffLast: 'past_due_staff_last',
+  // JSON — the last time each STORM-PRONE alert actually spoke, and how many have been held since
+  // (0.51.0-dev.6). In the settings table rather than memory so a restart cannot discard it; see
+  // alerts/index.ts `STORM_WINDOW_MS` for which alerts and why.
+  alertStorm: 'alert_storm',
+  // '1' → the masjid's own webhook may carry the alert text that NAMES the child, instead of the
+  // de-identified one (0.51.0-dev.17). Off by default, and eligibility is per event in
+  // alerts/index.ts `SPEC.webhookMayName` — see `getWebhookNamesStudent`.
+  webhookNamesStudent: 'webhook_names_student',
+  // JSON — whether the PAYER covers Stripe's cut rather than the school (0.51.0). Off by default; the
+  // math and the reasoning live in payments/fees.ts. See `getProcessingFee`.
+  processingFee: 'processing_fee',
   // The masjid's own logo, stored as a `data:` URI so it travels with the DB and needs no file
   // handling or attachment plumbing. Bounded and magic-byte checked on the way in (§14).
   schoolLogo: 'school_logo',
@@ -61,10 +72,18 @@ export const SETTING_KEYS = {
   // JSON — the madrasah's own wording for the printed family sheet (0.48.0). A partial map of
   // people/sheetText.ts keys; anything absent uses the shipped sentence.
   sheetText: 'sheet_text',
-  // The colour the printed artifacts are ruled in (0.47.0). One hex value; see `getAccentColor`.
+  // JSON — the madrasah's own wording for the onboarding message (0.51.0). A partial map of
+  // people/onboarding.ts keys; anything absent uses the shipped sentence. Stored beside the sheet's
+  // wording rather than inside the WhatsApp config on purpose: this message goes out on BOTH channels,
+  // and copy owned by one channel's settings is copy the other channel's screen cannot edit.
+  onboardingText: 'onboarding_text',
+  // JSON — WhatsApp windows the platform told us it had wrongly reported as sent (0.51.0-dev.9). Kept so
+  // a second poll of the same incident is not re-reported as a new one; see whatsapp/suspect.ts.
+  whatsappSuspect: 'whatsapp_suspect',
+  // The color the printed artifacts are ruled in (0.47.0). One hex value; see `getAccentColor`.
   accentColor: 'accent_color',
   // JSON — WhatsApp (0.50.0): the master switch, the parent pause, the per-event toggles, the country
-  // codes and the test student. See `getWhatsApp`; the event CATALOGUE lives in whatsapp/index.ts.
+  // codes and the test student. See `getWhatsApp`; the event CATALOG lives in whatsapp/index.ts.
   whatsapp: 'whatsapp',
   // The office's own wording for the "we don't have your email address" message (0.50.0). One string;
   // blank means the shipped sentence. See whatsapp/templates.ts.
@@ -161,7 +180,7 @@ export function getAutoInvoiceLast(): string | null {
  *
  * Contact details are split ONE COLUMN PER NUMBER (0.42.0) rather than the old single "guardian
  * phones" cell that crammed every number in behind a comma. A column headed "Father's" that you can
- * tap to ring is worth more to an office than a list, and a labelled column is the only way to know
+ * tap to ring is worth more to an office than a list, and a labeled column is the only way to know
  * whose number you are about to call. `other` is not a leftover: a guardian with no relation recorded —
  * every CSV-imported one — still has to appear somewhere, and dropping them would silently lose the
  * only number the school has.
@@ -182,13 +201,13 @@ export const YEAR_VIEW_COLUMNS = [
 export type YearViewColumn = (typeof YEAR_VIEW_COLUMNS)[number];
 
 /** What the two pre-0.42.0 combined columns become, so an install that had them keeps showing exactly
- *  the same information the morning after an update — just in labelled columns. */
+ *  the same information the morning after an update — just in labeled columns. */
 const LEGACY_COLUMNS: Record<string, YearViewColumn[]> = {
   guardianPhones: ['fatherPhone', 'motherPhone', 'otherPhone'],
   guardianEmails: ['fatherEmail', 'motherEmail', 'otherEmail'],
 };
 
-/** Phone numbers, in labelled columns — what an office keeps beside a payment grid. Everything else is
+/** Phone numbers, in labeled columns — what an office keeps beside a payment grid. Everything else is
  *  opt-in, so a page that gets printed and left on a desk carries only what the admin asked for (§14). */
 const DEFAULT_YEAR_VIEW_COLUMNS: YearViewColumn[] = ['fatherPhone', 'motherPhone', 'otherPhone'];
 
@@ -400,6 +419,35 @@ export function setParentMailPaused(on: boolean): void {
 }
 
 /**
+ * MAY THE MASJID'S WEBHOOK NAME THE CHILD? (0.51.0-dev.17)
+ *
+ * Every alert carries two texts (alerts/index.ts): `text`, which names the student and the amount and
+ * goes to addresses an admin typed, and `publicText`, which names nobody and is what the webhook and
+ * the OpenMasjidOS alert channel have always received. The reason for the split is that this app cannot
+ * see where the webhook ends up — `notifyPlatform` posts to the platform, which forwards to whatever URL
+ * the masjid configured, and that is usually a Slack or Discord channel with a membership we know
+ * nothing about.
+ *
+ * An office that wants "Yusuf Ismail paid $250" in their own staff channel is making the same deliberate
+ * choice as typing an address into the alert list, so this exists. What it does NOT do is move the
+ * default: off until somebody turns it on, in front of a sentence saying where the message goes.
+ *
+ * `=== '1'`, so a hand-edited or truncated row cannot turn it on — the same strict opt-in coercion
+ * `readGroupAlerts` uses for the WhatsApp group `detail` switch this mirrors. The `!== '0'` idiom is
+ * only for settings whose SAFE value is true, which this one's is not.
+ *
+ * THIS FLAG IS NOT THE WHOLE PERMISSION. An event also has to declare itself eligible
+ * (`SPEC.webhookMayName` in alerts/index.ts), and only `payment-received` does. Consent given for a
+ * payment notice is not consent for the past-due roster.
+ */
+export function getWebhookNamesStudent(): boolean {
+  return getSetting(SETTING_KEYS.webhookNamesStudent) === '1';
+}
+export function setWebhookNamesStudent(on: boolean): void {
+  setSetting(SETTING_KEYS.webhookNamesStudent, on ? '1' : '0');
+}
+
+/**
  * Chasing an overdue balance (0.48.0).
  *
  * `parentEmails` DEFAULTS OFF, and that is deliberate in a way the other parent switches are not. Every
@@ -453,6 +501,89 @@ export function getPastDue(): PastDueConfig {
 
 export function setPastDue(patch: Partial<PastDueConfig>): void {
   setSetting(SETTING_KEYS.pastDue, JSON.stringify({ ...getPastDue(), ...patch }));
+}
+
+/**
+ * Does the PAYER cover Stripe's cut, or does the school? (0.51.0)
+ *
+ * Off by default and that is not a shrug — turning it on changes what every parent is charged, so it
+ * has to be a decision somebody made rather than a default they inherited in an update. The math is in
+ * payments/fees.ts, which is also where the compliance note lives; this is only the stored policy.
+ *
+ * The card and bank rates are SEPARATE and the bank one has its own switch, because they are not
+ * remotely the same cost: 2.9% + 30¢ against 0.8% capped at $5. An office may reasonably pass on the
+ * card cost and absorb the bank one, and on a $2,000 term payment the difference between the two rates
+ * is fifty-five dollars of somebody's money.
+ *
+ * The defaults are Stripe's own published US rates, so an office that switches this on without reading
+ * anything is charging what it is actually being charged.
+ */
+export interface ProcessingFeeConfig {
+  /** The master switch. Off means every quote in the app is the identity — no code path changes. */
+  enabled: boolean;
+  /** Card rate in basis points (290 = 2.9%) and the per-charge fixed part, in cents. */
+  cardPercentBps: number;
+  cardFixedCents: number;
+  /** US bank account (ACH) — its own switch, because absorbing this one is a reasonable choice. */
+  bankEnabled: boolean;
+  bankPercentBps: number;
+  bankFixedCents: number;
+  /** ACH is capped by Stripe. Without honoring the cap a large payment would be charged a percentage
+   *  of a fee that stopped growing — money taken for nothing. 0 means uncapped. */
+  bankCapCents: number;
+}
+
+const FEE_DEFAULTS: ProcessingFeeConfig = {
+  enabled: false,
+  cardPercentBps: 290,
+  cardFixedCents: 30,
+  bankEnabled: false,
+  bankPercentBps: 80,
+  bankFixedCents: 0,
+  bankCapCents: 500,
+};
+
+/**
+ * A hard ceiling on the percentage, not a preference.
+ *
+ * 10% is far above any real cost of card acceptance, which is the thing the card networks actually cap
+ * a passed-on fee at (see payments/fees.ts). Its job is to stop a typo — a `2900` meant as 2.9% —
+ * from adding $290 to a $100 bill and taking it off a family's card before anybody notices.
+ */
+const MAX_FEE_BPS = 1000;
+
+const clampBps = (v: unknown, fallback: number): number => {
+  const n = Math.trunc(Number(v));
+  return Number.isFinite(n) && n >= 0 && n <= MAX_FEE_BPS ? n : fallback;
+};
+
+const clampCents = (v: unknown, fallback: number, max: number): number => {
+  const n = Math.trunc(Number(v));
+  return Number.isFinite(n) && n >= 0 && n <= max ? n : fallback;
+};
+
+export function getProcessingFee(): ProcessingFeeConfig {
+  const raw = getSetting(SETTING_KEYS.processingFee);
+  if (!raw) return { ...FEE_DEFAULTS };
+  try {
+    const p = JSON.parse(raw) as Partial<ProcessingFeeConfig>;
+    return {
+      enabled: p.enabled === true,
+      cardPercentBps: clampBps(p.cardPercentBps, FEE_DEFAULTS.cardPercentBps),
+      // A fixed part above a few dollars is a typo, not a payment processor's pricing.
+      cardFixedCents: clampCents(p.cardFixedCents, FEE_DEFAULTS.cardFixedCents, 1000),
+      bankEnabled: p.bankEnabled === true,
+      bankPercentBps: clampBps(p.bankPercentBps, FEE_DEFAULTS.bankPercentBps),
+      bankFixedCents: clampCents(p.bankFixedCents, FEE_DEFAULTS.bankFixedCents, 1000),
+      bankCapCents: clampCents(p.bankCapCents, FEE_DEFAULTS.bankCapCents, 100_000),
+    };
+  } catch {
+    return { ...FEE_DEFAULTS };
+  }
+}
+
+export function setProcessingFee(patch: Partial<ProcessingFeeConfig>): void {
+  setSetting(SETTING_KEYS.processingFee, JSON.stringify({ ...getProcessingFee(), ...patch }));
 }
 
 /** The last day the office's own past-due digest went out, or null. */
@@ -586,11 +717,95 @@ export function setSheetTextOverrides(patch: Record<string, string | null | unde
   setSetting(SETTING_KEYS.sheetText, Object.keys(next).length ? JSON.stringify(next) : '');
 }
 
+/**
+ * The madrasah's own wording for the onboarding message (0.51.0) — the boxes it changed, and nothing else.
+ *
+ * A LONGER CAP than the sheet's, because one of these boxes is a whole message rather than a sentence on a
+ * page with a two-side budget. Read-side validation is the same shape and exists for the same reason: this
+ * text is interpolated into an email body and a WhatsApp message, so a row edited by hand must come back as
+ * a bounded string or not at all. The registry (people/onboarding.ts) is what decides which keys mean
+ * anything; an unknown one stored here is simply never read.
+ */
+const ONBOARDING_TEXT_CAP = 1200;
+
+export function getOnboardingText(): Record<string, string> {
+  const raw = getSetting(SETTING_KEYS.onboardingText);
+  if (!raw) return {};
+  try {
+    const p = JSON.parse(raw) as unknown;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
+      if (typeof v !== 'string') continue;
+      const text = v.trim().slice(0, ONBOARDING_TEXT_CAP);
+      if (text) out[k] = text;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Merge in changed boxes. A key set to `''` or `null` is REMOVED rather than stored blank — clearing the
+ *  field means "use the shipped wording again", and a message with an empty body is not a message. */
+export function setOnboardingText(patch: Record<string, string | null | undefined>): void {
+  const next = getOnboardingText();
+  for (const [k, v] of Object.entries(patch)) {
+    const text = (v ?? '').trim().slice(0, ONBOARDING_TEXT_CAP);
+    if (text) next[k] = text;
+    else delete next[k];
+  }
+  setSetting(SETTING_KEYS.onboardingText, Object.keys(next).length ? JSON.stringify(next) : '');
+}
+
+/**
+ * The WhatsApp windows the platform reported as wrongly-"sent" (0.51.0-dev.9).
+ *
+ * Validated on read like every other JSON setting here, and for the sharper version of the usual reason:
+ * these numbers become a `WHERE created_at BETWEEN ?` over the message log, so a bound that is not a
+ * finite number would select rows nobody meant to touch. A row that cannot be read as a real interval is
+ * dropped rather than repaired.
+ */
+export interface SuspectWindowStored {
+  from: number;
+  to: number;
+  count: number;
+  seenAt: number;
+  marked: number;
+  /** What the platform said went wrong — , , , 
+   *  (platform 0.51.1-dev.13). Stored so the screen can say WHY rather than only how many. */
+  cause?: string;
+}
+
+export function getSuspectState(): SuspectWindowStored[] {
+  const raw = getSetting(SETTING_KEYS.whatsappSuspect);
+  if (!raw) return [];
+  try {
+    const p = JSON.parse(raw) as unknown;
+    if (!Array.isArray(p)) return [];
+    const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    return p.flatMap((row) => {
+      if (!row || typeof row !== 'object') return [];
+      const r = row as Record<string, unknown>;
+      const from = num(r.from);
+      const to = num(r.to);
+      if (from === null || to === null || to < from) return [];
+      return [{ from, to, count: num(r.count) ?? 0, seenAt: num(r.seenAt) ?? 0, marked: num(r.marked) ?? 0, cause: typeof r.cause === 'string' ? r.cause.slice(0, 40) : undefined }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function setSuspectState(windows: SuspectWindowStored[]): void {
+  setSetting(SETTING_KEYS.whatsappSuspect, windows.length ? JSON.stringify(windows) : '');
+}
+
 /** The teal every printed artifact has been ruled in since the first statement. */
 export const DEFAULT_ACCENT = '#0f766e';
 
 /**
- * The masjid's colour, used for the rules, headings and boxes on printed artifacts (0.47.0).
+ * The masjid's color, used for the rules, headings and boxes on printed artifacts (0.47.0).
  *
  * VALIDATED ON READ, not just on write, and that is not paranoia: this value is interpolated straight
  * into a `<style>` block on a page served to a browser, so a row edited by hand (or surviving from an
@@ -604,7 +819,7 @@ export function getAccentColor(): string {
 
 export function setAccentColor(hex: string | null): void {
   const v = (hex ?? '').trim();
-  if (v && !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)) throw new Error('invalid_colour');
+  if (v && !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)) throw new Error('invalid_color');
   setSetting(SETTING_KEYS.accentColor, v);
 }
 
@@ -614,7 +829,7 @@ export function setAccentColor(hex: string | null): void {
  * `color-mix` in sRGB rather than a hand-computed tint: it follows whatever accent is set without a
  * second setting to keep in step, and every browser that can print these pages supports it. The
  * printed rules already force these panels to white (toner), so this only affects the on-screen
- * preview and a colour print.
+ * preview and a color print.
  */
 export function accentWash(accent: string = getAccentColor()): string {
   return `color-mix(in srgb, ${accent} 7%, #ffffff)`;
@@ -636,7 +851,7 @@ export function accentWash(accent: string = getAccentColor()): string {
  *  • every event off. Same reason, one level down.
  *
  * `events` is stored OPAQUELY (a plain string→bool map) so this module knows nothing about which
- * events exist — whatsapp/index.ts owns that catalogue, exactly as alerts/index.ts owns the alert one.
+ * events exist — whatsapp/index.ts owns that catalog, exactly as alerts/index.ts owns the alert one.
  * Adding an event needs no change here.
  */
 export interface WhatsAppConfig {
@@ -673,10 +888,28 @@ export interface WhatsAppConfig {
    * other way is one click rather than two hundred parents reading a family's balance.
    */
   groupAlerts: Record<string, { events: string[]; detail: boolean }>;
+  /**
+   * How many PARENT messages this app will send per hour and per day (0.51.0-dev.5).
+   *
+   * Ours to enforce now: platform 0.51.1 removed every cap, cooldown and gap of its own, so an invoice
+   * run over 200 households would hand over 200 messages that all leave within seconds. The reasoning,
+   * the defaults and what is deliberately NOT capped are in whatsapp/index.ts `WA_CAP_DEFAULTS` —
+   * this is only where an office’s own figures live. Absent falls back to those defaults, so an
+   * upgraded install inherits exactly the pacing the platform used to impose.
+   */
+  hourlyCap?: number;
+  dailyCap?: number;
 }
 
 /** `+1` unless the office says otherwise — this app's first madāris are North American, and a wrong
  *  default is visible and one click to fix, whereas no default means every number fails silently. */
+/** A send cap an office typed, or undefined to inherit the shipped default. */
+const clampCap = (v: unknown, max: number): number | undefined => {
+  if (v === undefined || v === null || v === "") return undefined;
+  const n = Math.trunc(Number(v));
+  return Number.isFinite(n) && n >= 1 && n <= max ? n : undefined;
+};
+
 const WA_DEFAULTS: WhatsAppConfig = { enabled: false, paused: true, events: {}, defaultCountry: '+1', countries: ['+1'], testStudentId: '', groupAlerts: {} };
 
 /** A country code as we store it: `+` and 1–3 digits. Anything else is dropped rather than stored, since
@@ -705,6 +938,11 @@ export function getWhatsApp(): WhatsAppConfig {
       countries,
       testStudentId: typeof p.testStudentId === 'string' ? p.testStudentId.trim() : '',
       groupAlerts: readGroupAlerts(p.groupAlerts),
+      // Clamped, not trusted. A ceiling because this is the setting whose worst case is a banned
+      // number the masjid cannot get back; a floor of 1 because 0 would read as "unlimited" to
+      // somebody typing it and mean the opposite.
+      hourlyCap: clampCap(p.hourlyCap, 200),
+      dailyCap: clampCap(p.dailyCap, 1000),
     };
   } catch {
     return { ...WA_DEFAULTS, events: {}, countries: [...WA_DEFAULTS.countries], groupAlerts: {} };
@@ -712,7 +950,7 @@ export function getWhatsApp(): WhatsAppConfig {
 }
 
 /** Coerce a hand-edited or older `groupAlerts` row into shape. Unknown event ids are left alone here —
- *  whatsapp/index.ts owns the catalogue and filters against it, exactly as `alert_recipients` does. */
+ *  whatsapp/index.ts owns the catalog and filters against it, exactly as `alert_recipients` does. */
 function readGroupAlerts(raw: unknown): Record<string, { events: string[]; detail: boolean }> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const out: Record<string, { events: string[]; detail: boolean }> = {};
@@ -753,7 +991,7 @@ export function setWhatsAppEmailRequest(text: string | null): void {
 /**
  * The madrasah's own wording for each WhatsApp message (0.50.0).
  *
- * Stored OPAQUELY — this module knows nothing about which messages exist, so the catalogue and the
+ * Stored OPAQUELY — this module knows nothing about which messages exist, so the catalog and the
  * shipped sentences stay in whatsapp/templates.ts next to the code that renders them, exactly as
  * `sheet_text` keeps the printed sheet's registry beside the sheet. Unknown keys are never read back,
  * and the tRPC boundary validates against the real list.

@@ -11,17 +11,20 @@ import { TRPCError } from '@trpc/server';
 import { and, eq, ne, asc, desc, inArray } from 'drizzle-orm';
 import { router, adminProcedure, adminOrFinanceProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
-import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, carryIns, autopayEnrollments, paymentMethods, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
+import { feePlans, studentFees, students, families, invoices, invoiceItems, payments, chargeItems, charges, classes, courses, schoolYears, guardians, guardianFamilies, emergencyContacts, carryIns, autopayEnrollments, paymentMethods, standingPayments, MANUAL_PAYMENT_CHANNELS } from '../db/schema';
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { makeLog } from '../logger';
 import { recordPayment, reversePayment, familyBalance, studentBalance, invoiceTotal, invoicePaid } from '../billing/ledger';
-import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice } from '../billing/invoices';
+import { generateForFamily, generateForPeriod, attachChargeToExistingInvoice, billChargeNow, canBillAlone, releaseChargesFrom } from '../billing/invoices';
 import { billFromMonths, currentPeriod } from '../billing/joinMidYear';
 import { schoolYearMonths } from '../billing/schoolYear';
+import { AUDIENCE_CLASS, AUDIENCE_COURSE, AUDIENCE_STUDENTS, resolveAudience } from '../structure/audience';
+import { yearTotalFor } from '../billing/yearTotal';
+import { nextRunDate, owedNow } from '../billing/standingPayments';
 import { yearCellsFor } from '../billing/yearCells';
 import { invoiceLines, payableLines } from '../billing/lines';
-import { periodKeyError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
+import { periodKeyError, reservedPeriodError, periodBefore, isMonthPeriod, CARRY_IN_PERIOD, resolveInvoiceLabel } from '../billing/period';
 import { commitCarryIn, defaultGoLivePeriod, midYearPlan, noteCarryIn } from '../billing/carryIn';
 import { toCsv, csvMoney, csvDate } from '../billing/csv';
 import { isIsoDay } from '../settings/dates';
@@ -90,13 +93,34 @@ function isoDayOrNull(value: string | undefined, what: string): string | null {
   return value && value.trim() ? isoDay(value, what) : null;
 }
 
-/** Who a bulk apply targets: explicit students, or everyone active in a class or course.
- *  One resolver so the fee-plan and charge-item tabs behave identically. */
-const BULK_TARGET = z.union([
-  z.object({ kind: z.literal('students'), studentIds: z.array(ID).min(1).max(2000) }),
-  z.object({ kind: z.literal('class'), classId: ID }),
-  z.object({ kind: z.literal('course'), courseId: ID }),
-]);
+/**
+ * Who a bulk apply targets: explicit students, or everyone active in a class or course.
+ *
+ * DELIBERATELY NARROWER THAN `AUDIENCE` — there is no `all` here. The resolver these hand off to
+ * (structure/audience.ts) understands "everyone", because the onboarding message needs it; a one-click
+ * "put this charge on every student in the school" is a different proposition from a one-click "write to
+ * every family", and the difference is that this one moves money. Widening it is a decision, not a
+ * convenience: leave the boundary narrow and the one resolver shared.
+ */
+const BULK_TARGET = z.discriminatedUnion('kind', [AUDIENCE_STUDENTS, AUDIENCE_CLASS, AUDIENCE_COURSE]);
+
+/**
+ * WHEN a one-off charge becomes payable (0.51.0-dev.10).
+ *
+ * `now` is the default because it is what an office almost always means. A charge added mid-August used
+ * to sit `pending` until somebody generated August's tuition — so the choice was to bill the whole month
+ * early, committing every child's tuition, or tell the parent to wait. `now` gives the charge its own
+ * one-line bill, due today, payable through every channel immediately (`billChargeNow`).
+ *
+ * `period` is the old behavior and still the right answer when the charge genuinely belongs ON a month's
+ * bill — the office would rather a family got one invoice than two — and it is the ONLY answer for a
+ * CREDIT, which has to reduce something. A negative amount falls back to `period` on its own rather than
+ * being refused at the boundary: the office picked an amount and a target, and failing the whole action
+ * over a default they never chose would be the worse behavior.
+ *
+ * Defaulted here rather than in the browser so the two UIs that call this cannot disagree about it.
+ */
+const CHARGE_BILL = z.enum(['now', 'period']).default('now');
 
 /** Where a charge's label + amount come from: a preconfigured item (optionally re-priced for
  *  this application) or a free-typed one-off. */
@@ -132,10 +156,11 @@ function snapshotCharge(source: z.infer<typeof CHARGE_SOURCE>): { label: string;
  * anybody typing.
  */
 function assertBillablePeriod(periodKey: string, periodKind: 'month' | 'term' = 'month'): void {
-  if (periodKind === 'month') {
-    const err = periodKeyError(periodKey);
-    if (err) throw new TRPCError({ code: 'BAD_REQUEST', message: err });
-  }
+  // A term is exempt from the month SPELLING rule and from nothing else. Skipping the whole check for a
+  // term period also skipped the two RESERVED names, so a term run could be aimed at `carry-in` or at a
+  // single charge's own invoice (billing/period.ts `reservedPeriodError`).
+  const err = periodKind === 'month' ? periodKeyError(periodKey) : reservedPeriodError(periodKey);
+  if (err) throw new TRPCError({ code: 'BAD_REQUEST', message: err });
   const floor = getBillingStartPeriod();
   if (floor && isMonthPeriod(periodKey) && periodBefore(periodKey, floor)) {
     throw new TRPCError({
@@ -196,25 +221,10 @@ function invoiceMonthOptions(): { periodKey: string; label: string }[] {
   return out;
 }
 
-function resolveTarget(target: z.infer<typeof BULK_TARGET>): string[] {
-  if (target.kind === 'students') {
-    // Keep only ids that are real AND active — a stale UI selection must not create rows
-    // pointing at withdrawn students.
-    const rows = db.select({ id: students.id }).from(students).where(eq(students.status, 'active')).all();
-    const live = new Set(rows.map((r) => r.id));
-    return target.studentIds.filter((id) => live.has(id));
-  }
-  if (target.kind === 'class') {
-    return db.select({ id: students.id }).from(students).where(and(eq(students.classId, target.classId), eq(students.status, 'active'))).all().map((r) => r.id);
-  }
-  return db
-    .select({ id: students.id })
-    .from(students)
-    .innerJoin(classes, eq(classes.id, students.classId))
-    .where(and(eq(classes.courseId, target.courseId), eq(students.status, 'active')))
-    .all()
-    .map((r) => r.id);
-}
+/** Kept as a name here because two dozen call sites read better for it, but the RULE lives in
+ *  structure/audience.ts now — shared with the onboarding message, so the two can never disagree about
+ *  whether a withdrawn child is in a course. */
+const resolveTarget = resolveAudience;
 
 /** Invoice rows for a set of students, newest first, each carrying whose bill it is. Shared by the
  *  per-student window and the household one so the two can never disagree about a total. */
@@ -322,7 +332,7 @@ function familyTotals(rows: { familyId: string; familyLabel: string; afterOwedCe
 }
 
 /** Distinct, non-empty email addresses from a set of guardians — compared case-insensitively, since
- *  the same address typed twice with different capitalisation is one inbox. */
+ *  the same address typed twice with different capitalization is one inbox. */
 function emails(gs: { email: string | null }[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -639,9 +649,19 @@ export const billingRouter = router({
     // A voided invoice drops out of the invoiced total, but its payments stay counted — voiding a
     // paid bill would understate the family balance. Reverse the payment first (§9: reversals only).
     if (invoicePaid(db, input.id) !== 0) throw new TRPCError({ code: 'CONFLICT', message: 'Reverse the payments on this invoice before voiding it.' });
-    db.update(invoices).set({ status: 'void', updatedAt: now() }).where(eq(invoices.id, input.id)).run();
-    audit(auditActor(ctx), 'invoice.void', { entity: 'invoice', entityId: input.id });
-    return { ok: true as const };
+    let released = 0;
+    db.transaction((tx) => {
+      tx.update(invoices).set({ status: 'void', updatedAt: now() }).where(eq(invoices.id, input.id)).run();
+      /**
+       * Hand back any CHARGE that was on this bill, so it is owed again (billing/invoices.ts
+       * `releaseChargesFrom`). Without this a book fee voided along with the month's tuition stayed
+       * marked `invoiced` against a void invoice: never re-billed, never owed, and invisible — the one
+       * kind of line that was not getting the rule `alreadyBilled` already applies to a one-time fee.
+       */
+      released = releaseChargesFrom(tx, input.id);
+    });
+    audit(auditActor(ctx), 'invoice.void', { entity: 'invoice', entityId: input.id, detail: { chargesReleased: released } });
+    return { ok: true as const, chargesReleased: released };
   }),
 
   // ── Year view (the students × months payment grid) ───────────────────────────
@@ -723,7 +743,7 @@ export const billingRouter = router({
       const cellsByStudent = yearCellsFor(studentRows.map((r) => r.id), periodKeys);
 
       // Guardian contact, only when a guardian column is actually enabled — and classified by WHO each
-      // adult is, so each number gets its own labelled, tappable column (§ settings/YEAR_VIEW_COLUMNS).
+      // adult is, so each number gets its own labeled, tappable column (§ settings/YEAR_VIEW_COLUMNS).
       const wantsGuardians = columns.some((c) => c === 'guardianNames' || c.endsWith('Phone') || c.endsWith('Email'));
       const guardiansByFamily = new Map<string, { name: string; phone: string | null; email: string | null; kind: RelationKind; isEmergency: boolean }[]>();
       if (wantsGuardians) {
@@ -1018,45 +1038,94 @@ export const billingRouter = router({
   /** Add one charge to a student. If the target period's invoice already exists and is open the
    *  line lands on it immediately (and the invoice status is re-derived); otherwise the charge
    *  waits as `pending` and the next generation for that period picks it up. */
+  /**
+   * WHAT A YEAR OF FEES COMES TO for one student — a quote, not a bill (0.51.0-dev.11).
+   *
+   * The question every enrollment conversation starts with, which the office was answering with a
+   * calculator: the monthly plan times however many months this madrasah teaches, plus the per-term ones
+   * times the number of terms. `billing/yearTotal.ts` is the one place that arithmetic lives.
+   *
+   * IT WRITES NOTHING, and the copy on screen says so. A projected year is not a balance — every balance
+   * here is `invoiced − paid`, derived (§9) — so a family who leaves in March owes March, not this. An
+   * office that wants the year on the account adds it as a charge, deliberately, with a real invoice
+   * behind it.
+   *
+   * Admin OR finance, matching `familyBilling` which is the screen it renders on: finance runs the
+   * billing and is the person most often asked the question. It exposes nothing the ledger does not
+   * already show them.
+   */
+  yearTotal: adminOrFinanceProcedure
+    .input(z.object({ studentId: ID, fromPeriod: PERIOD.optional() }))
+    .query(({ input }) => yearTotalFor(input.studentId, input.fromPeriod ?? null)),
+
   chargeAdd: adminOrFinanceProcedure
-    .input(z.object({ studentId: ID, source: CHARGE_SOURCE, note: NOTE.optional(), periodKey: PERIOD.optional() }))
+    .input(z.object({ studentId: ID, source: CHARGE_SOURCE, note: NOTE.optional(), periodKey: PERIOD.optional(), bill: CHARGE_BILL }))
     .mutation(({ ctx, input }) => {
       if (!db.select({ id: students.id }).from(students).where(and(eq(students.id, input.studentId), eq(students.status, 'active'))).get()) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
       }
       const snap = snapshotCharge(input.source);
+      // Billing it now means it belongs to no period at all — see CHARGE_BILL. Storing the month the
+      // office happened to be looking at would leave a charge that is already invoiced still claiming a
+      // period, which is the kind of half-truth a later query reads as "not billed yet".
+      const immediate = input.bill === 'now' && canBillAlone(snap.amountCents);
       const id = rid('chg');
       const ts = now();
       db.insert(charges)
-        .values({ id, studentId: input.studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: input.periodKey ?? null, status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
+        .values({ id, studentId: input.studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: immediate ? null : (input.periodKey ?? null), status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
         .run();
-      const attach = attachChargeToExistingInvoice(id);
-      audit(auditActor(ctx), 'charge.add', { entity: 'student', entityId: input.studentId, detail: { chargeId: id, amountCents: snap.amountCents, periodKey: input.periodKey ?? null, attached: attach.attached } });
-      return { id, attached: attach.attached, invoiceId: attach.invoiceId };
+      // `billed` is its own bill, `attached` is a line added to a period's existing invoice. Both mean
+      // "payable now"; neither happens when the period has not been generated yet.
+      const immediateResult = immediate ? billChargeNow(id) : null;
+      const attach = immediateResult?.billed ? { attached: false as const, invoiceId: undefined } : attachChargeToExistingInvoice(id);
+      audit(auditActor(ctx), 'charge.add', {
+        entity: 'student',
+        entityId: input.studentId,
+        detail: { chargeId: id, amountCents: snap.amountCents, bill: input.bill, periodKey: immediate ? null : (input.periodKey ?? null), billed: !!immediateResult?.billed, attached: attach.attached },
+      });
+      return {
+        id,
+        attached: attach.attached,
+        invoiceId: immediateResult?.invoiceId ?? attach.invoiceId,
+        /** True when this became a bill of its own, payable straight away. */
+        billedNow: !!immediateResult?.billed,
+        /** Set when "now" was asked for and refused — today only ever `credit` (§ billChargeNow). */
+        billNowRefused: immediateResult && !immediateResult.billed ? immediateResult.reason : undefined,
+      };
     }),
 
   /** Mass-apply one charge to many students — "go on the item and select who to charge". */
   chargeAddBulk: adminOrFinanceProcedure
-    .input(z.object({ source: CHARGE_SOURCE, target: BULK_TARGET, note: NOTE.optional(), periodKey: PERIOD.optional() }))
+    .input(z.object({ source: CHARGE_SOURCE, target: BULK_TARGET, note: NOTE.optional(), periodKey: PERIOD.optional(), bill: CHARGE_BILL }))
     .mutation(({ ctx, input }) => {
       const snap = snapshotCharge(input.source);
       const ids = resolveTarget(input.target);
+      const immediate = input.bill === 'now' && canBillAlone(snap.amountCents);
       const ts = now();
       const created: string[] = [];
       db.transaction((tx) => {
         for (const studentId of ids) {
           const id = rid('chg');
           tx.insert(charges)
-            .values({ id, studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: input.periodKey ?? null, status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
+            .values({ id, studentId, chargeItemId: snap.chargeItemId, label: snap.label, amountCents: snap.amountCents, note: input.note || null, periodKey: immediate ? null : (input.periodKey ?? null), status: 'pending', createdByUserId: ctx.session?.userId ?? null, createdAt: ts, updatedAt: ts })
             .run();
           created.push(id);
         }
       });
-      // Attach after the insert transaction so one family's open invoice can't roll back the batch.
+      // Billed/attached AFTER the insert transaction, one child at a time, so a single family's invoice
+      // problem cannot roll back a hundred charges. Each is independent by construction.
       let attached = 0;
-      for (const id of created) if (attachChargeToExistingInvoice(id).attached) attached++;
-      audit(auditActor(ctx), 'charge.addBulk', { entity: 'billing', detail: { amountCents: snap.amountCents, targeted: ids.length, created: created.length, attached, periodKey: input.periodKey ?? null } });
-      return { created: created.length, attached, targeted: ids.length };
+      let billed = 0;
+      for (const id of created) {
+        if (immediate) {
+          if (billChargeNow(id).billed) billed++;
+        } else if (attachChargeToExistingInvoice(id).attached) attached++;
+      }
+      audit(auditActor(ctx), 'charge.addBulk', {
+        entity: 'billing',
+        detail: { amountCents: snap.amountCents, targeted: ids.length, created: created.length, bill: input.bill, billed, attached, periodKey: immediate ? null : (input.periodKey ?? null) },
+      });
+      return { created: created.length, attached, billed, targeted: ids.length };
     }),
 
   chargeList: adminOrFinanceProcedure
@@ -1151,7 +1220,7 @@ export const billingRouter = router({
       /**
        * Whether tuition collects itself, and off what (0.48.0).
        *
-       * The office could not see this anywhere. Autopay is a PER-HOUSEHOLD enrolment against a
+       * The office could not see this anywhere. Autopay is a PER-HOUSEHOLD enrollment against a
        * per-household Stripe Customer (§13.3), so it is reported here once and the screen says "this
        * household" rather than implying it is a property of one child — but it belongs on a child's record
        * because that is where a volunteer stands when a parent rings to ask why nothing was taken, or when
@@ -1188,6 +1257,72 @@ export const billingRouter = router({
    *  own invoices absorb it oldest-first; anything left over stays as his credit and the next bill for
    *  him takes it. Paying for several children is several records, which is the honest shape: the
    *  office counted separate amounts for separate kids. */
+  // ── Standing payments (0.51.0-dev.15) ──────────────────────────────────────
+  /**
+   * The standing arrangement on one student, and what it would record right now.
+   *
+   * `wouldRecord` is live rather than stored, and is the number the screen must show: the arrangement holds
+   * no amount at all, because the figure is whatever is OWED on the day (billing/standingPayments.ts). An
+   * office looking at the panel should see the same figure the scheduler would.
+   */
+  standingGet: adminOrFinanceProcedure.input(z.object({ studentId: ID })).query(({ input }) => {
+    const row = db.select().from(standingPayments).where(eq(standingPayments.studentId, input.studentId)).get();
+    const dayOfMonth = row?.dayOfMonth ?? 1;
+    // As of the NEXT RUN, not today. Asking about today told an office setting this up on the 24th that
+    // nothing would be recorded, because the bill was not due until the 1st — true, and indistinguishable
+    // from a broken feature. See `nextRunDate`.
+    const runsOn = nextRunDate(dayOfMonth);
+    return {
+      enabled: !!row?.enabled,
+      channel: (row?.channel ?? 'cash') as (typeof MANUAL_PAYMENT_CHANNELS)[number],
+      dayOfMonth,
+      memo: row?.memo ?? '',
+      lastPeriod: row?.lastPeriod ?? null,
+      /** The day the figure below is for, so the screen can name it rather than implying "now". */
+      runsOn,
+      wouldRecord: owedNow(input.studentId, runsOn),
+    };
+  }),
+
+  /**
+   * Set it up, change it, or switch it off.
+   *
+   * Admin OR finance, matching `recordManualPayment` below: this arrangement does exactly what that button
+   * does, on a schedule, so gating it more tightly would say finance may record a payment by hand but not
+   * arrange for one — a distinction with no reason behind it. Audited either way, because it is a standing
+   * instruction to write money.
+   */
+  standingSet: adminOrFinanceProcedure
+    .input(
+      z.object({
+        studentId: ID,
+        enabled: z.boolean(),
+        channel: z.enum(MANUAL_PAYMENT_CHANNELS),
+        // 1–28: every month has a 28th, so no arrangement silently skips February.
+        dayOfMonth: z.number().int().min(1).max(28),
+        memo: z.string().trim().max(200).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      if (!db.select({ id: students.id }).from(students).where(eq(students.id, input.studentId)).get()) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+      }
+      const ts = now();
+      db.insert(standingPayments)
+        .values({ studentId: input.studentId, enabled: input.enabled, channel: input.channel, dayOfMonth: input.dayOfMonth, memo: input.memo || null, createdAt: ts, updatedAt: ts })
+        .onConflictDoUpdate({
+          target: standingPayments.studentId,
+          set: { enabled: input.enabled, channel: input.channel, dayOfMonth: input.dayOfMonth, memo: input.memo || null, updatedAt: ts },
+        })
+        .run();
+      audit(auditActor(ctx), 'standing.set', {
+        entity: 'student',
+        entityId: input.studentId,
+        detail: { enabled: input.enabled, channel: input.channel, dayOfMonth: input.dayOfMonth },
+      });
+      return { ok: true as const };
+    }),
+
   recordManualPayment: adminOrFinanceProcedure
     .input(
       z.object({

@@ -94,7 +94,7 @@ describe('lookup (§11.2)', () => {
     expect(r.family.balanceCents).toBe(5000);
     expect(r.family.openInvoices).toHaveLength(1);
     // Only first name + last initial — never a full last name. Each sibling also carries their own
-    // ids so a kiosk can pay for a sibling without the parent typing their ID; the NAME minimisation
+    // ids so a kiosk can pay for a sibling without the parent typing their ID; the NAME minimization
     // is what this assertion guards, so check it field-by-field.
     expect(r.family.students.map((k: { firstName: string; lastInitial: string }) => ({ firstName: k.firstName, lastInitial: k.lastInitial }))).toEqual(
       expect.arrayContaining([
@@ -138,7 +138,7 @@ describe('lookup (§11.2)', () => {
     const fam = await admin.people.familyCreate({ name: 'Ismail family' });
     const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
     const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
-    await admin.billing.chargeAdd({ studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
+    await admin.billing.chargeAdd({ bill: 'period', studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
     await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
 
     const inv = (await call('lookup', { v: 2, studentCode: s.studentCode })).json().family.openInvoices[0];
@@ -151,7 +151,7 @@ describe('lookup (§11.2)', () => {
     for (const i of inv.items) expect(Object.keys(i).sort()).toEqual(['amountCents', 'balanceCents', 'id', 'kind', 'label']);
   });
 
-  it('accepts the ID as typed — lowercase and punctuation are normalised away', async () => {
+  it('accepts the ID as typed — lowercase and punctuation are normalized away', async () => {
     const { code } = await seed();
     expect((await call('lookup', { v: 2, studentCode: `${code.slice(0, 3).toLowerCase()} ${code.slice(3)}` })).json().found).toBe(true);
   });
@@ -256,12 +256,12 @@ describe('record-payment + check (§11.3/§11.4)', () => {
    * overrides it, and the second half of this test is the part that matters — generating the next month
    * recomputes every allocation, and the book fee must STILL read as settled afterwards.
    */
-  it('honours a parent’s choice of lines, and it survives the next month', async () => {
+  it('honors a parent’s choice of lines, and it survives the next month', async () => {
     const admin = caller('admin');
     const fam = await admin.people.familyCreate({ name: 'Ismail family' });
     const plan = await admin.billing.feePlanCreate({ name: 'Monthly tuition', amountCents: 20000, cadence: 'monthly' });
     const s = await admin.people.studentCreate({ familyId: fam.id, fullName: 'Yusuf Ismail', feePlanId: plan.id });
-    await admin.billing.chargeAdd({ studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
+    await admin.billing.chargeAdd({ bill: 'period', studentId: s.id, source: { kind: 'custom', label: 'Book fee', amountCents: 5000 }, periodKey: '2026-07' });
     await admin.billing.generateFamily({ familyId: fam.id, periodKey: '2026-07', label: 'Tuition — Jul 2026', dueDate: '2026-07-01' });
 
     const items = (await call('lookup', { v: 2, studentCode: s.studentCode })).json().family.openInvoices[0].items;
@@ -345,7 +345,7 @@ describe('record-payment + check (§11.3/§11.4)', () => {
 
   /** `allocations` has been in the contract since v1 and was parsed and then thrown away until 0.43.0 —
    *  a consumer asking for a specific invoice silently got oldest-due-first instead. */
-  it('honours invoice-level allocations, which used to be ignored', async () => {
+  it('honors invoice-level allocations, which used to be ignored', async () => {
     const admin = caller('admin');
     const { familyId, studentId } = await seed(); // one $50 July invoice
     await admin.billing.generateFamily({ familyId, periodKey: '2026-08', label: 'Tuition — Aug 2026', dueDate: '2026-08-01' });

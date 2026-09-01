@@ -1,0 +1,25 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (C) 2026 OpenMasjid-Solutions
+--
+-- What actually happened to a WhatsApp message (0.51.0).
+--
+-- Until now the queue log's last word was `queued`, because that was genuinely all this app could
+-- know: the platform answered 202 and the story ended there. A masjid then hit exactly the failure
+-- that design cannot explain — messages accepted, nothing delivered for over a day, no error
+-- anywhere — and neither the office nor this app had anything to look at. (The cause was
+-- platform-side: quiet hours evaluated in UTC held every evening message, and the queue was
+-- memory-only, so each container restart destroyed the backlog.)
+--
+-- OpenMasjidOS 0.51.1 gives every accepted message an id and an endpoint that reports its outcome.
+-- So: store the id, and let `status` carry the answer.
+--
+--  * `platform_id` — the OS's own message id, the handle for asking. NULL for every row written
+--    before this and for every `skipped` row, which never reached the platform at all.
+--  * `status` gains `sent` and `expired`. It is a text column with a TypeScript union over it, so
+--    there is nothing to alter — the widening is in the type, and this comment is the record of it.
+--    `expired` is the platform dropping a message held longer than 24 hours, which is a real outcome
+--    an office needs to see rather than a silence.
+ALTER TABLE `whatsapp_log` ADD `platform_id` text;--> statement-breakpoint
+-- Polled by the scheduler: the rows still awaiting an answer, newest first. Partial index rather than
+-- one over the whole table — the vast majority of rows are settled and never looked at again.
+CREATE INDEX `whatsapp_log_pending_idx` ON `whatsapp_log` (`created_at`) WHERE `status` = 'queued' AND `platform_id` IS NOT NULL;

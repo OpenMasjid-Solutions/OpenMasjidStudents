@@ -43,7 +43,7 @@ export interface PayableLine {
   itemId: string;
   invoiceId: string;
   studentId: string;
-  /** The invoice this line sits on, e.g. "Tuition — Feb 2027" — the period a parent recognises. */
+  /** The invoice this line sits on, e.g. "Tuition — Feb 2027" — the period a parent recognizes. */
   invoiceLabel: string;
   periodKey: string;
   dueDate: string | null;

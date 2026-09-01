@@ -15,7 +15,9 @@ import { refreshSiteInfo } from '../fabric/platform';
 import { writeSnapshot } from '../db/snapshot';
 import { runAutoInvoice } from '../billing/autoInvoice';
 import { runPastDue } from '../billing/pastDue';
-import { pruneWhatsappLog, refreshWhatsAppStatus } from '../whatsapp';
+import { runStanding } from '../billing/standingPayments';
+import { pruneWhatsappLog, refreshWhatsAppStatus, refreshWhatsappOutcomes } from '../whatsapp';
+import { checkSuspectWindows } from '../whatsapp/suspect';
 
 const log = makeLog('scheduler');
 let started = false;
@@ -51,6 +53,29 @@ export function startSchedulers(): void {
       if (r.ran) log.info('auto invoice run', { periodKey: r.periodKey, created: r.created });
     } catch (e) {
       log.error('auto invoice run failed', { error: (e as Error).message });
+    }
+  });
+
+  /**
+   * STANDING PAYMENTS, daily at 05:00 (0.51.0-dev.15) — the offline arrangements an office set up: cash
+   * on the first, a monthly bank transfer. `billing/standingPayments.ts` decides what each records.
+   *
+   * BEFORE the 06:00 autopay run and the 08:00 past-due chase, and that order is the point. A family with
+   * a standing cash arrangement must be recorded as paid before anything chases them for it, and before a
+   * saved card is charged for a bill the cash has now covered. Getting this wrong would double-collect.
+   *
+   * OUTSIDE the `fabricConfigured` guard, deliberately, and for the same reason auto-invoicing is: this is
+   * pure local billing. It writes ledger rows from the masjid's own data, sends nothing, and needs no
+   * platform — so a standalone install gets it too, where an office would otherwise be keying the same
+   * payment in every month with no way to automate it. (The jobs below the guard are there because every
+   * one of their outputs is an email or a Stripe call.)
+   */
+  new Cron('0 5 * * *', () => {
+    try {
+      const r = runStanding();
+      if (r.recorded) log.info('standing payments run', { recorded: r.recorded, skipped: r.skipped });
+    } catch (e) {
+      log.error('standing payments run failed', { error: (e as Error).message });
     }
   });
 
@@ -122,9 +147,47 @@ export function startSchedulers(): void {
     await refreshWhatsAppStatus();
   });
   // …and once at boot. A cron's first tick is a quarter of an hour away, and until it came the cache
-  // was cold — which the settings screen read as "not ready" and used to grey out the Send-a-test
+  // was cold — which the settings screen read as "not ready" and used to gray out the Send-a-test
   // button on an install that was working perfectly (0.50.0-dev.4).
   void refreshWhatsAppStatus();
+  // Every 15 minutes — ask what became of the messages still sitting at `queued` (0.51.0, needs
+  // OpenMasjidOS 0.51.1+). This was FIVE, to beat a shared 200-record ring that a single invoice run
+  // could fill on its own; the platform made it 500 per app kept for 24 hours (0.51.1-dev.8), and a
+  // day of our traffic is capped at 60 messages, so the race is gone and a quarter of an hour is the
+  // right trade for an admin refreshing a log. It no-ops in one cheap check when the platform cannot
+  // report outcomes at all.
+  new Cron('*/15 * * * *', async () => {
+    try {
+      await refreshWhatsappOutcomes();
+    } catch (e) {
+      log.warn('whatsapp outcome refresh failed', { error: (e as Error).message });
+    }
+  });
+  /**
+   * HOURLY — "was the platform wrong about anything it told us it sent?" (platform 0.51.2).
+   *
+   * A masjid's WhatsApp link can expire on its own; until 0.51.2 nobody noticed, and messages were
+   * reported `sent` and delivered nowhere for over a day. The platform now spots it in about ten
+   * minutes and hands back the windows it was wrong about — so this asks, and re-labels our own rows
+   * so the office's queue log stops asserting a delivery it cannot vouch for (whatsapp/suspect.ts).
+   *
+   * HOURLY IS THE RIGHT CADENCE, and deliberately not tighter. The read is cheap and on the platform's
+   * 600/min READ budget rather than our send budget, so frequency costs us no messages — but there is
+   * nothing to act on faster: the platform needs its own ~10 minutes to notice, the answer is almost
+   * always an empty array, and what it feeds is a banner a person reads, not an automatic resend.
+   * Polling right after a batch send would be worse than useless, since the window would not exist yet.
+   */
+  new Cron('7 * * * *', async () => {
+    try {
+      await checkSuspectWindows();
+    } catch (e) {
+      log.warn('whatsapp suspect check failed', { error: (e as Error).message });
+    }
+  });
+  // …and once at boot, which is the case that matters: a container restarted after an outage is exactly
+  // when there is a window waiting, and the first cron tick could be an hour away.
+  void checkSuspectWindows().catch(() => {});
+
   // Weekly — trim the WhatsApp queue log. It is an operational trail, not a record anybody bills from
   // (and it holds no message bodies), so an install running for years should not carry every line.
   new Cron('0 3 * * 0', () => {

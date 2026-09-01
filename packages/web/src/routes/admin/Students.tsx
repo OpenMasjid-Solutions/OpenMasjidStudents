@@ -12,9 +12,10 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { Printer, Users, Upload } from 'lucide-react';
+import { Printer, Send, Users, Upload } from 'lucide-react';
 import { staggerContainer, staggerItem } from '../../lib/motion';
 import { ageFromDob } from '../../lib/age';
+import { parseCents } from '../../lib/money';
 import { cn } from '../../lib/cn';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
@@ -23,6 +24,7 @@ import { SchoolTabs, useSchool } from '../../components/SchoolTabs';
 import { FamilyDetail } from './FamilyDetail';
 import { ImportStudents } from './ImportStudents';
 import { StudentPicker } from '../../components/StudentPicker';
+import { OnboardingSend } from '../../components/OnboardingSend';
 import { SiblingSuggestions } from '../../components/SiblingSuggestions';
 
 type Row = {
@@ -80,7 +82,7 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
    *  hang off the household, so linking IS how the parent details come to apply to them.
    *
    *  `billFromPeriod` empty is the default and means "bill nothing yet" — see the field below. */
-  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', classId: '', linkToStudentId: '', billFromPeriod: '' });
+  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', classId: '', linkToStudentId: '', billFromPeriod: '', firstMonth: '' });
   /** The months a catch-up may start from: this school year's, back to the billing floor, up to now. */
   const billFrom = trpc.billing.billFromMonths.useQuery({ schoolId });
   /** What the catch-up did, so five new invoices are never created silently. */
@@ -94,6 +96,10 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
 
   const openSiblings = () =>
     open({ title: t('siblings.title'), wide: true, dedupeKey: 'siblings:suggest', icon: <Users size={15} />, node: <SiblingSuggestions /> });
+
+  /** The onboarding message — the explain-what-this-is note, to a class, a course or the whole roster. */
+  const openOnboarding = () =>
+    open({ title: t('onboarding.title'), wide: true, dedupeKey: 'onboarding:send', icon: <Send size={15} />, node: <OnboardingSend /> });
 
   async function submitStudent(e: FormEvent) {
     e.preventDefault();
@@ -109,6 +115,7 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
       schoolId,
       linkToStudentId: stu.linkToStudentId || undefined,
       billFromPeriod: stu.billFromPeriod || undefined,
+      ...(stu.firstMonth.trim() && stu.billFromPeriod ? { firstMonthCents: parseCents(stu.firstMonth) ?? undefined } : {}),
     });
     // Say what the catch-up did. Creating five invoices for a family is not something to do quietly, and
     // neither is creating none because the month was before the billing floor.
@@ -121,7 +128,7 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
     );
     // The month is kept, like the plan and the class: a madrasah entering a group of children who all
     // started in October should not re-pick October for each of them.
-    setStu({ fullName: '', dob: '', feePlanId: stu.feePlanId, classId: stu.classId, linkToStudentId: '', billFromPeriod: stu.billFromPeriod });
+    setStu({ fullName: '', dob: '', feePlanId: stu.feePlanId, classId: stu.classId, linkToStudentId: '', billFromPeriod: stu.billFromPeriod, firstMonth: '' });
     setAdding(false);
     await Promise.all([
       utils.people.directory.invalidate(),
@@ -210,6 +217,11 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
           <>
             {/* Reachable outside the import too: an install that imported before 0.42.0 has households
                 that were never linked, and this is where someone goes looking for them. */}
+            {/* Admin only (behind `readOnly`, like every other write here): writing to every family at
+                once speaks for the madrasah, which is the wall §5 draws around finance. */}
+            <button type="button" className="btn btn--ghost" onClick={openOnboarding}>
+              <Send size={14} /> {t('onboarding.button')}
+            </button>
             <button type="button" className="btn btn--ghost" onClick={openSiblings}>{t('siblings.title')}</button>
             <button type="button" className="btn btn--ghost no-mobile" onClick={openImport}>{t('students.import')}</button>
             <button type="button" className="btn btn--primary" onClick={() => setAdding((v) => !v)}>{t('directory.addStudent')}</button>
@@ -294,6 +306,27 @@ export function Students({ readOnly = false }: { readOnly?: boolean }) {
                     : t('students.billFromHint')}
             </span>
           </div>
+          {/* WHAT THEIR FIRST MONTH COMES TO, when it is not the plan's own amount — a child starting on
+              the 15th is often charged part of that month. Only offered when a catch-up will actually
+              create that invoice: for a future start month there is no invoice yet to adjust, and for "not
+              yet" there is nothing at all. Left blank it bills the normal amount, which is the common case.
+              The adjustment shows on the bill as its own line, so the parent can see why it differs. */}
+          {!!stu.billFromPeriod && stu.billFromPeriod <= (billFrom.data?.current ?? '') && (
+            <div className="field" style={{ flex: '0 1 10rem' }}>
+              <label className="label" htmlFor="stu-firstmonth">{t('students.firstMonth')}</label>
+              <input
+                id="stu-firstmonth"
+                type="number"
+                step="0.01"
+                min="0"
+                className="input glass-inset"
+                value={stu.firstMonth}
+                onChange={(e) => setStu({ ...stu, firstMonth: e.target.value })}
+                placeholder={t('students.firstMonthPlaceholder')}
+              />
+              <span className="hint">{t('students.firstMonthHint')}</span>
+            </div>
+          )}
           {/* The sibling link. This is the ONLY way households are formed — nobody names a family.
               Type-to-search, because by the time a school has three hundred children a dropdown of
               every one of them is not a way to find a brother. */}

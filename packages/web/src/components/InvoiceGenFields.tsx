@@ -61,6 +61,42 @@ export function useInvoiceGen() {
   return { gen, setGen, cfg, ready: !!gen.periodKey && !!gen.label.trim() };
 }
 
+/**
+ * "For which month?" on its own, where the month is OPTIONAL — a one-off charge and a mass apply
+ * (0.51.0).
+ *
+ * Both of those screens asked for a "period key" in a free-text box with `2026-07` as the placeholder,
+ * which is this app's storage format leaking onto a volunteer's screen. Three things were wrong with
+ * it and only the first is cosmetic: nobody outside this codebase calls a month a period key; a typo
+ * lands the charge on a month that will never be generated, where it sits invisibly forever; and the
+ * SAME question two clicks away on the invoice form was already a dropdown, so the app disagreed with
+ * itself about what a month is.
+ *
+ * EMPTY IS A REAL ANSWER HERE and is why this is not `InvoiceGenFields`' month field. On an invoice the
+ * month is what is being generated and is required; on a charge it means "whichever invoice comes next",
+ * which is the common case and stays the default. So the blank option is first and is spelled out
+ * rather than left as a bare dash.
+ */
+export function PeriodMonthSelect({ id, value, onChange }: { id: string; value: string; onChange: (v: string) => void }) {
+  const { t } = useTranslation();
+  const cfg = trpc.billing.invoiceLabelConfig.useQuery();
+  return (
+    <div className="field" style={{ flex: '0 1 12rem' }}>
+      <label className="label" htmlFor={id}>{t('billing.forMonth')}</label>
+      <select id={id} className="input glass-inset" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{t('billing.periodNext')}</option>
+        {(cfg.data?.months ?? []).map((m) => (
+          <option key={m.periodKey} value={m.periodKey}>{m.label}</option>
+        ))}
+        {/* A charge already filed against a month outside the current school year would otherwise
+            vanish from its own form the moment the year rolls over. Kept as itself. */}
+        {value && !(cfg.data?.months ?? []).some((m) => m.periodKey === value) && <option value={value}>{value}</option>}
+      </select>
+      <span className="hint">{t('billing.periodHint')}</span>
+    </div>
+  );
+}
+
 /** The month, the label (with its tag chips and live preview) and the due date. The submit button stays
  *  with the caller — the two screens generate different things and say so on the button. */
 export function InvoiceGenFields({

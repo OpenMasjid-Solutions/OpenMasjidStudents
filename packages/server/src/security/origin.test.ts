@@ -8,12 +8,12 @@ type H = FastifyRequest['headers'];
 const req = (headers: H) => ({ headers }) as FastifyRequest;
 
 describe('isPrivateIp', () => {
-  it('recognises private / loopback / link-local', () => {
+  it('recognizes private / loopback / link-local', () => {
     for (const ip of ['127.0.0.1', '10.1.2.3', '192.168.5.10', '172.16.0.1', '172.31.255.1', '169.254.1.1', '::1', 'fd00::1', 'fe80::1', '::ffff:192.168.1.1']) {
       expect(isPrivateIp(ip)).toBe(true);
     }
   });
-  it('recognises public addresses', () => {
+  it('recognizes public addresses', () => {
     for (const ip of ['203.0.113.5', '8.8.8.8', '172.32.0.1', '172.15.0.1', '2606:4700::1', undefined]) {
       expect(isPrivateIp(ip)).toBe(false);
     }

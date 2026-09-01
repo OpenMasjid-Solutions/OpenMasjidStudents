@@ -16,7 +16,7 @@ import { pausedFor } from '../settings/testStudent';
  *  message will reach for; making it answer honestly that there is nobody to write to means the next
  *  such message is safe before anybody remembers the switch exists. It is only ever used to send.
  *
- *  The TEST STUDENT's household is the one exception (0.50.0), and it has to be honoured here as well
+ *  The TEST STUDENT's household is the one exception (0.50.0), and it has to be honored here as well
  *  as at the senders — this second line would otherwise quietly cancel the exception the first one
  *  granted, which is exactly what happened when the setting only lifted the WhatsApp pause. */
 export function guardianEmailsForFamily(familyId: string): string[] {

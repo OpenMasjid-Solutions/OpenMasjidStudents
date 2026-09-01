@@ -195,10 +195,10 @@ describe('optional columns are opt-in', () => {
   });
 
   /**
-   * One labelled column per number (0.42.0). The office wants to know WHOSE number it is about to
+   * One labeled column per number (0.42.0). The office wants to know WHOSE number it is about to
    * ring, which a single comma-separated cell could never say.
    */
-  it('files each number under the right heading, and keeps unlabelled ones in "other"', async () => {
+  it('files each number under the right heading, and keeps unlabeled ones in "other"', async () => {
     const { admin, ismailId } = await seed();
     await admin.people.guardianCreate({ familyId: ismailId, name: 'Abu Yusuf', phone: '(555) 111-1111', email: 'dad@test.org', relation: 'father' });
     // Free text from before the dropdown existed still classifies — offices type "Mom", not "mother".
@@ -335,7 +335,7 @@ describe('optional columns are opt-in', () => {
     expect(yusuf.extra.fatherPhone).toEqual(['(555) 111-1111']);
   });
 
-  /** An install that had the old combined column keeps seeing the same numbers, in labelled columns,
+  /** An install that had the old combined column keeps seeing the same numbers, in labeled columns,
    *  with no migration and no visit to Settings. */
   it('translates the pre-0.42.0 saved column names on read', async () => {
     const { admin } = await seed();

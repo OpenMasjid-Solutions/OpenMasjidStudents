@@ -120,7 +120,7 @@ Finance records cash/Zelle/check by hand, and prints **statements**, **household
 the **Cloudflare uplink the OS provides**; the admin surface stays on the masjid LAN. Tuition paid with a
 **child's Student ID** through **OpenMasjidDonations** and **OpenMasjidKiosk** flows automatically into the
 same ledger over the **OpenMasjidOS Fabric** — this app is the **provider** of the `students/billing`
-capability those apps consume. A masjid running more than one programme on different calendars (a weekend
+capability those apps consume. A masjid running more than one program on different calendars (a weekend
 maktab beside a full-time hifz school) can define **schools** (0.47.0), which scope the calendar and the
 class tree and never the household or the money.
 
@@ -163,7 +163,7 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   (ts/tsx/js/css), `# …` (yml/sh/Dockerfile), `<!-- … -->` (md/html) — followed by
   `Copyright (C) 2026 OpenMasjid-Solutions`. Never strip an existing header.
 - Never copy code from AGPL-incompatible sources — and **never copy QuickSchools' UI text, templates, assets,
-  or code**; they are the feature benchmark, nothing more. Re-implement from behaviour. Permissive deps
+  or code**; they are the feature benchmark, nothing more. Re-implement from behavior. Permissive deps
   (MIT/ISC/BSD) are fine. When in doubt, write it yourself.
 - **No AI co-author trailers in commits.** Conventional-commit messages (`feat:`, `fix:`, `docs:` …), small
   focused commits.
@@ -208,9 +208,16 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   (`student_fees`), with a per-student amount **override** — which is also how a sibling/hardship discount is
   expressed. (The family-level discount was removed in 0.39.0: with one bill per child it had nowhere honest
   to sit.) Writing plans is admin-only; finance reads them (0.42.0).
-- **Charge items + charges**: a configurable catalogue of one-off things (a book fee, a trip) applied to one
+- **Charge items + charges**: a configurable catalog of one-off things (a book fee, a trip) applied to one
   child or mass-applied to a class or course, each **snapshotting** its label and amount so re-pricing the
   item never rewrites history. A **negative** charge is how a credit, bursary or correction is expressed.
+  **A charge is BILLED ON ITS OWN by default** (0.51.0-dev.10, `billChargeNow`) — its own one-line invoice,
+  due today, payable immediately — because waiting for the month's run meant the office had to generate
+  every child's tuition early or tell the parent to wait. The invoice is keyed `charge-<id>` and NOT the
+  month: `invoices` is UNIQUE on (student, period) and generation returns early when one exists, so a
+  month-keyed immediate invoice would silently make that student's real tuition run skip them. `canBillAlone`
+  is the one place that knows a **credit cannot** be billed alone (it has to reduce something, and alone it
+  is an unpayable negative invoice), because both the router and the biller need that answer.
 - **Invoices** per STUDENT (generated for a month/term by hand or by the nightly job), line items (one per
   plan, plus each charge), statuses `open | partially_paid | paid | void`, due dates, and a label resolved
   from a remembered template so the month on the bill always matches the period it is filed under.
@@ -222,6 +229,22 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
 - **Starting mid-year** (`billing/carryIn.ts`, 0.43.0): a madrasah going live in February records what each
   child brings with them ONCE, as real dated ledger rows, and a billing floor stops the months before go-live
   ever being generated on top of it.
+- **What a year comes to** (0.51.0-dev.11, `billing/yearTotal.ts`): the question every enrollment opens
+  with, answered rather than worked out on a calculator — the monthly plan × the months this madrasah
+  actually teaches (never twelve, never the calendar), plus per-term × the terms configured (ZERO when
+  none are, because the generator would never bill one), plus a one-time fee only if not already billed,
+  all at the per-student override rather than the plan's list price. **It is a QUOTE and writes nothing**:
+  a projected year is not a balance, and a family who leaves in March owes March. **The headline runs from
+  where THAT student's billing starts to the end of the year**, derived from their earliest month-invoice
+  (`billingStartFor`) — the whole-year figure overstates a February joiner by half, and it is the office
+  who would correct it in front of a parent. A non-month period (`carry-in`, a stand-alone charge) is not a
+  start, a bill from a previous year clamps to this year's first month, and the whole year is still
+  reported alongside for the cases where both are asked for.
+- **A student joining mid-year can have their FIRST month set** (0.51.0-dev.11, `adjustFirstMonth`).
+  `billStudentFrom` already backfilled from a chosen month (0.48.0); the agreed figure for that first
+  month is an ADJUSTMENT LINE rather than a rewritten tuition line — honest on paper (tuition at the full
+  amount, then a named part-month credit under it), and it keeps ONE place writing money instead of
+  teaching the generator a second answer to what a line is worth.
 - **The year view** (`billing/yearCells.ts`, 0.42.0): every child × every month of the school year, at a
   glance, printable — which is how an office actually finds who is behind.
 - **External payments** arrive over Fabric from Donations and Kiosk (§11); **portal and autopay payments**
@@ -229,6 +252,52 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   anything.
 - **Manual payments**: channel `cash | check | ach | zelle | other`, amount, date, memo, and optionally the
   exact lines the money was handed over for.
+- **Standing payments** (0.51.0-dev.15, `billing/standingPayments.ts`): autopay for money that never
+  touches Stripe — a family who hands over cash or sends a transfer every month, set per STUDENT on their
+  billing record with a channel and a day. **It records the payment without anybody confirming the money
+  arrived**, which was Hasan's explicit choice over a confirm-first queue, so the panel says so plainly and
+  the two guards are what keep it from becoming a fiction: **the amount is whatever is OWED that day**
+  (never stored — a fixed figure against a smaller bill would mint credit, which the next invoice absorbs
+  in silence, compounding unseen), and **`payments.idempotency_key` is `standing:<student>:<period>` and
+  UNIQUE**, so a re-run, a restart or a catch-up on the 3rd cannot record a month twice. Runs at 05:00,
+  BEFORE autopay (06:00) and the past-due chase (08:00), or a family with a cash arrangement would be
+  chased and card-charged for a bill the cash had covered. Skips a withdrawn child, caps at that
+  student's own balance so a sibling's arrears are never settled by the wrong record, is stamped
+  `recorded_by_name = 'Standing arrangement'` rather than a person, and every row it writes reverses
+  through the ordinary `billing.reversePayment` — which is what makes the whole design tolerable.
+- **Processing fees** (0.51.0, `payments/fees.ts`): off by default, an office can decide the PAYER covers
+  Stripe’s cut rather than the school — $100 owed is charged as $103.30 and the madrasah receives $100.
+  Card and bank carry SEPARATE rates and separate switches, because 2.9%+30¢ against 0.8%-capped-at-$5 is
+  fifty-five dollars apart on a term bill. **A fee is not tuition and never enters the ledger**: it rides
+  on the PaymentIntent (`students_fee_cents`, §11.3) and `netOfIntent` is the ONE place a Stripe amount
+  becomes a tuition amount — the three read-back paths (portal confirm, autopay confirm, reconciliation)
+  all see the gross, and crediting it would leave a credit that quietly eats next month. Every screen says
+  the extra is the card networks’, not the masjid’s; the consumer half is advertised in `info.fee`.
+  Surcharging is regulated (debit cards, some states, network caps) so the panel says to check first.
+  **DISCLOSED IN THREE PLACES, because each is a different moment** (the third and the shape of the second
+  are 0.51.0-dev.7): pay-now itemizes it in front of the payer; the **autopay tab** shows the same three
+  lines worked on the household’s balance, since an off-session charge is never watched and that toggle is
+  the only chance — and it shows them *before* a method is saved, having previously appeared only once a
+  card was on file, which hid it for the whole of setup; and the **printed family sheet** carries a worked
+  example plus “cash or a check at the office avoids it”, because the sheet is where a family chooses HOW
+  to pay and the portal only speaks once they are already paying. Which rate a saved method attracts is
+  `payments/methods.ts` `feeKindOf` — one function for the charge and for the screen describing it, so
+  they cannot name different rates; `FEE_EXAMPLE_CENTS` likewise keeps the office’s preview and the
+  parent’s sheet on the same bill. See `docs/PAYMENTS.md` §6.
+- **The onboarding message** (0.51.0, `people/onboarding.ts`): the one message that explains what any of
+  this IS — every other parent message is about an event (a bill exists, money landed) and none of them
+  says what a parent portal is or why an unfamiliar number is texting about fees. Sent by an office from
+  the Students tab to everyone / a course / a class / picked students, or from one household's record, on
+  **both channels**. It **carries no detail on purpose and points at the family sheet**: a Student ID may
+  never travel by WhatsApp (§14), fees change while a message does not, and the sheet is handed over in
+  person, which is exactly what makes it the right place. Its tag list has no Student ID, balance or card
+  in it, which is the enforcement rather than a rule in a document. On WhatsApp it appends **which number
+  the madrasah writes from** — a message from an unknown number about a child's fees is indistinguishable
+  from a scam — and that line is its own editable box, absent from the email where it would mean nothing.
+  Wording is the madrasah's in Settings, previewed per channel against a real household. **Bounded at 50
+  households per press with the remainder reported** (the outreach's trade — a burst is how a number gets
+  restricted, and silent truncation is the failure this release removed), no per-event switch because it
+  is a button not an event, and it still honors both pauses and every opt-out.
 - **Refunds** (0.48.0, `payments/refunds.ts`): any transaction, grouped by Stripe PaymentIntent. A card
   payment is refunded at Stripe *and* reversed on the ledger, in that order; cash is reversed on the ledger
   with the screen saying plainly that a person still has to hand the money over. Full refunds only — a
@@ -275,7 +344,7 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   channel families actually read, through the masjid's own self-hosted OpenWA gateway. Every one of the
   seven exists on EMAIL too, with its own switch on each channel: `invoice-ready`, `receipt`, `past-due`,
   `autopay-upcoming`, `autopay-failed`, `card-expiring`, `payment-refunded`. **The platform owns
-  the connection AND the single paced queue every app shares**, which is the entire defence for a number
+  the connection AND the single paced queue every app shares**, which is the entire defense for a number
   WhatsApp does not officially permit; this app never goes near a gateway and never designs for volume.
   Off by default, **paused by default**, every event off, with a **test student** whose household gets
   through the pause so a real message can be tried on one family. Parents opt out from their own portal;
@@ -340,15 +409,17 @@ account may additionally be restricted to certain **schools**, which narrows a v
 
 | Capability | `admin` | `finance` | `parent` |
 | --- | :-: | :-: | :-: |
-| Settings: school name, currency, logo, colour, date format, contact, sheet wording | ✅ | ❌ | ❌ |
-| Settings: Stripe account, email alerts, parent emails, past-due policy, self-registration | ✅ | ❌ | ❌ |
+| Settings: school name, currency, logo, color, date format, contact, sheet wording | ✅ | ❌ | ❌ |
+| Settings: Stripe account, **who pays the processing fee**, email alerts, parent emails, past-due policy, self-registration | ✅ | ❌ | ❌ |
 | Settings: WhatsApp (on/off, pause, events, country codes, test student, outreach, queue log) | ✅ | ❌ | ❌ |
+| **Let the masjid webhook name the child on a payment notice** | ✅ *(0.51.0-dev.17 — off by default, §9)* | ❌ | ❌ |
 | Staff accounts (create, role, disable, reset password, school limits) | ✅ | ❌ | ❌ |
 | Staff WhatsApp number + which alerts they get on it | ✅ | ❌ | ❌ |
-| **Opt out of WhatsApp** (and back in) | ❌ | ❌ | ✅ anyone on their own household |
+| **Opt out of WhatsApp** (and back in) | ✅ *(0.51.0 — the office is told in person)* | ❌ | ✅ anyone on their own household |
 | Schools, school years, terms, courses, classes, rollover — write | ✅ | ❌ | ❌ |
 | Schools / years / courses / classes — read | ✅ | ✅ | ❌ |
 | Students / households / guardians / emergency contacts — write | ✅ | ❌ | ❌ |
+| **Erase a BILLED student for good** (invoices + payments with them) | ✅ *(0.51.0-dev.14, §9's one exception)* | ❌ | ❌ |
 | Students directory — read | ✅ | ✅ | own household only |
 | Guardian contact — read | ✅ | ✅ | own household |
 | Spreadsheet import | ✅ | ❌ | ❌ |
@@ -358,6 +429,7 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | Invoices: generate, void; the year view; CSV export | ✅ | ✅ | ❌ (own bills only) |
 | Ledger / all payments — read | ✅ | ✅ | own household only |
 | Record manual payment | ✅ | ✅ | ❌ |
+| **Standing payment** (record cash/ACH on a schedule) | ✅ | ✅ | ❌ |
 | Reverse a CASH payment / **refund any transaction** | ✅ | ✅ | ❌ |
 | Mid-year go-live: preview / commit | ✅ / ✅ | ✅ / ❌ | ❌ |
 | Reconcile with Stripe | ✅ | ✅ | ❌ |
@@ -404,14 +476,14 @@ of "card-ish channels" cannot disagree with it.
                  ▼                                            ▼
    ┌──────────────────────────────────────────────────────────────────────────┐
    │                OpenMasjidStudents — ONE container                         │
-   │  Fastify + tRPC (+ static built React UI: admin / billing / family)       │
+   │  Fastify + tRPC (+ static built React UI: admin / finance / family)       │
    │  Students · households · schools/years/courses/classes · fee plans        │
    │  Invoices · charges · derived ledger · refunds · past due · year view     │
    │  Printable statements / sheets / invoices / ID sheets (print-CSS HTML)    │
    │  SQLite (WAL) via Drizzle  •  /data volume (db + 30-min snapshot)         │
    │  Auth (argon2id) + roles + ORIGIN POLICY (admin = LAN-only)                │
    │  Stripe: Elements PIs, SetupIntents, off-session autopay, refunds          │
-   │  Scheduler: autopay · reconcile · auto-invoice · past due · snapshot        │
+   │  Scheduler: standing · autopay · reconcile · auto-invoice · past due · snap │
    │  /fabric/billing/*  ← secret-gated provider endpoints (LAN-only)           │
    │  /statements /sheets /invoices (authed)  ·  /api/logo /manifest.webmanifest│
    │  /apple-touch-icon.png /sw.js /api/public/appearance (open, no data)       │
@@ -465,7 +537,7 @@ of "card-ish channels" cannot disagree with it.
 | Icons | **lucide-react** + org masjid glyphs | |
 | i18n | **i18next / react-i18next**, RTL-aware | English first; Arabic/Urdu-ready. |
 | QR | **`qrcode`** (MIT) | Statements, sheets, portal signup links. |
-| Printed documents | **print-CSS HTML**, assembled server-side and escaped | **No PDF renderer and no headless Chromium** — Pi-friendly, and a browser's own print dialog is what an office already knows. `@react-pdf/renderer` was removed with the academics. |
+| Printed documents | **print-CSS HTML**, assembled server-side and escaped | **No PDF renderer and no headless Chromium** — Pi-friendly, and a browser's own print dialog is what an office already knows. `@react-pdf/renderer` outlived the academics as an unused dependency and was dropped in 0.45.0. |
 | Spreadsheets | hand-rolled reader (`web/src/lib/xlsx.ts`) | A .xlsx is a ZIP of XML and the browser has both halves; no spreadsheet dependency. |
 | Build/deploy | Docker multi-stage → one runtime image | Public, multi-arch, digest-pinned per release. |
 
@@ -497,31 +569,36 @@ OpenMasjidStudents/
 │   │       │   ├── structure.ts          # schools, years, terms, courses, classes, rollover
 │   │       │   ├── billing.ts            # fee plans, charges, invoices, ledger, payments, refunds, mid-year
 │   │       │   ├── portal.ts             # parent-scoped reads + pay-now + saved methods + autopay
-│   │       │   └── settings.ts           # settings, alerts, past-due policy, Stripe account, diagnostics
+│   │       │   ├── settings.ts           # settings, alerts, past-due policy, Stripe account, diagnostics
+│   │       │   ├── whatsapp.ts           # WhatsApp settings, texts, groups, queue log, suspect windows
+│   │       │   └── familyAccess.ts       # parent household scoping (§5) — a helper, not a router
 │   │       ├── billing/                  # ledger · invoices · lines · paidFor · period · schoolYear ·
 │   │       │                             # yearCells · carryIn · joinMidYear · autoInvoice · pastDue · stats ·
-│   │       │                             # statements · invoiceDoc · statementRoutes · studentCodes · csv
+│   │       │                             # yearTotal · standingPayments · statements · invoiceDoc ·
+│   │       │                             # statementRoutes · studentCodes · csv
 │   │       ├── payments/                 # stripe (the ONLY SDK importer) · autopay · refunds ·
-│   │       │                             # reconcile · methods · scheduler
+│   │       │                             # reconcile · methods · fees · scheduler
 │   │       ├── fabric/                   # provider.ts (/fabric/billing/*) · commands.ts (/fabric/commands/run) ·
 │   │       │                             # platform.ts (calls to the OS)
 │   │       ├── people/                   # names · household · relations · import · siblingSuggest ·
-│   │       │                             # onboardingSheet · idSheet · sheetText
-│   │       ├── schools/ structure/       # school scope resolution · year rollover
-│   │       ├── settings/                 # settings store · dates (the one date edge)
+│   │       │                             # onboardingSheet · idSheet · sheetText · onboarding
+│   │       ├── schools/ structure/       # school scope · year rollover · audience (who a bulk action names)
+│   │       ├── settings/                 # settings store · dates (the one date edge) · testStudent
 │   │       ├── alerts/ mail/ audit/      # who hears about it · templates + senders · append-only trail
-│   │       ├── whatsapp/                 # index.ts (every gate) · numbers.ts (E.164) · templates.ts
+│   │       ├── whatsapp/                 # index.ts (every gate) · numbers · templates · suspect
 │   │       ├── security/                 # origin.ts (§12.4) · rateLimit.ts
 │   │       ├── auth/                     # passwords · sessions · invites · usernames · firstRun
 │   │       └── http/                     # basePath · manifest (the PWA manifest builder)
-│   │   └── test/                         # vitest: 800+ tests, incl. the security matrix
+│   │   └── test/                         # vitest: 1,100+ tests, incl. the security matrix
 │   └── web/
-│       └── src/
-│           ├── routes/  login/ · admin/ · billing/ · family/
-│           ├── components/  (FirstRunSetup, FamilyBilling, Refunds, MidYearSetup, InstallPrompt, …)
-│           ├── lib/  (trpc, theme, i18n, motion, stripe, money, dates, phone, csv, xlsx, base)
-│           ├── styles/  (tokens.css + app.css + glass.css ported from OpenMasjidOS; shell.css, admin.css ours)
-│           └── public/  (icons, sw.js, apple-touch-icon.png)
+│       ├── src/
+│       │   ├── routes/  Login/Invite/Reset/Register/Setup (flat) · admin/ · finance/ · family/
+│       │   ├── components/  (FirstRunSetup, FamilyBilling, Refunds, MidYearSetup, InstallPrompt, …)
+│       │   ├── lib/  (trpc, i18n, motion, money, dates, phone, csv, xlsx, base, cn, prefs, appearance,
+│       │   │        changelog, cursorFx, scrollIdle, paymentMethod, months, age, password, registerSW)
+│       │   └── styles/  (tokens.css + app.css + glass.css ported from OpenMasjidOS; shell.css, admin.css,
+│       │                  family.css ours; paintCost.test.ts guards §15's paint-cost block)
+│       └── public/  (icons, sw.js, apple-touch-icon.png)   ← beside src/, not inside it
 └── docs/
     ├── FABRIC_BILLING_CONTRACT.md       # §11 extracted verbatim (the cross-repo contract)
     ├── PAYMENTS.md                      # §13 flows, the no-webhook doctrine, the autopay ladder
@@ -538,8 +615,8 @@ The tables, as they actually exist: `settings`, `users`, `sessions`, `invites`, 
 `schools`, `user_schools`, `school_years`, `terms`, `courses`, `classes`, `families`, `students`,
 `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts`, `fee_plans`, `student_fees`,
 `invoices`, `invoice_items`, `charge_items`, `charges`, `payments`, `payment_allocations`, `carry_ins`,
-`past_due_reminders`, `payment_methods`, `autopay_enrollments`, `autopay_runs`, `alert_recipients`,
-`whatsapp_log`, `audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
+`past_due_reminders`, `payment_methods`, `autopay_enrollments`, `autopay_runs`, `standing_payments`,
+`alert_recipients`, `whatsapp_log`, `audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
 printed on statements). That list is the whole schema: `stripe_events` was dropped in 0.48.0 (migration
 0037) because it deduped webhook deliveries and there is no webhook (§13.4) — a money schema with a table
 nobody writes is an invitation to wire the next thing to it. The DB file holds minors' PII and every
@@ -548,7 +625,7 @@ payment record, so the file itself is a secret regardless.
 Non-negotiable rules:
 
 - **A SCHOOL scopes the calendar and the grouping. It never scopes the household or the money** (0.47.0).
-  `schools` exists because a masjid may run a weekend maktab beside a full-time hifz programme on a
+  `schools` exists because a masjid may run a weekend maktab beside a full-time hifz program on a
   different calendar, so `school_years.school_id` and `courses.school_id` (and through courses, classes)
   belong to one school, and `students.school_id` says which one a child attends. That is the whole of it.
   `families`, `invoices`, `payments`, `payment_allocations`, `autopay_*` and every fee plan are
@@ -573,7 +650,7 @@ Non-negotiable rules:
   field stays authoritative. The Fabric contract still exposes `firstName` + `lastInitial` and still never
   returns a full surname (§11.2) — those are derived too.
 - **Usernames are compared case-INSENSITIVELY, in one place** (`auth/usernames.ts`, 0.48.0). Login always
-  matched loosely — a parent's username is their email address and a phone keyboard capitalises it — while
+  matched loosely — a parent's username is their email address and a phone keyboard capitalizes it — while
   every "is this name taken?" check compared exactly, and `users.username` is UNIQUE under a binary
   collation. So `Office` and `office` were both accepted and only one of them could ever be signed into. One
   helper now answers both questions; `findUserByUsername` tries an exact match first so an install that
@@ -583,7 +660,7 @@ Non-negotiable rules:
   would have been personal data collected for no purpose. WhatsApp is that purpose — a declined card at nine
   on a Sunday evening reaches a treasurer's phone and does not reach their inbox. So the column is back
   **with** `phone_country` and `wa_events`, entirely opt-in per account, and clearing the number is the off
-  switch. Minimisation is satisfied by the purpose, not by the absence; a number with no purpose is what the
+  switch. Minimization is satisfied by the purpose, not by the absence; a number with no purpose is what the
   old rule forbade and still is.
 - **WhatsApp gates in ONE place, and three of its defaults are the feature** (0.50.0, `whatsapp/index.ts`).
   `enabled` off, `paused` **ON** and every event off, on every install. The pause starting on is the one
@@ -595,13 +672,18 @@ Non-negotiable rules:
   them, a withdrawn one fails closed) and it overrides a pause and nothing else. **It covers BOTH channels**
   (`settings/testStudent.ts`, which is why it lives in settings and not in `whatsapp/`): it lifted only the
   WhatsApp pause at first, so an office that set a test student and took a payment got nothing at all —
-  the parent-EMAIL pause is a separate switch and held the receipt back silently. The email side honours it
+  the parent-EMAIL pause is a separate switch and held the receipt back silently. The email side honors it
   twice, at the sender AND in `guardianEmailsForFamily`, because that second line would otherwise cancel the
   exception the first one granted. `guardians.wa_opt_out` is the parent's own answer, stored on the PERSON
   rather than the household because it is a decision about a phone — and **nothing overrides it**, not the
   pause exception and not an office broadcast — but **any adult on a household may set it for anyone on that
   household**, because the portal IS the household (§5) and two parents sharing one balance and one set of
-  cards should not need the office to switch a spouse's number on. Every parent message is an office-editable
+  cards should not need the office to switch a spouse's number on. **The OFFICE may set it too, from 0.51.0**
+  (`people.guardianWhatsApp`, its own procedure so the trail records `by: 'office'` rather than burying it in a
+  general edit): a parent says "stop messaging me" at pickup or down the phone, never by signing into a
+  portal and finding a toggle, and an office that could not act on being told had only two options — keep
+  messaging them, or delete the number and lose the ability to ring them at all. It sets the same one flag,
+  so nothing overrides it whichever side set it. Every parent message is an office-editable
   TEMPLATE with a fixed tag list per message (`whatsapp/templates.ts`); there is no tag for a Student ID or a
   card, which is the enforcement rather than a rule in a document. **A WhatsApp GROUP is a STAFF channel**
   (0.50.0) — a finance group subscribing to the same `ALERT_EVENTS` a staff account can, and the fifth
@@ -616,6 +698,20 @@ Non-negotiable rules:
   real payment and got no message AND no log entry, with nothing anywhere saying which gate did it. A new
   notification type is added to BOTH channels and defaults OFF on both; the two that ship ON by email
   (`receipt`, `autopayFailure`) do so only because an upgraded install was already sending them.
+  **A `sent` IS NOT PROOF, AND `unknown` IS NOT `failed`** (0.51.0-dev.9, platform 0.51.2). A masjid's
+  WhatsApp session expired on its own, the platform did not notice, and for over a day every message was
+  accepted, recorded `sent`, and delivered nowhere. `GET /api/fabric/whatsapp/suspect` now hands back the
+  windows it was wrong about — on the READ budget, so polling costs no sends — and `whatsapp/suspect.ts`
+  is the one place that decides what that means here: **re-label, never resend.** A covered row becomes
+  `unknown` so the office's log stops asserting a delivery nobody can vouch for, and the screen names the
+  households with **no email address**, who are the only ones genuinely left uninformed — for everybody
+  else the email arrived, which is §2a's own argument ("a notice that arrived on one channel instead of
+  two") applied to a different fault. Resending is refused on three grounds and the second is the real
+  one: the paced queue is at its most fragile just after a re-link; every parent event exists on email
+  too; and **no message body is stored**, so a "resend" would be a freshly rendered *different* message
+  under the same event name. The 404 from `status/<id>` was being written as `failed` while the poller's
+  own comment said `unknown` — so the log printed **Failed** beside messages that had most likely
+  arrived, and an office trusting its own screen would chase a family who had already been told.
   `whatsapp_log` records event / recipient id / time / outcome and **never a message body**: a
   tuition message names a child and their fees, and a log is the copy that outlives the conversation.
   Nothing auth-critical (invite, reset, verification) is ever sent this way — a number can be banned
@@ -631,7 +727,7 @@ Non-negotiable rules:
   is every row written before 0.43.0; `billing/lines.ts` reads those by spreading them over the lines in
   order). When a parent chose lines — "this $50 is the book fee", at the kiosk, on the donation site or in the
   portal — that choice is stored on the payment (`payments.directed`, immutable like the rest of it) and
-  re-honoured by every later `reallocateStudent` BEFORE the oldest-due-first sweep. Storing it is the whole
+  re-honored by every later `reallocateStudent` BEFORE the oldest-due-first sweep. Storing it is the whole
   point: an instruction applied only at the moment of payment is undone by the next invoice, and the line the
   parent deliberately settled would read as outstanding again. `billing/lines.ts` is the ONE place that turns
   an invoice into lines, and `orderedItems` there is the ONE canonical order (tuition → charges → credits) —
@@ -663,6 +759,21 @@ Non-negotiable rules:
 - **Balances derived, never stored**; **payments immutable** (corrections = reversal rows, refunds = a Stripe
   refund plus those same reversal rows); soft-delete for anything money references; FKs `ON DELETE RESTRICT`
   on money paths.
+- **ONE deliberate exception to that, and it is a door rather than a rule** (0.51.0-dev.14,
+  `people.studentDelete` with `force`). A student who has been billed can be erased for good, along with
+  their invoices, lines, charges, payments and allocations. The refusal it bypasses is unchanged and is
+  still what an ordinary Delete hits; `force` exists because the alternative was worse in practice — an
+  install being set up bills a test roster by accident (the nightly job needs no help), and the madrasah
+  was then stuck with children who could only ever be *withdrawn*, cluttering every screen with real
+  invoices behind them. What keeps it honest: **admin only** (finance runs the billing and cannot erase
+  it); **never the default**, so a mis-click cannot reach it and the UI asks for the child's name to be
+  typed beside the counts and the money; **the audit row is written FIRST and carries the name, the
+  Student ID, the counts and the amount**, because it is the only trace that survives and an id that no
+  longer resolves documents nothing; and **it does not touch Stripe**, which the screen says out loud so a
+  vanished refund is not discovered at reconciliation. Deletion ORDER is the implementation — allocations,
+  payments, charges (they point at invoice items), then invoices, whose items cascade — and a wrong order
+  fails inside the transaction rather than half-erasing, which `test/studentDelete.test.ts` proves by
+  mutation.
 - **An alert must be able to reach a human without the platform's help** (0.44.0). `alerts/index.ts` is the
   ONE place that decides who hears about an event, and it fans out three ways: the addresses the office listed
   (`alert_recipients` → our own email), the OpenMasjidOS alert channel when the event maps to a declared id,
@@ -678,6 +789,29 @@ Non-negotiable rules:
   name-beside-an-amount, which is where §14's line has always been. Neither may carry a Student ID or card
   details. Parent-facing emails are gated inside `mail/notify.ts` (never per call site: receipts are sent from
   five places).
+- **The WEBHOOK may be opened by the office, for payment notices only, and the shape of that permission is
+  the whole care in it** (0.51.0-dev.17). A madrasah that wants "Yusuf Ismail paid $250" in its own staff
+  channel is making the same deliberate choice as typing an address into the alert list, so
+  `webhookNamesStudent` exists — **off on every install**, admin-only (finance runs the billing and does not
+  decide who is told about families), audited in both directions, and coerced `=== '1'` so a hand-edited row
+  cannot turn it on. What makes it narrow rather than a hole in §14 is that the setting is only ONE of three
+  conditions: `SPEC[event].webhook && SPEC[event].webhookMayName && the setting`. **Eligibility is declared
+  per event and only `payment-received` has it.** A global flag would have been the bug: approving a payment
+  notice would silently have handed the same permission to whatever event got `webhook: true` next, and the
+  two likeliest are the two worst texts in the table — `past-due`'s is a roster of every child behind with
+  amounts and dates, `payment-refunded`'s names children, the staff member who refunded AND the invoice lines
+  the money had paid for. `webhookTextFor` is the one place that decides and is a named function rather than
+  an inline ternary for a specific reason: the eligibility half has no reachable counter-example today, so a
+  test firing an ineligible event would pass because nothing was posted at all. **The OpenMasjidOS alert
+  channel is NOT covered and never will be** — `raiseAlert` keeps `publicText` unconditionally, and
+  `test/alerts.test.ts` pins the reason a hoisting mistake is currently invisible (no event is both
+  webhook-naming and platform-alerting) rather than pretending to catch the mistake itself. Two things ride
+  along and the panel says both: a payment recorded by hand also names **who recorded it**, and there is one
+  notice per payment with no digest and no storm gate, so a busy Sunday is a busy channel. A Student ID still
+  never goes, on any channel, switch or no switch — though note `codePrefix` derives the ID's first three
+  letters from the child's name, so publishing "Yusuf Ismail" publishes `YUS` and leaves 10,000 candidates
+  against a 6-failure/hour lockout. That is bounded, not broken, and it is the case for the default staying
+  off rather than a reason to refuse the feature.
 - **An alert names the STUDENT, never the household** (0.50.0-dev.14). It said "the Ismail family paid $250"
   for six releases, and that is one indirection away from what this app bills: **invoices and payments are
   per student**, so a household label makes an office do a lookup the alert could have done, and it hides the
@@ -687,7 +821,7 @@ Non-negotiable rules:
   household reads "Farooqi / Ismail", naming a child who may not be the one who is behind. So
   `alerts/index.ts` exports `studentName`, `studentAmounts` (per-child, since one card charge is recorded as
   one row per child) and `childrenOf` — the last for the two facts that genuinely belong to the household, a
-  CARD and an AUTOPAY enrolment, which name the children they pay FOR rather than pretending a child owns the
+  CARD and an AUTOPAY enrollment, which name the children they pay FOR rather than pretending a child owns the
   card. The past-due digest counts and lists STUDENTS while still chasing one household once, and says both
   numbers, because otherwise an office wonders why 9 students produced 5 emails. **The privacy line does not
   move**: all of this is the `text` variant, where a name beside an amount was always allowed; `publicText`
@@ -702,7 +836,7 @@ Non-negotiable rules:
 - **A WhatsApp COMMAND reply is the one place that goes the other way, and says only counts and totals**
   (0.50.0-dev.15, `fabric/commands.ts` + `billing/stats.ts`). An alert reaches addresses and numbers an
   admin configured, one event at a time; a command reply lands in a chat that keeps a copy forever, on
-  whichever phone is authorised today — the platform's own reason for refusing to expose app logs. So
+  whichever phone is authorized today — the platform's own reason for refusing to expose app logs. So
   `stats` reports how many and how much and points at a screen behind a login for who, and a test asserts
   no child's name can appear in it. Two arithmetic rules there are load-bearing: owed and credit are summed
   PER STUDENT and never netted install-wide (one child $100 behind and another $100 ahead is $100
@@ -729,7 +863,7 @@ Follows `OpenMasjidOS/docs/APP_MANIFEST_SPEC.md` + `OpenMasjidAPPS/docs/BUILDING
 ```yaml
 id: students
 name: OpenMasjid Students
-version: 0.48.0-dev.N        # X.Y.Z on main — §19
+version: 0.51.0-dev.N        # X.Y.Z on main — §19
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
 icon: icon.svg
@@ -824,7 +958,12 @@ sync). The compose `image:` line is **digest-pinned per release** —
 { "v": 1 }
 → { "v": 2, "enabled": true, "schoolName": "An-Noor Weekend School", "currency": "usd",
     "tagline": "Pay tuition with your child's Student ID",
-    "allowAdvance": true, "minAmountCents": 100 }   // 0.41.0, additive
+    "allowAdvance": true, "minAmountCents": 100,   // 0.41.0, additive
+    // fee (0.51.0, additive): does the PAYER cover Stripe's cut? `enabled: false` is the shape every
+    // consumer written before this already behaves correctly for; a null side means do not add one.
+    "fee": { "enabled": true,
+             "card": { "percentBps": 290, "fixedCents": 30 },
+             "bank": { "percentBps": 80, "fixedCents": 0, "capCents": 500 } } }
 // "enabled": false (setup incomplete or external payments turned off by admin) → consumers hide the campaign
 // allowAdvance: a parent may pay when NOTHING is due (a term up front, a Ramadan lump sum) — consumers
 // must offer the amount field at a zero balance, floored at minAmountCents. See the contract doc §11.0a.
@@ -842,7 +981,7 @@ the family id.
 
 **`POST /fabric/billing/lookup`** — resolve a **Student ID** to a family + balance + sibling list.
 ```jsonc
-// request — the ID alone (case/spaces/hyphens normalised here). No name, no PIN: v2 removed both.
+// request — the ID alone (case/spaces/hyphens normalized here). No name, no PIN: v2 removed both.
 { "v": 2, "studentCode": "YUS1234" }
 // Any mismatch — unknown ID, withdrawn child, locked ID, tuition payments switched off — gives an
 // identical "found": false. `identify` and `lookup` share ONE per-ID lockout bucket (6 failures/hour),
@@ -877,7 +1016,10 @@ the family id.
   "idempotencyKey": "pi_3PabcDEF",           // REQUIRED, ≤128 chars. Convention: the Stripe PaymentIntent id.
   "familyId": "fam_x1",                       // REQUIRED — from a prior lookup in this session
   "studentId": "stu_1",                       // optional — the matchedStudent from lookup
-  "amountCents": 15000, "currency": "usd",
+  "amountCents": 15000, "currency": "usd",    // the TUITION — what the family owed. NOT the card total
+                                              // when you grossed up for a fee (0.51.0, §11.2 info.fee).
+  "feeCents": 330,                            // optional, 0.51.0: Stripe's cut, if you passed it on.
+                                              // Informational — the ledger holds tuition only.
   "channel": "donations-web",                 // "donations-web" | "kiosk"
   "occurredAt": "2026-07-15T18:03:22Z",
   "externalRef": { "stripePaymentIntentId": "pi_3PabcDEF", "stripeChargeId": "ch_...", "stripeAccountId": "acct_..." },
@@ -906,6 +1048,7 @@ omos_app           = donations | kiosk | students-portal    ← students-portal 
 students_family_id = fam_x1                  ← REQUIRED (from lookup / known internally)
 students_student_id = stu_1                  ← optional, the matched student
 students_channel   = portal | autopay        ← set by this app, so reconciliation can tell them apart
+students_fee_cents = 330                     ← 0.51.0: REQUIRED whenever the payer covered Stripe’s cut
 ```
 **Never put a Student ID or a child's name in Stripe metadata, descriptions, or URLs** — metadata is visible
 in Stripe dashboards and exports. Description: `School balance — <family label>`. **Receipts must say
@@ -1024,7 +1167,7 @@ ledger by one of four **pull** paths: the Fabric `record-payment` call (Donation
 confirm-on-return (13.2.4), autopay's synchronous confirm (13.3), and the daily reconciliation (§11.4). There
 is no `/api/stripe/webhook` route, no signature verification and no webhook endpoint registration, because
 there is nothing for a webhook to tell us that reconciliation will not — and a webhook is an internet-facing
-route that must be exposed, verified and kept in step with Stripe's event catalogue. `stripe_events` is the
+route that must be exposed, verified and kept in step with Stripe's event catalog. `stripe_events` is the
 vestigial table from that design (§9). **A refund is the one Stripe call that changes our ledger
 immediately** (`payments/refunds.ts`): Stripe first, then the mirror rows.
 
@@ -1067,11 +1210,20 @@ invariant here is load-bearing:
   overnight and that day must not be the day nobody can sign in. No Student ID, no card details, and **no
   message body is ever logged or stored**, on any path including failures. Both are tested, not assumed.
 - **No PII in logs** — ids, codes and counts only; never names+amounts together; Fabric bodies never logged.
+- **A THIRD-PARTY SINK GETS THE DE-IDENTIFIED TEXT, AND THIS SECTION IS WHERE THE CODE THINKS THAT RULE
+  LIVES.** Eight comments across `alerts/`, `fabric/platform.ts`, `payments/refunds.ts`, `billing/pastDue.ts`
+  and `whatsapp/templates.ts` cite "(§14)" for it, and until 0.51.0-dev.17 there was no sentence here to
+  cite — the rule was written only in §9, so every one of those citations pointed at nothing. It is: an alert
+  reaching a sink this app cannot see carries **no name, and no name beside an amount**. The
+  OpenMasjidOS alert channel (`raiseAlert`) is unconditionally such a sink. The masjid webhook is one **by
+  default**, and is the single exception an office may lift for itself — narrowly, per event, admin-only and
+  audited; see §9 for why eligibility is declared per event rather than as one switch. A **Student ID** and
+  card details are exempt from any exception and never travel on either.
 - Role checks server-side on every procedure; **parent household-scoping enforced in queries**.
 - **Printed documents are minors' records**: served only through the authed route that re-checks the role ×
   origin matrix on every request, with `no-store`, `nosniff`, `no-referrer` and a CSP whose `default-src
   'none'` means an injected reference cannot phone home. Every interpolated value is escaped; the accent
-  colour and the logo are re-validated on the way out (a hex pattern, and magic bytes) because they land
+  color and the logo are re-validated on the way out (a hex pattern, and magic bytes) because they land
   inside a `<style>` block and an `<img>` on a page a browser renders.
 - **The SPA shell** is `no-store` (a cached shell is how an update becomes a no-op) plus `nosniff` and
   `no-referrer` — the invite/reset pages carry a token in the query string, and a referrer is not the place
@@ -1106,12 +1258,35 @@ skeleton shimmer loaders, staggered grid entrances. The ported files (`tokens.cs
 deviation goes in `shell.css` / `admin.css` instead, and anything that must differ carries a one-line comment
 saying why. Same-org AGPL, so copying these between OpenMasjid-Solutions repos is allowed and encouraged.
 
+**THE MATERIAL HAS A FRAME BUDGET, AND `backdrop-filter` IS ALL OF IT** (0.51.0-dev.16). Every element
+carrying one is its own render surface — the browser blurs everything painted behind it and recomputes
+the whole job whenever that changes — so the count is what matters, not the blur radius. glass.css states
+this itself ("PERFORMANCE CAP — a glass pane inside a glass pane must not re-blur") and caps only `.glass`
+and `.glass-raised`; **`.glass-inset` was never capped**, and it is on every input, select and inset panel
+in the staff shell: 286 across the app, 27 inside ONE family's billing record, all of them in one
+scrolling container. That is the whole of "scrolling a billing record is terrible". The four corrections
+live in **`shell.css`'s paint-cost block**, because the ported files must stay re-syncable, and
+`styles/paintCost.test.ts` fails the build if any of them is lost. Three rules worth carrying forward:
+
+- **An inset inside glass has nothing left to blur.** Its parent already flattened the wallpaper, so the
+  visible delta is nil and the cost is a render surface per input. The same is true of any opaque surface —
+  `ul.picker-list` and `div.menu` reached the same conclusion by their own routes.
+- **`filter` is not free, and `both` makes it permanent.** `winIn` animated `filter: blur(6px) → blur(0)`
+  and was declared `both`, so the final value stayed applied for the life of the window — and
+  `filter: blur(0)` is not no filter: it holds a render surface and makes the element a BACKDROP ROOT, so
+  every frosted descendant re-blurred the window's own scrolling content on every frame, forever, for a
+  blur of zero pixels. Animate opacity and transform; nothing else.
+- **A forever-looping decoration behind glass is a forever-looping repaint.** The aurora is cheap in
+  itself and it dirties every frosted surface above it on every frame. `lib/scrollIdle.ts` stands it down
+  during a scroll. And when overriding a ported rule, override **every branch of it** — a media query adds
+  no specificity, so a two-class override wins inside app.css's `prefers-reduced-motion` block too.
+
 **Madrasa-first, localizable, never hardcoded**: madrasa-native wording ships as **defaults and i18n
 strings**, and the office can rewrite the sentences on a family's printed sheet in Settings. **The parent
 portal is the face of the madrasah** — highest polish bar, phone-first (big tap targets, bottom nav,
 one-thumb payment flow), and since 0.48.0 the staff shell allows for a phone's notch and home bar too.
 **The printed documents are the artifacts families keep** — a dignified header (school name, period, the
-madrasah's own logo and colour), clean tables, the org's geometric restraint, and they must look right printed
+madrasah's own logo and color), clean tables, the org's geometric restraint, and they must look right printed
 in black-and-white on a masjid photocopier. Voice: plain and warm for parents (✅ "Your balance is $350" /
 "Autopay is on — we'll charge your Visa ···4242 when tuition is due" ❌ "off_session PaymentIntent
 requires_action"), and for staff (the finance manager is a volunteer, not an accountant). Errors: one friendly
@@ -1132,7 +1307,9 @@ secrets). Additions:
   manual-payment UI. One `billing/lines.ts` for what a bill is made of and in what order. One
   `alerts/index.ts` for who hears about an event. One `schools/index.ts` for school scope. One
   `settings/dates.ts` for every date edge. One `auth/usernames.ts` for how a username matches. One
-  `payments/methods.ts` for what a saved method is and what order they are tried in. One `payments/stripe.ts`
+  `payments/methods.ts` for what a saved method is and what order they are tried in. One
+  `payments/fees.ts` for whether a payer covers Stripe’s cut, and for what a PaymentIntent’s amount means
+  once it has. One `payments/stripe.ts`
   that imports the SDK. One `whatsapp/index.ts` for whether a WhatsApp message goes out and to whom, and one
   `whatsapp/numbers.ts` for what a number is on the wire. Adding a second place is the bug.
 - Unit tests for the ledger: exact pay, partial, overpay→credit, multi-invoice, replayed idempotency key,
@@ -1150,8 +1327,9 @@ secrets). Additions:
 
 ```
 npm install         # all workspaces
-npm run dev         # server + web, hot reload (server :8080; Vite :5173 proxying /trpc, /api, /fabric, /statements)
-npm run build       # typecheck + build web and server
+npm run dev         # server + web, hot reload (server :8080; Vite :5173 proxying /trpc, /api,
+                    #   /fabric, /statements, /sheets, /invoices)
+npm run build       # build web (vite — NO typecheck) then server (tsc). Types: npm run lint.
 npm run lint        # tsc --noEmit across both workspaces (there is no eslint in this repo)
 npm run test        # vitest — both workspaces
 npm run image       # build & tag ghcr.io/openmasjid-solutions/openmasjidstudents:local
@@ -1177,7 +1355,7 @@ payment paths (there is no webhook to forward — see §13.4); a small mock of `
 Builds via `npm run build`; `npm run lint` (`tsc --noEmit`) clean; the ledger / Fabric-contract / origin-policy tests pass;
 **role × origin matrix verified for touched routes** (an admin session over simulated tunnel gets 403; a
 parent token literally cannot fetch another household — tested, not assumed); works light+dark, LTR+RTL,
-reduced-motion honoured; new/changed screens reviewed side-by-side with the OpenMasjidOS dashboard for
+reduced-motion honored; new/changed screens reviewed side-by-side with the OpenMasjidOS dashboard for
 token/motion/typography parity (§15) **and checked on a phone-width viewport**; works with Fabric/mail/tunnel
 absent (standalone) and present; payment features tested against Stripe test mode including a declined card;
 printed documents checked in a real print preview, in black and white; every new date/money boundary validated
@@ -1267,8 +1445,19 @@ How to write one, every time:
    code under the new version number, while the release looks entirely successful. **This has already
    happened twice in the org.** Check it before you push: `git tag --points-at HEAD` on the pin commit, and
    `git rev-list -n 1 v<version>` must be that same SHA — the one you then put in the catalog PR's `commit:`.
-   (`docker-compose.yml` is in the workflow's `paths-ignore`, so neither the pin nor the tag rebuilds the
-   image; the digest stays the one you pinned.)
+   **This sentence used to say that `docker-compose.yml` being in the workflow's `paths-ignore` meant
+   "neither the pin nor the tag rebuilds the image". Half of that was false, and v0.50.0 paid for it.**
+   Path filters apply to a BRANCH push; GitHub ignores them entirely on a TAG push. So the pin commit
+   correctly did not rebuild, and then pushing the tag DID — re-publishing `:X.Y.Z` as a different index
+   (fresh attestations, plus any layer that missed the cache), which moved the tag off the digest step 4
+   had just pinned. Nothing broke, because the compose pins by digest and the digest wins, but a masjid
+   installed a build the release tag did not name.
+   `build-image.yml` now makes a `v*` tag run the GUARD ONLY — it skips qemu, buildx, the GHCR login and
+   the build — so the tag trigger still enforces "a stable compose must be digest-pinned and must not be a
+   prerelease" (main's equivalent can only warn, since step 3 deliberately leaves main unpinned for one
+   commit) while touching no registry. **After tagging, verify what the tag actually resolves to:**
+   `docker buildx imagetools inspect …:<version>` must print the digest in your compose. If it does not,
+   something rebuilt.
 6. **Open a PR against `OpenMasjid-Solutions/OpenMasjidAPPS` — base branch `dev`, NEVER `main`.** Change only
    this app's own entry in `registry.yaml`, nothing else in the file:
 
@@ -1323,13 +1512,20 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | what a bill is made of, or what order money lands in | `billing/lines.ts`, then `billing/ledger.ts` |
   | a balance being wrong | `billing/ledger.ts` (`reallocateStudent` first) |
   | a month showing the wrong state | `billing/yearCells.ts`, `billing/period.ts` |
+  | what a year of fees comes to | `billing/yearTotal.ts` |
+  | a payment the app records on a schedule without Stripe | `billing/standingPayments.ts` |
   | a card, a refund or a saved method | `payments/*` — and only `payments/stripe.ts` imports the SDK |
+  | who pays the processing fee, or an amount read back off a PaymentIntent | `payments/fees.ts` |
   | who gets told | `alerts/index.ts`, then `mail/notify.ts` (which fans out BOTH parent channels) |
   | a WhatsApp message — whether it goes, to whom, or what it says | `whatsapp/index.ts`, `whatsapp/numbers.ts`, `whatsapp/templates.ts` |
   | which household a pause does NOT apply to (either channel) | `settings/testStudent.ts` |
   | a printed sheet | `billing/statements.ts`, `billing/invoiceDoc.ts`, `people/onboardingSheet.ts`, `people/idSheet.ts` |
+  | what the onboarding message says, or the number it comes from | `people/onboarding.ts` |
+  | a message reported sent that may not have arrived | `whatsapp/suspect.ts` |
+  | which students a bulk action names (everyone, a course, a class), and the households behind them | `structure/audience.ts` — shared by mass-apply and the onboarding send |
   | a date | `settings/dates.ts` |
   | the calendar or the roster tree | `structure/*`, `schools/index.ts` |
+  | a screen that stutters, jitters or scrolls badly | `styles/shell.css`'s paint-cost block (§15) — count the `backdrop-filter` surfaces first, then `lib/money.ts` and `lib/scrollIdle.ts` |
 
 - **A fix goes where the rule lives, not where the symptom appeared.** Two places disagreeing about the same
   rule is the recurring shape of this codebase's real bugs — the username case defect, the display order that

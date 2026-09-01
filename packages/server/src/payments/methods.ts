@@ -16,7 +16,7 @@
  * WHAT IS DELIBERATELY NOT READ. `us_bank_account.routing_number`, any `billing_details.name`, and
  * `link.email`. A parent reading their own row learns nothing from them that the last four digits do not
  * already tell them, and this table is rendered on a screen the household reaches over the internet
- * (§14 data minimisation). The rule for this table has always been "brand/last4/exp only, never a PAN";
+ * (§14 data minimization). The rule for this table has always been "brand/last4/exp only, never a PAN";
  * this keeps to the same spirit for the kinds of method it did not previously know about.
  */
 import { eq, and, asc, isNull } from 'drizzle-orm';
@@ -60,8 +60,8 @@ const int = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 /**
  * Read a Stripe PaymentMethod into our columns.
  *
- * Every branch is additive: an unrecognised `type` still stores the type, so a method this app has never
- * heard of is described as itself ("Cash App") by the portal rather than mislabelled as a card. That is
+ * Every branch is additive: an unrecognized `type` still stores the type, so a method this app has never
+ * heard of is described as itself ("Cash App") by the portal rather than mislabeled as a card. That is
  * the whole failure this replaces.
  */
 export function describePaymentMethod(pm: StripePaymentMethodLike): PaymentMethodDetails {
@@ -91,6 +91,51 @@ export function orderedMethods(familyId: string) {
     .where(eq(paymentMethods.familyId, familyId))
     .orderBy(asc(paymentMethods.sortOrder), asc(paymentMethods.createdAt))
     .all();
+}
+
+/**
+ * WHICH PROCESSING-FEE RATE A SAVED METHOD ATTRACTS — the one place that decides it (0.51.0).
+ *
+ * A card and a bank debit cost the masjid amounts an order of magnitude apart (2.9% + 30¢ against 0.8%
+ * capped at $5), so `payments/fees.ts` quotes them separately and something has to say which of the two a
+ * stored `PaymentMethod.type` is. That was an inline ternary inside `chargeFamily`, invisible to anything
+ * else — and the moment the parent portal wanted to TELL a household what their next automatic charge
+ * would cost, the browser would have had to re-derive the same rule from the same column. Two copies of
+ * "is this a bank account?" is precisely the shape of bug this codebase keeps paying for (§16), so the
+ * question is answered here, beside the ordering that decides WHICH method gets asked.
+ *
+ * Deliberately narrow: only Stripe's `us_bank_account` is treated as a bank debit, because that is the
+ * only non-card method this app can save off-session and the only one the bank rate in Settings describes.
+ * Anything unrecognized falls to `card`, which is the dearer rate — a wrong guess then overcharges the
+ * PAYER by pennies rather than quietly billing the masjid for a fee it never passed on.
+ */
+export function feeKindOf(type: string | null | undefined): 'card' | 'bank' {
+  return type === 'us_bank_account' ? 'bank' : 'card';
+}
+
+/**
+ * HOW A SAVED METHOD IS NAMED TO A PARENT — "Visa ···· 4242", "Chase ···· 6789". One place (§16).
+ *
+ * Brand and last four only. Never a PAN, never a routing number, never a holder name; none of the three
+ * is stored (§14). Empty string when there is nothing recognizable to say, so a caller can leave the
+ * clause out of its sentence rather than printing a stub.
+ *
+ * It lives here, beside `feeKindOf` and `orderedMethods`, because `autopay.ts` had its own copy that read
+ * `brand` and `last4` and nothing else — so a household paying by BANK got "card ···· 6789" in the
+ * upcoming-charge and card-declined emails, since a `us_bank_account` row has a null `brand` and keeps
+ * the institution in `bankName`. Telling a family their card was declined when they never gave one is the
+ * kind of message that produces a phone call, and the fee they are being charged is the bank rate, which
+ * the same email may quote. `describePaymentMethod` above already knew the difference; the wording did not.
+ */
+export function methodLabel(pm: { type?: string | null; brand?: string | null; last4?: string | null; bankName?: string | null }): string {
+  const brand = (pm.brand ?? '').trim();
+  const bank = (pm.bankName ?? '').trim();
+  const last4 = (pm.last4 ?? '').trim();
+  const name = brand || bank;
+  if (!name && !last4) return '';
+  // A bank with no name on file reads as "bank account", never as "card" — the old fallback.
+  const nice = name ? name.charAt(0).toUpperCase() + name.slice(1) : feeKindOf(pm.type) === 'bank' ? 'Bank account' : 'Card';
+  return last4 ? `${nice} ···· ${last4}` : nice;
 }
 
 /**

@@ -4,7 +4,7 @@
  * How a username is MATCHED — one place, because two places disagreed (0.48.0).
  *
  * THE BUG. Signing in has always looked an account up case-INSENSITIVELY, and for a good reason: a
- * parent's username IS their email address, and a phone keyboard capitalises the first letter, so a
+ * parent's username IS their email address, and a phone keyboard capitalizes the first letter, so a
  * case-sensitive login would lock out families for a keystroke they cannot see. But every place that
  * asked "is this username taken?" compared it case-SENSITIVELY (`users.username` is UNIQUE, and SQLite's
  * default collation is binary). So `Office` and `office` were both accepted as separate accounts — and
@@ -19,7 +19,7 @@
  *
  * `findUserByUsername` tries an EXACT match first and only then a case-insensitive one. That ordering is
  * what looks after an install that already has such a pair: each person still reaches their own account
- * by typing their own name, and the loose match remains for the parent whose keyboard capitalised
+ * by typing their own name, and the loose match remains for the parent whose keyboard capitalized
  * something. It also keeps the single indexed lookup as the common path.
  */
 import { eq, sql } from 'drizzle-orm';

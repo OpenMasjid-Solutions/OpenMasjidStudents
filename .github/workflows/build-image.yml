@@ -31,12 +31,16 @@ name: Build image
 on:
   push:
     branches: [main, dev]
+    # A v* tag runs the GUARD ONLY — it never builds and never pushes. See "Build and push" below:
+    # `paths-ignore` cannot protect a tag push (GitHub ignores path filters on tag refs entirely), so a
+    # tag that rebuilt would re-push :X.Y.Z as a different index and move it off the digest the release
+    # just pinned. That happened to v0.50.0.
     tags: ['v*']
     # Changes that don't affect the image — skip the (slow) multi-arch build.
     # docker-compose.yml is NOT part of the image build context (.dockerignore
     # excludes *.md/docs; compose is only read by installers), so pinning the
     # image @sha256 digest in compose must not trigger a rebuild that would move
-    # the tag off the pinned digest.
+    # the tag off the pinned digest. NOTE: this only works for a BRANCH push.
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -166,10 +170,13 @@ jobs:
           esac
 
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -181,8 +188,19 @@ jobs:
       #
       # Multi-arch is not optional: masajid run this on Raspberry Pis (arm64) as well as amd64 hosts,
       # and the dev channel is where a Pi-only regression would be caught, so dev builds both too.
+      # A TAG NEVER BUILDS. The image for a release is published by the `main` push that precedes the
+      # tag — same commit content, same :X.Y.Z, same :latest — so a tag build only ever republished what
+      # was already in the registry, and republishing is not free: buildx produces a NEW index (fresh
+      # attestations, and any layer that missed the cache is rebuilt), so :X.Y.Z moved off the digest
+      # §19 step 4 had just pinned. v0.50.0 shipped with the compose pinning one index and the tag
+      # naming another: identical arm64, rebuilt amd64. The digest wins, so no masjid got a broken
+      # install — but they installed a build the release tag did not name.
+      #
+      # The tag ref still runs the guard above, which is the point of keeping the trigger: it is the only
+      # hard check that a stable compose is digest-pinned and its version is not a prerelease.
       - name: Build and push
         id: build
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
@@ -195,6 +213,13 @@ jobs:
       - name: What was published
         run: |
           echo "channel: ${{ steps.meta.outputs.channel }}"
+          # A tag ref reaches here with no build behind it, so say that rather than printing an empty
+          # digest and leaving somebody hunting for the pin they were told to copy.
+          if [ -z "${{ steps.build.outputs.digest }}" ]; then
+            echo "no image was built or pushed — a v* tag runs the guard only (see 'Build and push')."
+            echo "the release image was published by the main push before this tag, and the compose pins it."
+            exit 0
+          fi
           echo "digest:  ${{ steps.build.outputs.digest }}"
           if [ "${{ steps.meta.outputs.channel }}" = stable ]; then
             echo "Pin this in docker-compose.yml image line -> @${{ steps.build.outputs.digest }}"

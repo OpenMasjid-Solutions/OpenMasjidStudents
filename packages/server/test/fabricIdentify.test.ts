@@ -9,7 +9,7 @@
  *      family id. That thinness is what makes it safe to answer before the parent has confirmed
  *      anything, so if someone later "helpfully" adds a balance to it, these fail.
  *   2. Both code endpoints share ONE lockout bucket, so sweeping IDs through whichever answers faster
- *      gains nothing. With no secret behind the ID, that limiter is the whole defence (§11.2, §14).
+ *      gains nothing. With no secret behind the ID, that limiter is the whole defense (§11.2, §14).
  *   3. A v1 request still works for info / record-payment / check — an un-upgraded Donations or Kiosk
  *      build must not lose its money path just because `lookup` changed shape.
  */

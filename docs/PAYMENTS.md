@@ -26,12 +26,13 @@ verification, no endpoint registration; `stripe_events` was DROPPED in 0.48.0 (m
 | `portal.confirmPayment` (confirm-on-return) | the parent's browser, after Elements confirms | `portal` | reconciliation |
 | autopay's synchronous confirm | our own scheduler | `autopay` | reconciliation |
 | `billing.recordManualPayment` | the office | `cash` \| `check` \| `ach` \| `zelle` \| `other` | — (a person is standing there) |
+| `runStanding` (05:00 daily) | our own scheduler, on the arrangement the office set | `cash` \| `check` \| `ach` \| `zelle` \| `other` | — (no Stripe leg; the row reverses through `billing.reversePayment`) |
 | the mid-year go-live | the office, once | `carry_in` | — |
 | **reconciliation** (§11.4) | the daily job, or the Reconcile now button | whatever the PI's metadata says | it *is* the backstop |
 
 **Why no webhook.** A webhook is an internet-facing route that must be exposed, signature-verified, deduped
-and kept in step with Stripe's event catalogue — and it can tell us nothing reconciliation will not find
-within a day. The pull paths are the optimisation; reconciliation is the guarantee. Money is never lost, only
+and kept in step with Stripe's event catalog — and it can tell us nothing reconciliation will not find
+within a day. The pull paths are the optimization; reconciliation is the guarantee. Money is never lost, only
 delayed. The one place this shows is the wording after a parent pays: the UI may say "received" from the
 client's own confirmation, softly, because the ledger write happens on the same round trip.
 
@@ -55,7 +56,7 @@ Only `payments/stripe.ts` imports the SDK. Everything else asks it for a client 
    `MIN_PAYMENT_CENTS`.
 2. The server creates a PaymentIntent with §11.3's metadata (`omos_app=students-portal`,
    `students_channel=portal`, `students_family_id`), the description `School balance — <family label>`, and
-   `automatic_payment_methods` enabled so the household is offered whatever the masjid's Stripe account has
+   `automatic_payment_methods` enabled **when no processing fee applies** (with a fee on, the amount was grossed up for ONE method, so the intent pins `payment_method_types` to it — the parent picks card or bank before the intent is minted) so the household is offered whatever the masjid's Stripe account has
    switched on (cards, and a US bank account where it is enabled).
 3. The browser confirms with Elements. Card details never reach us.
 4. `portal.confirmPayment` retrieves the PI, checks it is **ours** and **this household's** (metadata, not
@@ -67,7 +68,7 @@ Only `payments/stripe.ts` imports the SDK. Everything else asks it for a client 
 
 ## 13.3 Autopay (saved method + our scheduler — NOT Stripe subscriptions)
 
-- **Enrol**: a SetupIntent with `usage: off_session`, then the household toggles autopay on. The consent
+- **Enroll**: a SetupIntent with `usage: off_session`, then the household toggles autopay on. The consent
   timestamp is stored.
 - **What is charged**: the sum of open invoice balances with `due_date <= today`, **capped at what the
   household's derived balance says it owes**. That cap is not belt-and-braces: a credit line larger than its
@@ -81,7 +82,7 @@ Only `payments/stripe.ts` imports the SDK. Everything else asks it for a client 
   ladder (a phantom failure could auto-disable a family early), and a pending run blocks any further charge
   for that household until reconciliation resolves it. Guessing "no charge happened" is how you double-bill.
 
-## 13.4 Refunds (0.48.0)
+## Refunds (0.48.0)
 
 The unit is a **transaction**, not a payment row: one card charge covering three children is three rows
 (§9), so refunds group by PaymentIntent and reverse the group while asking Stripe once. Stripe first, ledger
@@ -117,15 +118,76 @@ Consumer-side note: a kiosk or donation site must offer its amount field even at
 `info.allowAdvance` flag exists to tell it so — see
 [`FABRIC_BILLING_CONTRACT.md`](./FABRIC_BILLING_CONTRACT.md) §11.2.
 
+## 6. Processing fees — who pays Stripe's cut (0.51.0, `payments/fees.ts`)
+
+Off by default. A madrasah pays roughly **2.9% + 30¢** to accept a card, so a $100 invoice brings in
+$96.80; switch this on and the payer covers it instead — the card is charged **$103.30** and the school
+receives the full $100. Cash, check and Zelle are never touched, because there is no processing fee to
+pass on and inventing one would be a charge for nothing.
+
+**A fee is not tuition and never enters the ledger.** That is the whole invariant. Every balance in this
+app is `invoiced − paid` (§9), so crediting $103.30 against a $100 bill leaves a $3.30 credit that
+absorbs part of next month — and it is not an error anybody sees, it is a slow drift that compounds for
+as long as the setting is on. The dangerous direction is therefore *reading a Stripe amount back*, and
+three paths do it: the portal's confirm-on-return, autopay's synchronous confirm, and the daily
+reconciliation. All three go through `netOfIntent`, and nothing else may do that subtraction.
+
+**The fee travels on the PaymentIntent** (`students_fee_cents`, §11.3), not in a setting. Reconciliation
+runs a day later, on a job that never saw the request, and by then the rate may have changed or the
+feature been switched off — so the figure that was true when the payer agreed to it is carried with the
+charge. It is also what lets Donations and Kiosk mint their own intents and still be read correctly here.
+
+**Two rates, because they are not the same cost.** A card is 2.9% + 30¢ with no ceiling; ACH is 0.8%
+**capped at $5**. On a $2,000 term payment that is $60.05 against $5.00, so the bank rate has its own
+switch (an office may reasonably pass on the card cost and absorb the bank one) and the cap is honored
+— grossing up past it would charge a percentage of a fee that had stopped growing, which is money taken
+for nothing. Because a PaymentIntent's amount is fixed before Stripe asks the payer anything, an install
+that passes on both asks the parent which they are using *first*.
+
+**The arithmetic, and why the obvious version is wrong.** Stripe takes its percentage of the GROSS, so
+`gross = (tuition + fixed) / (1 − rate)`, rounded **up**. A naive markup on the tuition gives $103.20 and
+leaves the school a dime short on every $100 — an invoice that settles at $99.99 and stays open forever,
+showing a family as unpaid over a penny. Rounding up means the school is occasionally a cent over, which
+is a rounding; a cent under is a support call.
+
+**WHERE IT IS DISCLOSED, AND WHY THAT IS THREE PLACES** (0.51.0). A surcharge nobody was told about is
+the failure mode this feature has to avoid, and each of the three is a different moment:
+
+| Where | What it shows | Why it cannot be the others |
+| --- | --- | --- |
+| Portal **pay-now** | Tuition / fee / total, itemized, before the parent confirms | The payer is present and about to commit |
+| Portal **autopay tab** | The same three lines, worked on the household's balance today | An autopay charge is **off-session** — nobody is looking at a screen when it happens, so this toggle is the only moment the figure can be seen. Shown while a household is still *deciding*, before any method is saved: it used to appear only once a card was on file, which hid it for the whole of setup |
+| The printed **family sheet** | A worked example, and that cash or a check at the office avoids it | The sheet is where a family CHOOSES how to pay. The portal discloses at the point of paying, which is after the decision |
+
+All three read `payments/fees.ts` — `feeQuote` for the figures, `FEE_EXAMPLE_CENTS` for the bill a worked
+example uses, so the office's Settings preview and the parent's printed sheet quote the same one. The
+browser does no fee arithmetic anywhere: two implementations of the gross-up disagree by a cent the moment
+one is edited. Which RATE applies to a saved method is `payments/methods.ts` `feeKindOf` — one function,
+used by both the autopay charge and the screen that describes it, so they cannot name different rates.
+
+**A refund returns the whole charge**, fee included, because that is what the payer handed over —
+`stripe.refunds.create` with no amount refunds the PaymentIntent in full, and the ledger reverses the
+tuition. Stripe does not return its own cut on a refund, so the madrasah absorbs it. That is the honest
+outcome and the refund screen says so.
+
+**Compliance is the masjid's, and we say so out loud.** Passing a card fee to the payer is regulated:
+US federal law forbids it on **debit** cards, a few states forbid it outright, and the card networks cap
+it at what acceptance actually costs. This app cannot know a masjid's jurisdiction or its Stripe
+agreement, so the rate is clamped to something that could not exceed a real cost of acceptance (10%),
+the default is off, and the Settings panel carries the warning above the switch rather than in a
+footnote.
+
 ## Ledger invariants (see `billing/ledger.ts`)
 
 - All money in **integer cents**. Balances **derived, never stored**. Payments **immutable** (corrections =
   reversal rows; a refund is a Stripe refund plus those same rows).
 - **One** `recordPayment`/`recordSplit` path, used by the Fabric provider, the portal, autopay,
-  reconciliation, the manual-payment UI and the mid-year go-live.
+  reconciliation, the manual-payment UI, standing payments and the mid-year go-live.
 - Allocation is **per line** and **re-derived** whenever a bill changes, with a payer's stored instruction
-  honoured before the oldest-due-first sweep.
+  honored before the oldest-due-first sweep.
 - Idempotency at the DB: `payments.idempotency_key` UNIQUE (the Stripe PI id, whatever the channel), suffixed
-  `:studentId` when one charge fans out across siblings. Prefix-match it with `substr`, never `LIKE` — `_` is
+  `:studentId` when one charge fans out across siblings. A standing payment has no PI, so its key is
+  `standing:<studentId>:<period>` — which is what makes a re-run, a restart or a catch-up on the 3rd a
+  no-op rather than a second month's money. Prefix-match it with `substr`, never `LIKE` — `_` is
   a LIKE wildcard and Stripe ids are full of them.
 - Channels: `donations-web | kiosk | portal | autopay | cash | check | ach | zelle | other | carry_in`.

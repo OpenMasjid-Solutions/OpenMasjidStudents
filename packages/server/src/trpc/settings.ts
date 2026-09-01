@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 OpenMasjid-Solutions
-/** App settings (admin-only): the school's name, currency, logo, colour and date format; how it appears
+/** App settings (admin-only): the school's name, currency, logo, color and date format; how it appears
  *  to parents; who hears about what by email; the past-due policy; and the Stripe account (from the OS
  *  vault) that tuition charges go through. A few reads are admin OR finance where finance needs them. */
 import { z } from 'zod';
@@ -10,8 +10,11 @@ import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './t
 import { db } from '../db';
 import { families, guardians, guardianFamilies, paymentMethods, autopayEnrollments, alertRecipients, students } from '../db/schema';
 import { rid } from '../db/ids';
-import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor, getSheetTextOverrides, setSheetTextOverrides, donationUrl, getPastDue, setPastDue, getPastDueStaffLast } from '../settings';
+import { SETTING_KEYS, getSchoolName, getCurrency, getSelfRegistrationEnabled, getExternalPaymentsEnabled, setSetting, getChosenStripeAccount, setChosenStripeAccount, getSchoolLogo, setSchoolLogo, getParentEmails, setParentEmails, getParentMailPaused, setParentMailPaused, getWebhookNamesStudent, setWebhookNamesStudent, getSchoolContact, setSchoolContact, getAccentColor, setAccentColor, getSheetTextOverrides, setSheetTextOverrides, donationUrl, getPastDue, setPastDue, getPastDueStaffLast, getProcessingFee, setProcessingFee, getOnboardingText, setOnboardingText } from '../settings';
 import { SHEET_TEXT_DEFAULTS, SHEET_TEXT_KEYS, SHEET_TEXT_MAX, SHEET_TEXT_TAGS } from '../people/sheetText';
+import { ONBOARDING_DEFAULTS, ONBOARDING_KEYS, ONBOARDING_MAX, ONBOARDING_TAGS, onboardingWhatsApp, renderOnboarding } from '../people/onboarding';
+import { testFamilyId } from '../settings/testStudent';
+import { familyVars } from '../whatsapp';
 import { dueForChasing, pastDueFamilies, runPastDue } from '../billing/pastDue';
 import { DATE_FORMATS, DATE_FORMAT_SAMPLES, getDateFormat, setDateFormat } from '../settings/dates';
 import { ALERT_EVENTS, defaultEvents, listRecipients, sendAlertTest, type AlertEvent } from '../alerts';
@@ -21,6 +24,7 @@ import { portalBase } from '../auth/invites';
 import { cachedPublicUrl } from '../fabric/platform';
 import { fabricConfigured, config } from '../config';
 import { stripeReady, stripeAccountId, loadStripeKeys } from '../payments/stripe';
+import { FEE_EXAMPLE_CENTS, feeQuote } from '../payments/fees';
 import { fetchStripeAccounts } from '../fabric/platform';
 
 export const settingsRouter = router({
@@ -109,12 +113,12 @@ export const settingsRouter = router({
     }),
 
   /**
-   * The wording on the printed family sheet (0.48.0) — the catalogue, the shipped sentences, and this
+   * The wording on the printed family sheet (0.48.0) — the catalog, the shipped sentences, and this
    * madrasah's own versions of them.
    *
    * The whole registry comes from the server (people/sheetText.ts owns it), so the UI hard-codes no
    * sentence and no tag list: adding a box there makes a new field appear in Settings with no change on
-   * the browser side, exactly like the alert catalogue above.
+   * the browser side, exactly like the alert catalog above.
    */
   sheetTextGet: adminProcedure.query(() => ({
     keys: [...SHEET_TEXT_KEYS],
@@ -124,6 +128,58 @@ export const settingsRouter = router({
     tags: [...SHEET_TEXT_TAGS],
     maxLength: SHEET_TEXT_MAX,
   })),
+
+  /**
+   * The onboarding message's wording (0.51.0) — the same served-registry shape as the sheet above, so the
+   * UI hard-codes no sentence and adding a box needs no change on the browser side.
+   *
+   * `preview` is rendered against a REAL household — the test student's when one is set, otherwise the
+   * first on the roster — because the tags are the whole point of checking: an office wants to see what
+   * `[children]` and `[portal]` actually resolve to, not the template with brackets in it. Both channel
+   * forms are returned, since the WhatsApp one carries the extra which-number line and an office should
+   * be able to read the two side by side before writing to two hundred families.
+   */
+  onboardingTextGet: adminProcedure.query(() => {
+    // The same choice of sample household the WhatsApp template preview makes (trpc/whatsapp.ts): the
+    // test student's if the office has set one — they picked it precisely so previews are recognizable —
+    // otherwise whoever is first on the roster.
+    const fam = testFamilyId() ?? db.select({ id: families.id }).from(families).orderBy(asc(families.name)).get()?.id ?? null;
+    const vars = fam ? familyVars(fam) : { family: 'the Ismail family', children: ['Yusuf', 'Maryam'], portal: portalBase() ? `${portalBase()}/family` : '' };
+    return {
+      keys: [...ONBOARDING_KEYS],
+      defaults: ONBOARDING_DEFAULTS,
+      overrides: getOnboardingText(),
+      tags: [...ONBOARDING_TAGS],
+      maxLength: ONBOARDING_MAX,
+      /** Whether that preview is a real household or the worked example — the screen says which. */
+      sample: fam ? 'household' : ('example' as const),
+      preview: {
+        subject: renderOnboarding('subject', vars),
+        email: renderOnboarding('body', vars),
+        whatsapp: onboardingWhatsApp(vars),
+      },
+    };
+  }),
+
+  onboardingTextSet: adminProcedure
+    .input(
+      z.union([
+        z.object({ boxes: z.array(z.object({ key: z.enum(ONBOARDING_KEYS), text: z.string().max(ONBOARDING_MAX) })).min(1).max(ONBOARDING_KEYS.length) }),
+        z.object({ reset: z.literal(true) }),
+      ]),
+    )
+    .mutation(({ ctx, input }) => {
+      if ('reset' in input) {
+        setOnboardingText(Object.fromEntries(ONBOARDING_KEYS.map((k) => [k, null])));
+        audit(auditActor(ctx), 'settings.onboardingTextReset', { entity: 'settings' });
+        return { ok: true as const };
+      }
+      setOnboardingText(Object.fromEntries(input.boxes.map((b) => [b.key, b.text])));
+      // Key names only. The wording is the school's own prose rather than personal data, but there is no
+      // reason to copy paragraphs of it into the audit trail to record that it changed (§14).
+      audit(auditActor(ctx), 'settings.onboardingText', { entity: 'settings', detail: { keys: input.boxes.map((b) => b.key) } });
+      return { ok: true as const };
+    }),
 
   /**
    * Save changed boxes. A box sent as `''` goes back to the shipped sentence — that is what clearing the
@@ -217,12 +273,14 @@ export const settingsRouter = router({
    * the office's decision.
    */
   alertsGet: adminProcedure.query(() => ({
-    /** The catalogue, so the UI never hard-codes the event list. */
+    /** The catalog, so the UI never hard-codes the event list. */
     events: ALERT_EVENTS,
     recipients: listRecipients(),
     parentEmails: getParentEmails(),
     /** The master stop — nothing at all goes to a parent while it is on (0.48.0). */
     parentMailPaused: getParentMailPaused(),
+    /** May the masjid's webhook name the child on a payment notice (0.51.0-dev.17)? Off by default. */
+    webhookNamesStudent: getWebhookNamesStudent(),
     /** Nothing can be delivered without a transport; the UI says so rather than looking broken. */
     mailAvailable: mailAvailable(),
   })),
@@ -237,7 +295,7 @@ export const settingsRouter = router({
         id: z.string().trim().max(64).optional(),
         email: z.string().trim().email().max(320),
         label: z.string().trim().max(80).optional(),
-        /** Validated against the catalogue, so a stale client can never subscribe to an unknown id. */
+        /** Validated against the catalog, so a stale client can never subscribe to an unknown id. */
         events: z.array(z.enum(ALERT_EVENTS)).max(ALERT_EVENTS.length).optional(),
       }),
     )
@@ -290,6 +348,23 @@ export const settingsRouter = router({
   parentMailPauseSet: adminProcedure.input(z.object({ paused: z.boolean() })).mutation(({ ctx, input }) => {
     setParentMailPaused(input.paused);
     audit(auditActor(ctx), 'settings.parentMailPause', { entity: 'settings', detail: { paused: input.paused } });
+    return { ok: true as const };
+  }),
+
+  /**
+   * Let the masjid's webhook name the child on a payment notice (0.51.0-dev.17).
+   *
+   * Its own procedure, and audited both ways, for the reason the pause above gives: this is not "which
+   * notifications does this madrasah send" but a decision about how much a channel we cannot see is
+   * told about a family. Turning it ON is the entry somebody will want to find later, and turning it
+   * back off equally so.
+   *
+   * Admin, never finance — the same wall as the recipient list, and for the same stated reason: opening
+   * a channel is a standing grant of information about families, which is the office's call (§5).
+   */
+  webhookNamesSet: adminProcedure.input(z.object({ on: z.boolean() })).mutation(({ ctx, input }) => {
+    setWebhookNamesStudent(input.on);
+    audit(auditActor(ctx), 'settings.webhookNames', { entity: 'settings', detail: { on: input.on } });
     return { ok: true as const };
   }),
 
@@ -392,6 +467,46 @@ export const settingsRouter = router({
     .mutation(({ ctx, input }) => {
       setPastDue(input);
       audit(auditActor(ctx), 'settings.pastDue', { entity: 'settings', detail: { ...input } });
+      return { ok: true as const };
+    }),
+
+  /**
+   * The processing-fee policy, plus a worked example (0.51.0).
+   *
+   * The examples are computed by the SAME function that will charge the card, not written into the copy.
+   * An office deciding whether to switch this on is really asking "what will a parent see?", and a
+   * hand-written "about 3%" would drift from the arithmetic the moment either changed — which on this
+   * screen is the difference between an informed decision and a surprise on 200 cards.
+   */
+  processingFeeGet: adminProcedure.query(() => {
+    const cfg = getProcessingFee();
+    // The amounts live in payments/fees.ts, because the printed family sheet quotes one of them too and
+    // a parent's copy on paper must not work from a different bill than the office decided on.
+    const examples = FEE_EXAMPLE_CENTS.map((net) => ({
+      netCents: net,
+      card: feeQuote(net, 'card', { ...cfg, enabled: true }),
+      bank: feeQuote(net, 'bank', { ...cfg, enabled: true, bankEnabled: true }),
+    }));
+    return { ...cfg, currency: getCurrency(), examples, stripeReady: stripeReady() };
+  }),
+
+  processingFeeSet: adminProcedure
+    .input(
+      z.object({
+        enabled: z.boolean().optional(),
+        cardPercentBps: z.number().int().min(0).max(1000).optional(),
+        cardFixedCents: z.number().int().min(0).max(1000).optional(),
+        bankEnabled: z.boolean().optional(),
+        bankPercentBps: z.number().int().min(0).max(1000).optional(),
+        bankFixedCents: z.number().int().min(0).max(1000).optional(),
+        bankCapCents: z.number().int().min(0).max(100_000).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      setProcessingFee(input);
+      // Audited like every other money-path setting: this one changes what every parent is charged, so
+      // "when did this start?" has to be answerable from the trail.
+      audit(auditActor(ctx), 'settings.processingFee', { entity: 'settings', detail: { ...input } });
       return { ok: true as const };
     }),
 

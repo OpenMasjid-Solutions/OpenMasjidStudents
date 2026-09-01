@@ -56,7 +56,7 @@ export function codePrefix(fullName: string): string {
   return letters.slice(0, 3).padEnd(3, 'X');
 }
 
-/** Normalise typed input: trim, uppercase, drop spaces and hyphens a parent might add. */
+/** Normalize typed input: trim, uppercase, drop spaces and hyphens a parent might add. */
 export function normalizeStudentCode(input: string): string {
   return input.trim().toUpperCase().replace(/[\s-]/g, '');
 }
@@ -75,7 +75,7 @@ export function generateUniqueStudentCode(fullName: string): string {
     if (!taken(code)) return code;
   }
   // The name's own prefix is saturated (or very unlucky). Keep going rather than refusing to
-  // enrol a child: append a letter shift so the code is still recognisably theirs.
+  // enrol a child: append a letter shift so the code is still recognizably theirs.
   for (const alt of ['X', 'Y', 'Z']) {
     const p = `${prefix.slice(0, 2)}${alt}`;
     for (let i = 0; i < 200; i++) {

@@ -24,14 +24,10 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '../db';
 import { students } from '../db/schema';
-import { getWhatsApp, setWhatsApp } from './index';
+import { getWhatsApp } from './index';
 
 export function getTestStudentId(): string {
   return getWhatsApp().testStudentId;
-}
-
-export function setTestStudentId(studentId: string): void {
-  setWhatsApp({ testStudentId: studentId });
 }
 
 /**

@@ -10,11 +10,15 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { Pencil, Printer, Trash2 } from 'lucide-react';
+import { Pencil, Printer, Send, Trash2, Wallet } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
 import { formatUsPhone, telHref } from '../../lib/phone';
+import { formatMoney, parseCents } from '../../lib/money';
 import { StudentPicker } from '../../components/StudentPicker';
+import { OnboardingSend } from '../../components/OnboardingSend';
+import { FamilyBilling } from '../../components/FamilyBilling';
+import { useWindows } from '../../components/Windows';
 
 /** What a guardian is to the child. Four choices rather than an open box: an office typing "Dad",
  *  "father" and "Father" into three records made the column unusable for anything. Stored as these
@@ -35,16 +39,82 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const { t } = useTranslation();
   const utils = trpc.useUtils();
   const q = trpc.people.familyGet.useQuery({ id: familyId });
+  const { open } = useWindows();
 
+  /**
+   * The onboarding message for THIS household.
+   *
+   * Passes the household's students rather than a family id, so the one send path is the same one the
+   * roster-wide dialog uses (`kind: 'students'`) and the server collapses it to this household exactly as
+   * it would any other selection — no second route, no second set of gates.
+   */
+  const openOnboarding = () =>
+    open({
+      title: t('onboarding.titleOne', { family: q.data?.family.name ?? '' }),
+      dedupeKey: `onboarding:${familyId}`,
+      icon: <Send size={15} />,
+      node: <OnboardingSend studentIds={(q.data?.students ?? []).map((s) => s.id)} familyLabel={q.data?.family.name ?? ''} />,
+    });
+
+  /**
+   * THIS CHILD'S BILLING RECORD (0.51.0-dev.17) — the other half of a door that only opened one way.
+   *
+   * The billing window already opens this one (FamilyBilling's Household button), and the Billing tab
+   * and the year view both open billing directly. The one route that was missing is the obvious one: an
+   * office looking at a child, asked what they owe, had to leave, change tab, and find them again.
+   *
+   * PER STUDENT, unlike the onboarding button right below — and the difference is real rather than
+   * inconsistent. A message is one send to the household's adults, so three buttons would have implied
+   * three messages. A billing record is per household too, but it OPENS ON a child (`focusStudentId`
+   * seeds the payment and charge forms with them), so pressing the row you are reading is the whole
+   * point. Same `dedupeKey` as the Billing tab, so this focuses a record already open rather than
+   * stacking a second window on the same household.
+   *
+   * NOT gated on `readOnly`: finance reads the ledger and records the money (§5), so they are exactly
+   * who needs this. It is the ONE control in this window they may use.
+   */
+  const openBilling = (studentId: string, name: string) =>
+    open({
+      title: name,
+      wide: true,
+      dedupeKey: `billing:${familyId}`,
+      icon: <Wallet size={15} />,
+      node: <FamilyBilling familyId={familyId} currency={display.data?.currency ?? 'usd'} focusStudentId={studentId} />,
+    });
+
+  /**
+   * Everything that reads a student, not just this window (0.51.0-dev.14).
+   *
+   * THE BUG THIS FIXES: withdrawing a child here updated the household record and left the Students tab
+   * behind it still showing them **Active** — the roster reads `structure.studentsByClass`, which nothing
+   * here invalidated. Worse than a stale label, because that query filters withdrawn students OUT by
+   * default: the child stayed on the roster, marked active, and would only vanish when something else
+   * happened to refetch. An office reasonably concludes the withdrawal did not take.
+   *
+   * It is in `refresh()` rather than in `toggleWithdraw` because every write in this window can change a
+   * student's standing — withdrawing, reinstating, deleting, adding, unlinking a sibling — and two of
+   * those already remembered to invalidate the roster while two did not. One list, used by all of them.
+   */
   const refresh = async () => {
-    await utils.people.familyGet.invalidate({ id: familyId });
-    await utils.people.directory.invalidate();
+    await Promise.all([
+      utils.people.familyGet.invalidate({ id: familyId }),
+      utils.people.directory.invalidate(),
+      // The roster and its per-class counts.
+      utils.structure.studentsByClass.invalidate(),
+      utils.structure.courseTree.invalidate(),
+      // The sibling picker, which offers active students only.
+      utils.people.studentOptions.invalidate(),
+      // The year grid and the billing screens both list students and their fees.
+      utils.billing.yearGrid.invalidate(),
+      utils.billing.familyBilling.invalidate(),
+    ]);
   };
 
   const addStudent = trpc.people.studentCreate.useMutation();
   const updateStudent = trpc.people.studentUpdate.useMutation();
   const addGuardian = trpc.people.guardianCreate.useMutation();
   const updateGuardian = trpc.people.guardianUpdate.useMutation();
+  const guardianWa = trpc.people.guardianWhatsApp.useMutation();
   const removeGuardian = trpc.people.guardianRemove.useMutation();
   const removeContact = trpc.people.emergencyContactRemove.useMutation();
   const deleteStudent = trpc.people.studentDelete.useMutation();
@@ -67,6 +137,22 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   const countries = waCfg.data?.enabled ? waCfg.data.countries : [];
   /** Why a delete was refused — shown as text, since it is the useful half of the interaction. */
   const [deleteErr, setDeleteErr] = useState('');
+  /** Confirmation after an erase. The one action here with nothing left on screen to show it worked —
+   *  the child's row is gone, so without a sentence the office cannot tell an erase from a no-op. */
+  const [deleteMsg, setDeleteMsg] = useState('');
+  /**
+   * The student a refused delete is offering to erase ANYWAY, with what that would destroy (dev.14).
+   *
+   * Held in state rather than run from a `confirm()` because the numbers matter: a browser dialog that
+   * says "are you sure?" is the kind people click through, and this one takes real invoices and recorded
+   * payments with it. The panel prints the counts and the money, and asks for a typed confirmation.
+   */
+  const [forceDelete, setForceDelete] = useState<{ studentId: string; name: string; info: { invoices: number; payments: number; paidCents: number } } | null>(null);
+  const [forceTyped, setForceTyped] = useState('');
+  /** Only so the erase-anyway panel can state the money it would destroy. `settings.display` carries
+   *  presentation only and is the one read finance shares, so it costs this screen nothing. */
+  const display = trpc.settings.display.useQuery();
+  const money = (cents: number) => formatMoney(cents, display.data?.currency ?? 'usd');
   /** The same, for the guardian and contact rows below. */
   const [guardianErr, setGuardianErr] = useState('');
 
@@ -113,7 +199,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
 
   const [showStudent, setShowStudent] = useState(false);
   /** `billFromPeriod` empty means "bill nothing yet", which is what adding a student has always done. */
-  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', billFromPeriod: '' });
+  const [stu, setStu] = useState({ fullName: '', dob: '', feePlanId: '', billFromPeriod: '', firstMonth: '' });
   /** The months a mid-year catch-up may start from, and what the last one actually billed (0.48.0). */
   const billFrom = trpc.billing.billFromMonths.useQuery();
   const [billedMsg, setBilledMsg] = useState<string | null>(null);
@@ -125,7 +211,14 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
   async function submitStudent(e: FormEvent) {
     e.preventDefault();
     if (!stu.fullName.trim() || !stu.feePlanId) return;
-    const r = await addStudent.mutateAsync({ familyId, fullName: stu.fullName.trim(), dob: stu.dob || undefined, feePlanId: stu.feePlanId, billFromPeriod: stu.billFromPeriod || undefined });
+    const r = await addStudent.mutateAsync({
+      familyId,
+      fullName: stu.fullName.trim(),
+      dob: stu.dob || undefined,
+      feePlanId: stu.feePlanId,
+      billFromPeriod: stu.billFromPeriod || undefined,
+      ...(stu.firstMonth.trim() && stu.billFromPeriod ? { firstMonthCents: parseCents(stu.firstMonth) ?? undefined } : {}),
+    });
     // A catch-up is never silent — five new invoices on a household is news (0.48.0).
     setBilledMsg(
       !r.billed
@@ -134,7 +227,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
           ? t('students.billedFrom', { count: r.billed.created, from: r.billed.periods[0] })
           : t(`students.billedNone_${r.billed.reason ?? 'nothing_to_bill'}`),
     );
-    setStu({ fullName: '', dob: '', feePlanId: '', billFromPeriod: stu.billFromPeriod });
+    setStu({ fullName: '', dob: '', feePlanId: '', billFromPeriod: stu.billFromPeriod, firstMonth: '' });
     setShowStudent(false);
     await refresh();
   }
@@ -191,6 +284,24 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     }
   }
 
+  /** Erase a billed student for good. Only reachable from the panel above, which required the child's
+   *  name to be typed — the server refuses without `force`, so nothing here can happen by accident. */
+  async function doForceDelete() {
+    if (!forceDelete) return;
+    setDeleteErr('');
+    setDeleteMsg('');
+    try {
+      const erased = forceDelete.name;
+      await deleteStudent.mutateAsync({ studentId: forceDelete.studentId, force: true });
+      setForceDelete(null);
+      setForceTyped('');
+      setDeleteMsg(t('directory.forceDeleted', { name: erased }));
+      await refresh();
+    } catch (err) {
+      setDeleteErr((err as Error).message);
+    }
+  }
+
   /** Ask the server whether this student can be deleted, then confirm with the real reason either
    *  way. The precheck exists so the office is never told "no" only after committing to the click. */
   async function askDelete(studentId: string, name: string) {
@@ -206,6 +317,10 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
             ? t('directory.deleteBlockedPaid', { name, count: info.payments })
             : t('directory.deleteBlocked', { name, count: info.invoiceLines + info.invoicedCharges + info.invoices }),
         );
+        // …and the way through it (0.51.0-dev.14). Withdrawing is still the right answer nearly always,
+        // which is why this is a second control behind the refusal rather than a choice offered up front:
+        // an install that billed a test roster by accident has no other way to be rid of it.
+        setForceDelete({ studentId, name, info });
         return;
       }
       const extra = info.feeAssignments + info.pendingCharges;
@@ -243,6 +358,23 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
    * household but kept for another; deleted outright; or deleted along with their portal login. The
    * last one is the reason this asks the server at all rather than just confirming and posting.
    */
+  /**
+   * Record that this parent does or does not want WhatsApp (0.51.0).
+   *
+   * No confirmation dialog: it is one tap to undo, and the chip beside the name says which state it is
+   * in. A dialog on something this reversible is how people learn to click through the ones that
+   * matter (§15).
+   */
+  async function setGuardianWa(guardianId: string, optOut: boolean) {
+    setGuardianErr('');
+    try {
+      await guardianWa.mutateAsync({ id: guardianId, optOut });
+      await refresh();
+    } catch (err) {
+      setGuardianErr((err as Error).message);
+    }
+  }
+
   async function askRemoveGuardian(guardianId: string, name: string) {
     setGuardianErr('');
     try {
@@ -307,6 +439,17 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
           >
             <Printer size={14} /> {t('directory.printSheet')}
           </a>
+          {/* The onboarding message, for THIS household. Beside the sheet button and household-scoped for
+              exactly the same reason spelled out above it: the guardians are the household's, so a
+              message aimed at one child reaches the adults who also pay for their siblings. A button on
+              each student row would have looked like three different sends of one message.
+              Admin only, unlike the sheet — printing something to hand over is finance's job; writing to
+              a family in the madrasah's voice is not (§5). */}
+          {!readOnly && (
+            <button type="button" className="btn btn--ghost btn--sm" onClick={openOnboarding}>
+              <Send size={14} /> {t('onboarding.buttonOne')}
+            </button>
+          )}
           {!readOnly && <button type="button" className="btn btn--primary btn--sm" onClick={() => setShowStudent((v) => !v)}>{t('directory.addStudent')}</button>}
         </div>
         {students.length === 0 ? (
@@ -324,6 +467,12 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     <td><span className="code">{s.studentCode ?? '—'}</span></td>
                     <td>{s.status === 'withdrawn' ? <span className="chip is-muted">{t('directory.withdrawn')}</span> : <span className="chip">{t('directory.active')}</span>}</td>
                     <td className="actions">
+                      {/* What they owe, without leaving the child you are looking at. First in the row
+                          because it is the question asked most often, and the only one here finance may
+                          press — see `openBilling`. */}
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => openBilling(s.id, s.fullName)}>
+                        <Wallet size={13} /> {t('directory.billing')}
+                      </button>
                       {!readOnly && (
                         <>
                           <button type="button" className="btn btn--ghost btn--sm" onClick={() => toggleWithdraw(s.id, s.status, s.fullName)} disabled={updateStudent.isPending}>{s.status === 'active' ? t('directory.withdraw') : t('directory.reinstate')}</button>
@@ -341,9 +490,59 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     </td>
                   </tr>
                 ))}
+                {deleteMsg && (
+                  <tr>
+                    <td colSpan={5}><p className="notice notice--ok" style={{ margin: '0.25rem 0 0' }}>{deleteMsg}</p></td>
+                  </tr>
+                )}
                 {deleteErr && (
                   <tr>
                     <td colSpan={5}><p className="form-error" style={{ margin: '0.25rem 0 0' }}>{deleteErr}</p></td>
+                  </tr>
+                )}
+                {/*
+                  ERASE IT ANYWAY (0.51.0-dev.14). Behind the refusal, never beside the Delete button:
+                  withdrawing is the right answer nearly every time, and this one takes real invoices and
+                  recorded payments with it.
+
+                  It prints the counts and the MONEY, and it asks for the child's name to be typed. A
+                  window.confirm would have been less code and is the wrong control — people click those
+                  through, and there is nothing to undo afterwards.
+                */}
+                {forceDelete && (
+                  <tr>
+                    <td colSpan={5}>
+                      <div className="notice notice--warn" style={{ marginBlockStart: '0.4rem' }}>
+                        <p style={{ margin: 0 }}>
+                          <strong>{t('directory.forceDeleteTitle', { name: forceDelete.name })}</strong>
+                        </p>
+                        <p className="hint" style={{ marginBlockStart: '0.3rem' }}>
+                          {t('directory.forceDeleteWhat', {
+                            invoices: forceDelete.info.invoices,
+                            payments: forceDelete.info.payments,
+                            amount: money(forceDelete.info.paidCents),
+                          })}
+                        </p>
+                        <p className="hint" style={{ marginBlockStart: '0.3rem' }}>{t('directory.forceDeleteStripe')}</p>
+                        <div className="inline-form" style={{ paddingInline: 0, marginBlockStart: '0.4rem' }}>
+                          <div className="field" style={{ flex: '1 1 12rem' }}>
+                            <label className="label" htmlFor="force-confirm">{t('directory.forceDeleteType', { name: forceDelete.name })}</label>
+                            <input id="force-confirm" className="input glass-inset" value={forceTyped} onChange={(e) => setForceTyped(e.target.value)} autoComplete="off" />
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn--danger"
+                            disabled={forceTyped.trim() !== forceDelete.name || deleteStudent.isPending}
+                            onClick={() => void doForceDelete()}
+                          >
+                            {t('directory.forceDeleteAction')}
+                          </button>
+                          <button type="button" className="btn btn--ghost" onClick={() => { setForceDelete(null); setForceTyped(''); setDeleteErr(''); }}>
+                            {t('common.cancel')}
+                          </button>
+                        </div>
+                      </div>
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -394,6 +593,28 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                       : t('students.billFromHint')}
               </p>
             </div>
+            {/* What their FIRST month comes to, when it is not the plan's own amount — a child starting on
+                the 15th is often charged part of it. Offered here as well as on the Students tab for the
+                reason the month field above is: `billFrom` is shared by both add paths, so a child added
+                into an existing household must be treated no differently from one starting a new one. It
+                was missing here in dev.11, which made the feature look like it did not exist depending on
+                which of the two forms an office happened to open. */}
+            {!!stu.billFromPeriod && stu.billFromPeriod <= (billFrom.data?.current ?? '') && (
+              <div className="field" style={{ flex: '0 1 10rem' }}>
+                <label className="label" htmlFor="fd-firstmonth">{t('students.firstMonth')}</label>
+                <input
+                  id="fd-firstmonth"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="input glass-inset"
+                  value={stu.firstMonth}
+                  onChange={(e) => setStu({ ...stu, firstMonth: e.target.value })}
+                  placeholder={t('students.firstMonthPlaceholder')}
+                />
+                <p className="hint">{t('students.firstMonthHint')}</p>
+              </div>
+            )}
             <button type="submit" className="btn btn--primary" disabled={addStudent.isPending || !stu.feePlanId}>{t('common.save')}</button>
           </form>
         )}
@@ -427,9 +648,11 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                 {g.phone && <a className="muted" href={telHref(g.phone)}>· {formatUsPhone(g.phone)}</a>}
                 {g.email && <a className="muted" href={`mailto:${g.email}`}>· {g.email}</a>}
                 {g.isEmergencyContact && <span className="chip is-accent">{t('directory.emergency')}</span>}
-                {/* This person asked not to be messaged (0.50.0). Shown, never changed from here: it is
-                    their own answer, given in the parent portal. Without it, "why didn't they get the
-                    reminder?" has no visible answer on the screen the office is actually looking at. */}
+                {/* This person is not messaged on WhatsApp (0.50.0). The chip alone was the whole
+                    feature at first — shown, never changeable — on the reasoning that it is the
+                    parent's own answer. But a parent says "stop messaging me" at pickup, not by
+                    finding a toggle in a portal, so from 0.51.0 the office can record it here too. It
+                    sets the same one flag, so nothing overrides it either way (§9). */}
                 {g.waOptOut && countries.length > 0 && <span className="chip is-muted">{t('directory.waOptedOut')}</span>}
                 {/* Whether they took up a portal account decides which action is useful: an invite for
                     someone who never signed up, a reset for someone who did and forgot. */}
@@ -451,6 +674,19 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                     <button type="button" className="btn btn--ghost btn--sm" onClick={() => void askRemoveGuardian(g.guardianId, g.name)} disabled={removeGuardian.isPending}>
                       <Trash2 size={13} /> {t('common.delete')}
                     </button>
+                    {/* Only where WhatsApp is actually configured — the same `countries` condition the
+                        chip uses. On an install that does not use it this is a button about nothing. */}
+                    {countries.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => void setGuardianWa(g.guardianId, !g.waOptOut)}
+                        disabled={guardianWa.isPending}
+                        title={t(g.waOptOut ? 'directory.waResumeHint' : 'directory.waStopHint')}
+                      >
+                        {t(g.waOptOut ? 'directory.waResume' : 'directory.waStop')}
+                      </button>
+                    )}
                   </>
                 )}
                 {g.hasAccount ? (
@@ -577,7 +813,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
       </section>
 
       {/* Add a sibling — at the bottom, because it is the thing you reach for after reading the
-          record and realising a child belongs on it. One choice: which child. The household you are
+          record and realizing a child belongs on it. One choice: which child. The household you are
           looking at is the one they join, so there is nothing else to say. */}
       {!readOnly && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>

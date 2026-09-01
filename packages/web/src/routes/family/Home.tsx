@@ -101,7 +101,7 @@ export function FamilyHome({ onManageAutopay }: { onManageAutopay: () => void })
               </div>
               <div className="sub">{owed ? t('family.due') : credit ? t('family.inCredit') : t('family.allSettled')}</div>
               {/* Offered even when nothing is due: a parent who wants to pay the term up front, or
-                  top up before travelling, should not have to wait for an invoice to exist. PayNow
+                  top up before traveling, should not have to wait for an invoice to exist. PayNow
                   re-words itself for that case; the money lands as credit and the next invoices
                   generated absorb it. */}
               {payConfigQ.data?.ready && chosenFor(fam).length === 0 && (
@@ -141,7 +141,7 @@ export function FamilyHome({ onManageAutopay }: { onManageAutopay: () => void })
               )}
             </section>
 
-            {/* Open bills, itemised. A bill of one line reads as it always did; a bill that is tuition
+            {/* Open bills, itemized. A bill of one line reads as it always did; a bill that is tuition
                 PLUS something else says so, and each line can be paid on its own — "just the book fee"
                 is a real thing parents ask for, and it used to be impossible to express. */}
             <section className="fam-section">

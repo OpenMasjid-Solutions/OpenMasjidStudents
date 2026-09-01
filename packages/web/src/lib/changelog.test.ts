@@ -180,7 +180,7 @@ describe('headlines vs detail (0.49.0)', () => {
     expect(isPrereleaseVersion('0.49.0-dev.1')).toBe(true);
   });
 
-  it('recognises the marker however it is capitalised or continued', () => {
+  it('recognizes the marker however it is capitalized or continued', () => {
     expect(isDetailHeading('Also in this release')).toBe(true);
     expect(isDetailHeading('  also in this release, in detail  ')).toBe(true);
     expect(isDetailHeading('Added')).toBe(false);
