@@ -15,23 +15,32 @@
 # it, create the admin account, and set up the rest inside the app (saved to /data).
 services:
   app:
-    # ── STABLE CHANNEL — this line differs from `dev`, and that is the point ──
-    # Tag for humans + @sha256 digest for integrity. The digest is the real pin: a tag can be moved to
-    # point at different content, a digest cannot. This is what every masjid installs.
+    # ── DEVELOPMENT CHANNEL — this line differs from `main`, and that is the point ──
+    # An IMMUTABLE, versioned prerelease tag that matches `manifest.yaml`'s `version` exactly.
     #
-    # On `dev` this same line is an IMMUTABLE prerelease tag (`:X.Y.Z-dev.N`) matching that branch's
-    # manifest version, because the development channel needs a distinct version per build for the
-    # platform to detect one at all. So a merge from dev lands a prerelease tag here, and re-pinning is a
-    # STEP OF the release rather than an afterthought — CLAUDE.md "Branching policy" + §19: set the plain
-    # version, merge, let CI build, pin the digest it prints, then tag.
+    # It must not be the moving `:dev` tag, and that is not a style preference. The catalog embeds this
+    # compose and OpenMasjidOS detects an update by comparing the catalog's `version` against the
+    # installed one — so a dev entry that declared the same version as stable and pointed at a tag that
+    # silently moves gave the platform nothing observable to act on: same version string, same image
+    # reference, no notification, nothing to update to. Every dev build now gets its own version and its
+    # own tag, so a dev host sees a real change.
     #
-    # Skipping the pin would ship every stable install a dev build's tag. `build-image.yml` refuses to
-    # publish a v* tag whose compose is not digest-pinned, or whose version is still a prerelease — but
-    # the guard is the backstop, not the plan.
+    # AND THE VERSION MUST BE THE NEXT MINOR'S, not another prerelease of the release that just shipped.
+    # `0.51.0-dev.18` sorts BELOW `0.51.0` — a prerelease orders before the release it leads to — so the
+    # catalog's freshness floor read the dev entry as a DOWNGRADE for testers and served them the stable
+    # release instead, warning on every hourly build. That is why this line opens 0.52.0 the moment
+    # 0.51.0 is out (CLAUDE.md "Branching policy" rule 5).
     #
-    # Pinned to the multi-arch INDEX digest, not to a per-platform manifest — so a Raspberry Pi and an
-    # amd64 box install the same reference and resolve their own architecture from it.
-    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.51.0@sha256:d5df93e54dfb780fb1e631125356d5887aaf2a3b50e1d74c5f77af43c1fc88af
+    # Bumping the prerelease means bumping this line with it. CI refuses to publish when the compose tag
+    # and the manifest version disagree, so a forgotten bump fails the build instead of shipping an entry
+    # that points at the previous build.
+    #
+    # On `main` this line is a release tag AND its @sha256 digest (the digest is the real pin — a moved
+    # tag can't repoint it):
+    #   ghcr.io/openmasjid-solutions/openmasjidstudents:0.51.0@sha256:d5df93e5…
+    # Restoring that pin is a step OF the merge-to-main release (CLAUDE.md "Branching policy" + §19); CI
+    # refuses to publish a v* tag whose compose is not digest-pinned.
+    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.52.0-dev.1
     restart: unless-stopped
     environment:
       PORT: "8080"

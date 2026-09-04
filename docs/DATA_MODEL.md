@@ -124,7 +124,7 @@ and `updated_at` wherever a row is ever updated.
     messages arrive, and silence used to be indistinguishable from success.
   - `platformAlertIds()` exists purely so `test/alerts.test.ts` can hold the code against
     `manifest.yaml`. It only guards the half that lives in this repo — the catalog entry is the other
-    half, and a release has to carry it (§19 step 6).
+    half, and a release has to carry it (§19 step 7).
   - **Parent emails are gated inside `mail/notify.ts`**, not at the call sites: receipts are sent from
     five places (portal, autopay, kiosk, donation site, and the office's own cash entry), and a check
     per caller is a check somebody forgets. 0.44.0 also added the three that were missing — cash, kiosk
