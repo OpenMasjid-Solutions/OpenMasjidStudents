@@ -418,7 +418,7 @@ phase reads "built" only when it has shipped, and until then this section descri
 | Phase | What | Status |
 | --- | --- | :-- |
 | **0** | Foundations: these amendments; the migration-journal guard; `charges.source_key`; the CSV round-trip fix | **BUILT** *(0.52.0-dev.2)* |
-| **1** | The student record — real fields, a screen to edit them on, the field registry, Settings tabs, import | **mostly BUILT** *(0.52.0-dev.3)* — see below |
+| **1** | The student record — real fields, a screen to edit them on, the field registry, Settings tabs, import | **BUILT** *(0.52.0-dev.4)* |
 | **2** | Admissions — inquiry → waitlist → offer → admission → re-admission (`docs/ADMISSIONS.md`) | **specified** |
 | **3** | Attendance — enrollment history, the calendar, the daily register (`docs/ATTENDANCE.md`) | **specified** |
 | **4** | Academics — subjects, teachers, assessments, marks, hifz (`docs/ACADEMICS.md`) | **specified** |
@@ -437,15 +437,25 @@ back in).
 **Phase 1 — a real student record.** Today a student is a name, a Student ID, an optional DOB and a
 status: a billing record, not a student record. Adding to it:
 
+On the CHILD:
 - **date of admission**, **date of withdrawal**, and a **withdrawal reason**;
-- **address** — on the CHILD, and nothing else moves: guardians, phones and emails stay on the
-  **household** (§9), and nothing that belongs to the household is duplicated onto the student;
 - **prior schooling / madrasa attended**, and **prior hifz progress on arrival**;
 - **medical notes, allergies, emergency medical consent** — the §14 amendment, and the conditions on it
-  are in §14, not here;
-- **languages spoken**, **nationality**;
-- **office notes with an author and a timestamp, append-only** (the existing free-text `students.notes`
-  is written by two paths and rendered by none — this replaces it with something that has a reader).
+  are in §14, not here.
+
+On the **HOUSEHOLD** — **address**, **languages spoken**, **nationality**. They were on the child for
+one release and moved on Hasan's correction (0.52.0-dev.4, migration 0043): a family shares all three,
+so per-child meant three copies that drift and an office correcting an address had to remember how many
+children were on the record. It is the rule guardians, phones and emails have always followed (§9), and
+it is what makes linking a sibling share them. `people/fields.ts` carries a `scope` per field, and a
+household field submitted to the student procedure is REFUSED rather than written into the wrong table.
+
+Plus **office notes with an author and a timestamp** (the existing free-text `students.notes` was
+written by two paths and rendered by none — this replaces it with something that has a reader). They
+**cannot be edited**, so a correction is another note and nobody's record of a conversation is quietly
+rewritten; they **can be deleted**, admin-only and audited, which the first cut did not allow and Hasan
+asked for — a note typed onto the wrong child could otherwise only ever be added to. The audit row
+keeps the author, the time and the length, **never the body**, or deleting it would be pointless.
 
 **No photo.** It was in the original brief and Hasan removed it (0.52.0). It would have created the
 first upload path in the app's history — against a §14 attachment rule that does not exist, past a
@@ -469,16 +479,28 @@ the failure mode it has to avoid. **Import** extends the existing pattern: downl
 ~120–160 lines with no compression, no `sharedStrings.xml` and no `styles.xml` (§7 — "Ask before adding
 heavy dependencies", and a working ZIP writer already exists in this repo's own `xlsx.test.ts`).
 
-> **WHAT IS BUILT, AND THE ONE PIECE THAT IS NOT** (0.52.0-dev.3). Built: the eleven columns,
-> `student_notes`, `people/fields.ts`, `people.studentGet` / `studentNoteAdd` / `studentFields{Get,Set}`,
-> the record screen, tabbed Settings, and `lib/xlsxWrite.ts` (the template now downloads as a workbook).
-> **Not built: the PRE-FILLED template and the update path it requires**, and they are one piece rather
-> than two. The importer has no update path at all today, so a template carrying the install's current
-> rows would create a duplicate of every child the moment it was uploaded back — decision 3's note.
-> Doing it safely means a row identity (the Student ID column), create-vs-update classification, an
-> error rather than a silent create for an ID that matches nothing, "empty means leave unchanged" on an
-> update with an explicit sentinel to clear, and a preview that says how many rows are new and how many
-> are changes. That is a bulk write across a whole roster and it gets its own slice.
+> **THE UPDATE PATH, AND THE FIVE RULES THAT MAKE IT SAFE** (0.52.0-dev.4). An office can export the
+> roster **with its data in it** (`people.importExport`), fill in the blanks in Excel, and upload it
+> back. That workflow is only safe because of these, and the obvious implementation gets each one
+> wrong at the cost of a whole roster:
+>
+> 1. **The Student ID column is the identity.** A row with one is a change to that child; a row
+>    without one is a new child. **Never matched by name** — a madrasah really does enrol two children
+>    called Muhammad Ali.
+> 2. **An ID matching nothing is an ERROR, never a silent create.** A typo would otherwise mint a
+>    second record for a child already on the roster, which is the outcome an office cannot see.
+> 3. **An empty cell LEAVES THE FIELD ALONE.** The sheet is mostly blanks being filled in; empty
+>    meaning "set to nothing" would wipe a field per untouched column. `(clear)` empties one on purpose.
+> 4. **Only what CHANGED is written**, so `updated_at` still means something and the trail is not one
+>    row per child per import. A row that matches the record exactly produces no write at all.
+> 5. **Money and people are not touched.** Repeating the exported fee plan, amount or guardian is
+>    silent; trying to CHANGE one is refused with a sentence saying where to change it instead. Bulk
+>    editing what a family pays, past a preview nobody reads line by line, is how a hundred households
+>    get the wrong bill.
+>
+> The preview counts new against changed and lists **every field it would change, from → to**, because
+> nobody proof-reads three hundred rows of unchanged values. The switch is off by default and explicit:
+> "I am uploading the sheet I exported" and "I am adding this year's intake" look identical in a file.
 
 **Phase 2 — admissions.** Full spec in `docs/ADMISSIONS.md`. The headline rules: an **inquiry is not a
 student and not a household**, it never mints a Student ID, and the ID is minted at **conversion** and
@@ -1987,7 +2009,7 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | a date | `settings/dates.ts` |
   | the calendar or the roster tree | `structure/*`, `schools/index.ts` |
   | a screen that stutters, jitters or scrolls badly | `styles/shell.css`'s paint-cost block (§15) — count the `backdrop-filter` surfaces first, then `lib/money.ts` and `lib/scrollIdle.ts` |
-  | which student fields exist, who may see one, or what an office switched off | `people/fields.ts` (§5's medical wall, §9) |
+  | which student fields exist, who may see one, whether it is the CHILD's or the HOUSEHOLD's, or what an office switched off | `people/fields.ts` (§5's medical wall, §9) |
   | which class a child is in, or was in on a date | `structure/enrollment.ts` — never `UPDATE students SET class_id` |
   | whether the madrasah teaches on a given day | `structure/calendar.ts` |
   | an attendance rate, count or streak | `attendance/derive.ts` |

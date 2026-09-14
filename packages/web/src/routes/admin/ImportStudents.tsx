@@ -8,7 +8,7 @@
  *  file with any error cannot half-import. */
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check } from 'lucide-react';
+import { Check, Download } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
 import { autoMatchColumns, toCsv, downloadCsv } from '../../lib/csv';
@@ -282,6 +282,13 @@ export function ImportStudents() {
   const plans = trpc.billing.feePlanList.useQuery();
   const preview = trpc.people.importPreview.useMutation();
   const commit = trpc.people.importCommit.useMutation();
+  /**
+   * The roster WITH its data in it (0.52.0-dev.4) — the export half of "fill in the blanks".
+   *
+   * Lazy: an office importing a fresh roster never presses it, and it reads every student, every
+   * household and every guardian to build the sheet.
+   */
+  const exportRoster = trpc.people.importExport.useQuery(undefined, { enabled: false });
 
   const [step, setStep] = useState<Step>('pick');
   const [fileName, setFileName] = useState('');
@@ -289,6 +296,15 @@ export function ImportStudents() {
   const [cells, setCells] = useState<string[][]>([]);
   const [mapping, setMapping] = useState<Record<string, number>>({});
   const [defaultFeePlanId, setDefaultFeePlanId] = useState('');
+  /**
+   * May a row carrying a Student ID CHANGE that child?
+   *
+   * Off by default and explicit, because the two intentions look identical in a file: "I am uploading
+   * the sheet I exported" and "I am adding this year's intake". Ticked, a row with an ID fills in that
+   * child's details; unticked, it is an error that says so. Either way the preview counts new against
+   * changed before a single row is written.
+   */
+  const [updateExisting, setUpdateExisting] = useState(false);
   /** Where each unrecognized relationship goes, keyed by the lowercased label the file used. */
   const [placements, setPlacements] = useState<Record<string, Placement>>({});
   const [parseError, setParseError] = useState('');
@@ -297,14 +313,33 @@ export function ImportStudents() {
   const rows = useMemo(() => {
     if (!cols) return [];
     return cells.map((r) => {
-      const o: Record<string, string> = {};
+      // Core columns are named properties on the row; registry fields go into `fields`, keyed by their
+      // registry key. `source` comes from the server so this needs no copy of the registry — adding a
+      // field there makes a column appear here with no change to this file.
+      const o: Record<string, unknown> = {};
+      const fieldValues: Record<string, string> = {};
       for (const f of cols) {
         const i = mapping[f.key];
-        if (i !== undefined && i >= 0) o[f.key] = r[i] ?? '';
+        if (i === undefined || i < 0) continue;
+        if (f.source === 'field') fieldValues[f.key] = r[i] ?? '';
+        else o[f.key] = r[i] ?? '';
       }
+      if (Object.keys(fieldValues).length) o.fields = fieldValues;
       return o;
     });
   }, [cells, mapping, cols]);
+
+  /**
+   * Download the roster as it stands, in the shape the importer reads back.
+   *
+   * A workbook rather than a CSV for the same reason the template is: the office edits this in Excel
+   * and uploads it again, and a CSV round trip through Excel is where a date column changes meaning.
+   */
+  async function downloadRoster() {
+    const r = exportRoster.data ?? (await exportRoster.refetch()).data;
+    if (!r) return;
+    downloadXlsx('students.xlsx', toXlsx(r.columns.map((c) => c.label), r.rows, 'Students'));
+  }
 
   /**
    * The template, in whichever of the two formats the office actually works in.
@@ -361,10 +396,11 @@ export function ImportStudents() {
   /** Validate server-side, then either stop to ask where the odd relationships go, or show the review. */
   async function runPreview(chosen: Record<string, Placement>) {
     const res = await preview.mutateAsync({
-      rows,
+      rows: rows as never,
       defaultFeePlanId: defaultFeePlanId || undefined,
       schoolId: schoolArg,
       placements: Object.keys(chosen).length ? chosen : undefined,
+      updateExisting,
     });
     const unanswered = res.askRelations.filter((r) => !(r.key in chosen));
     if (unanswered.length > 0) {
@@ -379,10 +415,11 @@ export function ImportStudents() {
 
   async function runCommit() {
     await commit.mutateAsync({
-      rows,
+      rows: rows as never,
       defaultFeePlanId: defaultFeePlanId || undefined,
       schoolId: schoolArg,
       placements: Object.keys(placements).length ? placements : undefined,
+      updateExisting,
     });
     await Promise.all([
       utils.structure.studentsByClass.invalidate(),
@@ -423,6 +460,25 @@ export function ImportStudents() {
             </button>
           </div>
           <p className="hint">{t('import.templateHint')}</p>
+
+          {/* The other door (0.52.0-dev.4): the roster you already have, with its data in it. This is
+              what makes "record eleven new things about three hundred children" a spreadsheet job
+              rather than three hundred screens. */}
+          <div className="glass-inset" style={{ padding: '0.75rem 0.9rem', borderRadius: '0.6rem', marginBlockStart: '0.8rem' }}>
+            <h3 style={{ margin: '0 0 0.3rem', fontSize: '0.95rem' }}>{t('import.exportTitle')}</h3>
+            <p className="hint" style={{ marginBlockStart: 0 }}>{t('import.exportHint', { clear: template.data?.clearWith ?? '(clear)' })}</p>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => void downloadRoster()} disabled={exportRoster.isFetching}>
+              <Download size={14} /> {exportRoster.isFetching ? t('common.loading') : t('import.exportAction')}
+            </button>
+          </div>
+
+          <label className="check" style={{ display: 'flex', gap: '0.5rem', alignItems: 'baseline', marginBlockStart: '0.8rem' }}>
+            <input type="checkbox" checked={updateExisting} onChange={(e) => setUpdateExisting(e.target.checked)} />
+            <span>
+              {t('import.updateExisting')}
+              <span className="hint" style={{ display: 'block' }}>{t('import.updateExistingHint')}</span>
+            </span>
+          </label>
         </section>
       )}
 
@@ -550,7 +606,12 @@ export function ImportStudents() {
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head">
             <h2>{t('import.preview')}</h2>
-            <span className="chip">{t('import.rowsOk', { count: preview.data.okCount })}</span>
+            {preview.data.createCount > 0 && <span className="chip">{t('import.rowsNew', { count: preview.data.createCount })}</span>}
+            {preview.data.updateCount > 0 && <span className="chip">{t('import.rowsChanged', { count: preview.data.updateCount })}</span>}
+            {preview.data.unchangedCount > 0 && <span className="chip is-muted">{t('import.rowsUnchanged', { count: preview.data.unchangedCount })}</span>}
+            {preview.data.createCount === 0 && preview.data.updateCount === 0 && preview.data.unchangedCount === 0 && (
+              <span className="chip">{t('import.rowsOk', { count: preview.data.okCount })}</span>
+            )}
             {preview.data.errorCount > 0 && (
               <span className="chip" style={{ color: 'var(--color-danger)' }}>{t('import.rowsError', { count: preview.data.errorCount })}</span>
             )}
@@ -568,6 +629,35 @@ export function ImportStudents() {
                 {preview.data.rows.map((r) => (
                   <tr key={r.row}>
                     <td className="muted">{fileLines(r.sourceRows)}</td>
+                    {/* A row about a child who is already here reads as WHAT WOULD CHANGE, field by
+                        field, rather than as a set of columns that mostly repeat the record. That is
+                        the only thing an office can actually check, and the reason the preview exists
+                        at all: nobody proof-reads three hundred rows of unchanged values. */}
+                    {r.mode === 'update' && r.update ? (
+                      <>
+                        <td>
+                          {r.update.currentName}
+                          <span className="chip" style={{ marginInlineStart: '0.35rem' }}>{r.update.studentCode}</span>
+                        </td>
+                        <td colSpan={4}>
+                          {r.update.changes.length === 0 ? (
+                            <span className="muted">{t('import.noChange')}</span>
+                          ) : (
+                            <div style={{ display: 'grid', gap: '0.15rem', fontSize: '0.85rem' }}>
+                              {r.update.changes.map((c) => (
+                                <span key={c.key}>
+                                  <strong>{t(`record.field.${c.key}`, { defaultValue: c.label })}</strong>
+                                  {c.scope === 'household' && <span className="chip is-muted" style={{ marginInlineStart: '0.3rem' }}>{t('import.householdShort')}</span>}
+                                  <span className="muted"> · {c.from || t('import.blankCell')} → </span>
+                                  {c.to || <span className="muted">{t('import.blankCell')}</span>}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </>
+                    ) : (
+                      <>
                     <td>{r.resolved ? r.resolved.fullName : '—'}</td>
                     <td>{r.resolved?.className ?? '—'}</td>
                     <td>{r.resolved?.feePlanName ?? (defaultFeePlanId ? t('import.usingDefault') : '—')}</td>
@@ -587,6 +677,8 @@ export function ImportStudents() {
                         </div>
                       )}
                     </td>
+                      </>
+                    )}
                     <td className={r.ok ? 'muted' : 'error-text'}>{r.ok ? '✓' : r.errors.join(' ')}</td>
                   </tr>
                 ))}
@@ -597,7 +689,9 @@ export function ImportStudents() {
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <button type="button" className="btn btn--ghost" onClick={() => setStep(preview.data.askRelations.length > 0 ? 'contacts' : 'map')}>{t('common.back')}</button>
             <button type="button" className="btn btn--primary" onClick={() => void runCommit()} disabled={preview.data.errorCount > 0 || commit.isPending}>
-              {t('import.commit', { count: preview.data.okCount })}
+              {preview.data.updateCount > 0
+                ? t('import.commitMixed', { created: preview.data.createCount, updated: preview.data.updateCount })
+                : t('import.commit', { count: preview.data.createCount || preview.data.okCount })}
             </button>
           </div>
           {preview.data.errorCount > 0 && <p className="hint">{t('import.fixFirst')}</p>}

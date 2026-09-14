@@ -247,6 +247,21 @@ export const families = sqliteTable('families', {
   name: text('name').notNull(),
   notes: text('notes'),
   status: text('status').$type<'active' | 'archived'>().notNull().default('active'),
+  /**
+   * ── THE HOUSEHOLD'S OWN DETAILS (0.52.0-dev.4, §4a Phase 1) ──
+   *
+   * Read through `people/fields.ts` (`familyColumnsFor`), never directly: the registry decides whether
+   * a field exists, whether the office switched it off, and which role may see it.
+   *
+   * They are here rather than on `students` because a family shares them. That was Hasan's correction
+   * a release after they first shipped on the child, and it is the same rule guardians, phone numbers
+   * and emergency contacts have always followed (§9): nothing is copied per student, so linking a
+   * sibling IS what makes the household's details apply to them. A child who genuinely lives
+   * elsewhere is a note on their record, not a fourth copy of an address.
+   */
+  address: text('address'),
+  languages: text('languages'),
+  nationality: text('nationality'),
   /** Stripe Customer id — created on the family's first saved card / portal payment (§13.1). */
   stripeCustomerId: text('stripe_customer_id'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
@@ -300,17 +315,13 @@ export const students = sqliteTable(
     /** ISO day, with the office's own reason beside it. Separate from `status`, which is the switch. */
     withdrawnOn: text('withdrawn_on'),
     withdrawalReason: text('withdrawal_reason'),
-    /**
-     * The CHILD's address, and nothing else about contact moves here: guardians, phone numbers and
-     * email addresses stay on the HOUSEHOLD (§9), which is what makes linking a sibling share them.
-     * An address is on the child because a child can live at a different address from their siblings.
-     */
-    address: text('address'),
     /** Where they studied before, and how far they had memorized on arrival. */
     priorSchool: text('prior_school'),
     priorHifz: text('prior_hifz'),
-    languages: text('languages'),
-    nationality: text('nationality'),
+    // Address, languages and nationality were here for one release and MOVED TO THE HOUSEHOLD in
+    // 0.52.0-dev.4 (migration 0043), on Hasan's correction. A family shares all three, so per-child
+    // meant three copies that drift — the same reasoning that has always put guardians and emergency
+    // contacts on `families` (§9). See people/fields.ts `FieldScope`.
     /**
      * ── THE §14 AMENDMENT. READ §14 BEFORE TOUCHING THESE THREE. ──
      *

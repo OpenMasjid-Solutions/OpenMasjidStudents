@@ -421,13 +421,13 @@ app fully working. [`CLAUDE.md`](CLAUDE.md) §4a carries the per-phase status �
 
 **A real student record.** Today a student is a name, a Student ID, an optional date of birth and a
 status — a billing record, not a student record. It gains the things a madrasa actually keeps: date
-of admission, date of withdrawal and why; an address on the child (guardians and phone numbers stay
-on the household, as they are); prior schooling and any hifz progress on arrival; medical notes,
-allergies and emergency medical consent; languages and nationality; and office notes with an author
-and a timestamp. **Every field can be switched off in Settings**, and Settings itself gains tabs.
-The **medical fields are admin-only and off until an office turns them on** — the finance manager
-never sees them. Import grows to match: download a template **pre-filled with your current data**
-plus the new columns, edit it, upload it back.
+of admission, date of withdrawal and why; prior schooling and any hifz progress on arrival; medical
+notes, allergies and emergency medical consent; and office notes with an author and a timestamp.
+The **household** keeps its address, the languages spoken and its nationality — once for every child
+on the record, the same way guardians already work. **Every field can be switched off in Settings**,
+and Settings itself gains tabs. The **medical fields are admin-only and off until an office turns
+them on** — the finance manager never sees them. Import grows to match: download your roster **with
+your current data already in it**, fill in the blanks, upload it back.
 
 **Admissions** — [`docs/ADMISSIONS.md`](docs/ADMISSIONS.md). The funnel a family actually walks: a
 short **public inquiry form** you can embed in the masjid's own website, a **waitlist** the office

@@ -36,11 +36,23 @@
  * not switchable and they are not listed here. This registry governs the fields Phase 1 ADDED.
  */
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
-import { students, type Role } from '../db/schema';
+import { families, students, type Role } from '../db/schema';
 import { getSetting, setSetting, SETTING_KEYS } from '../settings';
 
 /** A field's kind, which is all the UI needs to render and validate it. */
 export type StudentFieldKind = 'text' | 'longtext' | 'date' | 'flag';
+
+/**
+ * WHO the field is about — and this is a data-model decision, not a layout one (0.52.0-dev.4).
+ *
+ * `student` lives on `students`; `household` lives on `families`. Address, nationality and languages
+ * started on the student and were moved, on Hasan's correction, for the same reason guardians and
+ * emergency contacts have always been on the household (§9): a family shares them, so holding them per
+ * child means three copies that drift, and an office correcting an address has to remember how many
+ * children are on the record. The child-level exception that would have justified per-student — a
+ * sibling living elsewhere — is rare enough to be a note, and notes now have a home.
+ */
+export type FieldScope = 'student' | 'household';
 
 /**
  * How sensitive the field is. `medical` is the §14 amendment and carries every condition attached to
@@ -50,9 +62,20 @@ export type StudentFieldSensitivity = 'ordinary' | 'medical';
 
 export interface StudentFieldSpec {
   readonly key: StudentFieldKey;
-  /** The `students` column it lives in. */
-  readonly column: StudentColumn;
+  /** The column it lives in — on `students` or on `families`, per `scope`. */
+  readonly column: string;
+  readonly scope: FieldScope;
   readonly kind: StudentFieldKind;
+  /**
+   * The column header in a spreadsheet, and what the import auto-matcher recognizes.
+   *
+   * English literals, like `IMPORT_FIELDS` beside them and for the same reason: this is the header of
+   * a FILE, not a label on a screen, and it has to match what the matcher looks for whatever language
+   * the office's browser is in. The screen labels are i18n (`record.field.*`) and are a different
+   * question about the same field.
+   */
+  readonly label: string;
+  readonly aliases: readonly string[];
   readonly sensitivity: StudentFieldSensitivity;
   /**
    * Which roles may READ it. WRITING is admin-only for every field without exception — the procedures
@@ -79,8 +102,6 @@ export type StudentFieldKey =
   | 'allergies'
   | 'medicalConsent';
 
-type StudentColumn = keyof typeof students.$inferSelect;
-
 const STAFF: readonly Role[] = ['admin', 'finance'];
 const ADMIN_ONLY: readonly Role[] = ['admin'];
 
@@ -89,18 +110,25 @@ const ADMIN_ONLY: readonly Role[] = ['admin'];
  * two cannot drift into different orders and there is nothing to keep in step by hand.
  */
 export const STUDENT_FIELDS: readonly StudentFieldSpec[] = [
-  { key: 'admittedOn', column: 'admittedOn', kind: 'date', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true },
-  { key: 'withdrawnOn', column: 'withdrawnOn', kind: 'date', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true },
-  { key: 'withdrawalReason', column: 'withdrawalReason', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true },
-  { key: 'address', column: 'address', kind: 'longtext', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true },
-  { key: 'priorSchool', column: 'priorSchool', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true },
-  { key: 'priorHifz', column: 'priorHifz', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true },
-  { key: 'languages', column: 'languages', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true },
-  { key: 'nationality', column: 'nationality', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true },
+  // ── About the CHILD ─────────────────────────────────────────────────────────
+  { key: 'admittedOn', column: 'admittedOn', scope: 'student', kind: 'date', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true, label: 'Date of admission', aliases: ['admitted', 'date of admission', 'admission date', 'joined', 'start date', 'enrolled'] },
+  { key: 'withdrawnOn', column: 'withdrawnOn', scope: 'student', kind: 'date', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true, label: 'Date of withdrawal', aliases: ['withdrawn', 'date of withdrawal', 'left', 'leaving date', 'end date'] },
+  { key: 'withdrawalReason', column: 'withdrawalReason', scope: 'student', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true, label: 'Reason for leaving', aliases: ['reason for leaving', 'withdrawal reason', 'why left'] },
+  { key: 'priorSchool', column: 'priorSchool', scope: 'student', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true, label: 'Previous school', aliases: ['previous school', 'prior school', 'previous madrasah', 'last school', 'former school'] },
+  { key: 'priorHifz', column: 'priorHifz', scope: 'student', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true, label: 'Hifz on arrival', aliases: ['hifz on arrival', 'hifz', 'memorization', 'juz memorized', 'quran progress'] },
   // ── The §14 amendment. Admin only, and off on every install until an office asks for them. ──
-  { key: 'medicalNotes', column: 'medicalNotes', kind: 'longtext', sensitivity: 'medical', readableBy: ADMIN_ONLY, onByDefault: false },
-  { key: 'allergies', column: 'allergies', kind: 'longtext', sensitivity: 'medical', readableBy: ADMIN_ONLY, onByDefault: false },
-  { key: 'medicalConsent', column: 'medicalConsent', kind: 'flag', sensitivity: 'medical', readableBy: ADMIN_ONLY, onByDefault: false },
+  { key: 'medicalNotes', column: 'medicalNotes', scope: 'student', kind: 'longtext', sensitivity: 'medical', readableBy: ADMIN_ONLY, onByDefault: false, label: 'Medical notes', aliases: ['medical notes', 'medical', 'health notes', 'conditions'] },
+  { key: 'allergies', column: 'allergies', scope: 'student', kind: 'longtext', sensitivity: 'medical', readableBy: ADMIN_ONLY, onByDefault: false, label: 'Allergies', aliases: ['allergies', 'allergy'] },
+  { key: 'medicalConsent', column: 'medicalConsent', scope: 'student', kind: 'flag', sensitivity: 'medical', readableBy: ADMIN_ONLY, onByDefault: false, label: 'Emergency medical consent', aliases: ['medical consent', 'emergency medical consent', 'consent'] },
+
+  // ── About the HOUSEHOLD ─────────────────────────────────────────────────────
+  // Moved here from the student on Hasan's correction (0.52.0-dev.4). A family shares an address, a
+  // nationality and the languages spoken at home; holding them per child meant three copies that
+  // drift and an office that has to remember how many children are on the record. Same rule as
+  // guardians and emergency contacts (§9) — and linking a sibling is what makes them apply.
+  { key: 'address', column: 'address', scope: 'household', kind: 'longtext', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true, label: 'Address', aliases: ['address', 'home address', 'street', 'postal address'] },
+  { key: 'languages', column: 'languages', scope: 'household', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true, label: 'Languages spoken', aliases: ['languages', 'languages spoken', 'language', 'home language', 'mother tongue'] },
+  { key: 'nationality', column: 'nationality', scope: 'household', kind: 'text', sensitivity: 'ordinary', readableBy: STAFF, onByDefault: true, label: 'Nationality', aliases: ['nationality', 'citizenship', 'country'] },
 ];
 
 const BY_KEY = new Map(STUDENT_FIELDS.map((f) => [f.key, f]));
@@ -146,9 +174,9 @@ export function setEnabledFieldKeys(keys: StudentFieldKey[]): void {
  * Both halves, always, in this one function. Asking "is it on?" and "may they see it?" separately is
  * how one of the two gets forgotten at a call site.
  */
-export function visibleFields(role: Role): StudentFieldSpec[] {
+export function visibleFields(role: Role, scope?: FieldScope): StudentFieldSpec[] {
   const on = new Set(enabledFieldKeys());
-  return STUDENT_FIELDS.filter((f) => on.has(f.key) && f.readableBy.includes(role));
+  return STUDENT_FIELDS.filter((f) => on.has(f.key) && f.readableBy.includes(role) && (scope === undefined || f.scope === scope));
 }
 
 /**
@@ -172,7 +200,26 @@ export function studentColumnsFor(role: Role): Record<string, SQLiteColumn> {
     createdAt: students.createdAt,
     updatedAt: students.updatedAt,
   };
-  for (const f of visibleFields(role)) cols[f.key] = students[f.column] as SQLiteColumn;
+  for (const f of visibleFields(role, 'student')) cols[f.key] = (students as unknown as Record<string, SQLiteColumn>)[f.column];
+  return cols;
+}
+
+/**
+ * The same, for the HOUSEHOLD — the core family row plus whatever household-scoped fields this role
+ * may see. `familyGet` and the record screen both go through it, so the two cannot disagree about
+ * whether finance sees an address.
+ */
+export function familyColumnsFor(role: Role): Record<string, SQLiteColumn> {
+  const cols: Record<string, SQLiteColumn> = {
+    id: families.id,
+    name: families.name,
+    notes: families.notes,
+    status: families.status,
+    stripeCustomerId: families.stripeCustomerId,
+    createdAt: families.createdAt,
+    updatedAt: families.updatedAt,
+  };
+  for (const f of visibleFields(role, 'household')) cols[f.key] = (families as unknown as Record<string, SQLiteColumn>)[f.column];
   return cols;
 }
 
@@ -199,3 +246,14 @@ export function pickVisibleFields(row: Record<string, unknown>, role: Role): Rec
  * does not erase what is in it, and an office deserves to be told which of those two it is getting.
  */
 export const MEDICAL_FIELD_KEYS: readonly StudentFieldKey[] = STUDENT_FIELDS.filter((f) => f.sensitivity === 'medical').map((f) => f.key);
+
+/**
+ * The extended fields as SPREADSHEET columns, for the import template and the data export.
+ *
+ * Only the ones an office has switched on and this role may see — so a template never carries a
+ * column for a field that is off, and an export never carries a medical column to somebody who
+ * cannot see it on screen either. Shape matches `IMPORT_FIELDS` so the dialog treats both alike.
+ */
+export function importFieldsFor(role: Role): { key: StudentFieldKey; label: string; required: false; aliases: string[]; scope: FieldScope; kind: StudentFieldKind; column: string }[] {
+  return visibleFields(role).map((f) => ({ key: f.key, label: f.label, required: false as const, aliases: [...f.aliases], scope: f.scope, kind: f.kind, column: f.column }));
+}

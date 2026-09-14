@@ -77,18 +77,24 @@ describe('THE MEDICAL WALL', () => {
   it('gives finance the ordinary fields and NEVER a medical one, on familyGet', async () => {
     const { admin, finance, studentId, familyId } = await seed();
     await enableAll(admin);
-    await admin.people.studentUpdate({ id: studentId, fields: { address: '12 Mill Lane', allergies: 'Peanuts', medicalNotes: 'Carries an inhaler', medicalConsent: true } });
+    await admin.people.studentUpdate({ id: studentId, fields: { priorSchool: 'Madrasah al-Noor', allergies: 'Peanuts', medicalNotes: 'Carries an inhaler', medicalConsent: true } });
+    // Address is the HOUSEHOLD's from 0.52.0-dev.4, so it is written through familyUpdate.
+    await admin.people.familyUpdate({ id: familyId, fields: { address: '12 Mill Lane' } });
 
-    const asAdmin = (await admin.people.familyGet({ id: familyId })).students[0] as Record<string, unknown>;
-    const asFinance = (await finance.people.familyGet({ id: familyId })).students[0] as Record<string, unknown>;
+    const adminFam = await admin.people.familyGet({ id: familyId });
+    const financeFam = await finance.people.familyGet({ id: familyId });
+    const asAdmin = adminFam.students[0] as Record<string, unknown>;
+    const asFinance = financeFam.students[0] as Record<string, unknown>;
 
     // The positive half, so the negative half cannot pass vacuously.
     expect(asAdmin.allergies).toBe('Peanuts');
     expect(asAdmin.medicalNotes).toBe('Carries an inhaler');
     expect(asAdmin.medicalConsent).toBe(true);
-    expect(asAdmin.address).toBe('12 Mill Lane');
+    expect(asAdmin.priorSchool).toBe('Madrasah al-Noor');
+    expect((adminFam.family as Record<string, unknown>).address).toBe('12 Mill Lane');
 
-    expect(asFinance.address).toBe('12 Mill Lane'); // finance DOES see the ordinary record
+    expect(asFinance.priorSchool).toBe('Madrasah al-Noor'); // finance DOES see the ordinary record
+    expect((financeFam.family as Record<string, unknown>).address).toBe('12 Mill Lane'); // …household too
     for (const k of fields.MEDICAL_FIELD_KEYS) expect(asFinance).not.toHaveProperty(k);
     // And not merely absent as a key — nothing in the payload carries the value at all.
     expect(JSON.stringify(asFinance)).not.toContain('Peanuts');
@@ -186,10 +192,27 @@ describe('a hand-edited settings row cannot widen what is exposed', () => {
 describe('writing a field', () => {
   it('stores it, and an empty string clears it', async () => {
     const { admin, studentId } = await seed();
-    await admin.people.studentUpdate({ id: studentId, fields: { nationality: 'British' } });
-    expect((await admin.people.studentGet({ id: studentId })).student).toMatchObject({ nationality: 'British' });
-    await admin.people.studentUpdate({ id: studentId, fields: { nationality: '' } });
-    expect((await admin.people.studentGet({ id: studentId })).student).toMatchObject({ nationality: null });
+    await admin.people.studentUpdate({ id: studentId, fields: { priorHifz: 'Juz 3' } });
+    expect((await admin.people.studentGet({ id: studentId })).student).toMatchObject({ priorHifz: 'Juz 3' });
+    await admin.people.studentUpdate({ id: studentId, fields: { priorHifz: '' } });
+    expect((await admin.people.studentGet({ id: studentId })).student).toMatchObject({ priorHifz: null });
+  });
+
+  it('REFUSES a household field submitted to the student, and the reverse', async () => {
+    // Not a silent write into the wrong table, which on screen looks like a save that did nothing.
+    const { admin, studentId, familyId } = await seed();
+    await expect(admin.people.studentUpdate({ id: studentId, fields: { address: '12 Mill Lane' } })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(admin.people.familyUpdate({ id: familyId, fields: { priorHifz: 'Juz 3' } })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('keeps the household fields OFF the child, which is the whole reason they moved', async () => {
+    const { admin, familyId, studentId } = await seed();
+    await admin.people.familyUpdate({ id: familyId, fields: { address: '12 Mill Lane', languages: 'Urdu, English' } });
+    const a = await admin.people.studentGet({ id: studentId });
+    expect(a.family).toMatchObject({ address: '12 Mill Lane', languages: 'Urdu, English' });
+    expect(a.householdFields.map((f) => f.key)).toEqual(expect.arrayContaining(['address', 'languages', 'nationality']));
+    // The child's own field list does not offer them, so the screen cannot put them in the wrong place.
+    expect(a.fields.map((f) => f.key)).not.toContain('address');
   });
 
   it('refuses a date that is the right SHAPE but not a real day (§9)', async () => {
@@ -241,12 +264,31 @@ describe('office notes', () => {
     expect(notes[0].createdAt).toBeInstanceOf(Date);
   });
 
-  it('IS APPEND-ONLY — the router offers no way to change or remove one', async () => {
-    // A structural assertion rather than a behavioural one: there is nothing to call, so the test is
-    // that the surface does not exist. If an update or delete is ever added, this fails and whoever
-    // adds it has to come and read people/notes.ts on why it was left out.
-    const surface = Object.keys(app.appRouter._def.procedures).filter((k) => k.startsWith('people.studentNote'));
-    expect(surface).toEqual(['people.studentNoteAdd']);
+  it('CANNOT BE EDITED — only added and removed', async () => {
+    // The half of append-only that still holds, and a structural assertion rather than a behavioral
+    // one: a note cannot be quietly rewritten into something its author did not write, so a correction
+    // is still another note. Deleting arrived in 0.52.0-dev.4 because the first cut had no way out of
+    // a note typed onto the wrong child. If an EDIT is ever added this fails, and whoever adds it has
+    // to come and read people/notes.ts on why it was left out.
+    const surface = Object.keys(app.appRouter._def.procedures).filter((k) => k.startsWith('people.studentNote')).sort();
+    expect(surface).toEqual(['people.studentNoteAdd', 'people.studentNoteDelete']);
+  });
+
+  it('deletes one, admin only, and the trail keeps WHO wrote it but never WHAT', async () => {
+    const { admin, finance, studentId } = await seed();
+    await admin.people.studentNoteAdd({ studentId, body: 'Mother asked us not to call the father.' });
+    const { notes } = await admin.people.studentGet({ id: studentId });
+    expect(notes).toHaveLength(1);
+
+    await expect(finance.people.studentNoteDelete({ id: notes[0].id })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    await admin.people.studentNoteDelete({ id: notes[0].id });
+    expect((await admin.people.studentGet({ id: studentId })).notes).toEqual([]);
+
+    // A trail that copied the body on the way out would make deleting it pointless.
+    const trail = JSON.stringify(app.dbmod.db.select().from(auditLog).all());
+    expect(trail).toContain('noteDelete');
+    expect(trail).not.toContain('the father');
   });
 
   it('takes the note typed on the add form as the child’s first note', async () => {

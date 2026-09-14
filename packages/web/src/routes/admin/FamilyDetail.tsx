@@ -19,6 +19,8 @@ import { StudentPicker } from '../../components/StudentPicker';
 import { OnboardingSend } from '../../components/OnboardingSend';
 import { FamilyBilling } from '../../components/FamilyBilling';
 import { StudentRecord } from '../../components/StudentRecord';
+import { HouseholdFields } from '../../components/HouseholdFields';
+import type { FieldSpec } from '../../components/RecordFields';
 import { useWindows } from '../../components/Windows';
 
 /** What a guardian is to the child. Four choices rather than an open box: an office typing "Dad",
@@ -651,6 +653,18 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
         )}
         {showStudent && <p className="hint">{t('directory.idHint')}</p>}
       </section>
+
+      {/* The household's own details — address, languages, nationality (0.52.0-dev.4). Between the
+          children and the adults, which is where they belong: they are facts about the home rather
+          than about either. Same component the child's record screen renders, so editing from either
+          window is the same write. */}
+      <HouseholdFields
+        familyId={familyId}
+        family={q.data.family as unknown as Record<string, unknown>}
+        fields={q.data.householdFields as FieldSpec[]}
+        readOnly={readOnly}
+        onSaved={refresh}
+      />
 
       {/* Guardians */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>

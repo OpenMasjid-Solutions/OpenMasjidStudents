@@ -182,7 +182,7 @@
     "medical": "Medical",
     "medicalHint": "Office use only. The finance manager never sees these, and they never appear on anything a parent reads, in an alert, or in an export. Switch them off entirely under Settings.",
     "notes": "Office notes",
-    "notesHint": "Notes are kept with who wrote them and when, and can’t be edited or removed afterwards — if something was written in error, add another note saying so.",
+    "notesHint": "Notes are kept with who wrote them and when, and can’t be edited — if something was written in error, add another note saying so, or delete it.",
     "addNote": "Add a note",
     "saveNote": "Add note",
     "noNotes": "No notes yet.",
@@ -201,7 +201,10 @@
       "medicalNotes": "Medical notes",
       "allergies": "Allergies",
       "medicalConsent": "Emergency medical consent"
-    }
+    },
+    "household": "Household details",
+    "householdHint": "These belong to the whole household — every child on this record shares them, and so does any sibling linked in later. A child who lives somewhere else is a note on their own record.",
+    "confirmDeleteNote": "Delete this note?\n\nIt is removed for good. The trail keeps who wrote it and when, but not what it said."
   },
   "students": {
     "title": "Students",
@@ -326,7 +329,19 @@
     "feeSearch": "Search by name",
     "feeSearchCount": "Showing {{shown}} of {{total}}.",
     "downloadTemplateXlsx": "Download template (Excel)",
-    "downloadTemplateCsv": "Download template (CSV)"
+    "downloadTemplateCsv": "Download template (CSV)",
+    "exportTitle": "Already have students here?",
+    "exportHint": "Download your roster with everything the app already knows filled in, add the missing details in Excel, then upload it back with “Update students already here” ticked. Leave a cell empty to keep what is there; type {{clear}} to empty one on purpose.",
+    "exportAction": "Download my roster",
+    "updateExisting": "Update students already here",
+    "updateExistingHint": "A row with a Student ID fills in that child’s details instead of adding a new one. Their fee plan, guardians and Student ID are never changed by an import.",
+    "rowsNew": "{{count}} new",
+    "rowsChanged": "{{count}} to change",
+    "rowsUnchanged": "{{count}} already up to date",
+    "noChange": "Already up to date",
+    "householdShort": "Household",
+    "blankCell": "(empty)",
+    "commitMixed": "Add {{created}} and update {{updated}}"
   },
   "year": {
     "title": "Year view",

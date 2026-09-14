@@ -44,13 +44,22 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   the finance manager never can, on any screen — and they never appear on anything a parent reads, in
   an alert, in a log or in a payment record. They are off until you turn them on.
 - **Office notes are signed and dated.** A note now records who wrote it and when, and sits on the
-  child's record where it can be read back. Notes cannot be edited or deleted afterwards: if
-  something was written in error, add a note saying so. Anything in the old notes box has been kept
-  and appears as the first note on that child.
+  child's record where it can be read back. A note cannot be edited — if something was written in
+  error, add another saying so — but an admin can delete one, and the trail keeps who wrote it and
+  when without keeping what it said. Anything in the old notes box has been kept and appears as the
+  first note on that child.
 - **Settings is in tabs** — School, Students, Documents, Messages, Payments — instead of one very long
   page.
+- **Fill in your whole roster from a spreadsheet.** Download your students **with everything the app
+  already knows already in the file**, add the missing details in Excel, and upload it back. A row
+  with a Student ID fills in that child rather than adding a new one, an empty cell leaves what is
+  there alone, and the preview lists every field it would change — from what, to what — before a
+  single row is written. Fee plans, guardians and Student IDs are never changed by an import.
 - **The import template now downloads as an Excel file.** A CSV opened in Excel and saved back is
   where a date column quietly changes meaning; a workbook skips that step. The CSV is still there.
+- **Address, languages and nationality belong to the household, not to each child.** Type an address
+  once and every child on the record has it — including a sibling linked in later. They are on both
+  the household screen and each child's record, and editing either is the same change.
 
 ### Also in this release
 
@@ -75,12 +84,20 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   family twice; a natural key lands before admissions does. And a migration whose hand-typed `when`
   is not strictly increasing applies on a fresh database and is skipped forever on a live one, so a
   journal guard test lands first.
-- **Phase 1's remaining piece, named rather than quietly dropped.** The template does not yet come
-  PRE-FILLED with the install's own rows, because the importer has no update path — a pre-filled file
-  uploaded back would create a duplicate of every child. Doing it safely needs a row identity (the
-  Student ID column), create-vs-update classification, an error rather than a silent create for an ID
-  matching nothing, "empty means leave unchanged" on an update, and a preview that says how many rows
-  are new and how many are changes. That is a bulk write across a whole roster and it lands on its own.
+- **The import update path, and the five rules that make it safe.** The Student ID column is the
+  identity and a name is never matched on; an ID matching nothing is an error rather than a silent
+  create; an empty cell leaves the field alone (`(clear)` empties one on purpose); only what changed is
+  written, so a row matching the record produces no write at all; and repeating an exported fee plan,
+  amount or guardian is silent while trying to change one is refused. Twenty-four tests, including a
+  full export → re-import round trip asserting that nothing at all is written. Two proven by mutation:
+  making empty mean "clear", and letting an unknown ID fall through to a create, each turn the right
+  tests red.
+- **Address, languages and nationality moved from the student to the household** (migration 0043),
+  one release after they shipped and before any stable release carried them. `people/fields.ts` gained
+  a `scope` per field, `familyColumnsFor` projects the household through the same allow-list the child
+  goes through, and a field submitted to the wrong procedure is refused rather than written into the
+  wrong table. Verified against a live database: the first NON-EMPTY value per household is carried
+  across, whitespace is not a value, and the student columns are dropped in place.
 - **Under it all: `people/fields.ts`, and it matters more than the fields.** `familyGet` was an
   admin-or-finance procedure selecting the whole student row, and the finance shell renders the same
   household component the admin shell does — its read-only flag only ever wrapped buttons. So a medical

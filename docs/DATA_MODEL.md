@@ -16,14 +16,14 @@
 > …), while every table added since was missing. It is now generated from the real
 > `packages/server/src/db/schema.ts`. If you change the schema, change this.
 
-The **34 tables** that exist, grouped by what they are for:
+The **35 tables** that exist, grouped by what they are for:
 
 | Area | Tables |
 | --- | --- |
 | Config | `settings` |
 | Accounts | `users`, `sessions`, `invites`, `password_resets` |
 | Structure | `schools`, `user_schools`, `school_years`, `terms`, `courses`, `classes` |
-| People | `families`, `students`, `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts` |
+| People | `families`, `students`, `student_notes`, `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts` |
 | Fees | `fee_plans`, `student_fees`, `charge_items`, `charges` |
 | Billing | `invoices`, `invoice_items`, `payments`, `payment_allocations`, `carry_ins`, `past_due_reminders`, `standing_payments` |
 | Cards | `payment_methods`, `autopay_enrollments`, `autopay_runs` |
@@ -64,10 +64,14 @@ Notable absences, each deliberate:
 | Academics | `subjects`, `teachers`, `teaching_assignments`, `assessments`, `marks`, `hifz_records` | 4 |
 | Report cards | `grading_schemes`, `grading_bands`, `report_cards`, `report_card_comments` | 5 |
 
-Plus columns rather than tables: the Phase 1 student fields on `students`; `school_years.teaching_days`,
-`admission_fee_cents` and `readmission_fee_cents`; and **`charges.source_key`** — a nullable UNIQUE
-natural key, in Phase 0, because `charges` has no unique index at all today and `chargeAdd` inserts with
-no existence check, so re-approving a re-admission would charge a family twice.
+Plus columns rather than tables: `school_years.teaching_days`, `admission_fee_cents` and
+`readmission_fee_cents`.
+
+**Phase 0 and Phase 1 have SHIPPED** and their tables are in the list above, not here:
+`charges.source_key` (migration 0041 — a nullable UNIQUE natural key, because `charges` had no unique
+index at all and `chargeAdd` inserted with no existence check, so re-approving a re-admission would
+have charged a family twice); the student-record columns and `student_notes` (0042); and the household
+details on `families` (0043).
 
 Non-negotiable rules live in CLAUDE.md §9: Student IDs unique and always generated; money in integer
 cents; idempotency keys UNIQUE; **balances derived, never stored**; payments immutable (reversals, not
@@ -100,6 +104,24 @@ and `updated_at` wherever a row is ever updated.
     `audit_log`**, because §5 records that *nothing reads the audit log*. One function writes both rows
     so they cannot disagree. Building a real reader for `audit_log` would make most of that duplication
     unnecessary and is recorded as open (CLAUDE.md §20).
+- **Address, languages and nationality live on the HOUSEHOLD, not the student** (0.52.0-dev.4,
+  migration 0043). They shipped on the child in dev.3 and moved a release later on Hasan's correction,
+  before any stable release carried them. A family shares all three, so per-child meant three copies
+  that drift and an office correcting an address had to remember how many children were on the record
+  — the same reasoning that has always put guardians and emergency contacts on `families` (§9), and
+  what makes linking a sibling share them. `people/fields.ts` gained a `scope` per field so one
+  registry still answers every question about one; `familyColumnsFor` projects the household through
+  the same role allow-list the child goes through; and a field submitted to the wrong procedure is
+  **refused**, because writing it into the wrong table would look on screen like a save that did
+  nothing. The carry-across takes the first NON-EMPTY value per household, deterministically by row id.
+- **The importer can UPDATE, and the Student ID is the identity** (0.52.0-dev.4). Five rules, each
+  chosen because the obvious alternative costs a whole roster: a row's Student ID decides create vs
+  update and a NAME is never matched on (two children called Muhammad Ali is a thing that happens); an
+  ID matching nothing is an error rather than a silent create; an empty cell leaves the field alone,
+  with `(clear)` to empty one on purpose; only what changed is written; and money and guardians are
+  read for a new child and refused as a CHANGE to an existing one. Repeating an exported fee plan or
+  guardian unchanged is silent — without that the export could never round-trip, which the test suite
+  found rather than a masjid.
 - **Medical fields exist, and the column allow-list is what makes them safe** (0.52.0). §14's
   "no medical fields" is amended, not excepted — and adding the column is only half the work, because
   `people.familyGet` is an `adminOrFinanceProcedure` doing a bare `SELECT` and the finance shell renders

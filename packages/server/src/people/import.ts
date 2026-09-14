@@ -130,6 +130,15 @@ export function isExampleRow(r: ImportRow): boolean {
 }
 
 export interface ImportRow {
+  /**
+   * The Student ID, and the whole of what makes an UPDATE possible (0.52.0-dev.4).
+   *
+   * Present → this row is about a child who already exists, and only the details in it are written.
+   * Absent → a new child, exactly as before. An ID that matches NOTHING is an error and never a
+   * silent create: a typo'd ID would otherwise mint a second record for a child who is already here,
+   * which is the one outcome an office cannot see and cannot easily undo.
+   */
+  studentCode?: string;
   fullName?: string;
   dob?: string;
   className?: string;
@@ -141,7 +150,19 @@ export interface ImportRow {
   guardianPhone?: string;
   guardianEmail?: string;
   note?: string;
+  /** The extended record fields, keyed by registry key (`people/fields.ts`). */
+  fields?: Record<string, string | undefined>;
 }
+
+/**
+ * What an office types to CLEAR a value on an update, since an empty cell means "leave this alone".
+ *
+ * The two cannot be the same thing. A pre-filled sheet is mostly blanks the office is filling IN, so
+ * empty has to mean "unchanged" or every untouched cell would wipe a field. That leaves no way to
+ * empty one deliberately, hence this. Spelled as a word rather than a punctuation mark because "-" is
+ * a real answer to "Hifz on arrival".
+ */
+export const CLEAR_SENTINEL = '(clear)';
 
 /** A person from one row's guardian columns, and which file row they came from. */
 export interface ImportContact {
@@ -167,6 +188,22 @@ export interface ResolvedContact extends ImportContact {
   asked: boolean;
 }
 
+/** One field an update row would change, as the preview prints it. */
+export interface FieldChange {
+  key: string;
+  label: string;
+  from: string;
+  to: string;
+  scope: 'student' | 'household';
+}
+
+export interface RowUpdate {
+  studentId: string;
+  studentCode: string;
+  currentName: string;
+  changes: FieldChange[];
+}
+
 export interface RowResult {
   row: number; // 0-based index into the submitted array — the row that carried the name
   /** Every submitted row that makes up this student, the named one first. More than one when
@@ -177,6 +214,15 @@ export interface RowResult {
   /** The people these rows named, and where each will be filed. Present even for a failed row: when
    *  something is wrong, seeing how the rows were grouped is most of the explanation. */
   contacts: ResolvedContact[];
+  /**
+   * Is this row a new child or a change to one already here (0.52.0-dev.4)?
+   *
+   * Decided by the Student ID column and nothing else — never by guessing from a name, which would
+   * merge two children called Muhammad Ali the first time a madrasah enrolled both.
+   */
+  mode: 'create' | 'update';
+  /** On an update: the student it matched, and exactly what would change. Empty means nothing would. */
+  update?: RowUpdate;
   /** What the row resolved to, for the dialog's preview. */
   resolved: {
     fullName: string;
@@ -190,6 +236,10 @@ export interface ValidateResult {
   rows: RowResult[];
   okCount: number;
   errorCount: number;
+  /** New children, changes to existing ones, and rows that matched but would change nothing. */
+  createCount: number;
+  updateCount: number;
+  unchangedCount: number;
   /** How many file rows were folded into the student above them. */
   mergedCount: number;
   /** The relation labels the office still has to place — spelled as the file spelled them, with how
@@ -348,7 +398,11 @@ export function mergeRows(rows: ImportRow[]): { merged: MergedRow[]; strays: Str
   const merged: MergedRow[] = [];
   const strays: StrayRow[] = [];
   rows.forEach((r, i) => {
-    if (norm(r.fullName)) {
+    // A row is its own student when it NAMES one — or, from 0.52.0-dev.4, when it carries a Student
+    // ID. That second case is the whole update workflow: an office filling in a blank column on the
+    // exported sheet may well clear the name cell, and without this the row would be read as another
+    // adult for the child above it and its details filed onto the wrong family.
+    if (norm(r.fullName) || norm(r.studentCode)) {
       const contact = rowContact(r, i);
       merged.push({ row: i, sourceRows: [i], fields: r, contacts: contact ? [contact] : [] });
       return;
@@ -417,13 +471,121 @@ function lookups(tx: Tx, schoolId?: string | null) {
     .where(eq(classes.status, 'active'))
     .all()
     .filter((c) => courseIds.has(c.courseId));
-  // No family lookup: an import never matches an existing household, it always makes a new one.
+  // No family lookup for a CREATE: an import never matches an existing household, it always makes a
+  // new one. An UPDATE is the other way round — it matches an existing CHILD by their Student ID, and
+  // never by name (0.52.0-dev.4), because two children called Muhammad Ali is a thing that happens.
   return {
     planByName: new Map(plans.map((p) => [key(p.name), p.id])),
     classes: cls,
+    classNameById: new Map(cls.map((c) => [c.id, c.name])),
     courseById: new Map(crs.map((c) => [c.id, c.name])),
     courseByName: new Map(crs.map((c) => [key(c.name), c.id])),
   };
+}
+
+/** Normalize a typed Student ID the way the Fabric lookup does — case, spaces and hyphens. */
+export const normalizeCode = (v: string | undefined | null): string => norm(v).toUpperCase().replace(/[\s-]+/g, '');
+
+/**
+ * UPDATING A CHILD WHO IS ALREADY HERE (0.52.0-dev.4) — the half of the importer that did not exist.
+ *
+ * The office exports their roster WITH its data in it (`people.importExport`), fills in the blanks in
+ * Excel, and uploads it back. That workflow is only safe because of the three rules below; without
+ * them a pre-filled sheet would create a duplicate of every child on the first re-upload.
+ *
+ *  1. **An empty cell means LEAVE THIS ALONE.** A pre-filled sheet is mostly the cells being filled
+ *     in; treating empty as "set to nothing" would wipe a field per untouched column. `(clear)`
+ *     is how an office empties one deliberately.
+ *  2. **Only what CHANGED is written.** A row where nothing differs produces no write at all, so
+ *     `updated_at` still means something and the audit trail is not one row per child per import.
+ *  3. **Money and people are not touched.** Fee plan, amount, guardians and emergency contacts are
+ *     read from the sheet for a NEW child and ignored for an existing one. Changing what a family pays
+ *     is a decision with a screen of its own; doing it by spreadsheet, in bulk, past a preview nobody
+ *     reads line by line, is how a hundred households get the wrong bill.
+ */
+function resolveUpdate(
+  existing: ReturnType<typeof existingByCode>[number],
+  r: ImportRow,
+  L: ReturnType<typeof lookups>,
+  fmt: DateFormat,
+  specs: readonly { key: string; label: string; scope: 'student' | 'household'; kind: string; column: string }[],
+): { errors: string[]; changes: FieldChange[] } {
+  const errors: string[] = [];
+  const changes: FieldChange[] = [];
+  const add = (key: string, label: string, from: unknown, to: string, scope: 'student' | 'household') => {
+    const was = from === null || from === undefined ? '' : String(from);
+    if (was !== to) changes.push({ key, label, from: was, to, scope });
+  };
+
+  const name = norm(r.fullName);
+  if (name && name !== existing.fullName) add('fullName', 'Name', existing.fullName, name, 'student');
+
+  const rawDob = norm(r.dob);
+  if (rawDob) {
+    const dob = importDob(rawDob, fmt);
+    if (dob.bad) errors.push(`Date of birth "${rawDob}" isn’t a date we can read — use ${DATE_FORMAT_SAMPLES[fmt]} or 2026-03-04.`);
+    else if (dob.iso && dob.iso !== existing.dob) add('dob', 'Date of birth', existing.dob, dob.iso, 'student');
+  }
+
+  const rawClass = norm(r.className);
+  if (rawClass) {
+    const res = resolveClass(L, rawClass, norm(r.courseName));
+    if ('error' in res) errors.push(res.error);
+    else if (res.id !== existing.classId) add('classId', 'Class', existing.classId ? (L.classNameById.get(existing.classId) ?? '') : '', rawClass, 'student');
+  }
+
+  // ── Money, and why it is refused rather than applied ────────────────────────
+  //
+  // The export carries the fee plan and the amount, because a roster without them is not one an office
+  // recognizes. Repeating them unchanged is therefore the NORMAL case and must be silent. Trying to
+  // CHANGE one is refused: what a family pays is a decision with a screen of its own, and doing it by
+  // spreadsheet, in bulk, past a preview nobody reads line by line, is how a hundred households get
+  // the wrong bill. A refusal is better than silently ignoring a cell somebody deliberately edited.
+  const planCell = norm(r.feePlanName);
+  if (planCell && key(planCell) !== key(existing.planName ?? '')) {
+    errors.push(`Fee plan is not changed by an import for a student who is already here — "${existing.fullName}" is on ${existing.planName ?? 'no plan'}. Put it back, or change it on their billing record.`);
+  }
+  const amountCell = norm(r.amount);
+  if (amountCell) {
+    const parsed = parseAmountCents(amountCell);
+    const same = parsed !== 'bad' && (parsed ?? null) === existing.overrideCents;
+    if (!same) errors.push('Amount is not changed by an import for a student who is already here — change it on their billing record.');
+  }
+
+  for (const spec of specs) {
+    const raw = r.fields?.[spec.key];
+    if (raw === undefined) continue;
+    const text = norm(raw);
+    if (text === '') continue; // rule 1: empty leaves it alone
+    const row = spec.scope === 'household' ? existing.family : existing.student;
+    const current = row[spec.key];
+    if (text === CLEAR_SENTINEL) {
+      add(spec.key, spec.label, current, '', spec.scope);
+      continue;
+    }
+    if (spec.kind === 'flag') {
+      const yes = ['yes', 'y', 'true', '1'].includes(text.toLowerCase());
+      const no = ['no', 'n', 'false', '0'].includes(text.toLowerCase());
+      if (!yes && !no) {
+        errors.push(`"${spec.label}" takes Yes or No — "${text}" is neither.`);
+        continue;
+      }
+      add(spec.key, spec.label, current === true ? 'Yes' : current === false ? 'No' : '', yes ? 'Yes' : 'No', spec.scope);
+      continue;
+    }
+    if (spec.kind === 'date') {
+      const d = importDob(text, fmt);
+      if (d.bad || !d.iso) {
+        errors.push(`"${spec.label}" — "${text}" isn’t a date we can read.`);
+        continue;
+      }
+      add(spec.key, spec.label, current, d.iso, spec.scope);
+      continue;
+    }
+    add(spec.key, spec.label, current, text, spec.scope);
+  }
+
+  return { errors, changes };
 }
 
 /** Resolve a class by name, optionally scoped to a course name. Returns the id, or a reason. */
@@ -455,6 +617,80 @@ export interface ImportOpts {
    * is better than the old column's answer of nobody. Absent (tests, `validateRows`) → `Office`.
    */
   noteBy?: { userId: string | null; name: string | null };
+  /**
+   * May a row carrying a Student ID CHANGE that child (0.52.0-dev.4)?
+   *
+   * Off unless the office ticks it, and a row with an ID is then an error rather than a silent create.
+   * Explicit because this is a bulk write across a whole roster: "I am uploading the sheet I exported"
+   * and "I am adding this year's intake" are different intentions, and the file looks similar either
+   * way. The preview says how many rows are new and how many are changes before anything is written.
+   */
+  updateExisting?: boolean;
+  /** The extended-field catalog to honor — `importFieldsFor(role)`. Absent → core columns only. */
+  fieldSpecs?: readonly { key: string; label: string; scope: 'student' | 'household'; kind: string; column: string }[];
+}
+
+/**
+ * Every student, by normalized Student ID, with the registry values an update might change.
+ *
+ * Read in one pass rather than per row: an update file is the whole roster, and 400 rows must not be
+ * 400 queries. The household half is read too, because address, languages and nationality live on
+ * `families` now (0.52.0-dev.4) and a diff has to compare against what is actually there.
+ */
+function existingByCode(specs: readonly { key: string; scope: 'student' | 'household'; column: string }[]) {
+  const studentCols = specs.filter((f) => f.scope === 'student');
+  const familyCols = specs.filter((f) => f.scope === 'household');
+  const fams = new Map<string, Record<string, unknown>>();
+  for (const f of db.select().from(families).all()) {
+    const row: Record<string, unknown> = {};
+    for (const spec of familyCols) row[spec.key] = (f as unknown as Record<string, unknown>)[spec.column];
+    fams.set(f.id, row);
+  }
+  // What the fee plan and the guardians ALREADY say, so a row repeating them is recognized as
+  // unchanged rather than refused. The export carries both — a roster without the parent's name on it
+  // is not a roster an office recognizes — and refusing every exported row would have made the whole
+  // round trip impossible. The refusal still fires, but only when the sheet tries to CHANGE them.
+  const planByStudent = new Map(
+    db
+      .select({ studentId: studentFees.studentId, planName: feePlans.name, override: studentFees.overrideAmountCents })
+      .from(studentFees)
+      .innerJoin(feePlans, eq(feePlans.id, studentFees.feePlanId))
+      .all()
+      .map((r) => [r.studentId, r]),
+  );
+  const guardiansByFamily = new Map<string, { name: string; phone: string | null; email: string | null }[]>();
+  for (const g of db
+    .select({ familyId: guardianFamilies.familyId, name: guardians.name, phone: guardians.phone, email: guardians.email })
+    .from(guardianFamilies)
+    .innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId))
+    .all()) {
+    const list = guardiansByFamily.get(g.familyId) ?? [];
+    list.push(g);
+    guardiansByFamily.set(g.familyId, list);
+  }
+  return db
+    .select()
+    .from(students)
+    .all()
+    .filter((s) => !!s.studentCode)
+    .map((s) => {
+      const sr: Record<string, unknown> = {};
+      for (const spec of studentCols) sr[spec.key] = (s as unknown as Record<string, unknown>)[spec.column];
+      const plan = planByStudent.get(s.id);
+      return {
+        id: s.id,
+        code: normalizeCode(s.studentCode),
+        fullName: s.fullName,
+        dob: s.dob,
+        classId: s.classId,
+        familyId: s.familyId,
+        planName: plan?.planName ?? null,
+        overrideCents: plan?.override ?? null,
+        guardians: guardiansByFamily.get(s.familyId) ?? [],
+        student: sr,
+        family: fams.get(s.familyId) ?? {},
+      };
+    });
 }
 
 /** Dry run: resolve every row and collect problems. Writes nothing. */
@@ -473,13 +709,73 @@ export function validateRows(rows: ImportRow[], opts: ImportOpts): ValidateResul
       s.reason === 'looksLikeAStudent'
         ? 'it has a class, a date of birth or an amount on it. If this is a student, add their name; if it is another adult for the student above, clear those columns.'
         : 'there is no student above it for its details to belong to.';
-    out.push({ row: s.row, sourceRows: [s.row], ok: false, errors: [`Row ${fileLine(s.row)} has no name and ${why}`], contacts: [], resolved: null });
+    out.push({ row: s.row, sourceRows: [s.row], ok: false, mode: 'create', errors: [`Row ${fileLine(s.row)} has no name and ${why}`], contacts: [], resolved: null });
+  }
+
+  // Every child already here, by Student ID, read once — an update file is the whole roster.
+  const specs = opts.fieldSpecs ?? [];
+  const byCode = new Map<string, ReturnType<typeof existingByCode>[number]>();
+  if (rows.some((r) => normalizeCode(r.studentCode))) {
+    for (const e of existingByCode(specs)) byCode.set(e.code, e);
   }
 
   for (const m of merged) {
     const r = m.fields;
     const errors: string[] = [];
     const fullName = norm(r.fullName);
+
+    // ── An existing child (0.52.0-dev.4) ─────────────────────────────────────
+    const code = normalizeCode(r.studentCode);
+    if (code) {
+      const existing = byCode.get(code);
+      if (!opts.updateExisting) {
+        out.push({
+          row: m.row,
+          sourceRows: m.sourceRows,
+          ok: false,
+          mode: 'update',
+          errors: [`Row ${fileLine(m.row)} has a Student ID (${code}), so it is about a child who is already here. Tick “Update students already here” to fill in their details, or clear the Student ID column to add them as someone new.`],
+          contacts: [],
+          resolved: null,
+        });
+        continue;
+      }
+      if (!existing) {
+        // NEVER a silent create: a typo'd ID would otherwise mint a second record for a child who is
+        // already on the roster, which is the one outcome an office cannot see afterwards.
+        out.push({
+          row: m.row,
+          sourceRows: m.sourceRows,
+          ok: false,
+          mode: 'update',
+          errors: [`Row ${fileLine(m.row)}: no student has the ID ${code}. Check it against their record, or clear that cell to add them as a new student.`],
+          contacts: [],
+          resolved: null,
+        });
+        continue;
+      }
+      const u = resolveUpdate(existing, r, L, fmt, specs);
+      // Same rule as the fee plan above: the export carries the first guardian, so repeating one the
+      // household already has is silent, and only a guardian the sheet is trying to ADD or CHANGE is
+      // refused. Matching on name is enough here — this is "is this the parent already on file?",
+      // not an identity decision, and the answer only ever decides whether to show a message.
+      const known = new Set(existing.guardians.map((g) => key(g.name)));
+      const unknownContact = m.contacts.find((c) => (c.name || c.phone || c.email) && !known.has(key(c.name)));
+      if (unknownContact) {
+        u.errors.push('Guardians are not changed by an import for a student who is already here — clear those columns, or add them on the household record.');
+      }
+      out.push({
+        row: m.row,
+        sourceRows: m.sourceRows,
+        ok: u.errors.length === 0,
+        mode: 'update',
+        errors: u.errors,
+        contacts: [],
+        resolved: null,
+        update: { studentId: existing.id, studentCode: existing.code, currentName: existing.fullName, changes: u.changes },
+      });
+      continue;
+    }
 
     // The template ships with example rows (0.48.0). An office that filled in their own students
     // underneath and forgot to delete ours would otherwise create three children who do not exist —
@@ -490,6 +786,7 @@ export function validateRows(rows: ImportRow[], opts: ImportOpts): ValidateResul
         row: m.row,
         sourceRows: m.sourceRows,
         ok: false,
+        mode: 'create',
         errors: [`Row ${fileLine(m.row)} is still the example row from the template — replace it with a real student, or delete it.`],
         contacts: [],
         resolved: null,
@@ -549,6 +846,7 @@ export function validateRows(rows: ImportRow[], opts: ImportOpts): ValidateResul
       row: m.row,
       sourceRows: m.sourceRows,
       ok: errors.length === 0,
+      mode: 'create',
       errors,
       contacts,
       resolved: errors.length ? null : { fullName, className, feePlanName, amountCents: amt === 'bad' ? null : amt },
@@ -560,6 +858,11 @@ export function validateRows(rows: ImportRow[], opts: ImportOpts): ValidateResul
     rows: out,
     okCount: out.filter((r) => r.ok).length,
     errorCount: out.filter((r) => !r.ok).length,
+    /** New children against changes to existing ones — the sentence the dialog leads with. */
+    createCount: out.filter((r) => r.ok && r.mode === 'create').length,
+    updateCount: out.filter((r) => r.ok && r.mode === 'update' && (r.update?.changes.length ?? 0) > 0).length,
+    /** Rows that matched a child and would change nothing. Not a problem; worth saying. */
+    unchangedCount: out.filter((r) => r.ok && r.mode === 'update' && (r.update?.changes.length ?? 0) === 0).length,
     mergedCount: merged.reduce((n, m) => n + m.sourceRows.length - 1, 0),
     askRelations: [...asked.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
   };
@@ -567,6 +870,9 @@ export function validateRows(rows: ImportRow[], opts: ImportOpts): ValidateResul
 
 export interface CommitResult {
   created: number;
+  /** Children already here whose record the file changed, and how many fields in total. */
+  updated: number;
+  fieldsChanged: number;
   familiesCreated: number;
   guardiansCreated: number;
   /** Emergency contacts created from rows the office placed there (0.48.0). */
@@ -591,16 +897,61 @@ export function commitRows(rows: ImportRow[], opts: ImportOpts): CommitResult {
   // whole import.
   const fileSchoolId = opts.schoolId ?? defaultSchoolId();
 
-  const result: CommitResult = { created: 0, familiesCreated: 0, guardiansCreated: 0, contactsCreated: 0, mergedCount: check.mergedCount, students: [] };
+  const result: CommitResult = { created: 0, familiesCreated: 0, guardiansCreated: 0, contactsCreated: 0, updated: 0, fieldsChanged: 0, mergedCount: check.mergedCount, students: [] };
   const ts = new Date();
 
   const touchedFamilies = new Set<string>();
+  /** The diffs `validateRows` already worked out, by row — recomputing them here would be a second
+   *  place deciding what an import changes, and the preview the office approved is this one. */
+  const updates = new Map<number, RowUpdate>();
+  for (const r of check.rows) if (r.mode === 'update' && r.update) updates.set(r.row, r.update);
+  const specByKey = new Map((opts.fieldSpecs ?? []).map((f) => [f.key, f]));
 
   db.transaction((tx) => {
     const L = lookups(tx, fileSchoolId);
 
     for (const m of mergeRows(rows).merged) {
       const r = m.fields;
+
+      // ── A child who is already here: write ONLY what changed (0.52.0-dev.4) ──
+      const up = updates.get(m.row);
+      if (up) {
+        if (up.changes.length === 0) continue; // nothing differs; no write, so updated_at still means something
+        const sPatch: Record<string, unknown> = {};
+        const fPatch: Record<string, unknown> = {};
+        let familyId: string | null = null;
+        for (const c of up.changes) {
+          if (c.key === 'fullName') { sPatch.fullName = displayName(c.to); continue; }
+          if (c.key === 'dob') { sPatch.dob = c.to || null; continue; }
+          if (c.key === 'classId') {
+            const res = resolveClass(L, c.to, '');
+            // Validated already; a class that vanished between preview and commit is the caller's
+            // problem to see rather than something to write half of.
+            if ('error' in res) throw new Error('invalid_rows');
+            sPatch.classId = res.id;
+            sPatch.schoolId = schoolIdForClass(res.id) ?? fileSchoolId;
+            continue;
+          }
+          const spec = specByKey.get(c.key);
+          if (!spec) continue;
+          const value = spec.kind === 'flag' ? (c.to === 'Yes' ? true : c.to === 'No' ? false : null) : c.to === '' ? null : c.to;
+          if (spec.scope === 'household') fPatch[spec.column] = value;
+          else sPatch[spec.column] = value;
+        }
+        const stu = tx.select({ id: students.id, familyId: students.familyId }).from(students).where(eq(students.id, up.studentId)).get();
+        if (!stu) throw new Error('invalid_rows');
+        familyId = stu.familyId;
+        if (Object.keys(sPatch).length) tx.update(students).set({ ...sPatch, updatedAt: ts }).where(eq(students.id, up.studentId)).run();
+        if (Object.keys(fPatch).length) tx.update(families).set({ ...fPatch, updatedAt: ts }).where(eq(families.id, familyId)).run();
+        // A renamed child can change the household's derived label, exactly as on the record screen.
+        if (sPatch.fullName !== undefined) touchedFamilies.add(familyId);
+        // The Note column APPENDS on an update — a note is append-only, so a sheet cannot rewrite one.
+        addStudentNote(up.studentId, norm(r.note), opts.noteBy ?? { userId: null, name: null }, ts, tx);
+        result.updated++;
+        result.fieldsChanged += up.changes.length;
+        continue;
+      }
+
       const fullName = displayName(norm(r.fullName));
 
       // ONE HOUSEHOLD PER STUDENT. An import never guesses that two children are siblings; the office

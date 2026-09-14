@@ -10,31 +10,27 @@
  *
  * ── The server decides what this renders, and that is the point ──────────────
  *
- * `people.studentGet` returns `fields`: the fields THIS caller may see, already filtered for what the
- * office switched off and for the role's own allow-list (`people/fields.ts`, §5's medical wall). This
- * component never holds its own list of fields and never decides who may see one — it renders what came
- * back. Two consequences worth keeping:
+ * `people.studentGet` returns `fields` and `householdFields`: what THIS caller may see of the child and
+ * of their household, already filtered for what the office switched off and for the role's own
+ * allow-list (`people/fields.ts`, §5's medical wall). This component holds no list of fields and never
+ * decides who may see one — it renders what came back. Two consequences worth keeping:
  *
  *   - a field added to the registry appears here with no change to this file, and
  *   - finance is not shown a medical box it would be refused on saving, because finance was not told
  *     the field exists. The old failure mode was the opposite: the finance shell renders the SAME
  *     household component the admin shell does, with a `readOnly` prop that only ever wrapped buttons.
  *
- * Notes are admin-only and APPEND-ONLY (`people/notes.ts`): there is no edit and no delete, because a
- * note is often the record of what somebody was told. A correction is another note.
+ * The household's own details (address, languages, nationality) are shown here as well as on the
+ * household window — one component, one mutation — because an office looking at a child is exactly who
+ * needs to correct an address. The panel says the value applies to every child on the record.
  */
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { NotebookPen, Save, Stethoscope } from 'lucide-react';
+import { NotebookPen, Save, Stethoscope, Trash2 } from 'lucide-react';
 import { trpc } from '../lib/trpc';
 import { formatDate } from '../lib/dates';
-
-/** What the server says a field is. Mirrors `people/fields.ts`; the values come from it at runtime. */
-type FieldKind = 'text' | 'longtext' | 'date' | 'flag';
-type FieldSpec = { key: string; kind: FieldKind; sensitivity: 'ordinary' | 'medical' };
-
-/** A form value. `null` is a flag's third state — nobody has asked yet — and is not the same as "no". */
-type Value = string | boolean | null;
+import { HouseholdFields } from './HouseholdFields';
+import { FieldGrid, changedFields, seedDraft, type FieldSpec, type FieldValue } from './RecordFields';
 
 export function StudentRecord({ studentId, readOnly = false }: { studentId: string; readOnly?: boolean }) {
   const { t } = useTranslation();
@@ -43,8 +39,9 @@ export function StudentRecord({ studentId, readOnly = false }: { studentId: stri
   const display = trpc.settings.display.useQuery();
   const save = trpc.people.studentUpdate.useMutation();
   const addNote = trpc.people.studentNoteAdd.useMutation();
+  const removeNote = trpc.people.studentNoteDelete.useMutation();
 
-  const [draft, setDraft] = useState<Record<string, Value>>({});
+  const [draft, setDraft] = useState<Record<string, FieldValue>>({});
   const [err, setErr] = useState('');
   const [saved, setSaved] = useState(false);
   const [note, setNote] = useState('');
@@ -55,43 +52,24 @@ export function StudentRecord({ studentId, readOnly = false }: { studentId: stri
    * Keyed on `updatedAt` rather than on the query object: a refetch that returns the same record must
    * not throw away what the office is halfway through typing.
    */
-  const stamp = (q.data?.student as Record<string, unknown> | undefined)?.updatedAt;
+  const row = q.data?.student as Record<string, unknown> | undefined;
+  const stamp = row?.updatedAt;
   useEffect(() => {
-    if (!q.data) return;
-    const row = q.data.student as Record<string, unknown>;
-    const next: Record<string, Value> = {};
-    for (const f of q.data.fields as FieldSpec[]) {
-      const v = row[f.key];
-      next[f.key] = f.kind === 'flag' ? (typeof v === 'boolean' ? v : null) : ((v as string | null) ?? '');
-    }
-    setDraft(next);
+    if (q.data) setDraft(seedDraft(q.data.student as Record<string, unknown>, q.data.fields as FieldSpec[]));
   }, [q.data, stamp]);
 
-  if (q.isLoading || !q.data) return <p className="empty">{t('common.loading')}</p>;
+  if (q.isLoading || !q.data || !row) return <p className="empty">{t('common.loading')}</p>;
 
-  const row = q.data.student as Record<string, unknown>;
   const fields = q.data.fields as FieldSpec[];
   const dateFmt = display.data?.dateFormat ?? 'iso';
-
-  /** Only what actually changed, so an untouched record produces no write and no audit row. */
-  function changed(): Record<string, Value> {
-    const out: Record<string, Value> = {};
-    for (const f of fields) {
-      const was = row[f.key];
-      const now = draft[f.key];
-      const same = f.kind === 'flag' ? (typeof was === 'boolean' ? was : null) === now : ((was as string | null) ?? '') === now;
-      if (!same) out[f.key] = now;
-    }
-    return out;
-  }
+  const changes = changedFields(row, fields, draft);
 
   async function submit() {
     setErr('');
     setSaved(false);
-    const fieldsChanged = changed();
-    if (Object.keys(fieldsChanged).length === 0) return;
+    if (Object.keys(changes).length === 0) return;
     try {
-      await save.mutateAsync({ id: studentId, fields: fieldsChanged });
+      await save.mutateAsync({ id: studentId, fields: changes });
       await Promise.all([utils.people.studentGet.invalidate({ id: studentId }), utils.people.familyGet.invalidate()]);
       setSaved(true);
     } catch (e) {
@@ -112,63 +90,27 @@ export function StudentRecord({ studentId, readOnly = false }: { studentId: stri
     }
   }
 
+  /**
+   * Delete one note.
+   *
+   * Notes still cannot be EDITED — a correction is another note — and this is the way out of a mistake
+   * the first cut did not have: a note typed onto the wrong child, or one carrying something that
+   * should never have been written down. It asks first, because it cannot be undone and the note is
+   * somebody's record of a conversation.
+   */
+  async function deleteNote(id: string) {
+    if (!window.confirm(t('record.confirmDeleteNote'))) return;
+    setErr('');
+    try {
+      await removeNote.mutateAsync({ id });
+      await utils.people.studentGet.invalidate({ id: studentId });
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
   const medical = fields.filter((f) => f.sensitivity === 'medical');
   const ordinary = fields.filter((f) => f.sensitivity === 'ordinary');
-
-  const input = (f: FieldSpec) => {
-    const id = `sr-${f.key}`;
-    const v = draft[f.key];
-    if (f.kind === 'flag') {
-      return (
-        <select
-          id={id}
-          className="input glass-inset"
-          disabled={readOnly}
-          value={v === true ? 'yes' : v === false ? 'no' : ''}
-          onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value === '' ? null : e.target.value === 'yes' })}
-        >
-          {/* Blank is the honest default and it is listed first: "not recorded" is a real answer, and
-              defaulting a consent question to No would be a claim nobody made. */}
-          <option value="">{t('record.notRecorded')}</option>
-          <option value="yes">{t('common.yes')}</option>
-          <option value="no">{t('common.no')}</option>
-        </select>
-      );
-    }
-    if (f.kind === 'longtext') {
-      return <textarea id={id} className="input glass-inset" rows={3} disabled={readOnly} value={(v as string) ?? ''} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })} />;
-    }
-    // A date input always speaks ISO on the wire whatever the browser shows, which is exactly what the
-    // server wants (§9: stored ISO, displayed otherwise).
-    return (
-      <input
-        id={id}
-        type={f.kind === 'date' ? 'date' : 'text'}
-        className="input glass-inset"
-        disabled={readOnly}
-        value={(v as string) ?? ''}
-        onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
-      />
-    );
-  };
-
-  const group = (title: string, list: FieldSpec[], note?: string) =>
-    list.length === 0 ? null : (
-      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
-        <div className="section-head">
-          <h2>{title}</h2>
-        </div>
-        {note && <p className="hint">{note}</p>}
-        <div className="inline-form">
-          {list.map((f) => (
-            <div className="field" key={f.key} style={{ flex: f.kind === 'longtext' ? '1 1 100%' : '1 1 14rem' }}>
-              <label className="label" htmlFor={`sr-${f.key}`}>{t(`record.field.${f.key}`)}</label>
-              {input(f)}
-            </div>
-          ))}
-        </div>
-      </section>
-    );
 
   return (
     <div className="win-content">
@@ -183,30 +125,28 @@ export function StudentRecord({ studentId, readOnly = false }: { studentId: stri
         <p className="muted" style={{ fontSize: '0.9rem', margin: 0 }}>
           <span className="code">{(row.studentCode as string) ?? '—'}</span>
           {row.dob ? <> · {t('directory.dob')}: {formatDate(row.dob as string, dateFmt)}</> : null}
-          {q.data.family ? <> · {q.data.family.name}</> : null}
+          {q.data.family ? <> · {String((q.data.family as Record<string, unknown>).name ?? '')}</> : null}
         </p>
       </section>
 
-      {group(t('record.details'), ordinary)}
+      {ordinary.length > 0 && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head"><h2>{t('record.details')}</h2></div>
+          <FieldGrid specs={ordinary} draft={draft} setDraft={setDraft} readOnly={readOnly} idPrefix="sr" t={t} />
+        </section>
+      )}
 
-      {/* Medical is its own panel and says so, rather than being eight boxes down a long form. §14
-          amended "no medical fields" on the condition that this is admin-only and off until an office
-          asks for it — a reader who lands here should be able to see that it is a different kind of
-          thing. Finance is never TOLD these fields exist, so this renders for nobody else. */}
+      {/* Medical is its own panel and says so, rather than being boxes down a long form. §14 amended
+          "no medical fields" on the condition that this is admin-only and off until an office asks for
+          it — a reader who lands here should be able to see that it is a different kind of thing.
+          Finance is never TOLD these fields exist, so this renders for nobody else. */}
       {medical.length > 0 && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head">
             <h2><Stethoscope size={15} /> {t('record.medical')}</h2>
           </div>
           <p className="hint">{t('record.medicalHint')}</p>
-          <div className="inline-form">
-            {medical.map((f) => (
-              <div className="field" key={f.key} style={{ flex: f.kind === 'longtext' ? '1 1 100%' : '1 1 14rem' }}>
-                <label className="label" htmlFor={`sr-${f.key}`}>{t(`record.field.${f.key}`)}</label>
-                {input(f)}
-              </div>
-            ))}
-          </div>
+          <FieldGrid specs={medical} draft={draft} setDraft={setDraft} readOnly={readOnly} idPrefix="sr" t={t} />
         </section>
       )}
 
@@ -214,13 +154,25 @@ export function StudentRecord({ studentId, readOnly = false }: { studentId: stri
 
       {!readOnly && fields.length > 0 && (
         <div className="inline-form" style={{ alignItems: 'center' }}>
-          <button type="button" className="btn btn--primary" onClick={submit} disabled={save.isPending || Object.keys(changed()).length === 0}>
+          <button type="button" className="btn btn--primary" onClick={submit} disabled={save.isPending || Object.keys(changes).length === 0}>
             <Save size={14} /> {t('common.save')}
           </button>
           {saved && <span className="notice notice--ok" style={{ margin: 0 }}>{t('record.saved')}</span>}
         </div>
       )}
       {err && <p className="form-error">{err}</p>}
+
+      {/* The household's details, editable from here — one component and one mutation, shared with the
+          household window, so this is one field shown twice rather than two code paths. */}
+      {q.data.family && (
+        <HouseholdFields
+          familyId={String((q.data.family as Record<string, unknown>).id)}
+          family={q.data.family as Record<string, unknown>}
+          fields={q.data.householdFields as FieldSpec[]}
+          readOnly={readOnly}
+          onSaved={() => Promise.all([utils.people.studentGet.invalidate({ id: studentId }), utils.people.familyGet.invalidate()])}
+        />
+      )}
 
       {/* Notes. Admin only — the server returns an empty list to finance, so this whole panel is absent
           for them rather than empty. */}
@@ -246,8 +198,11 @@ export function StudentRecord({ studentId, readOnly = false }: { studentId: stri
               {q.data.notes.map((n) => (
                 <li key={n.id} style={{ display: 'block', padding: '0.5rem 0.6rem' }}>
                   <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{n.body}</p>
-                  <p className="muted" style={{ fontSize: '0.8rem', margin: '0.2rem 0 0' }}>
-                    {n.authorName} · {formatDate(new Date(n.createdAt).toISOString().slice(0, 10), dateFmt)}
+                  <p className="muted" style={{ fontSize: '0.8rem', margin: '0.2rem 0 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span>{n.authorName} · {formatDate(new Date(n.createdAt).toISOString().slice(0, 10), dateFmt)}</span>
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={() => deleteNote(n.id)} disabled={removeNote.isPending} title={t('common.delete')}>
+                      <Trash2 size={13} />
+                    </button>
                   </p>
                 </li>
               ))}
