@@ -6,7 +6,17 @@
 >
 > **Product target, in one line:** self-hosted **tuition & fee management for a madrasa** — students with a
 > generated Student ID, per-student fee plans, per-student invoices, a derived ledger, and payments by
-> cash/Stripe (parent portal + autopay) **plus the OpenMasjid Donations site and Kiosk** over the Fabric.
+> cash/Stripe (parent portal + autopay) **plus the OpenMasjid Donations site and Kiosk** over the Fabric —
+> **and, from 0.52.0, the madrasah's own student record: admissions, attendance, marks and report cards.**
+>
+> **THE v0.35.0 ACADEMICS PIVOT IS REVERSED (0.52.0, Hasan's decision).** For fifteen releases this
+> document said there was no attendance, no gradebook and no admissions, and that there "will not be".
+> That is no longer the plan: the academic layer is being built back as a first-class domain, in phases,
+> starting from 0.52.0. **§4a is the whole of the new scope**, `docs/ADMISSIONS.md`, `docs/ATTENDANCE.md`
+> and `docs/ACADEMICS.md` are its specifications, and every section it touches (§5, §9, §12.4, §14, §16,
+> §18, §20) has been amended rather than annotated — because a banner is not documentation, which is what
+> the 0.48.0 rewrite below was for. **What is specified is not what exists**: §4a marks each phase's
+> status, and a phase says "built" only once it has shipped. `docs/*` say the same, at the top of each file.
 >
 > **This document was rewritten against the code at 0.48.0** (audit of 2026-08-13). It had carried a
 > "SCOPE PIVOT" banner since v0.35.0 saying that several sections still described removed academic features
@@ -135,8 +145,20 @@ capability those apps consume. A masjid running more than one program on differe
 maktab beside a full-time hifz school) can define **schools** (0.47.0), which scope the calendar and the
 class tree and never the household or the money.
 
-Think: **"the madrasa's tuition & fee desk, in one container the masjid owns — and payable anywhere: the
-portal, the kiosk, or the donation site."**
+**From 0.52.0 it is also the madrasah's student record.** A child stops being a billing row with a name on
+it: the office keeps what a madrasa actually keeps — when they were admitted and why they left, where they
+studied before, what languages they speak, the medical facts somebody needs at four in the afternoon — and
+a family arrives through a real **admissions** funnel (a public inquiry form, a waitlist, an offer, a
+one-time form link) rather than being typed in from a phone call. A **daily register** against a calendar
+that knows which days this madrasah actually teaches, a **gradebook** of subjects and assessments, a
+running **hifz** record, and a **report card per term** that freezes what it showed. All of it is
+admin-only and therefore LAN-only, all of it is derived rather than stored, and **none of it touches the
+ledger, invoicing or the Fabric contract** — the one place money and academics meet is the enrollment fee,
+which is raised as an ordinary charge through the charge machinery that already exists. §4a is the scope;
+`docs/ADMISSIONS.md`, `docs/ATTENDANCE.md` and `docs/ACADEMICS.md` are the specs.
+
+Think: **"the madrasa's tuition & fee desk — and its student record — in one container the masjid owns, and
+payable anywhere: the portal, the kiosk, or the donation site."**
 
 ---
 
@@ -210,8 +232,11 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
 **Structure (grouping and the calendar, 0.46.0–0.47.0)**
 - **Schools** — the calendar + grouping scope, NOT a tenant (§9). **School years** with terms, a real
   **rollover** (`structure/rollover.ts`) that promotes classes and carries children forward, and
-  **courses → classes** as the roster tree. Classes are labels for grouping and bulk fee work; there is no
-  timetable, attendance or gradebook and there will not be.
+  **courses → classes** as the roster tree. Classes are labels for grouping and bulk fee work; **there is
+  still no timetable and none is planned** (§4a), and attendance and the gradebook are being built back
+  on top of these same labels rather than beside them. **Rollover overwrites `students.class_id` in place
+  and has no undo** — which is exactly why §4a's Phase 3 opens with enrollment history: a register taken
+  last term must not be reattributed by next term's rollover.
 - `user_schools` optionally restricts a staff account to some schools. **No rows means all schools.**
 
 **Finance (billing — the whole app)**
@@ -373,22 +398,147 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
 - **A snapshot of the database every 30 minutes** (`db/snapshot.ts`), because the platform tars a live volume.
 - i18n (i18next) + RTL-safe layouts; light/dark via Fabric appearance; `prefers-reduced-motion`.
 
+### 🚧 4a. In scope, specified, being built — THE ACADEMIC LAYER (0.52.0 →)
+
+**This reverses the v0.35.0 pivot, on Hasan's decision, and it is a reversal rather than an addition** —
+the sentences it contradicts were assertions about the future ("there will not be"), repeated as code
+comments citing §4 in `db/schema.ts`, `trpc/structure.ts` and `routes/admin/Structure.tsx`. Those comments
+are corrected as each phase lands, not left to read as a ban on the thing beside them.
+
+**What is NOT reversed, and is still out:** the **timetable**. Attendance is therefore a *daily register*
+against named sessions, not a period-by-period grid, and that distinction is what keeps Phase 3 small.
+Also still out: merit, the comment bank, transcripts, the Report Creator, **custom (user-defined) student
+fields**, **file uploads of any kind**, and a **teacher or student LOGIN**. See the ❌ list below, which
+now states each of those as its own line so nobody has to infer it from a paragraph.
+
+**Every phase ships on its own and leaves the app fully working.** Do not start a phase until the one
+before it is merged and green. **Status is per phase and this table is the honest record of it** — a
+phase reads "built" only when it has shipped, and until then this section describes a plan:
+
+| Phase | What | Status |
+| --- | --- | :-- |
+| **0** | Foundations: these amendments; the migration-journal guard; `charges.source_key`; the CSV round-trip fix | **specified** |
+| **1** | The student record — real fields, a screen to edit them on, the field registry, Settings tabs, import | **specified** |
+| **2** | Admissions — inquiry → waitlist → offer → admission → re-admission (`docs/ADMISSIONS.md`) | **specified** |
+| **3** | Attendance — enrollment history, the calendar, the daily register (`docs/ATTENDANCE.md`) | **specified** |
+| **4** | Academics — subjects, teachers, assessments, marks, hifz (`docs/ACADEMICS.md`) | **specified** |
+| **5** | Report cards — grading scheme, draft → finalized, the frozen snapshot (`docs/ACADEMICS.md`) | **specified** |
+
+**Phase 0 — foundations.** Invisible to a masjid and it gates everything else. These amendments; a
+**migration-journal guard test** (`_journal.json` strictly increasing, every file present, every file
+listed) because Drizzle compares only `created_at` against the newest applied row and the `when` values
+have been hand-typed since 0032 — a migration whose `when` is not strictly greater applies perfectly on a
+fresh database and is **skipped forever on a live one**, with the app booting, reporting success, and
+failing at runtime on a missing table; the **`charges.source_key` natural key** (§9); and the CSV
+`escapeCell` round-trip fix (a `+44…` phone and a negative amount come back mangled once the export is
+re-imported, because the formula-injection prefix is applied on the way out and not stripped on the way
+back in).
+
+**Phase 1 — a real student record.** Today a student is a name, a Student ID, an optional DOB and a
+status: a billing record, not a student record. Adding to it:
+
+- **date of admission**, **date of withdrawal**, and a **withdrawal reason**;
+- **address** — on the CHILD, and nothing else moves: guardians, phones and emails stay on the
+  **household** (§9), and nothing that belongs to the household is duplicated onto the student;
+- **prior schooling / madrasa attended**, and **prior hifz progress on arrival**;
+- **medical notes, allergies, emergency medical consent** — the §14 amendment, and the conditions on it
+  are in §14, not here;
+- **languages spoken**, **nationality**;
+- **office notes with an author and a timestamp, append-only** (the existing free-text `students.notes`
+  is written by two paths and rendered by none — this replaces it with something that has a reader).
+
+**No photo.** It was in the original brief and Hasan removed it (0.52.0). It would have created the
+first upload path in the app's history — against a §14 attachment rule that does not exist, past a
+1 MiB JSON body cap and no multipart plugin, and either as minors' faces inside the DB that the 30-minute
+snapshot copies or as files on `/data` that the snapshot does **not** copy. Neither was free, and the
+feature was not worth either.
+
+**Every one of these fields can be disabled in Settings**, through a **server-owned field registry**
+filtered against an allow-list on read — the `YEAR_VIEW_COLUMNS` pattern, whose own comment gives the
+reason ("so a stale/hand-edited row can never widen what is exposed"). That is a fixed catalog with
+switches, **not** user-defined custom fields, which stay out. Settings gains **tabs** while this lands,
+the way OpenMasjidOS does it — noting this app has no react-router at all, so it is the same shape and
+not the same code.
+
+**The screen is the work.** `studentUpdate` exists and has exactly **one** call site in the entire web
+app (the withdraw toggle); `students.notes` is written by two paths and rendered by none. Phase 1 is
+therefore "build the student record screen that does not exist", and twelve more write-only columns is
+the failure mode it has to avoid. **Import** extends the existing pattern: download a template
+**pre-filled with the install's current data** plus the new columns, edit, re-upload. That needs an
+**.xlsx writer** — and no library: `lib/xlsx.ts` already reads, and a minimal STORE-only ZIP emitter is
+~120–160 lines with no compression, no `sharedStrings.xml` and no `styles.xml` (§7 — "Ask before adding
+heavy dependencies", and a working ZIP writer already exists in this repo's own `xlsx.test.ts`).
+
+**Phase 2 — admissions.** Full spec in `docs/ADMISSIONS.md`. The headline rules: an **inquiry is not a
+student and not a household**, it never mints a Student ID, and the ID is minted at **conversion** and
+nowhere else; the pipeline's **state is stored truth**, never derived from the presence of other records;
+the **public inquiry form is the only new unauthenticated write surface in the whole project and stays
+that way** (§14); admission and re-admission links **reuse the existing hashed one-time token
+machinery**; conversion and enrollment-fee raising are **idempotent**; and the **enrollment fee is an
+ordinary charge** through the existing charge procedures — admissions opens no new path into the ledger.
+
+**Phase 3 — attendance.** Full spec in `docs/ATTENDANCE.md`. It opens with **enrollment history**, which
+is a schema reversal (`enrollments`, recorded in `docs/DATA_MODEL.md` as deliberately not re-created) and
+is what makes "the roster on that date" answerable: a child admitted in November was not absent in
+October. **That history cannot be backfilled** — every class-change audit row records the new value or a
+count, never the old one — so **history begins the day the table ships**, and a term that predates it
+reports "no roster history" rather than a number. Then the **calendar** (teaching weekdays + closure days
+that move with the lunar calendar and are editable at short notice), then named **sessions**, then the
+register itself: `present | absent | late | excused`, with **excused a distinct state and not a flag**,
+and a **`registers` row asserting the register was taken** — because otherwise a class nobody marked and
+a class where everyone was present are the same thing in the database.
+
+**Phase 4 — academics.** Full spec in `docs/ACADEMICS.md`. Subjects (graded / pass-fail / narrative),
+**teachers as a RECORD and not a login**, teaching assignments scoped to a year, assessments with integer
+**basis-point weights**, marks as **integer points with a maximum** where `absent` and `excused` are
+neither zero nor each other, and **hifz as a running record** rather than a score out of ten.
+
+**Phase 5 — report cards.** One **grading scheme per install**, versioned so reprinting last year's card
+applies last year's bands; **draft → finalized**, where finalizing writes a **structured snapshot that
+current templates re-render** (freezing rendered HTML would pin the design system into a database row and
+break §15's re-sync, RTL and theme fixes); printable HTML with a print stylesheet, **no PDF toolchain**;
+and a **parent route and predicate of its own** — widening `canServeStatement` would widen it for the
+class Student ID sheet too, which is the whole install rather than one household.
+
+**Invariants that bind the whole layer** (each is enforced where its rule lives, not here):
+derived-never-stored for rates, averages and grades exactly as for balances (§9); append-only audit with
+**before → after** on every sensitive write (§14); **admin stays network-only** at login and at session
+use, so all of this is LAN-only and the origin policy does not bend for convenience (§12.4); role checks
+server-side on every procedure, with **finance reaching no academic, admissions or medical record** and a
+parent reaching only their own children (§5); **no PII in logs**, and nothing submitted through the public
+form in a log line either (§14); every string through i18next, RTL-aware, light and dark, §15 parity; and
+**nothing in this layer may touch the ledger, invoicing or the Fabric contract** (§11).
+
 ### ❌ Out of scope — do not build these
 
-- **All academics / SIS** (removed in the v0.35.0 pivot): scheduling/timetable, attendance, gradebook, grading
-  scales, merit, comment bank, exams, report cards, transcripts, term finals, admissions/the `/apply` form,
-  the Report Creator, custom student fields, documents-on-file, student notes/incidents, and the
-  **teacher/student** roles. Do not reintroduce any of these. Courses and classes survive **only** as labels
-  for grouping and bulk fee work.
+- **Timetables.** Attendance is a daily register against named sessions (§4a Phase 3). Sessions have a
+  name and an order — **not times, subjects or teachers**. That is the line, and it is what keeps
+  attendance from becoming a scheduling product.
+- **A teacher or student LOGIN, and any teacher/student ROLE.** The three roles stay `admin`, `finance`,
+  `parent` (§5). A teacher **record** you assign is in scope (§4a Phase 4); a teacher who signs in is
+  not. `docs/ATTENDANCE.md` §3.4 records what the minimum shape of that login would be later, so the
+  model built now does not make it awkward — that note is a design constraint, not a plan to build it.
+- **Merit, the comment bank, transcripts, and the Report Creator.** A per-subject and a head-of-madrasah
+  comment are in (§4a Phase 5); a reusable bank of canned comments is not. An annual cumulative view is
+  in; transcripts are not.
+- **Custom (user-defined) student fields.** The field set is fixed in code and **toggleable** in
+  Settings through a server-owned registry (§4a Phase 1). A masjid adding its own columns is a different
+  product with a different validation, import, export and privacy story.
+- **File uploads of any kind** — student photos, documents-on-file at admission (birth certificates,
+  immunisation records, prior transcripts), and payment-proof attachments. There is no upload path, no
+  multipart plugin, a 1 MiB JSON body cap, and the 30-minute snapshot copies **only the database**, so
+  anything on `/data` that is not the DB falls outside the one restorable copy §14 promises. **If files
+  ever come back, the first commit writes §14's attachment rules** — which now exist to be cited (they
+  did not when this bullet first pointed at them).
 - **Stripe Billing subscriptions/invoices.** Autopay is saved-method + off-session PaymentIntents driven by
   **our** scheduler and **our** invoices (§13.3). Our ledger is the source of truth; never mirror it into
   Stripe objects.
 - **Card-present hardware** in this app (that's Kiosk's job); wallets beyond what Elements gives for free.
 - **Our own SMTP.** Mail goes through the platform (`email: true`). A standalone install sends nothing and
   degrades to copy/print links — that is a supported mode, not a bug.
-- **Payment-proof attachments.** Planned once, never built; there is no upload path and no `/data/attachments`.
-  If it comes back it comes back with §14's attachment rules intact.
-- Parent-initiated data edits (changes go through the office); push notifications.
+- Parent-initiated data edits (changes go through the office); push notifications. **Except**: an
+  admission or re-admission form submitted by a family through a one-time token link (§4a Phase 2), which
+  is not an edit — it lands as a **proposal the office reviews as a diff** before anything is written.
 - Multi-tenant anything (one install = one masjid — and see §9 on why `schools` is not that); payroll, staff
   HR, zakat handling; a public REST API beyond §11.
 
@@ -396,6 +546,13 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
 
 Partial refunds through the ledger (credits are the answer today); ACH autopay; TOTP 2FA for staff;
 completing micro-deposit verification for saved bank accounts.
+
+From the academic layer (§4a), three more — each deferred with a reason, not merely unbuilt: **a reader
+for `audit_log`**, which §5 records as a real gap and which would remove most of the reason §9 lets a
+domain history duplicate a facet of it; **a teacher-facing register**, which is small *provided* Phase 4's
+teaching assignments exist and whose minimum shape is written down in `docs/ATTENDANCE.md` §3.4 precisely
+so the model built now does not preclude it; and **transcripts**, for which Phase 5's annual cumulative
+view is the foundation. Design around all three; build none of them.
 
 ---
 
@@ -414,7 +571,17 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | `finance` | ✅ | ✅ |
 | `parent` | ✅ | ✅ |
 | *(login / invite / reset / register pages)* | ✅ | ✅ *(§14 rate limits)* |
+| *(admission / re-admission token links)* | ✅ | ✅ *(one-time hashed token, §4a Phase 2)* |
+| *(`/public/inquiry*` — the embeddable form)* | ✅ | ✅ **unauthenticated, by design — §14** |
 | *(`/fabric/*`)* | ✅ | ❌ **404 outright** |
+
+**The whole academic layer is admin-only and therefore LAN-only**, at login and at session use, and that
+is not being weakened to make admissions or mark entry more convenient (§4a). One consequence is worth
+building for rather than explaining repeatedly: `cf-ray` short-circuits **before** the client IP is
+examined, so a phone on the masjid Wi-Fi is still `tunnel` if it reached the app by the bookmarked public
+URL — same device, same network, different door. **When an admin sign-in is refused over the tunnel, name
+the LAN address to open instead**; nothing in the app tells anyone that today, and a teacher discovering
+it at 8am with a class in front of them is the avoidable version.
 
 **Permission matrix:**
 
@@ -433,7 +600,23 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | **Erase a BILLED student for good** (invoices + payments with them) | ✅ *(0.51.0-dev.14, §9's one exception)* | ❌ | ❌ |
 | Students directory — read | ✅ | ✅ | own household only |
 | Guardian contact — read | ✅ | ✅ | own household |
+| **Student record: admission/withdrawal dates, address, prior schooling, languages, nationality** | ✅ | ✅ read only | ❌ |
+| **Student record: MEDICAL notes, allergies, emergency medical consent** | ✅ | ❌ **the medical wall — see below** | ❌ |
+| **Office notes on a student** (append-only, authored) | ✅ | ❌ | ❌ |
+| **Which student fields exist at all** (the Settings field registry) | ✅ | ❌ | ❌ |
 | Spreadsheet import | ✅ | ❌ | ❌ |
+| **Admissions: inquiries, waitlist, offers, declines, conversion** *(§4a Phase 2)* | ✅ | ❌ | ❌ |
+| **Re-admission: open a year, send, remind, approve** | ✅ | ❌ | ❌ |
+| **Submit the public inquiry form** | *(unauthenticated — anyone, §14)* | | |
+| **Complete an admission / re-admission form** | ✅ *(on the family's behalf)* | ❌ | *(by one-time token link, no session)* |
+| **Enrollment fee amounts per school year** | ✅ | ❌ | ❌ |
+| **Attendance: the calendar, closure days, sessions** *(§4a Phase 3)* | ✅ | ❌ | ❌ |
+| **Attendance: take, correct, and read a register** | ✅ | ❌ | ❌ |
+| **Academics: subjects, teachers, teaching assignments** *(§4a Phase 4)* | ✅ | ❌ | ❌ |
+| **Academics: assessments, marks, hifz records** | ✅ | ❌ | ❌ |
+| **Report cards: draft, comment, finalize** *(§4a Phase 5)* | ✅ | ❌ | ❌ |
+| **Report cards — read** | ✅ | ❌ | ✅ **finalized only, own children** |
+| **The grading scheme and its bands** | ✅ | ❌ | ❌ |
 | **Fee plans — define / archive / delete** (0.42.0) | ✅ | ❌ **read only** | ❌ |
 | Fee assignment per student + amount override | ✅ | ✅ | ❌ |
 | Charge items + charges (incl. mass apply, void) | ✅ | ✅ | ❌ |
@@ -450,9 +633,28 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | Parent invites / resets / account admin | ✅ | ✅ | ❌ |
 | Audit log — read | ❌ *(nothing reads it yet — see below)* | ❌ | ❌ |
 
-Clean walls, on purpose: **finance never sees settings or staff accounts; parents never see another
-household, and never see the audit log or another child's record.** If a feature seems to need to cross a
-wall, stop and ask.
+Clean walls, on purpose: **finance never sees settings or staff accounts; finance never sees a medical
+field, an admissions record or an academic record; parents never see another household, and never see the
+audit log or another child's record.** If a feature seems to need to cross a wall, stop and ask.
+
+**THE MEDICAL WALL NEEDS A MECHANISM, BECAUSE THE DEFAULT IS THE OTHER WAY** (0.52.0). Adding a medical
+column to `students` hands it to finance with **no code change at all**, by two independent routes that
+are both already live: `people.familyGet` is an `adminOrFinanceProcedure` doing a bare `SELECT` of the
+students table, so every column added ships over the wire automatically; and the finance shell renders
+the **same** `FamilyDetail` component the admin shell does, where `readOnly` is cosmetic — every one of
+its occurrences wraps a button. A wall that depends on nobody adding a column is not a wall.
+
+So the mechanism is an **explicit, server-side column allow-list keyed on role, in one place**
+(`people/fields.ts` — the same file that owns the field registry, §16). Roles get columns they are listed
+for; a new column is invisible until it is listed, which is the safe direction and the opposite of
+today's. The registry's *disabled* switch is a different question from the *role* question and both are
+answered in that one file — a field an office switched off is shown to nobody, and a field that is on is
+still only shown to the roles that may see it. `YEAR_VIEW_COLUMNS` is the pattern and its comment is the
+reason: "filter against the allow-list so a stale/hand-edited row can never widen what is exposed."
+
+Finance sees the **ordinary** student record — admission dates, address, prior schooling — because
+finance talks to families about money and needs to know who a child is. Finance does **not** see medical
+notes, allergies or consent, does not see an inquiry, and does not see a mark.
 
 **Two gaps in that table are real and are recorded rather than rounded up** (found in the 0.50.0
 pre-release audit, where both rows claimed a capability that has never existed):
@@ -491,6 +693,8 @@ of "card-ish channels" cannot disagree with it.
    │  Students · households · schools/years/courses/classes · fee plans        │
    │  Invoices · charges · derived ledger · refunds · past due · year view     │
    │  Printable statements / sheets / invoices / ID sheets (print-CSS HTML)    │
+   │  §4a (0.52.0→, admin+LAN only): student record · admissions · register ·  │
+   │        marks · hifz · report cards — none of it touching the ledger       │
    │  SQLite (WAL) via Drizzle  •  /data volume (db + 30-min snapshot)         │
    │  Auth (argon2id) + roles + ORIGIN POLICY (admin = LAN-only)                │
    │  Stripe: Elements PIs, SetupIntents, off-session autopay, refunds          │
@@ -549,7 +753,7 @@ of "card-ish channels" cannot disagree with it.
 | i18n | **i18next / react-i18next**, RTL-aware | English first; Arabic/Urdu-ready. |
 | QR | **`qrcode`** (MIT) | Statements, sheets, portal signup links. |
 | Printed documents | **print-CSS HTML**, assembled server-side and escaped | **No PDF renderer and no headless Chromium** — Pi-friendly, and a browser's own print dialog is what an office already knows. `@react-pdf/renderer` outlived the academics as an unused dependency and was dropped in 0.45.0. |
-| Spreadsheets | hand-rolled reader (`web/src/lib/xlsx.ts`) | A .xlsx is a ZIP of XML and the browser has both halves; no spreadsheet dependency. |
+| Spreadsheets | hand-rolled reader (`web/src/lib/xlsx.ts`), and from 0.52.0 a hand-rolled **writer** beside it | A .xlsx is a ZIP of XML and the browser has both halves; **still no spreadsheet dependency**. The writer is STORE-only (no compression — the reader and Excel both accept it), `t="inlineStr"` cells so there is no `sharedStrings.xml`, and ISO date text so there is no `styles.xml`; round-tripped through `parseXlsx` in its tests. A working minimal ZIP writer already existed in this repo's own `xlsx.test.ts`. |
 | Build/deploy | Docker multi-stage → one runtime image | Public, multi-arch, digest-pinned per release. |
 
 Keep it Pi-friendly. Ask before adding heavy dependencies.
@@ -614,9 +818,17 @@ OpenMasjidStudents/
     ├── FABRIC_BILLING_CONTRACT.md       # §11 extracted verbatim (the cross-repo contract)
     ├── PAYMENTS.md                      # §13 flows, the no-webhook doctrine, the autopay ladder
     ├── WHATSAPP.md                      # 0.50.0 — every gate, what never travels this way, numbers
+    ├── ADMISSIONS.md                    # §4a Phase 2 — the funnel, the public endpoint, conversion
+    ├── ATTENDANCE.md                    # §4a Phase 3 — enrollment history, the calendar, the register
+    ├── ACADEMICS.md                     # §4a Phases 4–5 — subjects, marks, hifz, report cards
     ├── DATA_MODEL.md                    # schema decisions, incl. the §12.4 reconciliation
     └── audit/                           # security audits: findings, remediation, what is still open
 ```
+
+> The three academic specs are **written before the code**, the way `PAYMENTS.md` and `WHATSAPP.md` were,
+> and each says at the top that it describes a plan. The server directories they call for
+> (`admissions/`, `attendance/`, `academics/`, and `people/fields.ts`, `structure/enrollment.ts`,
+> `structure/calendar.ts`) do not exist yet; they appear in this tree as each phase lands.
 
 ---
 
@@ -632,6 +844,15 @@ printed on statements). That list is the whole schema: `stripe_events` was dropp
 0037) because it deduped webhook deliveries and there is no webhook (§13.4) — a money schema with a table
 nobody writes is an invitation to wire the next thing to it. The DB file holds minors' PII and every
 payment record, so the file itself is a secret regardless.
+
+**The academic layer adds roughly eighteen more, and this list is updated AS EACH PHASE SHIPS, not now**
+(§4a — what is specified is not what exists): `enrollments`; `closure_days`, `sessions`,
+`attendance_marks`, `registers`; `inquiries`, `inquiry_events`, `admission_links`, `readmissions`;
+`subjects`, `teachers`, `teaching_assignments`, `assessments`, `marks`, `hifz_records`;
+`grading_schemes`, `grading_bands`, `report_cards`, `report_card_comments` — plus new columns on
+`students` (§4a Phase 1), on `school_years` (teaching weekdays, enrollment fees) and on `charges`
+(`source_key`). `docs/DATA_MODEL.md` carries the same list with each table's shape; the three `docs/`
+specs carry the reasoning.
 
 Non-negotiable rules:
 
@@ -862,6 +1083,75 @@ Non-negotiable rules:
   platform's own untrusted display text (§12).
 - `autopay_runs` UNIQUE on (family, run_date): the scheduler's own idempotency, and the Stripe idempotency key
   for PI creation is derived from it (§13.3).
+- **`enrollments` COMES BACK, and `students.class_id` stops being written directly** (§4a Phase 3).
+  `docs/DATA_MODEL.md` records `enrollments` as deliberately *not* re-created in the v0.35.0 pivot, and
+  that reasoning is still right about **money** — fees attach to the student, never to a class enrollment,
+  so each child's bill is their own — and is now wrong about **time**. A register is a fact about a class
+  on a day, and `students.class_id` is a single current pointer that **nine paths overwrite**, one of
+  which is a rollover that rewrites every child's class in place with no undo. **The history cannot be
+  recovered from `audit_log`**: every class-change entry records the NEW value or a count, never the old
+  one. So `enrollments` (student, class, year, `from_date`, `to_date`, reason) is the roster over time,
+  **history begins the day it ships**, a term predating it reports "no roster history" rather than a
+  number, and the current pointer stays — denormalized, cheap, read by nine paths — with exactly one
+  writer: **`structure/enrollment.ts` is the ONE place a child moves between classes** (§16), closing a
+  row, opening a row and updating the pointer in one transaction. Placement, bulk placement, rollover,
+  admission conversion and re-admission approval all go through it. A second writer is the bug.
+- **MEDICAL FIELDS EXIST FROM 0.52.0, AND THE ALLOW-LIST IS THE FEATURE** (§14's amendment, §5's medical
+  wall). `people/fields.ts` is the ONE place that answers three separate questions about a student
+  column — does it exist, has the office switched it off, and may this role see it — because answering
+  them in three places is how a column an admin disabled reaches a CSV export anyway. Adding a column
+  makes it visible to **nobody** until it is listed; that is the opposite of today's `SELECT`-everything
+  default and is the whole reason the file exists. The registry is server-owned and filtered against the
+  allow-list **on read**, per `YEAR_VIEW_COLUMNS`, so a hand-edited settings row can never widen what is
+  exposed. **Medical fields are never on a parent-facing page, never in an alert of either text, never in
+  a log, never in an export a non-admin can run, and never on a printed document that is not explicitly
+  the medical sheet.** They are not a Fabric field and never become one (§11).
+- **`charges.source_key` IS THE NATURAL KEY, and it belongs to `charges` rather than to admissions**
+  (§4a Phase 0). `charges` has two indexes, neither unique, and `chargeAdd` inserts with a fresh id and
+  no existence check — while bulk fee-plan assignment a few hundred lines away *does* check first. So
+  re-approving a re-admission charges a family twice, silently, in the exact fortnight a whole school
+  re-enrolls. A nullable UNIQUE `source_key` (null for anything a human raises by hand — SQLite allows
+  many NULLs in a UNIQUE column, as `student_code` already relies on) with deterministic keys
+  (`admission:<inquiryId>`, `readmission:<studentId>:<schoolYearId>`) makes a repeat a **no-op returning
+  the existing charge**, not an error: the caller is a bulk approve button and "already done" is success.
+- **AN ADMISSIONS STATE IS STORED TRUTH, NEVER DERIVED** (§4a Phase 2). An inquiry's state is what a
+  transition set it to, recorded with who, when and why — not an inference from whether a student row
+  exists. Deriving it is how a half-failed conversion reads as successful. And **an inquiry is not a
+  student and not a household**: it never mints a Student ID, never appears in the directory, and is
+  never billable. The ID is minted at conversion, in `admissions/convert.ts`, and nowhere else.
+- **ATTENDANCE, MARKS AND GRADES FOLLOW THE LEDGER'S RULE: DERIVED, NEVER STORED** (§4a Phases 3–5).
+  Store the raw mark and nothing else; every rate, count, streak, percentage, weighted average and band
+  is computed on read — `attendance/derive.ts` and `academics/derive.ts` are the two places (§16). A
+  stored percentage drifts the moment a mark is corrected or a closure day is added, and it drifts
+  silently. Adding a closure day in April **must** change March's rate; that is the feature. Three
+  corollaries the tests pin: `excused` is a **distinct state and not a flag on absent**, because the two
+  are reported separately even where they average alike; `absent` and `excused` marks leave the
+  **denominator** rather than counting as zero; and **the absence of marks is not "everybody present"**,
+  which is why a `registers` row asserts that a register was taken at all. Numbers are **integers** —
+  points with a stored maximum, weights and rates in basis points, rounded in exactly one place, for the
+  same reason money is integer cents.
+- **A FINALIZED REPORT CARD READS ITS SNAPSHOT, AND THE SNAPSHOT IS STRUCTURED** (§4a Phase 5). A mark
+  corrected in March must not rewrite the card issued in January — the same instinct as immutable
+  payments. What is frozen is the **facts** (marks, derived percentages, band labels, comments, the hifz
+  record, the attendance summary, the scheme id **and version**), re-rendered by current templates; not
+  rendered HTML, which would pin the design system into a database row and break §15's re-sync, RTL and
+  theme fixes the first time either moved. The house precedent is `snapshotCharge`: copy the fact, keep
+  the id as provenance.
+- **A DOMAIN HISTORY TABLE MAY DUPLICATE A FACET OF `audit_log`, AND THE REASON IS RECORDED RATHER THAN
+  GLOSSED.** §5 states plainly that nothing reads the audit log — it is forensic, reached with `sqlite3`.
+  Where a history is a **product surface** (the admissions trail the office reads, a corrected-mark
+  marker, a corrected-register marker) the write happens **twice**: the audit row because §14 requires
+  it, and the domain row or column because the screen has to show it. One function writes both, so they
+  cannot disagree. This is not a second place deciding a rule; it is a reader for a trail that has none.
+  Building a real reader for `audit_log` would make most of this unnecessary and remains worth doing.
+- **A MIGRATION'S `when` MUST BE STRICTLY INCREASING, AND A TEST ENFORCES IT** (§4a Phase 0). Drizzle
+  compares only `created_at` against the newest applied row; the stored hash is written and never
+  compared, and the `when` values in `_journal.json` have been typed by hand since 0032. A migration whose
+  `when` is not strictly greater than the last applied one **applies perfectly on a fresh database and is
+  skipped forever on a live one** — the app boots, reports success, and fails at runtime on a missing
+  table. For a project adding eighteen tables across six independently shipping phases that is the
+  highest-consequence footgun in the repo, and the guard (journal strictly increasing, every file
+  present, every file listed) is about twenty lines.
 - Every table: id, created_at, and updated_at where a row is ever updated.
 
 ---
@@ -903,6 +1193,15 @@ ports:
   - container: 8080
     label: Web interface
 ```
+
+**The academic layer adds alert ids, and each one lands in the SAME commit as the code that raises it**
+(§4a): `admissions-inquiry` (Phase 2) and `chronic-absence` (Phase 3) at least. Declaring an id here is
+necessary and not sufficient — `raiseAlert` is answered `400 Unknown alert` for any id missing from **the
+catalog entry the masjid installed from**, fail-soft and invisible, which is how `payment-short` was dead
+for all of 0.43.0. `test/alerts.test.ts` fails the build when the code can raise an id the manifest does
+not declare, **or when an event has no label in the web app's `en.json`**; both apply to every new id.
+And both new events carry a `publicText` that **names nobody** — the per-event webhook-naming exception
+(§9) is granted to `payment-received` alone and is not extended to either of these.
 
 **A capability declared here is necessary and never sufficient — check the BUILT entry, not this file.**
 OpenMasjidOS reads capabilities from the catalog entry the masjid installed from, so a key that does not
@@ -1118,6 +1417,17 @@ skipped. The push paths are optimizations; **money is never lost**, only delayed
     the masjid network") and **existing `admin` sessions presented from tunnel get 403** — both, so a
     LAN-minted admin cookie is useless remotely.
   - `finance | parent` allowed from both origins. `/fabric/*` refuses tunnel-origin outright (§11.1).
+  - **The public inquiry routes (`/public/inquiry*`) are reachable from BOTH origins with no session at
+    all, and that is the point of them** (§4a Phase 2). They are plain Fastify routes registered before
+    the SPA fallback and **excluded from the tRPC role/origin middleware**, which is exactly why every
+    control on them is stated explicitly in §14 rather than inherited. They are **not** a Fabric
+    capability and must never live under `/fabric/*`, whose whole shape — secret-gated, LAN-only, 404 over
+    the tunnel — is the opposite of what a public embeddable form needs. Reading an inquiry *inside* the
+    app is `adminProcedure` like everything else in §4a, and therefore LAN-only.
+  - **`cf-ray` short-circuits before the IP is examined**, so `lan` depends on the ADDRESS a client
+    reached the app by, never on the network it is sitting on: a phone on masjid Wi-Fi that opens the
+    bookmarked public URL is `tunnel`. That is correct and stays. **Say so at the door**: when an admin
+    sign-in is refused over the tunnel, name the LAN address to open instead.
   - The policy lives in one middleware consulted by every tRPC procedure; per-procedure overrides are
     forbidden without a CLAUDE.md change.
 - **Tunnel niceties**: absolute links/QRs/invite emails use the public URL the platform reports (`domain:
@@ -1195,10 +1505,74 @@ immediately** (`payments/refunds.ts`): Stripe first, then the mirror rows.
 This is the org's most sensitive app — **records about children, internet-facing, moving money**. Every
 invariant here is load-bearing:
 
-- **Data minimization**: no SSNs, no medical fields, no photos. DOB optional. `lookup` (§11.2) never returns
-  full last names, DOB, addresses or guardian contact. Saved payment methods store **type, brand, last4,
-  expiry, wallet, bank name, account type — never a PAN, never a routing number, never a holder name**. The
-  parent portal shows a household only to users linked via `guardian_users` — tested per procedure.
+- **Data minimization**: **no SSNs, no photos, no uploaded files.** DOB optional. `lookup` (§11.2) never
+  returns full last names, DOB, addresses or guardian contact. Saved payment methods store **type, brand,
+  last4, expiry, wallet, bank name, account type — never a PAN, never a routing number, never a holder
+  name**. The parent portal shows a household only to users linked via `guardian_users` — tested per
+  procedure.
+- **MEDICAL FIELDS ARE THE ONE AMENDMENT TO THAT RULE, AND THEY ARE AMENDED RATHER THAN EXCEPTED**
+  (0.52.0, Hasan's explicit sign-off). This line read "no SSNs, no medical fields, no photos" for the
+  whole life of the project and a code comment in `db/schema.ts` cites it. Medical notes, allergies and
+  emergency medical consent are now **in scope** (§4a Phase 1) because an office that cannot write down a
+  child's allergy keeps it on paper in a drawer, which is worse in every direction. **SSNs and photos are
+  not amended and stay forbidden** — the photo was in the original brief and Hasan removed it.
+  This is the most sensitive field this app will ever hold, on an internet-facing app about children, so
+  the conditions are the amendment and not decoration:
+  - **Off unless an office turns them on.** They are fields in the Phase 1 registry like any other, and
+    the registry ships with the medical ones **disabled**.
+  - **Admin only, through the role-keyed column allow-list in `people/fields.ts`** (§5's medical wall,
+    §9). **Finance never sees them** — and the default without that mechanism is the opposite, because
+    `familyGet` is `adminOrFinanceProcedure` doing a bare `SELECT` and finance renders the same component.
+  - **Never on a parent-facing page, in any text of any alert, in a log, in a CSV a non-admin can run, in
+    a Fabric response, or in Stripe metadata.** Not "not by default" — never.
+  - **The DB file is already a secret** (§9) and these fields do not change that; what they change is the
+    cost of getting the allow-list wrong, which is why it has its own tests and its own mutation check.
+- **ATTACHMENT RULES — written so that §4's citation resolves to something.** §4 said for several releases
+  that attachments would come back "with §14's attachment rules intact", and §14 had no such rules: the
+  identical dangling-citation defect §14 recorded about *itself* in 0.51.0-dev.17. **There is still no
+  upload path and none is planned** (§4 ❌ — photos and admission documents are both out). If files ever
+  come back, **the first commit of that work writes the rules into this bullet and nothing uploads before
+  it**, and it must answer all six of these, because each is a hole that exists today:
+  1. **Where files live, and whether they are inside the backup guarantee.** `db/snapshot.ts` `VACUUM
+     INTO`s **only the SQLite database**, so anything else on `/data` falls outside the one restorable
+     copy this section promises. Either the snapshot grows to cover them or the docs say plainly that it
+     does not.
+  2. **Size and type**, enforced server-side by **magic bytes and not by filename or content-type** — the
+     precedent is the school logo, which is a `data:` URI in a settings row, magic-byte checked, capped.
+  3. **The body limit.** `index.ts` sets a 1 MiB JSON cap and there is no multipart plugin anywhere;
+     uploads get their own route and their own limit, never a raised global one.
+  4. **Who may read one back**, through an authed route that re-checks the role × origin matrix per
+     request with `no-store`, `nosniff`, `no-referrer` and `default-src 'none'` — like every printable
+     document, and never through a widened existing predicate (see the report-card rule below).
+  5. **Never from an unauthenticated surface.** The public inquiry form takes no files, ever.
+  6. **What deletion means** when money or a record references the file.
+- **THE PUBLIC INQUIRY ENDPOINT IS THE ONLY NEW UNAUTHENTICATED WRITE SURFACE IN THE ACADEMIC LAYER, AND
+  IT STAYS THAT WAY** (§4a Phase 2; full spec in `docs/ADMISSIONS.md` §2). Nothing else in admissions or
+  academics is reachable without a session. Its controls, each load-bearing: **identical response every
+  time** — stored, deduplicated, honeypotted or rate-limited all return the same acknowledgement, so
+  submitting can never reveal whether a child, an email, a household or a Student ID is already known
+  (the same no-enumeration rule `lookup` follows, on a surface with no lockout to fall back on); **a
+  honeypot field and a minimum time-to-submit**; **rate limits per IP and globally, with IPv6 folded to
+  /64 before keying** — `clientIpFrom` returns the full address today, so one /64 is 2^64 distinct keys
+  against a limiter that evicts oldest-first past 50,000, and `rateLimit.test.ts` asserts that
+  consequence (it floods 50,200 junk keys and then asserts a previously-blocked key is allowed again), so
+  **hardening the limiter is a prerequisite of that phase rather than a follow-up**; **field-length caps
+  and a route body cap**; **a global daily ceiling**, above which the form answers identically and stores
+  nothing; **`frame-ancestors` from a Settings origin allowlist, never `*`**; an office switch to disable
+  embedding entirely and to close inquiries for a year; **everything stored inert and escaped at every
+  render**; **no captcha by default**, because a masjid with no outbound internet must still be able to
+  take an inquiry; and **nothing submitted ever reaches a log line** — not the name, the email, the
+  message, or a truncated preview. That last one is §14's no-PII rule plus one addition worth saying:
+  the body is attacker-controlled, so logging it would also make the log a place to inject.
+- **ACADEMIC RECORDS ARE MINORS' RECORDS AND A REPORT CARD GETS ITS OWN ROUTE** (§4a Phase 5).
+  `canServeStatement` is the single predicate behind all four existing printable routes — the household
+  statement, the per-child invoice, the family sheet **and the class Student ID sheet**. Widening it so a
+  parent can fetch a report card widens it for all four, and `statementRoute.test.ts` says what that
+  costs: the ID sheet is "every child's ID … a leak there is the whole install, not one household." So a
+  parent report card is a **new route with a new predicate**, parent-scoped through `familyAccess.ts`,
+  serving **finalized cards only**, carrying the same headers every printable document carries. The test
+  that proves it asserts, in the same file, that the ID-sheet route is still unreachable for a parent —
+  so the two cannot drift apart.
 - **Origin policy (§12.4)** is a security invariant, not a preference: admin auth is impossible via tunnel,
   both at login and at session-use time.
 - **A Student ID is the whole credential on the payment path, and it is GUESSABLE — the limiter is the
@@ -1323,6 +1697,16 @@ secrets). Additions:
   once it has. One `payments/stripe.ts`
   that imports the SDK. One `whatsapp/index.ts` for whether a WhatsApp message goes out and to whom, and one
   `whatsapp/numbers.ts` for what a number is on the wire. Adding a second place is the bug.
+
+  **The academic layer adds seven more, one per phase it lands in** (§4a): one **`people/fields.ts`** for
+  what a student field is — whether it exists, whether the office disabled it, and which roles may see it
+  (§5's medical wall, §9); one **`structure/enrollment.ts`** for moving a child between classes, writing
+  the enrollment row and the current pointer together; one **`structure/calendar.ts`** for whether the
+  madrasah teaches on a given day, so a denominator cannot differ between two screens; one
+  **`attendance/derive.ts`** for every rate, count and streak; one **`academics/derive.ts`** for every
+  percentage, weighted average and band, rounding **once**; one **`admissions/convert.ts`** for turning an
+  inquiry into a student; and one **`admissions/fees.ts`** for raising an enrollment fee, which it does
+  through the existing charge procedures rather than beside them.
 - Unit tests for the ledger: exact pay, partial, overpay→credit, multi-invoice, replayed idempotency key,
   reversal, refund, and one per channel.
 - `/fabric/*`, the printable documents and the PWA files are plain Fastify routes registered before the SPA
@@ -1374,6 +1758,21 @@ printed documents checked in a real print preview, in black and white; every new
 file; audit entries for every sensitive write touched; and the CHANGELOG entry written in the voice a masjid
 reads, under the release heading — a **headline** if a masjid would notice it, under `### Also in this
 release` if they would not (§19, "One changelog, two audiences").
+
+**An academic-layer phase (§4a) additionally is not done until:** every new procedure is **admin-gated
+server-side** and carries its role × origin row (a finance session gets `FORBIDDEN`, not a filtered view);
+**no medical field, inquiry body or academic record appears in any log, alert text, export or Fabric
+response** — asserted, not reviewed; every **derived** number is proven to move when its inputs move (a
+closure day added in April changes March's rate; a mark corrected after finalization does **not** change
+the finalized card); the **migration is safe on a live install that already has students, invoices and
+payments** and its `_journal.json` `when` is strictly greater than the last applied one (§9); **nothing in
+the phase touched the ledger, invoicing or the Fabric contract** (§11) — if `billing/` changed, say why in
+the PR; §4a's status table, the §4 code comments the phase contradicts, §9's table list and
+`docs/DATA_MODEL.md` are all updated **in the same commit**; and the phase's own test list at the bottom
+of its `docs/` spec passes, with each non-obvious guard proven by mutation — delete the fix, watch it go
+red, put it back (§20). **A guard that passes vacuously is worse than none**, and this repo has the scar:
+a past-due test named the child after the household, so "the household name is gone" passed on a
+substring of the student's name.
 
 ---
 
@@ -1577,6 +1976,13 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | a date | `settings/dates.ts` |
   | the calendar or the roster tree | `structure/*`, `schools/index.ts` |
   | a screen that stutters, jitters or scrolls badly | `styles/shell.css`'s paint-cost block (§15) — count the `backdrop-filter` surfaces first, then `lib/money.ts` and `lib/scrollIdle.ts` |
+  | which student fields exist, who may see one, or what an office switched off | `people/fields.ts` (§5's medical wall, §9) |
+  | which class a child is in, or was in on a date | `structure/enrollment.ts` — never `UPDATE students SET class_id` |
+  | whether the madrasah teaches on a given day | `structure/calendar.ts` |
+  | an attendance rate, count or streak | `attendance/derive.ts` |
+  | a percentage, a weighted average or a grade band | `academics/derive.ts` |
+  | an inquiry becoming a student | `admissions/convert.ts`, then `admissions/fees.ts` for the enrollment fee |
+  | what a report card shows once it is finalized | its stored snapshot — not the live tables (§9) |
 
 - **A fix goes where the rule lives, not where the symptom appeared.** Two places disagreeing about the same
   rule is the recurring shape of this codebase's real bugs — the username case defect, the display order that
@@ -1584,11 +1990,16 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   one, unify it and leave the reason in a comment.
 - **Every non-obvious fix gets a test that fails without it.** Prove that: delete the fix, watch it go red,
   put it back. A guard that passes vacuously is worse than none.
-- If a task seems to need card-present hardware, Stripe Billing subscriptions, a webhook, an academic feature,
-  or a student/teacher login — **stop**: the first two belong elsewhere (Kiosk / §13.3), the third was removed
-  by design (§13.4), and the rest are out of scope (§4).
-- Write non-trivial decisions into `docs/DATA_MODEL.md` / `docs/PAYMENTS.md`; security findings and what was
-  done about them into `docs/audit/`.
+- If a task seems to need card-present hardware, Stripe Billing subscriptions, or a webhook — **stop**:
+  the first belongs to Kiosk, the second is §13.3, and the third was removed by design (§13.4). **Academic
+  features are no longer on that list** (§4a) — but a **timetable**, a **teacher or student login**, a
+  **user-defined student field**, or **any file upload** still are, and so is anything that would open a
+  second path into the ledger.
+- Write non-trivial decisions into `docs/DATA_MODEL.md` / `docs/PAYMENTS.md` / `docs/ADMISSIONS.md` /
+  `docs/ATTENDANCE.md` / `docs/ACADEMICS.md`; security findings and what was done about them into
+  `docs/audit/`. **When a §4a phase ships, move its row in §4a's table to "built", correct the §4 code
+  comments it contradicts, and update §9's table list and `docs/DATA_MODEL.md` in the same commit** — the
+  gap between "specified" and "built" is only honest while somebody closes it.
 
 ### Open questions to confirm with Hasan before the affected step
 
@@ -1604,3 +2015,33 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
    beta masjid actually takes ACH before that is built out.
 7. ~~PIN policy~~ — **settled (v0.39.0): no PINs.** Student ID only, with a name-confirmation step and a
    per-ID lockout (§11.2, §14).
+
+**The academic layer's thirteen decisions are SETTLED (Hasan, 0.52.0)** and are recorded here so the next
+session does not reopen them. Each is implemented where its rule lives; this is the index, not the rule.
+
+| # | Question | Settled as |
+|---|---|---|
+| 1 | Enrollment fee timing | **Charged on enrollment**, not pay-to-confirm — the latter means accepting money for a child with no student record, i.e. a new path into the ledger |
+| 2 | What a parent sees | **Finalized report cards only** |
+| 3 | Empty cells on import | On an **insert**, empty = "not provided"; on an **update**, empty = "leave unchanged", with an explicit sentinel to clear. Note the importer has **no update path at all** today, so re-uploading an edited template currently creates duplicates — Phase 1 fixes that |
+| 4 | Grading scheme scope | **One per install**, plus the per-subject *type* (graded / pass-fail / narrative), which covers hifz without a second scheme |
+| 5 | Report card snapshot | **Structured snapshot, re-rendered by current templates** (§9) |
+| 6 | XLSX library | **None.** `lib/xlsx.ts` reads; a minimal STORE-only writer is ~120–160 lines (§7) |
+| 7 | Waitlist capacity | **Manual ordering, no capacity** — capacity would have to be enforced in rollover, bulk assign and admission, three paths that cannot currently fail |
+| 8 | Documents at admission | **Out of scope**, with the photo removed alongside them (§4 ❌, §14's attachment rules) |
+| 9 | Inquiry form fields | **Fixed set** — a configurable public form is a configurable attack surface |
+| 10 | Re-admission & the fee plan | **The office reconfirms per child, pre-filled, with the diff shown** |
+| 11 | Attendance granularity | **Per class per session.** Per subject implies a timetable |
+| 12 | Who takes the register | **Admin only.** Keyed `(class, date, session)` and storing `taken_by_user_id` from day one, so a teacher role later is an auth change rather than a data migration (`docs/ATTENDANCE.md` §3.4) |
+| 13 | Attendance in the portal | **Not at all for now**, then on the finalized report card in Phase 5 |
+
+**Newly open, and each is answered by the phase that needs it** — raise before the step, not during it:
+
+8. **Whether the teacher record ever gains a login.** The record is in and the login is out (§4 ❌), and
+   `teachers` deliberately carries **no `user_id`** so the model cannot drift into an auth path by
+   accident. Ask before adding one.
+9. **Whether `audit_log` gets a real reader.** §5 records that nothing reads it; §9 records that the
+   academic layer therefore duplicates a facet of it wherever a history is a product surface. Building
+   the reader would make most of that duplication unnecessary.
+10. **Whether the medical fields' allow-list should ever admit finance** (§5's medical wall). Settled as
+    **no** for 0.52.0; it is the kind of thing an office asks for once a nurse is involved.

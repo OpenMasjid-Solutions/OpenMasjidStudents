@@ -32,7 +32,31 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 <!-- The line opened when 0.51.0 shipped. Headlines first, then `### Also in this release` and
      everything else below it (see the two-audiences note at the top of this file). -->
 
-- Nothing yet.
+- Nothing a masjid would notice yet — this release is still being built.
+
+### Also in this release
+
+- **The academic layer is specified.** The v0.35.0 decision to narrow this app to fees and money is
+  reversed: a real student record, admissions, a daily register, a gradebook and report cards are
+  being built back, in six phases that each ship on their own. **No feature code yet** — this is the
+  specification, written before the code the way the payments and WhatsApp doctrines were.
+  `CLAUDE.md` §4a is the scope and carries the status per phase; `docs/ADMISSIONS.md`,
+  `docs/ATTENDANCE.md` and `docs/ACADEMICS.md` are the specs; `docs/DATA_MODEL.md` lists the
+  eighteen planned tables; the README says plainly which of it exists.
+- **Two invariants were amended rather than quietly worked around.** §14's "no medical fields"
+  becomes an amendment with conditions — admin-only through a role-keyed column allow-list, off
+  until an office turns them on, never parent-facing, never in a log, alert, export or Fabric
+  response — because the default without that mechanism is that finance sees them with no code
+  change at all. And §14 now carries the **attachment rules** §4 had been citing since before they
+  existed, which is the same dangling-citation defect §14 recorded about itself in 0.51.0-dev.17.
+  **Photos, documents and uploads of every kind stay out**, so nothing needs them yet.
+- **Three things the spec records as costs rather than discovering later.** Class history cannot be
+  reconstructed — every class-change audit row holds the new value and never the old one — so
+  `enrollments` comes back and roster history starts the day it ships. `charges` has no unique index
+  and `chargeAdd` does not check for an existing row, so re-approving a re-admission would charge a
+  family twice; a natural key lands before admissions does. And a migration whose hand-typed `when`
+  is not strictly increasing applies on a fresh database and is skipped forever on a live one, so a
+  journal guard test lands first.
 
 ## [0.51.0]
 

@@ -25,10 +25,16 @@ one screen. Those payments land in the same ledger over the OpenMasjidOS **Fabri
 *provides* the `students/billing` capability those apps consume
 (see [`docs/FABRIC_BILLING_CONTRACT.md`](docs/FABRIC_BILLING_CONTRACT.md)).
 
-> **Tuition, not academics.** This app was deliberately narrowed to fees and money in v0.35.0.
-> There is no attendance, gradebook, report cards, transcripts, timetable or admissions pipeline,
-> and no teacher or student login — those were removed and stay out. Courses and classes exist
-> only as **labels** for grouping students on the roster and applying fees in bulk.
+> **The academic layer is coming back (0.52.0 →).** This app was deliberately narrowed to fees and
+> money in v0.35.0, and this notice used to say academics were gone for good. That decision is
+> reversed: a **real student record**, an **admissions funnel**, a **daily register**, a
+> **gradebook** and **report cards** are specified and being built in phases. **None of it has
+> shipped yet** — everything described in *What it does* below is what exists today. See
+> [What's coming](#whats-coming-the-academic-layer) for the plan, and
+> [`CLAUDE.md`](CLAUDE.md) §4a for the scope and the per-phase status.
+>
+> What is **not** coming back: a timetable, a teacher or student login, user-defined custom fields,
+> and file uploads of any kind.
 
 ---
 
@@ -89,8 +95,9 @@ The complete feature set, by area.
 - **Optional terms** within a year, so a `per-term` fee cadence means something concrete.
 - **Courses → classes** as a two-level grouping, with archive, delete and a deletability check.
 - **Assign a student to a class**, individually or in bulk, and list students by class.
-- Deliberately **organizational only**: no teachers, no attendance, no grades, no capacity. These
-  labels drive the roster, the year view, and applying fees to many children at once.
+- **Organizational only, today**: no teachers, no attendance, no grades, no capacity. These labels
+  drive the roster, the year view, and applying fees to many children at once. The academic layer
+  (below) builds **on** these same labels rather than beside them — a class stays one thing.
 
 ### Fee plans &amp; assignment
 
@@ -405,6 +412,58 @@ The complete feature set, by area.
 
 ---
 
+## What's coming: the academic layer
+
+**Specified, not shipped.** Everything above exists today; everything here is a plan with a written
+specification and no code yet. It arrives in phases, each one shipping on its own and leaving the
+app fully working. [`CLAUDE.md`](CLAUDE.md) §4a carries the per-phase status — a phase reads
+"built" only once it has shipped.
+
+**A real student record.** Today a student is a name, a Student ID, an optional date of birth and a
+status — a billing record, not a student record. It gains the things a madrasa actually keeps: date
+of admission, date of withdrawal and why; an address on the child (guardians and phone numbers stay
+on the household, as they are); prior schooling and any hifz progress on arrival; medical notes,
+allergies and emergency medical consent; languages and nationality; and office notes with an author
+and a timestamp. **Every field can be switched off in Settings**, and Settings itself gains tabs.
+The **medical fields are admin-only and off until an office turns them on** — the finance manager
+never sees them. Import grows to match: download a template **pre-filled with your current data**
+plus the new columns, edit it, upload it back.
+
+**Admissions** — [`docs/ADMISSIONS.md`](docs/ADMISSIONS.md). The funnel a family actually walks: a
+short **public inquiry form** you can embed in the masjid's own website, a **waitlist** the office
+orders by hand, an **offer**, and an **admission form** that reaches the family as a one-time link.
+Completing it is what creates the student and mints their Student ID — an inquiry never does.
+**Re-admission** is its own flow for the families you already have: pre-filled from what you hold,
+the family edits what changed, and the office approves a **diff** rather than a blind overwrite —
+in bulk, because it happens to a whole school in one fortnight. Admission and re-admission fees are
+raised as ordinary charges through the machinery that already bills everything else.
+
+**Attendance** — [`docs/ATTENDANCE.md`](docs/ATTENDANCE.md). A **daily register**, not a timetable:
+one class, one date, one named session, one mark — present, absent, late, or excused, with excused
+a state of its own rather than a footnote on absent. It starts with a **calendar** that knows which
+weekdays this madrasah teaches and which days it is closed, because closures move with the lunar
+calendar and an absence rate computed against "every day in the term" is worthless. Whole class on
+one screen, everyone present by default, one tap to change. And a view of **which registers have
+not been taken**, because chasing that is the real job.
+
+**Marks and hifz** — [`docs/ACADEMICS.md`](docs/ACADEMICS.md). Subjects the install defines, each
+graded, pass/fail or narrative; teachers and who teaches what; assessments with weights; marks where
+"absent" is not a zero; and **hifz as a running record** — sūrah, āyah, juz, sabaq / sabqi / manzil —
+rather than a score out of ten, because that is what it is.
+
+**Report cards.** One grading scheme per install with the bands the madrasah writes, a card per
+student per term, and a **draft → finalized** lifecycle where finalizing freezes what the card
+showed. A mark corrected in March does not rewrite the card issued in January. Printable in the same
+way statements are, and visible to parents in the portal — **finalized cards only**.
+
+**Two things about it worth knowing up front.** All of it is **admin-only**, and admin works only on
+the masjid network — so the register is taken on masjid Wi-Fi, by its LAN address, not through the
+public link. And **class history starts the day it ships**: the app has never recorded which class a
+child was in *last* term, and that cannot be reconstructed, so a term that predates the feature says
+"no roster history" instead of showing you a number that looks right.
+
+---
+
 ## Roles &amp; access
 
 Three roles. Checks are enforced server-side on every procedure, not in the UI.
@@ -418,6 +477,11 @@ Three roles. Checks are enforced server-side on every procedure, not in the UI.
 **Admin is network-only by design, at both login *and* session use** — a cookie minted on the
 LAN is refused if it is later presented from the internet. Clean walls elsewhere: finance never
 sees settings or staff management; parents can only ever reach their own household.
+
+The academic layer keeps those walls and adds one. All of it is **admin-only** — and therefore
+network-only — so admissions, the register and the gradebook are worked on masjid Wi-Fi, by the
+LAN address. **Finance never sees a medical field, an admissions record or a mark**; parents see
+**finalized report cards for their own children**, and nothing else of it.
 
 ---
 
@@ -487,7 +551,18 @@ money. The invariants that hold it together —
   can change hands.
 - **Money is append-only**: payments immutable, balances derived, reversals instead of edits, and
   foreign keys that refuse to delete anything money references.
-- Invite / reset / verification tokens are CSPRNG, single-use, expiring, and **stored hashed**.
+- Invite / reset / verification tokens are CSPRNG, single-use, expiring, and **stored hashed**. The
+  admission and re-admission links reuse that same machinery rather than a second one.
+- **There are no file uploads, anywhere** — no student photos, no documents at admission, no payment
+  proofs. There is no upload path in the app at all, and any future one has six questions to answer
+  first (they are written down, in `CLAUDE.md` §14).
+- **Medical fields are admin-only and off by default**, behind a server-side allow-list that decides
+  per role which columns of a student record leave the server. A field nobody listed is visible to
+  nobody, which is the safe direction.
+- **The public inquiry form is the only part of the academic layer reachable without signing in**,
+  and it stays that way. It answers identically whatever you submit, so it cannot be used to find out
+  whether a child, an email or a family is already known; nothing submitted through it is ever
+  written to a log.
 - `/data` holds minors' PII and every payment record — treat backups of it accordingly.
 
 Findings and remediation from the August 2026 audit are in [`docs/audit/`](docs/audit/).
@@ -590,6 +665,11 @@ May Allah reward everyone who made it possible.
 ## Status
 
 Active development. See [`CHANGELOG.md`](CHANGELOG.md) for what has landed.
+
+The **academic layer** (0.52.0 →) is specified and not yet shipped — [`CLAUDE.md`](CLAUDE.md) §4a
+carries the per-phase status, and [`docs/ADMISSIONS.md`](docs/ADMISSIONS.md),
+[`docs/ATTENDANCE.md`](docs/ATTENDANCE.md) and [`docs/ACADEMICS.md`](docs/ACADEMICS.md) are the
+specifications. Each says at the top which of it exists.
 
 ## License
 
