@@ -32,7 +32,25 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 <!-- The line opened when 0.51.0 shipped. Headlines first, then `### Also in this release` and
      everything else below it (see the two-audiences note at the top of this file). -->
 
-- Nothing a masjid would notice yet — this release is still being built.
+- **A student is a record now, not just a name and a bill.** You can keep when a child was admitted,
+  when they left and why, their address, where they studied before and how far they had memorized on
+  arrival, the languages they speak and their nationality — and, if your madrasah needs them, medical
+  notes, allergies and emergency medical consent. Open a child's **Record** from their row on the
+  household screen.
+- **You choose what your madrasah keeps.** Every one of those fields can be switched off under
+  Settings → Students, and anything switched off disappears from every screen rather than sitting
+  there as an empty box. Switching one off hides what is in it; it never deletes it.
+- **The medical fields are treated differently, on purpose.** Only an admin can see or edit them —
+  the finance manager never can, on any screen — and they never appear on anything a parent reads, in
+  an alert, in a log or in a payment record. They are off until you turn them on.
+- **Office notes are signed and dated.** A note now records who wrote it and when, and sits on the
+  child's record where it can be read back. Notes cannot be edited or deleted afterwards: if
+  something was written in error, add a note saying so. Anything in the old notes box has been kept
+  and appears as the first note on that child.
+- **Settings is in tabs** — School, Students, Documents, Messages, Payments — instead of one very long
+  page.
+- **The import template now downloads as an Excel file.** A CSV opened in Excel and saved back is
+  where a date column quietly changes meaning; a workbook skips that step. The CSV is still there.
 
 ### Also in this release
 
@@ -57,6 +75,24 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   family twice; a natural key lands before admissions does. And a migration whose hand-typed `when`
   is not strictly increasing applies on a fresh database and is skipped forever on a live one, so a
   journal guard test lands first.
+- **Phase 1's remaining piece, named rather than quietly dropped.** The template does not yet come
+  PRE-FILLED with the install's own rows, because the importer has no update path — a pre-filled file
+  uploaded back would create a duplicate of every child. Doing it safely needs a row identity (the
+  Student ID column), create-vs-update classification, an error rather than a silent create for an ID
+  matching nothing, "empty means leave unchanged" on an update, and a preview that says how many rows
+  are new and how many are changes. That is a bulk write across a whole roster and it lands on its own.
+- **Under it all: `people/fields.ts`, and it matters more than the fields.** `familyGet` was an
+  admin-or-finance procedure selecting the whole student row, and the finance shell renders the same
+  household component the admin shell does — its read-only flag only ever wrapped buttons. So a medical
+  column would have reached finance through an ALTER TABLE and no code change at all. One file now
+  answers all three questions about a field (does it exist, did the office switch it off, may this role
+  see it) and a role's query fetches only the columns it may have, so what a role cannot see is never
+  read out of the database. Proven by mutation: widening the allow-list to finance turns three tests
+  red. Migration 0042 was verified against a live database holding students with notes.
+- **`lib/xlsxWrite.ts` — writing a workbook with no spreadsheet library**, the other half of the reader
+  added in 0.48.0. STORE-only ZIP, inline strings so there is no string table, ISO date TEXT so there
+  is no style table and no handing the value back to Excel's locale. Every test round-trips through the
+  real reader, which is the assertion that matters: a file we hand an office is one this app reads back.
 - **Phase 0 is built — three foundations, none of them visible to a masjid.** A guard test on the
   migration journal, because since 0032 the timestamps that decide whether a migration runs have been
   typed by hand, and one that is not strictly greater than the last applies fine on a fresh database

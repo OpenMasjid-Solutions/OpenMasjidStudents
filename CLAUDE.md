@@ -418,7 +418,7 @@ phase reads "built" only when it has shipped, and until then this section descri
 | Phase | What | Status |
 | --- | --- | :-- |
 | **0** | Foundations: these amendments; the migration-journal guard; `charges.source_key`; the CSV round-trip fix | **BUILT** *(0.52.0-dev.2)* |
-| **1** | The student record — real fields, a screen to edit them on, the field registry, Settings tabs, import | **specified** |
+| **1** | The student record — real fields, a screen to edit them on, the field registry, Settings tabs, import | **mostly BUILT** *(0.52.0-dev.3)* — see below |
 | **2** | Admissions — inquiry → waitlist → offer → admission → re-admission (`docs/ADMISSIONS.md`) | **specified** |
 | **3** | Attendance — enrollment history, the calendar, the daily register (`docs/ATTENDANCE.md`) | **specified** |
 | **4** | Academics — subjects, teachers, assessments, marks, hifz (`docs/ACADEMICS.md`) | **specified** |
@@ -460,14 +460,25 @@ switches, **not** user-defined custom fields, which stay out. Settings gains **t
 the way OpenMasjidOS does it — noting this app has no react-router at all, so it is the same shape and
 not the same code.
 
-**The screen is the work.** `studentUpdate` exists and has exactly **one** call site in the entire web
-app (the withdraw toggle); `students.notes` is written by two paths and rendered by none. Phase 1 is
+**The screen is the work.** `studentUpdate` had exactly **one** call site in the entire web app (the
+withdraw toggle) and `students.notes` was written by two paths and rendered by none. Phase 1 is
 therefore "build the student record screen that does not exist", and twelve more write-only columns is
 the failure mode it has to avoid. **Import** extends the existing pattern: download a template
 **pre-filled with the install's current data** plus the new columns, edit, re-upload. That needs an
 **.xlsx writer** — and no library: `lib/xlsx.ts` already reads, and a minimal STORE-only ZIP emitter is
 ~120–160 lines with no compression, no `sharedStrings.xml` and no `styles.xml` (§7 — "Ask before adding
 heavy dependencies", and a working ZIP writer already exists in this repo's own `xlsx.test.ts`).
+
+> **WHAT IS BUILT, AND THE ONE PIECE THAT IS NOT** (0.52.0-dev.3). Built: the eleven columns,
+> `student_notes`, `people/fields.ts`, `people.studentGet` / `studentNoteAdd` / `studentFields{Get,Set}`,
+> the record screen, tabbed Settings, and `lib/xlsxWrite.ts` (the template now downloads as a workbook).
+> **Not built: the PRE-FILLED template and the update path it requires**, and they are one piece rather
+> than two. The importer has no update path at all today, so a template carrying the install's current
+> rows would create a duplicate of every child the moment it was uploaded back — decision 3's note.
+> Doing it safely means a row identity (the Student ID column), create-vs-update classification, an
+> error rather than a silent create for an ID that matches nothing, "empty means leave unchanged" on an
+> update with an explicit sentinel to clear, and a preview that says how many rows are new and how many
+> are changes. That is a bulk write across a whole roster and it gets its own slice.
 
 **Phase 2 — admissions.** Full spec in `docs/ADMISSIONS.md`. The headline rules: an **inquiry is not a
 student and not a household**, it never mints a Student ID, and the ID is minted at **conversion** and

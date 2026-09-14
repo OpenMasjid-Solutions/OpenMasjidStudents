@@ -247,7 +247,6 @@
     "title": "Import students",
     "intro": "Upload a spreadsheet or CSV and match its columns to the fields below. Nothing is saved until you review the result. Each student becomes one household of their own — link brothers and sisters afterwards, on either child’s record.",
     "pickFile": "Spreadsheet or CSV file",
-    "downloadTemplate": "Download template",
     "templateHint": "Every column the importer understands, with four example rows showing how a second parent, a sibling discount and a relative are written. Replace them with your own students — an example row left in is refused rather than imported.",
     "emptyFile": "That file has no rows we could read.",
     "matchColumns": "Match columns",
@@ -325,7 +324,9 @@
     "feesUnsaved_other": "{{count}} rows haven’t been saved yet — press Save on each, or they won’t be kept.",
     "feeNoPlan": "— pick a plan —",
     "feeSearch": "Search by name",
-    "feeSearchCount": "Showing {{shown}} of {{total}}."
+    "feeSearchCount": "Showing {{shown}} of {{total}}.",
+    "downloadTemplateXlsx": "Download template (Excel)",
+    "downloadTemplateCsv": "Download template (CSV)"
   },
   "year": {
     "title": "Year view",

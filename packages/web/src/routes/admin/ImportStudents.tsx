@@ -12,6 +12,7 @@ import { Check } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
 import { autoMatchColumns, toCsv, downloadCsv } from '../../lib/csv';
+import { downloadXlsx, toXlsx } from '../../lib/xlsxWrite';
 import { parseSpreadsheet, XlsxError } from '../../lib/xlsx';
 import { formatMoney } from '../../lib/money';
 import { useSchool } from '../../components/SchoolTabs';
@@ -305,13 +306,25 @@ export function ImportStudents() {
     });
   }, [cells, mapping, cols]);
 
-  function downloadTemplate() {
+  /**
+   * The template, in whichever of the two formats the office actually works in.
+   *
+   * Every column, and four example rows (0.48.0). The labels are exactly what the auto-matcher
+   * recognizes; the rows show the two things a header row cannot — that a line with no name is
+   * another adult for the student above it, and that the Amount column overrides the plan for one
+   * child. The examples come from the server, which is also what refuses them if they are left in.
+   *
+   * **.xlsx is offered first from 0.52.0**, and it is not a convenience. An office opens a CSV in
+   * Excel and saves it back, which is precisely where a date column gets reinterpreted by the
+   * machine's locale and 03/04 becomes the wrong day. Handing them a workbook skips that step.
+   * The writer is ours (`lib/xlsxWrite.ts`) — no spreadsheet dependency, §7.
+   */
+  function downloadTemplate(as: 'xlsx' | 'csv') {
     if (!cols) return;
-    // Every column, and four example rows (0.48.0). The labels are exactly what the auto-matcher
-    // recognizes; the rows show the two things a header row cannot — that a line with no name is
-    // another adult for the student above it, and that the Amount column overrides the plan for one
-    // child. The examples come from the server, which is also what refuses them if they are left in.
-    downloadCsv('students-template.csv', toCsv(cols.map((f) => f.label), template.data?.example ?? []));
+    const headers = cols.map((f) => f.label);
+    const rows = template.data?.example ?? [];
+    if (as === 'csv') downloadCsv('students-template.csv', toCsv(headers, rows));
+    else downloadXlsx('students-template.xlsx', toXlsx(headers, rows.map((r) => r.map((c) => c ?? '')), 'Students'));
   }
 
   async function onFile(file: File) {
@@ -401,9 +414,14 @@ export function ImportStudents() {
             <p className="hint">{t('import.pickFileHint')}</p>
           </div>
           {parseError && <p className="form-error">{parseError}</p>}
-          <button type="button" className="btn btn--ghost btn--sm" onClick={downloadTemplate} disabled={!cols}>
-            {t('import.downloadTemplate')}
-          </button>
+          <div className="inline-form" style={{ gap: '0.4rem' }}>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => downloadTemplate('xlsx')} disabled={!cols}>
+              {t('import.downloadTemplateXlsx')}
+            </button>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => downloadTemplate('csv')} disabled={!cols}>
+              {t('import.downloadTemplateCsv')}
+            </button>
+          </div>
           <p className="hint">{t('import.templateHint')}</p>
         </section>
       )}
