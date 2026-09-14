@@ -419,7 +419,7 @@ phase reads "built" only when it has shipped, and until then this section descri
 | --- | --- | :-- |
 | **0** | Foundations: these amendments; the migration-journal guard; `charges.source_key`; the CSV round-trip fix | **BUILT** *(0.52.0-dev.2)* |
 | **1** | The student record — real fields, a screen to edit them on, the field registry, Settings tabs, import | **BUILT** *(0.52.0-dev.4)* |
-| **2** | Admissions — inquiry → waitlist → offer → admission → re-admission (`docs/ADMISSIONS.md`) | **part built** *(0.52.0-dev.7)* |
+| **2** | Admissions — inquiry → waitlist → offer → admission → re-admission (`docs/ADMISSIONS.md`) | **BUILT** *(0.52.0-dev.9)* |
 | **3** | Attendance — enrollment history, the calendar, the daily register (`docs/ATTENDANCE.md`) | **specified** |
 | **4** | Academics — subjects, teachers, assessments, marks, hifz (`docs/ACADEMICS.md`) | **specified** |
 | **5** | Report cards — grading scheme, draft → finalized, the frozen snapshot (`docs/ACADEMICS.md`) | **specified** |
@@ -514,9 +514,9 @@ that way** (§14); admission and re-admission links **reuse the existing hashed 
 machinery**; conversion and enrollment-fee raising are **idempotent**; and the **enrollment fee is an
 ordinary charge** through the existing charge procedures — admissions opens no new path into the ledger.
 
-> **WHAT OF IT IS BUILT (0.52.0-dev.7), and what is not.** The phase ships in two halves because the
-> first one stands on its own: a masjid can put the form on their website and work the pipeline from
-> the desk, with nothing half-finished on screen, before conversion exists.
+> **BUILT, across three dev builds (0.52.0-dev.7 to -dev.9).** It shipped in halves because each one
+> stands on its own: a masjid could put the form on their website and work the pipeline from the desk
+> before conversion existed, and admit children before re-admission did.
 >
 > **Built:** all four tables and the two `school_years` fee columns (migration 0044, verified against
 > a live database holding students, invoices, payments and charges); the **public form** —
@@ -535,9 +535,22 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > lift it or to write a second thing that mints an ID its own way, and only one of those is allowed
 > (§16). Every path that creates a child now comes through that file.
 >
-> **Not built yet:** §5, **re-admission**. `admission_links` and `readmissions` are tables with no
-> writer, which is why they are named here rather than left to be noticed. It follows conversion
-> because it is the same machinery pointed at a child who is already on the roster.
+> **dev.9** added §5, **re-admission** (`admissions/readmission.ts`): opening a year for a cohort
+> through the SAME `structure/audience.ts` mass fee apply and the onboarding send use — which is also
+> what enforces "withdrawn students are excluded", since that resolver returns active students only;
+> a one-time link per family through the extracted `auth/tokens.ts`; a submission stored INERT as a
+> proposal; and an approval that writes **only the fields that changed and the office accepted**.
+>
+> That extraction is worth naming: `auth/tokens.ts` is now the one place a link token is minted and
+> hashed, and invites and password resets were repointed at it in the same commit. There were three
+> copies of "randomBytes, then sha256, then an expiry" and the fourth was about to be written — which
+> is three places to get single-use wrong on surfaces reachable from the internet (§16).
+>
+> **One deviation from the spec's own diagram, recorded rather than slipped in:** `admitted` is
+> reachable from every live state, not only from `offered`, because a family admitted the morning they
+> walked in would otherwise need four actions for one conversation, two of them recording an offer
+> nobody made. The invariant is untouched — `admitted` still means a student EXISTS, and only
+> `markAdmitted`, inside conversion's transaction, can apply it.
 
 **Phase 3 — attendance.** Full spec in `docs/ATTENDANCE.md`. It opens with **enrollment history**, which
 is a schema reversal (`enrollments`, recorded in `docs/DATA_MODEL.md` as deliberately not re-created) and
@@ -1779,8 +1792,18 @@ secrets). Additions:
   percentage, weighted average and band, rounding **once**; one **`admissions/transition.ts`** for moving an inquiry
   along the pipeline — the one writer of a state, of the `inquiry_events` trail and of the audit row
   beside it (BUILT, 0.52.0-dev.7); one **`admissions/convert.ts`** for turning an
-  inquiry into a student; and one **`admissions/fees.ts`** for raising an enrollment fee, which it does
-  through the existing charge procedures rather than beside them.
+  inquiry into a student; one **`admissions/fees.ts`** for raising an enrollment fee, which it does
+  through the existing charge procedures rather than beside them; and one
+  **`admissions/readmission.ts`** for what a returning family's answer changes — its `diffSubmission`
+  is used by BOTH the office's preview and the approval that applies it, which is what makes "preview
+  and commit agree" a property rather than a hope.
+
+  Two more landed with Phase 2 that are not academic at all, and both replaced copies rather than
+  adding a place: **`auth/tokens.ts`** (the one place a one-time link token is minted, hashed and
+  checked — invites, resets and both admission links now share it, where there had been three copies
+  of the same twenty lines) and **`people/create.ts`** (the one implementation of "create a student",
+  lifted out of `trpc/people.ts` so admissions could reach it without a second thing that mints a
+  Student ID its own way).
 - Unit tests for the ledger: exact pay, partial, overpay→credit, multi-invoice, replayed idempotency key,
   reversal, refund, and one per channel.
 - `/fabric/*`, the printable documents and the PWA files are plain Fastify routes registered before the SPA
@@ -2058,6 +2081,9 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | where an inquiry has got to, or who moved it and why | `admissions/transition.ts` — never `UPDATE inquiries SET state` |
   | what the public inquiry form accepts, answers, or refuses | `admissions/publicRoutes.ts`; what it SAYS is `admissions/text.ts` |
   | an inquiry becoming a student | `admissions/convert.ts`, then `admissions/fees.ts` for the enrollment fee |
+  | a returning child confirming another year, or what an approval writes | `admissions/readmission.ts` |
+  | a one-time link token — minting it, hashing it, whether it is still good | `auth/tokens.ts` |
+  | creating a student, or where a Student ID comes from | `people/create.ts` — the ONLY place one is minted |
   | what a report card shows once it is finalized | its stored snapshot — not the live tables (§9) |
 
 - **A fix goes where the rule lives, not where the symptom appeared.** Two places disagreeing about the same

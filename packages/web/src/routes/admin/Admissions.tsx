@@ -27,6 +27,7 @@ import { staggerContainer, staggerItem } from '../../lib/motion';
 import { formatDate } from '../../lib/dates';
 import { useWindows } from '../../components/Windows';
 import { InquiryDetail } from '../../components/InquiryDetail';
+import { Readmissions } from '../../components/Readmissions';
 
 /** The filters, in the order an office works them: everything live, then one state at a time. */
 const FILTERS = ['open', 'new', 'reviewing', 'waitlisted', 'offered', 'declined', 'withdrawn', 'admitted'] as const;
@@ -36,6 +37,7 @@ export function Admissions() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
   const { open } = useWindows();
+  const [view, setView] = useState<'inquiries' | 'readmission'>('inquiries');
   const [filter, setFilter] = useState<Filter>('open');
   const [adding, setAdding] = useState(false);
   const [err, setErr] = useState('');
@@ -99,6 +101,22 @@ export function Admissions() {
         </button>
       </div>
 
+      {/* Two halves of one desk: families asking for the first time, and families being asked to
+          confirm another year. Different work, same fortnight, so they are one screen with a switch
+          rather than two dock items competing for the same corner of an office's attention. */}
+      <div className="filter-bar" role="group" aria-label={t('admissions.title')}>
+        <button type="button" className={cn('btn btn--ghost btn--sm', view === 'inquiries' && 'is-active')} aria-pressed={view === 'inquiries'} onClick={() => setView('inquiries')}>
+          {t('admissions.viewInquiries')}
+        </button>
+        <button type="button" className={cn('btn btn--ghost btn--sm', view === 'readmission' && 'is-active')} aria-pressed={view === 'readmission'} onClick={() => setView('readmission')}>
+          {t('admissions.viewReadmission')}
+        </button>
+      </div>
+
+      {view === 'readmission' ? (
+        <Readmissions />
+      ) : (
+        <>
       <p className="hint">{t('admissions.intro')}</p>
 
       {adding && (
@@ -194,6 +212,8 @@ export function Admissions() {
             </div>
           </motion.section>
         </motion.div>
+      )}
+        </>
       )}
     </div>
   );

@@ -61,6 +61,7 @@ import { config } from '../config';
 import { getAccentColor, getAdmissions, getSchoolLogo, getSchoolName, getSetting, parseLogoDataUri, setSetting } from '../settings';
 import { INQUIRY_CAPS, storeInquiry } from './inquiry';
 import { admissionsTextHtml, admissionsTextPlain } from './text';
+import { READMISSION_CAPS, READMISSION_FIELDS, readmissionByToken, submitReadmission } from './readmission';
 
 /** Ids and outcome words only — never a name, an address or a body (§14). */
 const log = makeLog('admissions');
@@ -247,11 +248,15 @@ const FIELDS: { name: string; label: string; type: string; cap: number; required
  * Fastify before any handler runs — a different response, which would break the one rule this surface
  * has. `<noscript>` therefore says to call the office, which is honest rather than silent.
  */
-function renderPage(opts: { open: boolean; token: string }): string {
-  const school = esc(getSchoolName());
-  const accent = esc(getAccentColor());
-  const style = `
-    :root { color-scheme: light dark; --accent: ${accent}; }
+/**
+ * The chrome both public pages share — one stylesheet, one shell.
+ *
+ * `__ACCENT__` is substituted rather than interpolated so this stays a constant: the accent is
+ * re-validated against a hex pattern on read (`getAccentColor`), because it lands inside a `<style>`
+ * block, and a template literal here would make it look like any other value.
+ */
+const PAGE_STYLE = `
+    :root { color-scheme: light dark; --accent: __ACCENT__; }
     * { box-sizing: border-box; }
     body { margin: 0; padding: 1.25rem; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #17211f; background: #f6f8f7; }
     @media (prefers-color-scheme: dark) { body { color: #e8efec; background: #10161a; } .box { background: #182026; border-color: #2a3740; } input, textarea { background: #0f161a; color: inherit; border-color: #33424c; } }
@@ -267,8 +272,30 @@ function renderPage(opts: { open: boolean; token: string }): string {
     button[disabled] { opacity: 0.6; cursor: default; }
     .hint { font-size: 0.85rem; opacity: 0.75; }
     .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+    button.ghost { color: var(--accent); background: transparent; border: 1px solid currentColor; }
     .done { display: none; }
   `;
+
+/** The document both pages are poured into. Nothing external: no font, no stylesheet, no image that
+ *  is not a data URI — partly because the CSP says so, and partly because this is the one page a
+ *  masjid embeds in a site we know nothing about. It has to be impossible to blame. */
+function page(school: string, style: string, inner: string, script = ''): string {
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${school}</title>
+<style>${style}</style>
+</head><body><div class="wrap">
+${logoTag()}
+${inner}
+</div>${script ? `<script>${script}</script>` : ''}</body></html>`;
+}
+
+function renderPage(opts: { open: boolean; token: string }): string {
+  const school = esc(getSchoolName());
+  const style = PAGE_STYLE.replace('__ACCENT__', esc(getAccentColor()));
 
   const fields = opts.open
     ? FIELDS.map((f) => {
@@ -312,21 +339,86 @@ function renderPage(opts: { open: boolean; token: string }): string {
     })();`
     : '';
 
-  return `<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>${school}</title>
-<style>${style}</style>
-</head><body><div class="wrap">
-${logoTag()}
-<h1>${school}</h1>
-<div class="box">
-${body}
-${done}
-</div>
-</div>${script ? `<script>${script}</script>` : ''}</body></html>`;
+  return page(school, style, `<h1>${school}</h1><div class="box">${body}${done}</div>`, script);
+}
+
+/** The fields a family may confirm or change, with the label they see. A FIXED set (decision 9). */
+const READMISSION_BOXES: { name: (typeof READMISSION_FIELDS)[number]; label: string }[] = [
+  { name: 'address', label: 'Home address' },
+  { name: 'guardianName', label: 'Parent or guardian' },
+  { name: 'guardianPhone', label: 'Phone' },
+  { name: 'guardianEmail', label: 'Email' },
+  { name: 'languages', label: 'Languages spoken at home' },
+  { name: 'nationality', label: 'Nationality' },
+];
+
+const READMISSION_BODY = z.object({
+  token: z.string().min(1).max(200),
+  returning: z.boolean(),
+  address: z.string().max(400).optional(),
+  languages: z.string().max(200).optional(),
+  nationality: z.string().max(200).optional(),
+  guardianName: z.string().max(200).optional(),
+  guardianPhone: z.string().max(80).optional(),
+  guardianEmail: z.string().max(300).optional(),
+});
+
+/**
+ * The re-admission page — the same chrome as the inquiry form, PRE-FILLED from the current record.
+ *
+ * Pre-filling is what makes the diff small and the family's job short: most of what comes back is
+ * what was already there, and `diffSubmission` writes only what actually moved. Every value is
+ * escaped on the way into the attribute, like every other document this app assembles.
+ */
+function renderReadmissionPage(found: ReturnType<typeof readmissionByToken>, token: string): string {
+  const school = esc(getSchoolName());
+  const accent = esc(getAccentColor());
+  const style = PAGE_STYLE.replace('__ACCENT__', accent);
+
+  if (!found.ok) {
+    const says: Record<string, string> = {
+      unknown: 'We could not find that link. Please ask the office for a new one.',
+      expired: 'That link has expired. Please ask the office for a new one.',
+      used: 'That form has already been sent — thank you. There is nothing more to do.',
+      closed: 'The office has already dealt with this one. Thank you.',
+    };
+    return page(school, style, `<h1>${school}</h1><div class="box"><p>${esc(says[found.reason] ?? says.unknown)}</p></div>`);
+  }
+
+  const c = found.current;
+  const boxes = READMISSION_BOXES.map((b) => {
+    const id = `r_${b.name}`;
+    return `<label for="${id}">${esc(b.label)}</label><input id="${id}" name="${b.name}" type="text" maxlength="${READMISSION_CAPS[b.name]}" value="${esc(c[b.name])}">`;
+  }).join('\n');
+
+  const body = `<p>Assalamu alaikum. Please check that what we hold for <b>${esc(c.fullName)}</b> is still right, change anything that is not, and tell us whether they are coming back.</p>
+      <form id="frm" novalidate>
+        ${boxes}
+        <input type="hidden" name="token" value="${esc(token)}">
+        <button type="submit" id="btn" data-returning="1">Yes — we are coming back</button>
+        <button type="button" id="no" class="ghost">No — not returning this year</button>
+      </form>
+      <p class="hint">This goes to the madrasah office, who will check it before anything is changed.</p>`;
+
+  const done = `<div class="done" id="done"><p>Jazak Allah khayran — we have your answer. There is nothing more to do.</p></div>`;
+
+  const script = `
+    (function () {
+      var f = document.getElementById('frm'), b = document.getElementById('btn'), n = document.getElementById('no'), d = document.getElementById('done');
+      function send(returning) {
+        b.disabled = true; n.disabled = true;
+        var data = { returning: returning };
+        new FormData(f).forEach(function (v, k) { data[k] = String(v); });
+        fetch(${JSON.stringify(`${config.basePath}/public/readmission`)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+          .then(function (r) { return r.json(); })
+          .then(function (r) { if (r && r.ok) { f.style.display = 'none'; d.style.display = 'block'; } else { b.disabled = false; n.disabled = false; } })
+          .catch(function () { b.disabled = false; n.disabled = false; });
+      }
+      f.addEventListener('submit', function (e) { e.preventDefault(); send(true); });
+      n.addEventListener('click', function () { send(false); });
+    })();`;
+
+  return page(school, style, `<h1>${school}</h1><div class="box">${body}${done}</div>`, script);
 }
 
 function sendPage(reply: FastifyReply, html: string, frameAncestors: string): FastifyReply {
@@ -374,6 +466,44 @@ f.src=${JSON.stringify(src)};f.loading='lazy';f.title='Admissions inquiry';f.sty
       .header('cache-control', 'no-store')
       .header('x-content-type-options', 'nosniff')
       .send(js);
+  });
+
+  /**
+   * THE RE-ADMISSION FORM, behind a one-time token (0.52.0-dev.9, docs/ADMISSIONS.md §5).
+   *
+   * **Not the same kind of surface as the inquiry form above, and the difference is the whole
+   * reason the two live side by side.** That one is unauthenticated by design and therefore answers
+   * identically whatever happens. This one is authenticated BY THE TOKEN — 256 bits, single-use,
+   * stored only as a hash, exactly like an invite or a password reset (§12.4's origin table lists it
+   * as its own row for that reason). There is nothing to enumerate, so it says plainly when a link
+   * has expired or already been used: a family staring at "not found" when the real answer is "you
+   * already sent this" is a phone call to the office.
+   *
+   * It writes nothing to the household. What a family sends is stored INERT on the re-admission row
+   * as a PROPOSAL, and the office reviews it as a diff before a single field moves — §4's one
+   * exception to "no parent-initiated data edits" is exactly that shape.
+   *
+   * Switched on with the same `publicForm` setting, because it is the same decision: whether this
+   * install answers to families over the internet at all.
+   */
+  app.get('/public/readmission', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!getAdmissions().publicForm) return off(reply);
+    const token = String((req.query as { token?: string } | undefined)?.token ?? '');
+    const found = token ? readmissionByToken(token) : { ok: false as const, reason: 'unknown' as const };
+    return sendPage(reply, renderReadmissionPage(found, token), "'none'");
+  });
+
+  app.post('/public/readmission', { bodyLimit: BODY_LIMIT }, async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!getAdmissions().publicForm) return off(reply);
+    const parsed = READMISSION_BODY.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ ok: false, reason: 'invalid' });
+    // Throttled per source like every internet-facing submission, even behind a token: the token is
+    // unguessable, but the endpoint is still a place to hammer.
+    if (!inquiryLimiter.allow(rateLimitKey(req))) return reply.code(429).send({ ok: false, reason: 'rate' });
+    const { token, returning, ...fields } = parsed.data;
+    const res = submitReadmission(token, fields, { returning, actor: { userId: null, role: 'public', name: 'Re-admission form' } });
+    log.info('readmission', { ok: res.ok, reason: res.reason ?? null });
+    return reply.code(res.ok ? 200 : 409).header('cache-control', 'no-store').send({ ok: res.ok, reason: res.reason ?? null });
   });
 
   app.post('/public/inquiry', { bodyLimit: BODY_LIMIT }, async (req: FastifyRequest, reply: FastifyReply) => {

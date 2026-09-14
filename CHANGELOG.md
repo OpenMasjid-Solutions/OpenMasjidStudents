@@ -57,15 +57,22 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   household, the child, their Student ID and their fee plan, and raises your enrollment fee if the
   year has one. If the family already has a child with you, the screen says so before you press it,
   so a younger brother or sister joins the household they belong to instead of starting a second one.
+
+  The same screen asks the families you **already** have whether they are coming back. Open
+  re-admission for a school year and every active student goes on a list — withdrawn children are
+  never asked. Each family gets a one-time link showing what you hold for them, already filled in;
+  they correct what has changed and say yes or no. You see **exactly what they changed, before and
+  after**, and approve it field by field — nothing they send is written until you have looked at it.
+  The screen says who has answered and who has not, which during re-enrollment fortnight is the job.
 - **Settings is in tabs** — School, Students, Admissions, Documents, Messages, Payments — instead of
   one very long page.
 - **Fill in your whole roster from a spreadsheet.** Download your students **with everything the app
   already knows already in the file**, add the missing details in Excel, and upload it back. A row
   with a Student ID fills in that child rather than adding a new one, an empty cell leaves what is
   there alone, and the preview lists every field it would change — from what, to what — before a
-  single row is written. Fee plans, guardians and Student IDs are never changed by an import.
-- **The import template now downloads as an Excel file.** A CSV opened in Excel and saved back is
-  where a date column quietly changes meaning; a workbook skips that step. The CSV is still there.
+  single row is written. Fee plans, guardians and Student IDs are never changed by an import. The
+  template now downloads as a real **Excel file** as well as a CSV — a CSV opened in Excel and saved
+  back is where a date column quietly changes meaning, and a workbook skips that step.
 - **Address, languages and nationality belong to the household, not to each child.** Type an address
   once and every child on the record has it — including a sibling linked in later. They are kept on
   the household record, and only there: a child's record shows which household they are in, and the
@@ -120,6 +127,31 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   injection sink; and the new `admissions-inquiry` alert names the child only in the mail going to
   addresses an office typed — the platform channel and the webhook get "1 new admission inquiry" and
   no name, the per-event naming exception staying granted to `payment-received` alone.
+- **Re-admission — the children who are already here** (§5 of the spec). Opening a year for a cohort
+  goes through the SAME `structure/audience.ts` that mass fee apply and the onboarding send use, which
+  is also what enforces "withdrawn students are excluded" — that resolver returns active students
+  only, so it is enforced in one place rather than remembered in three. **What comes back is a diff,
+  not a blind overwrite:** the form is pre-filled, so most of what a family sends is what was already
+  there, and only what actually moved is written — `updated_at` still means something after three
+  hundred families re-enroll. An absent field means the form never carried it; an empty one means
+  somebody cleared a box on purpose, and conflating the two would either wipe untouched fields or
+  refuse to honor a deliberate clear. The office can refuse one field and accept the rest. **Preview
+  and commit agree because they call the same function**, which a test asserts over the same input.
+  Everything is idempotent — opening, approving, and the re-enrollment fee, keyed
+  `readmission:<student>:<year>` — because the normal mode of use is three hundred families and every
+  button pressed twice. `lapsed` is a button, never an inference from silence: deriving it at read
+  time would make the screen disagree with itself between two refreshes.
+- **One-time link tokens now live in `auth/tokens.ts`**, and invites and password resets were
+  repointed at it in the same commit. There were three copies of "CSPRNG, then SHA-256, then an
+  expiry" and a fourth was about to be written — three places to get single-use or hashing wrong, on
+  surfaces reachable from the internet. The family's re-admission link is minted there, stored only
+  as a hash, single-use, and is **email or print only** — a token link is auth-critical and never
+  travels by WhatsApp, where a number can be banned overnight.
+- **The re-admission link says which failure it is** — expired, already used, already dealt with —
+  unlike the inquiry form, which answers identically whatever happens. Not an inconsistency: the
+  inquiry form's key is a child's name, so any variation is an enumeration oracle, while a 256-bit
+  token is unguessable and telling its holder "you already sent this" reveals nothing to anybody who
+  did not already have it. A family staring at "not found" is a phone call to the office.
 - **Conversion — an inquiry becomes a student** (`admissions/convert.ts`, §4 of the spec). One
   transaction: the household, the child, their guardians, their fee plan, their class and the move to
   `admitted`. **Idempotent by construction rather than by a guard bolted on** — a double-clicked

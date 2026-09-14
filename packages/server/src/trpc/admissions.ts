@@ -29,8 +29,19 @@ import { TRPCError } from '@trpc/server';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { router, adminProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
-import { feePlans, inquiries, inquiryEvents, schoolYears, schools, type InquiryState } from '../db/schema';
+import { feePlans, inquiries, inquiryEvents, readmissions, schoolYears, schools, type InquiryState } from '../db/schema';
 import { audit } from '../audit';
+import { AUDIENCE } from '../structure/audience';
+import {
+  READMISSION_FIELDS,
+  approveReadmission,
+  diffSubmission,
+  mintReadmissionLink,
+  openReadmissions,
+  readmissionBoard,
+  reviewReadmission,
+  setReadmissionState,
+} from '../admissions/readmission';
 import { canTransition, inquiryById, reorderWaitlist, transitionInquiry, TransitionRefused, type OfficeTransition } from '../admissions/transition';
 import { INQUIRY_CAPS, storeInquiry } from '../admissions/inquiry';
 import { ADMISSIONS_TEXT_DEFAULTS, ADMISSIONS_TEXT_KEYS } from '../admissions/text';
@@ -277,6 +288,87 @@ export const admissionsRouter = router({
         if (v && !isIsoDay(v)) throw new TRPCError({ code: 'BAD_REQUEST', message: `That ${k === 'dob' ? 'date of birth' : 'admission date'} is not a real date.` });
       }
       return convertInquiry({ ...input, inquiryId: input.id }, { ...auditActor(ctx), name: recordingActor(ctx).name });
+    }),
+
+  // ── Re-admission: the children who are already here ───────────────────────
+
+  /**
+   * Open re-admission for a cohort, for one year.
+   *
+   * Takes the SAME audience shape mass fee apply and the onboarding send take, resolved by the same
+   * `structure/audience.ts` — which is also what enforces "withdrawn students are excluded", since
+   * that resolver returns active students only (§16). A third resolver here would have drifted on
+   * exactly that.
+   *
+   * Idempotent: a second press creates nothing and reports how many were already on the list.
+   */
+  readmissionOpen: adminProcedure
+    .input(z.object({ schoolYearId: ID, target: AUDIENCE }))
+    .mutation(({ ctx, input }) => openReadmissions(input.target, input.schoolYearId, auditActor(ctx))),
+
+  /** Who has answered and who has not — the screen an office lives on for a fortnight. */
+  readmissionBoard: adminProcedure.input(z.object({ schoolYearId: ID })).query(({ input }) => {
+    const board = readmissionBoard(input.schoolYearId);
+    const plans = db.select({ id: feePlans.id, name: feePlans.name, amountCents: feePlans.amountCents }).from(feePlans).where(eq(feePlans.status, 'active')).all();
+    const year = db.select().from(schoolYears).where(eq(schoolYears.id, input.schoolYearId)).get() ?? null;
+    return { ...board, feePlans: plans, year, currency: getCurrency() };
+  }),
+
+  /** One family's answer, as a diff — computed by the same function the approval applies. */
+  readmissionReview: adminProcedure.input(z.object({ id: ID })).query(({ input }) => reviewReadmission(input.id)),
+
+  /**
+   * A one-time link to send the family.
+   *
+   * Returned once and never stored in the clear (§14). EMAIL OR PRINT ONLY — a token link is
+   * auth-critical and never travels by WhatsApp, where a number can be banned overnight.
+   */
+  readmissionLink: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    const r = mintReadmissionLink(input.id, ctx.session?.userId ?? null);
+    audit(auditActor(ctx), 'readmission.link', { entity: 'readmission', entityId: input.id });
+    return r;
+  }),
+
+  /** The office filling the form in on the family's behalf — the spec allows it explicitly, and a
+   *  phone call is how most of a madrasah's re-enrollment actually happens. */
+  readmissionSubmitFor: adminProcedure
+    .input(z.object({ id: ID, returning: z.boolean(), fields: z.record(z.string().max(400)).optional() }))
+    .mutation(({ ctx, input }) => {
+      const { readmission: row, current } = reviewReadmission(input.id);
+      const changes = diffSubmission(current, input.fields ?? {});
+      const kept: Record<string, string> = {};
+      for (const c of changes) kept[c.field] = c.to;
+      const at = new Date();
+      db.update(readmissions)
+        .set({ state: input.returning ? 'submitted' : 'not_returning', submittedPayload: kept, submittedAt: at, updatedAt: at })
+        .where(eq(readmissions.id, row.id))
+        .run();
+      audit(auditActor(ctx), 'readmission.submit', { entity: 'readmission', entityId: row.id, detail: { returning: input.returning, changed: changes.length, by: 'office' } });
+      return { ok: true as const, changed: changes.length };
+    }),
+
+  /** Write what the office accepted, roll the child into the year, raise the re-enrollment fee. */
+  readmissionApprove: adminProcedure
+    .input(
+      z.object({
+        id: ID,
+        feePlanId: ID.nullable().optional(),
+        overrideAmountCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+        classId: ID.nullable().optional(),
+        feeWaived: z.boolean().optional(),
+        feeOverrideCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+        rejectFields: z.array(z.enum(READMISSION_FIELDS)).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => approveReadmission({ ...input, readmissionId: input.id }, { ...auditActor(ctx), name: recordingActor(ctx).name })),
+
+  /** `lapsed` for a family that never answered, or back to `pending` to reopen. NEVER inferred from
+   *  silence at read time — that would make the screen disagree with itself between refreshes (§9). */
+  readmissionState: adminProcedure
+    .input(z.object({ id: ID, state: z.enum(['pending', 'submitted', 'approved', 'enrolled', 'not_returning', 'lapsed']) }))
+    .mutation(({ ctx, input }) => {
+      setReadmissionState(input.id, input.state, auditActor(ctx));
+      return { ok: true as const };
     }),
 
   // ── Settings for the public form ──────────────────────────────────────────

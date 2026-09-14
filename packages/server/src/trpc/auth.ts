@@ -10,7 +10,6 @@
  */
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { randomBytes } from 'node:crypto';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { router, publicProcedure, protectedProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
 import { db } from '../db';
@@ -18,6 +17,7 @@ import { users, guardians, guardianUsers, guardianFamilies, students, invites, p
 import { rid } from '../db/ids';
 import { hashPassword, verifyPassword, dummyHash, MIN_PASSWORD_LENGTH } from '../auth/passwords';
 import { createSession, destroySession, cookieOptions, COOKIE, COOKIE_PATH, SSO_SESSION_TTL_MS, hashToken } from '../auth/sessions';
+import { mintToken } from '../auth/tokens';
 import { probePlatformSession } from '../fabric/platform';
 import { alertStaff } from '../alerts';
 import { fabricConfigured, config } from '../config';
@@ -287,9 +287,9 @@ export const authRouter = router({
     const user = db.select({ id: users.id, username: users.username, email: users.email, status: users.status }).from(users).where(eq(users.id, link.userId)).get();
     if (!user || user.status !== 'active') throw new TRPCError({ code: 'BAD_REQUEST', message: 'That portal account is disabled.' });
 
-    const token = randomBytes(32).toString('base64url');
+    const { token, tokenHash } = mintToken(); // auth/tokens.ts — the one place a link token is made
     const ts = new Date();
-    db.insert(passwordResets).values({ id: rid('pwr'), tokenHash: hashToken(token), userId: user.id, createdAt: ts, expiresAt: new Date(ts.getTime() + RESET_TTL_MS) }).run();
+    db.insert(passwordResets).values({ id: rid('pwr'), tokenHash, userId: user.id, createdAt: ts, expiresAt: new Date(ts.getTime() + RESET_TTL_MS) }).run();
     const url = `${portalBase()}/family/reset?token=${token}`;
     const to = user.email && user.email.includes('@') ? user.email : user.username;
     // A guardian's own reset, so it is parent mail and the pause switch holds it (0.48.0). The link is
@@ -395,9 +395,9 @@ export const authRouter = router({
     // otherwise the office handles the reset and no un-deliverable token is left stranded. Response
     // stays generic either way.
     if (user && mailAvailable() && portalBase()) {
-      const token = randomBytes(32).toString('base64url');
+      const { token, tokenHash } = mintToken(); // auth/tokens.ts — the one place a link token is made
       const ts = new Date();
-      db.insert(passwordResets).values({ id: rid('pwr'), tokenHash: hashToken(token), userId: user.id, createdAt: ts, expiresAt: new Date(ts.getTime() + RESET_TTL_MS) }).run();
+      db.insert(passwordResets).values({ id: rid('pwr'), tokenHash, userId: user.id, createdAt: ts, expiresAt: new Date(ts.getTime() + RESET_TTL_MS) }).run();
       const to = user.email && user.email.includes('@') ? user.email : user.username;
       // Deliberately NOT awaited: the response must take the same time whether or not the account
       // exists, or it becomes an account-enumeration oracle. The delivery OUTCOME is audited from the

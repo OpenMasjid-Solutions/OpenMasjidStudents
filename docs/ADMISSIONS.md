@@ -3,20 +3,28 @@
 
 # ADMISSIONS — inquiry → waitlist → offer → admission → re-admission
 
-> **Status: HALF BUILT (0.52.0-dev.8).** This is Phase 2 of the academic layer (CLAUDE.md §4a). It was
-> written before the code deliberately — the same discipline `docs/PAYMENTS.md` and `docs/WHATSAPP.md`
-> follow — so the schema and the wire rules were argued once, in one place, rather than discovered per
-> screen.
+> **Status: BUILT (0.52.0-dev.7 → -dev.9).** This is Phase 2 of the academic layer (CLAUDE.md §4a). It
+> was written before the code deliberately — the same discipline `docs/PAYMENTS.md` and
+> `docs/WHATSAPP.md` follow — so the schema and the wire rules were argued once, in one place, rather
+> than discovered per screen. It now describes what exists.
 >
-> **Built:** every table in §1 (migration 0044, verified against a live database holding students,
+> **dev.7:** every table in §1 (migration 0044, verified against a live database holding students,
 > invoices, payments and charges); the **public inquiry endpoint** of §2 in full, including the
 > limiter hardening it depended on, which shipped a build earlier as the security fix it also was;
-> the **pipeline** of §3, in `admissions/transition.ts`; the office's desk and its settings, in
-> `trpc/admissions.ts`; the `admissions-inquiry` alert of §6; and — from **0.52.0-dev.8** —
-> **§4, conversion**, in `admissions/convert.ts` and `admissions/fees.ts`.
+> the **pipeline** of §3, in `admissions/transition.ts`; the office's desk and its settings; and the
+> `admissions-inquiry` alert of §6.
+> **dev.8:** §4, **conversion** — `admissions/convert.ts` and `admissions/fees.ts`.
+> **dev.9:** §5, **re-admission** — `admissions/readmission.ts`, the family's one-time link through
+> the extracted `auth/tokens.ts`, and the office's diff.
 >
-> **Not built:** §5, re-admission. `admission_links` and `readmissions` exist as tables with no
-> writer. That section is still written in the future tense; everything above it is now present.
+> Two things this phase changed OUTSIDE admissions, both of which removed a copy rather than adding a
+> place: `createStudentRow` moved to **`people/create.ts`** (the one implementation of "create a
+> student", and therefore the only place a Student ID is minted), and one-time link tokens moved to
+> **`auth/tokens.ts`**, which invites and password resets now share.
+>
+> Still deferred, by decision rather than omission: an enrollment-fee payment BEFORE a student record
+> exists (§4's "charged on enrollment, not pay-to-confirm"), a capacity limit on the waitlist
+> (decision 7), and document uploads at admission (decision 8 / §4 ❌).
 >
 > Owner sections in `CLAUDE.md`: §4a (scope), §5 (roles), §9 (data rules), §12.4 (origin), §14
 > (the public endpoint), §16 (one place decides).

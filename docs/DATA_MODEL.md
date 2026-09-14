@@ -135,6 +135,30 @@ and `updated_at` wherever a row is ever updated.
   read for a new child and refused as a CHANGE to an existing one. Repeating an exported fee plan or
   guardian unchanged is silent — without that the export could never round-trip, which the test suite
   found rather than a masjid.
+- **A re-admission submission is a PROPOSAL, and only what changed is written** (0.52.0-dev.9). §4
+  rules out parent-initiated data edits; the one exception it grants is a form submitted through a
+  one-time token link, "which is not an edit — it lands as a proposal the office reviews as a diff
+  before anything is written". So the family's answer goes into `readmissions.submitted_payload`
+  inert, and `diffSubmission` is what turns it into a list of changes. It is used by BOTH the
+  office's preview and the approval that applies it, rather than each computing its own, which is
+  what makes "preview and commit agree" a property of the code instead of a hope — and it is the
+  thing docs/ADMISSIONS.md §5 asks to be proven by a test running both over the same input.
+  An ABSENT field means the form never carried it; an EMPTY one means a family cleared a pre-filled
+  box on purpose. Conflating them would either wipe untouched fields or refuse to clear a deliberate
+  one. Repeating a pre-filled value writes nothing at all, so `updated_at` still means something
+  after a whole school re-enrolls.
+- **One-time link tokens live in `auth/tokens.ts`, and there were three copies before** (0.52.0-dev.9).
+  An invite, a password reset and now two admission links are the same object: CSPRNG, single-use,
+  expiring, stored only as a SHA-256 hash. docs/ADMISSIONS.md §1.3 says to extract rather than copy,
+  and the reason is that a second implementation is a second place to get expiry, single-use or
+  hashing wrong — on surfaces reachable from the internet. The extraction repointed invites and
+  resets in the same commit rather than leaving a fourth copy beside three.
+- **The re-admission link says WHICH failure it is, unlike the public inquiry form** (0.52.0-dev.9),
+  and the difference is principled rather than inconsistent. The inquiry form's key is a child's name
+  and an email address, so any variation in its answer is an enumeration oracle. A token is 256 bits
+  and unguessable, so telling its holder "that link has already been used" tells nobody anything they
+  did not already have — and a family staring at "not found" when the real answer is "you already
+  sent this" is a phone call to the office.
 - **An inquiry is a table of its own, and `inquiries.student_id` points FORWARD** (0.52.0-dev.7).
   The convenient design is to create the student straight away and mark them pending, so the rest of
   the app can already see them. That would put an unconfirmed, publicly submitted record on the
