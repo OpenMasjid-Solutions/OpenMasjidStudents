@@ -417,7 +417,7 @@ phase reads "built" only when it has shipped, and until then this section descri
 
 | Phase | What | Status |
 | --- | --- | :-- |
-| **0** | Foundations: these amendments; the migration-journal guard; `charges.source_key`; the CSV round-trip fix | **specified** |
+| **0** | Foundations: these amendments; the migration-journal guard; `charges.source_key`; the CSV round-trip fix | **BUILT** *(0.52.0-dev.2)* |
 | **1** | The student record — real fields, a screen to edit them on, the field registry, Settings tabs, import | **specified** |
 | **2** | Admissions — inquiry → waitlist → offer → admission → re-admission (`docs/ADMISSIONS.md`) | **specified** |
 | **3** | Attendance — enrollment history, the calendar, the daily register (`docs/ATTENDANCE.md`) | **specified** |

@@ -57,6 +57,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   family twice; a natural key lands before admissions does. And a migration whose hand-typed `when`
   is not strictly increasing applies on a fresh database and is skipped forever on a live one, so a
   journal guard test lands first.
+- **Phase 0 is built — three foundations, none of them visible to a masjid.** A guard test on the
+  migration journal, because since 0032 the timestamps that decide whether a migration runs have been
+  typed by hand, and one that is not strictly greater than the last applies fine on a fresh database
+  and is skipped **forever** on a live one — the app boots, reports success, and fails later on a
+  missing table. A `source_key` natural key on `charges` with one writer, so software raising the same
+  fee twice creates one charge and reports that it did; the database enforces it rather than a
+  check-then-insert, and the upgrade was verified against a database that already held charges. And
+  the CSV formula guard now round-trips: `+44…` phone numbers and negative amounts came back with a
+  `'` welded to the front once a template is exported pre-filled and re-imported. The guard itself is
+  untouched — it is reversed on the way IN, and only when a formula character follows, so `'Abd Allah`
+  is not quietly renamed.
 
 ## [0.51.0]
 

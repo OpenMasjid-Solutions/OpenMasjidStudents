@@ -767,12 +767,30 @@ export const charges = sqliteTable(
     status: text('status').$type<ChargeStatus>().notNull().default('pending'),
     invoiceItemId: text('invoice_item_id').references(() => invoiceItems.id, { onDelete: 'restrict' }),
     createdByUserId: text('created_by_user_id'),
+    /**
+     * The NATURAL KEY for a charge something raised on a family's behalf (0.52.0) — null for every
+     * charge a person raises by hand, which is all of them today.
+     *
+     * This table shipped with no unique index at all and `chargeAdd` inserts without checking, which is
+     * fine while a human is the one pressing the button and can see a duplicate. CLAUDE.md §4a Phase 2
+     * raises an enrollment fee from a BULK approve, for a whole school in one fortnight, where pressing
+     * it twice is ordinary — so the key exists before the caller does.
+     *
+     * UNIQUE because the database has to be what enforces it: a check-then-insert is passed by both of
+     * two concurrent requests. `billing/charges.ts` `raiseChargeOnce` is the one place that writes it
+     * (§16) and it catches the constraint and re-reads rather than failing the caller, because the
+     * caller is a button whose honest answer to "already done" is success.
+     */
+    sourceKey: text('source_key'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
   (t) => ({
     studentStatusIdx: index('charges_student_status_idx').on(t.studentId, t.status),
     periodIdx: index('charges_period_idx').on(t.periodKey),
+    // SQLite permits many NULLs in a UNIQUE column, so hand-raised charges are unaffected — the same
+    // property `students_code_uq` relies on for its gradual backfill.
+    sourceKeyUq: unique('charges_source_key_uq').on(t.sourceKey),
   }),
 );
 export type Charge = typeof charges.$inferSelect;
