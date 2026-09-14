@@ -1590,10 +1590,18 @@ invariant here is load-bearing:
   submitting can never reveal whether a child, an email, a household or a Student ID is already known
   (the same no-enumeration rule `lookup` follows, on a surface with no lockout to fall back on); **a
   honeypot field and a minimum time-to-submit**; **rate limits per IP and globally, with IPv6 folded to
-  /64 before keying** — `clientIpFrom` returns the full address today, so one /64 is 2^64 distinct keys
-  against a limiter that evicts oldest-first past 50,000, and `rateLimit.test.ts` asserts that
-  consequence (it floods 50,200 junk keys and then asserts a previously-blocked key is allowed again), so
-  **hardening the limiter is a prerequisite of that phase rather than a follow-up**; **field-length caps
+  /64 before keying** — **DONE AHEAD OF THE FORM (0.52.0-dev.6), because it was a live defect and not
+  only a prerequisite.** `clientIpFrom` returned the full address, so one /64 was 2^64 distinct keys
+  against a limiter that evicted oldest-first past 50,000, and `rateLimit.test.ts` asserted that
+  consequence out loud (flood 50,200 junk keys, and a key at its cap is allowed again). That forgave a
+  **block**, and a block is the control: `codeLookupLimiter` is keyed on the Student ID the caller
+  SUPPLIES, so somebody sweeping the ID space generated the flood for free and unlocked the codes they
+  had just locked. Eviction is now ordered — dead entries, then unblocked ones, never a live block —
+  and a saturated map stops admitting new keys rather than growing: `SubmitLimiter` fails CLOSED
+  (public surfaces), `LoginLimiter` stops tracking (locking every parent out of the portal is worse,
+  and the per-account limiter is the second layer). `security/origin.ts` `rateLimitKey` is the ONE
+  place a request becomes a key (§16) and there is deliberately no raw client-IP helper left beside
+  it; **field-length caps
   and a route body cap**; **a global daily ceiling**, above which the form answers identically and stores
   nothing; **`frame-ancestors` from a Settings origin allowlist, never `*`**; an office switch to disable
   embedding entirely and to close inquiries for a year; **everything stored inert and escaped at every

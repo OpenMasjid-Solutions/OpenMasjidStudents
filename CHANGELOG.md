@@ -85,6 +85,20 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   family twice; a natural key lands before admissions does. And a migration whose hand-typed `when`
   is not strictly increasing applies on a fresh database and is skipped forever on a live one, so a
   journal guard test lands first.
+- **The rate limiters stopped forgiving themselves under a flood**, which they had been doing since
+  they were written, and two live surfaces were bypassable through it with no secret needed. Both
+  limiter maps were bounded by evicting the oldest entry, and the repo's own test asserted the
+  consequence out loud: flood fifty thousand junk keys and a key that was at its cap is allowed
+  again. The per-Student-ID lockout — the only thing standing behind an ID with no PIN — is keyed on
+  the code the caller supplies, so an attacker sweeping codes generated that flood for free and
+  unlocked the ones they had already locked. Eviction is now ordered and a live block is never
+  dropped; a map that fills with live blocks stops admitting new keys instead of growing, failing
+  closed on public surfaces and open on the login path, where locking every parent out of their own
+  portal is the worse of the two. Alongside it, an IPv6 address is now folded to its **/64** before it
+  is used as a limiter key, in the one place a request becomes a key: the smallest block anybody is
+  assigned is a /64, so one ordinary household held 18 quintillion free buckets and every per-IP
+  limit in the app counted to one. The old test asserting the forgiving behavior is inverted, and
+  there is no raw client-IP helper left for a future limiter to key on by mistake.
 - **The import update path, and the five rules that make it safe.** The Student ID column is the
   identity and a name is never matched on; an ID matching nothing is an error rather than a silent
   create; an empty cell leaves the field alone (`(clear)` empties one on purpose); only what changed is

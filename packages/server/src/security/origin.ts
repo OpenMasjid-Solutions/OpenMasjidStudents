@@ -79,11 +79,63 @@ export function classifyOrigin(req: FastifyRequest): Origin {
   return classifyOriginParts(req.headers, req.socket?.remoteAddress);
 }
 
-/** Effective client IP for a request — used as the rate-limit key so remote users get
- *  per-client buckets instead of all sharing the OS proxy's IP (which would let one
- *  attacker lock everyone out). */
-export function clientIp(req: FastifyRequest): string {
-  return clientIpFrom(req.headers, req.socket?.remoteAddress) || 'unknown';
+/**
+ * Expand an IPv6 address to its eight groups, or null if it is not one we can read.
+ *
+ * Returning null on anything unusual is deliberate and is the strict direction: the caller then keys
+ * on the whole string, which can only ever give an address its OWN bucket. Guessing at a malformed
+ * address is how two different clients end up sharing one.
+ */
+function expandIpv6(s: string): string[] | null {
+  if (s.includes('.')) return null; // an embedded IPv4 literal — rare, and not worth guessing at
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const groups = halves.length === 1 ? head : [...head, ...Array(8 - head.length - tail.length).fill('0'), ...tail];
+  if (groups.length !== 8) return null;
+  if (!groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.map((g) => g.replace(/^0+(?=.)/, '')); // normalize, so 0db8 and db8 are one bucket
+}
+
+/**
+ * THE RATE-LIMIT KEY FOR AN ADDRESS — IPv6 IS FOLDED TO ITS /64 (0.52.0, §14, §4a Phase 2).
+ *
+ * An IPv4 address is one host and makes one honest bucket. **An IPv6 address is not**: the smallest
+ * block anybody is assigned is a /64, and most home connections get a /56 or /48 on top of that. So a
+ * single ordinary customer holds at least 2^64 addresses and can present a new one per request — which
+ * turns every per-IP limiter in this app into a counter that never reaches two, and floods the map on
+ * the way past (see `rateLimit.ts`, where the eviction used to forgive a block under exactly this).
+ *
+ * Folding to /64 is the standard unit: it is the smallest thing a network operator hands out, so it is
+ * the smallest thing it is fair to hold responsible. Coarser (/48) would let one ISP customer lock out
+ * their neighbours; finer is no limit at all.
+ *
+ * Any address we cannot parse keys on itself, unfolded — strict rather than lenient, per `expandIpv6`.
+ */
+export function foldIpForKey(ip: string | undefined): string {
+  const s = (ip ?? '').trim().toLowerCase();
+  if (!s) return 'unknown';
+  const bare = s.split('%')[0]; // a zone id (fe80::1%eth0) is about this host, not about the peer
+  // An IPv4-mapped address is an IPv4 host wearing a hat — one address, so key it as one.
+  const mapped = bare.startsWith('::ffff:') ? bare.slice(7) : bare;
+  if (!mapped.includes(':')) return mapped || 'unknown';
+  const groups = expandIpv6(mapped);
+  if (!groups) return mapped;
+  return `${groups.slice(0, 4).join(':')}::/64`;
+}
+
+/**
+ * The rate-limit key for a request. **This is the one place a request becomes a limiter key** (§16),
+ * which is why there is no exported "the client's IP" helper beside it: every caller of the old one
+ * was a limiter, and a raw address sitting in scope is an invitation to key on it directly and lose
+ * the folding above without anything failing.
+ *
+ * Per-client buckets rather than one shared bucket on the OS proxy's address — otherwise a single
+ * attacker locks out everybody behind it.
+ */
+export function rateLimitKey(req: FastifyRequest): string {
+  return foldIpForKey(clientIpFrom(req.headers, req.socket?.remoteAddress));
 }
 
 /** Is the browser↔edge hop HTTPS? (Cloudflare, or the OS LAN TLS proxy.) Used ONLY for

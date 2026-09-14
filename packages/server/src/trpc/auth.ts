@@ -21,7 +21,7 @@ import { createSession, destroySession, cookieOptions, COOKIE, COOKIE_PATH, SSO_
 import { probePlatformSession } from '../fabric/platform';
 import { alertStaff } from '../alerts';
 import { fabricConfigured, config } from '../config';
-import { clientIp } from '../security/origin';
+import { rateLimitKey } from '../security/origin';
 import { loginLimiter, loginAccountLimiter, inviteAcceptLimiter, resetRequestLimiter, resetConfirmLimiter, registerLimiter, codeLookupLimiter } from '../security/rateLimit';
 import { findUserByUsername, normalizeUsername, usernameTaken } from '../auth/usernames';
 import { hasAnyUser } from '../auth/firstRun';
@@ -129,7 +129,7 @@ export const authRouter = router({
   login: publicProcedure
     .input(z.object({ username: USERNAME, password: PASSWORD }))
     .mutation(async ({ ctx, input }) => {
-      const key = clientIp(ctx.req);
+      const key = rateLimitKey(ctx.req);
       /**
        * TWO buckets, per §14's "per-IP and per-account" (0.48.0).
        *
@@ -318,7 +318,7 @@ export const authRouter = router({
   inviteAccept: publicProcedure
     .input(z.object({ token: TOKEN, password: z.string().min(MIN_PASSWORD_LENGTH).max(200) }))
     .mutation(async ({ ctx, input }) => {
-      const key = clientIp(ctx.req);
+      const key = rateLimitKey(ctx.req);
       const wait = inviteAcceptLimiter.retryAfterMs(key);
       if (wait > 0) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: `Too many attempts. Try again in ${Math.ceil(wait / 1000)}s.` });
 
@@ -370,7 +370,7 @@ export const authRouter = router({
    *  IP against inbox bombing. Works for any role, but only ever emails the account's own address; the
    *  reset itself never mints an admin session (admin still logs in LAN-only). */
   resetRequest: publicProcedure.input(z.object({ email: USERNAME })).mutation(async ({ ctx, input }) => {
-    if (!resetRequestLimiter.allow(clientIp(ctx.req))) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Too many requests. Please try again in a little while.' });
+    if (!resetRequestLimiter.allow(rateLimitKey(ctx.req))) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Too many requests. Please try again in a little while.' });
     const email = input.email.trim().toLowerCase();
     // Resolve the target DETERMINISTICALLY: the UNIQUE username first (case-insensitive, matching
     // login), then the (non-unique, nullable) email column only when it identifies EXACTLY ONE active
@@ -425,7 +425,7 @@ export const authRouter = router({
   resetConfirm: publicProcedure
     .input(z.object({ token: TOKEN, password: z.string().min(MIN_PASSWORD_LENGTH).max(200) }))
     .mutation(async ({ ctx, input }) => {
-      const key = clientIp(ctx.req);
+      const key = rateLimitKey(ctx.req);
       const wait = resetConfirmLimiter.retryAfterMs(key);
       if (wait > 0) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: `Too many attempts. Try again in ${Math.ceil(wait / 1000)}s.` });
       const r = db.select().from(passwordResets).where(and(eq(passwordResets.tokenHash, hashToken(input.token)), isNull(passwordResets.usedAt))).get();
@@ -467,7 +467,7 @@ export const authRouter = router({
   register: publicProcedure
     .input(z.object({ studentCode: z.string().trim().min(1).max(32), email: USERNAME }))
     .mutation(async ({ ctx, input }) => {
-      if (!registerLimiter.allow(clientIp(ctx.req))) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in a little while.' });
+      if (!registerLimiter.allow(rateLimitKey(ctx.req))) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Too many attempts. Please try again in a little while.' });
       // Door closed (toggle off / no mail transport / no public URL) → behave exactly like a non-match.
       if (!getSelfRegistrationEnabled() || !mailAvailable() || !portalBase()) return { ok: true as const };
       const code = normalizeStudentCode(input.studentCode);

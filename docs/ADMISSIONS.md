@@ -158,12 +158,16 @@ that has no lockout to fall back on.
 outbound connectivity, so no third-party captcha by default):
 
 - A **honeypot** field, and a **minimum time-to-submit** (a form completed in under ~3 seconds is a bot).
-- **Rate limits per IP and globally.** The per-IP key **must fold IPv6 to /64 before keying** —
-  `clientIpFrom` returns the full address today, so one /64 is 2^64 distinct keys, and the existing
-  `SubmitLimiter` evicts oldest-first past 50,000 keys. The repo's own test asserts the consequence
-  (`rateLimit.test.ts` floods 50,200 junk keys and then asserts a previously-blocked key is allowed
-  again). **Hardening the limiter is a prerequisite of this phase, not a follow-up** — an evicting map
-  forgives under exactly the flood a public form invites.
+- **Rate limits per IP and globally.** **BUILT, 0.52.0-dev.6, ahead of the form.** The per-IP key is
+  folded to its /64 in `security/origin.ts` `rateLimitKey`, the one place a request becomes a limiter
+  key — `clientIpFrom` returned the full address, so one /64 was 2^64 distinct keys, and there is now
+  no exported raw-client-IP helper for a later limiter to key on by mistake. Eviction in
+  `security/rateLimit.ts` no longer drops a live block (dead entries first, then unblocked ones), and
+  a map that saturates with live blocks stops admitting new keys rather than growing: `SubmitLimiter`
+  fails **closed**, `LoginLimiter` stops tracking. The old flood test, which asserted the forgiving
+  behavior, is inverted. It was a live defect rather than only a prerequisite: `codeLookupLimiter` is
+  keyed on the Student ID the caller supplies, so sweeping the ID space generated the flood for free.
+  `DailyCeiling` lands in the same file for the whole-install cap below.
 - **Field-length caps server-side**, and a body cap on the route, not just on the app.
 - A **global daily ceiling** per install, above which the form answers the same acknowledgement and
   stores nothing. A flooded office is a broken office.
