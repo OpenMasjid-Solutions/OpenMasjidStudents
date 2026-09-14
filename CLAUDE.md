@@ -524,15 +524,20 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > every §14 control written into the handler because there are no Fastify hooks in this repo; the
 > **pipeline** (`admissions/transition.ts`, the ONE writer of a state, of `inquiry_events` and of the
 > audit row); the **desk** (`trpc/admissions.ts`, admin-only and therefore LAN-only, plus the
-> Admissions screen and the Settings tab); the `admissions-inquiry` alert; and the limiter hardening
-> the phase depended on, which shipped a build earlier as the security fix it also was (dev.6).
+> Admissions screen and the Settings tab); the `admissions-inquiry` alert; the limiter hardening the
+> phase depended on, which shipped a build earlier as the security fix it also was (dev.6); and — from
+> **0.52.0-dev.8** — **conversion** (`admissions/convert.ts`, `admissions/fees.ts`), which is what
+> makes the funnel produce a child.
 >
-> **Not built yet:** `admissions/convert.ts` and `admissions/fees.ts` — so an inquiry can reach
-> `offered` and no further, `markAdmitted` has no caller, and `admission_links` and `readmissions`
-> are tables with no writer. That is deliberate rather than forgotten: `admitted` is unreachable from
-> the office's transition (its type excludes it), so nothing can claim a student that does not exist.
-> Re-admission follows conversion, since it is the same machinery pointed at a child who is already
-> on the roster.
+> Conversion moved `createStudentRow` out of `trpc/people.ts` into **`people/create.ts`**, unchanged.
+> It was module-private inside a router, and §4 step 2 requires an inquiry to become a student
+> "through the existing people write path, which is what mints the Student ID" — so the choice was to
+> lift it or to write a second thing that mints an ID its own way, and only one of those is allowed
+> (§16). Every path that creates a child now comes through that file.
+>
+> **Not built yet:** §5, **re-admission**. `admission_links` and `readmissions` are tables with no
+> writer, which is why they are named here rather than left to be noticed. It follows conversion
+> because it is the same machinery pointed at a child who is already on the roster.
 
 **Phase 3 — attendance.** Full spec in `docs/ATTENDANCE.md`. It opens with **enrollment history**, which
 is a schema reversal (`enrollments`, recorded in `docs/DATA_MODEL.md` as deliberately not re-created) and

@@ -17,9 +17,10 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CalendarDays, Mail, MessageSquare, Phone, School, User } from 'lucide-react';
+import { CalendarDays, GraduationCap, Mail, MessageSquare, Phone, School, User } from 'lucide-react';
 import { trpc, type RouterOutputs } from '../lib/trpc';
 import { formatDate } from '../lib/dates';
+import { AdmitInquiry } from './AdmitInquiry';
 
 type NextState = RouterOutputs['admissions']['get']['next'][number];
 
@@ -164,6 +165,19 @@ export function InquiryDetail({ id }: { id: string }) {
         )}
         {err && <p className="form-error">{err}</p>}
       </section>
+
+      {/* Admitting is its own panel rather than another button in the row above, because it is the one
+          action here that CREATES something — a household, a child, a Student ID and a charge — and
+          the others only move a record along. It is hidden once the state is terminal. */}
+      {next.length > 0 && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head">
+            <h2><GraduationCap size={15} /> {t('admissions.admitTitle')}</h2>
+          </div>
+          <p className="hint">{t('admissions.admitHint')}</p>
+          <AdmitInquiry id={id} onAdmitted={() => utils.admissions.get.invalidate({ id })} />
+        </section>
+      )}
 
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head">

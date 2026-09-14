@@ -607,7 +607,25 @@
     "trail": "What has happened",
     "arrived": "Inquiry received",
     "movedFromTo": "{{from}} → {{to}}",
-    "someone": "Someone at the office"
+    "someone": "Someone at the office",
+    "admitTitle": "Admit this child",
+    "admitHint": "This creates the household, the child and their Student ID, puts them on a fee plan, and raises the enrollment fee if your year has one. Safe to press twice.",
+    "admit": "Admit {{name}}",
+    "admitNewHousehold": "A new household will be created, with the parent above on it.",
+    "admitIntoHousehold": "They join the household you picked — its guardians and address already apply to them.",
+    "alreadyAdmitted": "Already admitted. They are on your roster with a Student ID.",
+    "siblingHint": "A household already has somebody with these contact details. If this is a brother or sister, put them in it rather than starting a second household — otherwise the family gets two bills, two sheets and two logins.",
+    "household": "Household",
+    "newHousehold": "Start a new household",
+    "matchedOn": {
+      "email": "Same email",
+      "phone": "Same phone",
+      "name": "Same name"
+    },
+    "class": "Class",
+    "noClass": "No class yet",
+    "waiveFee": "Waive the {{amount}} enrollment fee for this family",
+    "waiveFeeHint": "What the year charges everybody else is unchanged. Leave it off and the fee is raised as an ordinary charge on their record."
   },
   "profile": {
     "menu": "Account",

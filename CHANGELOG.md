@@ -53,7 +53,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   your own site with one line of HTML, or share the link. It is **off until you turn it on** under
   Settings → Admissions, and you can close intake when the year is full — the page then says so
   rather than quietly swallowing what somebody writes. Nothing here is a student yet: a child joins
-  your roster, and gets their Student ID, only when you admit them.
+  your roster, and gets their Student ID, only when you **admit** them — one press that creates the
+  household, the child, their Student ID and their fee plan, and raises your enrollment fee if the
+  year has one. If the family already has a child with you, the screen says so before you press it,
+  so a younger brother or sister joins the household they belong to instead of starting a second one.
 - **Settings is in tabs** — School, Students, Admissions, Documents, Messages, Payments — instead of
   one very long page.
 - **Fill in your whole roster from a spreadsheet.** Download your students **with everything the app
@@ -117,6 +120,33 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   injection sink; and the new `admissions-inquiry` alert names the child only in the mail going to
   addresses an office typed — the platform channel and the webhook get "1 new admission inquiry" and
   no name, the per-event naming exception staying granted to `payment-received` alone.
+- **Conversion — an inquiry becomes a student** (`admissions/convert.ts`, §4 of the spec). One
+  transaction: the household, the child, their guardians, their fee plan, their class and the move to
+  `admitted`. **Idempotent by construction rather than by a guard bolted on** — a double-clicked
+  Admit, a retried request and a double-submitted form all find the inquiry already admitted and get
+  the existing child back, because the state is stored truth written in the same transaction as the
+  student it is true about. Not "does a student with this name exist", which is a question a madrasah
+  with two children called Muhammad Ali cannot answer. The **enrollment fee** goes through the charge
+  machinery that already existed, keyed `admission:<inquiryId>` in the UNIQUE `charges.source_key`
+  Phase 0 added for exactly this — so a family cannot be charged twice for enrolling once, and a
+  waiver or a per-family override is honored without touching what the year charges everybody else.
+  It is raised AFTER the transaction commits, deliberately: a failure there leaves an admitted child
+  with no enrollment charge, which an office can see and fix, rather than rolling back a conversion
+  that had already succeeded.
+- **`createStudentRow` moved out of the router into `people/create.ts`**, unchanged. It was
+  module-private inside `trpc/people.ts`, and an inquiry has to become a student through the existing
+  write path because that is what mints the Student ID (§16) — so the choice was to lift it or to
+  write a second thing that mints an ID its own way. Every path that creates a child now goes through
+  one file, which is also the only place a Student ID can come from.
+- **A sibling is offered, never assumed — in either direction.** `siblingHints` reuses `identityKeys`
+  from `people/household.ts` rather than adding a third matcher, and reports WHY a household matched
+  (an email match outranks a name). It is a hint and nothing else: silently joining a matched
+  household is the same mistake as silently duplicating one, and worse, because it attaches a child
+  to an address and a set of guardians nobody confirmed.
+- **`admitted` is reachable from every live state, which the spec's diagram does not draw.** Written
+  down as a deviation rather than slipped in: a family admitted the same morning they walked in would
+  otherwise need four actions for one conversation, two of them recording an offer nobody made. The
+  invariant is untouched — `admitted` still means a student exists, and only conversion can apply it.
 - **Forty new tests, nine guards proven by mutation**, and one of those mutations found a real bug
   rather than confirming a fix: the hardened limiter's eviction never ran at all, because the map
   refuses new keys AT its ceiling and so can never exceed it — which would have left a limiter that

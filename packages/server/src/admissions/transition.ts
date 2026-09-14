@@ -55,15 +55,26 @@ export type OfficeTransition = Exclude<InquiryState, 'admitted'>;
  * `declined` is TERMINAL and the row is retained — an office asked "did we ever hear from them?"
  * needs an answer, and deleting the record is how that question stops having one.
  *
- * `withdrawn` is not terminal, and that is the one deliberate liberty: a family who dropped out and
- * came back is ordinary, and the alternative is a second record for the same conversation. Going
- * back from `offered` to `waitlisted` is likewise allowed, because an offer is sometimes retracted
- * and the honest record of that is the place they went back to.
+ * `withdrawn` is not terminal, and that is one deliberate liberty: a family who dropped out and came
+ * back is ordinary, and the alternative is a second record for the same conversation. Going back from
+ * `offered` to `waitlisted` is likewise allowed, because an offer is sometimes retracted and the
+ * honest record of that is the place they went back to.
+ *
+ * **`admitted` IS REACHABLE FROM EVERY LIVE STATE, AND THAT IS A DEVIATION FROM THE DIAGRAM IN
+ * docs/ADMISSIONS.md §3, MADE ON PURPOSE.** The drawing has one arrow into it, from `offered`. A
+ * family who walks into the office and is admitted the same morning would then need four actions for
+ * one conversation — type the inquiry, start reviewing, offer a place, admit — and the middle two
+ * would be recording an offer nobody made. Friction like that is how a pipeline stops being used and
+ * the office goes back to a notebook.
+ *
+ * Nothing is weakened by it: `admitted` still means a student EXISTS, and the only way to apply it is
+ * still `markAdmitted` from inside `admissions/convert.ts`'s transaction. The trail records the move
+ * that actually happened — `new → admitted` for a walk-in — rather than a tidier one that did not.
  */
 export const NEXT_STATES: Record<InquiryState, readonly InquiryState[]> = {
-  new: ['reviewing', 'waitlisted', 'offered', 'declined', 'withdrawn'],
-  reviewing: ['waitlisted', 'offered', 'declined', 'withdrawn'],
-  waitlisted: ['reviewing', 'offered', 'declined', 'withdrawn'],
+  new: ['reviewing', 'waitlisted', 'offered', 'admitted', 'declined', 'withdrawn'],
+  reviewing: ['waitlisted', 'offered', 'admitted', 'declined', 'withdrawn'],
+  waitlisted: ['reviewing', 'offered', 'admitted', 'declined', 'withdrawn'],
   offered: ['waitlisted', 'admitted', 'declined', 'withdrawn'],
   declined: [],
   admitted: [],

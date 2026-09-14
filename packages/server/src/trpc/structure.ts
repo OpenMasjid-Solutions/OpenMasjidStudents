@@ -211,7 +211,25 @@ export const structureRouter = router({
     }),
 
   schoolYearUpdate: adminProcedure
-    .input(z.object({ id: ID, label: NAME.optional(), startYear: YEAR.optional(), startMonth: MONTH.optional(), endMonth: MONTH.optional() }))
+    .input(
+      z.object({
+        id: ID,
+        label: NAME.optional(),
+        startYear: YEAR.optional(),
+        startMonth: MONTH.optional(),
+        endMonth: MONTH.optional(),
+        /**
+         * What this year charges to join, and to come back (0.52.0, §4a Phase 2). Integer cents like
+         * all money, and `null` means NO FEE — an ordinary madrasah rather than an unconfigured one.
+         *
+         * Edited here rather than in the admissions router because the school year is one row with
+         * one editor, and a second writer for two of its columns is how two screens start disagreeing
+         * about what a year says (§16). What the fee MEANS is `admissions/fees.ts`.
+         */
+        admissionFeeCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+        readmissionFeeCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+      }),
+    )
     .mutation(({ ctx, input }) => {
       requireSchoolYear(input.id);
       const patch: Partial<typeof schoolYears.$inferInsert> = { updatedAt: now() };
@@ -219,8 +237,13 @@ export const structureRouter = router({
       if (input.startYear !== undefined) patch.startYear = input.startYear;
       if (input.startMonth !== undefined) patch.startMonth = input.startMonth;
       if (input.endMonth !== undefined) patch.endMonth = input.endMonth;
+      // 0 and null both mean "nothing to charge" (`resolveEnrollmentFee` reads them the same way), so
+      // a 0 typed into the box is stored as null and the screen shows an empty field rather than a
+      // zero that looks like a configured price of nothing.
+      if (input.admissionFeeCents !== undefined) patch.admissionFeeCents = input.admissionFeeCents || null;
+      if (input.readmissionFeeCents !== undefined) patch.readmissionFeeCents = input.readmissionFeeCents || null;
       db.update(schoolYears).set(patch).where(eq(schoolYears.id, input.id)).run();
-      audit(auditActor(ctx), 'schoolYear.update', { entity: 'schoolYear', entityId: input.id });
+      audit(auditActor(ctx), 'schoolYear.update', { entity: 'schoolYear', entityId: input.id, detail: { keys: Object.keys(input).filter((k) => k !== 'id') } });
       return { ok: true as const };
     }),
 

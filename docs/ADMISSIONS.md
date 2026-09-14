@@ -3,7 +3,7 @@
 
 # ADMISSIONS — inquiry → waitlist → offer → admission → re-admission
 
-> **Status: HALF BUILT (0.52.0-dev.7).** This is Phase 2 of the academic layer (CLAUDE.md §4a). It was
+> **Status: HALF BUILT (0.52.0-dev.8).** This is Phase 2 of the academic layer (CLAUDE.md §4a). It was
 > written before the code deliberately — the same discipline `docs/PAYMENTS.md` and `docs/WHATSAPP.md`
 > follow — so the schema and the wire rules were argued once, in one place, rather than discovered per
 > screen.
@@ -12,12 +12,11 @@
 > invoices, payments and charges); the **public inquiry endpoint** of §2 in full, including the
 > limiter hardening it depended on, which shipped a build earlier as the security fix it also was;
 > the **pipeline** of §3, in `admissions/transition.ts`; the office's desk and its settings, in
-> `trpc/admissions.ts`; and the `admissions-inquiry` alert of §6.
+> `trpc/admissions.ts`; the `admissions-inquiry` alert of §6; and — from **0.52.0-dev.8** —
+> **§4, conversion**, in `admissions/convert.ts` and `admissions/fees.ts`.
 >
-> **Not built:** §4 (conversion) and §5 (re-admission). `admission_links` and `readmissions` exist as
-> tables with no writer, and an inquiry can reach `offered` and no further — `admitted` is
-> unreachable from the office's transition by TYPE, so nothing can claim a student who does not
-> exist. Those sections are still written in the future tense; everything above them is now present.
+> **Not built:** §5, re-admission. `admission_links` and `readmissions` exist as tables with no
+> writer. That section is still written in the future tense; everything above it is now present.
 >
 > Owner sections in `CLAUDE.md`: §4a (scope), §5 (roles), §9 (data rules), §12.4 (origin), §14
 > (the public endpoint), §16 (one place decides).
@@ -216,6 +215,13 @@ new → reviewing ────┼──────────── waitlisted
                                      ├── admitted   (conversion — a student exists)
                                      └── withdrawn  (the family dropped out)
 ```
+
+**ONE DEVIATION FROM THE DRAWING, MADE ON PURPOSE (0.52.0-dev.8):** `admitted` is reachable from
+every live state, not only from `offered`. A family who walks into the office and is admitted the same
+morning would otherwise need four actions for one conversation — type the inquiry, start reviewing,
+offer a place, admit — and the middle two would be recording an offer nobody made. Nothing is weakened
+by it: `admitted` still means a student EXISTS, and the only way to apply it is still `markAdmitted`
+from inside conversion's own transaction. The trail records the move that actually happened.
 
 Every transition records **who, when, and why**, in `inquiry_events` and in `audit_log`. `declined` is
 terminal but the record is retained — an office asked "did we ever hear from them?" needs an answer.

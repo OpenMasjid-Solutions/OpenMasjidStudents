@@ -29,16 +29,20 @@ import { TRPCError } from '@trpc/server';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { router, adminProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
-import { inquiries, inquiryEvents, schoolYears, schools, type InquiryState } from '../db/schema';
+import { feePlans, inquiries, inquiryEvents, schoolYears, schools, type InquiryState } from '../db/schema';
 import { audit } from '../audit';
 import { canTransition, inquiryById, reorderWaitlist, transitionInquiry, TransitionRefused, type OfficeTransition } from '../admissions/transition';
 import { INQUIRY_CAPS, storeInquiry } from '../admissions/inquiry';
 import { ADMISSIONS_TEXT_DEFAULTS, ADMISSIONS_TEXT_KEYS } from '../admissions/text';
+import { conversionPreview, convertInquiry } from '../admissions/convert';
+import { resolveEnrollmentFee } from '../admissions/fees';
+import { isIsoDay } from '../settings/dates';
 import {
   ADMISSIONS_TEXT_CAP,
   MAX_EMBED_ORIGINS,
   getAdmissions,
   getAdmissionsText,
+  getCurrency,
   isEmbedOrigin,
   setAdmissions,
   setAdmissionsText,
@@ -214,6 +218,65 @@ export const admissionsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'An inquiry needs the child’s name, your contact’s name, and either an email address or a phone number.' });
       }
       return { ok: true as const, outcome: res.outcome, id: res.inquiry?.id ?? null };
+    }),
+
+  // ── Conversion: the inquiry becomes a student ─────────────────────────────
+
+  /**
+   * What the Admit screen needs before it asks anything.
+   *
+   * The households this family might ALREADY be part of, most importantly: a younger sibling of an
+   * existing student must be offered the existing household rather than silently given a second one.
+   * It is a hint and never an action — silently joining them to a matched household is the same
+   * mistake in the other direction, and worse, because it attaches a child to an address and a set of
+   * guardians nobody confirmed.
+   */
+  convertPreview: adminProcedure.input(z.object({ id: ID })).query(({ input }) => {
+    const p = conversionPreview(input.id);
+    const plans = db.select({ id: feePlans.id, name: feePlans.name, amountCents: feePlans.amountCents, cadence: feePlans.cadence }).from(feePlans).where(eq(feePlans.status, 'active')).all();
+    const fee = resolveEnrollmentFee({ schoolYearId: p.inquiry.schoolYearId, kind: 'admission' });
+    return { ...p, feePlans: plans, enrollmentFee: fee, currency: getCurrency() };
+  }),
+
+  /**
+   * Admit them: a household, a child with a Student ID, their guardians, their fee plan and the
+   * enrollment fee, in one step.
+   *
+   * IDEMPOTENT. A second press returns the student the first one made — the inquiry's own state is
+   * what answers, and the enrollment fee has its own UNIQUE key besides, so even a conversion that
+   * somehow ran twice could not bill a family twice.
+   */
+  convert: adminProcedure
+    .input(
+      z.object({
+        id: ID,
+        feePlanId: ID,
+        overrideAmountCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+        familyId: ID.nullable().optional(),
+        classId: ID.nullable().optional(),
+        fullName: z.string().trim().max(160).optional(),
+        dob: z.string().trim().max(10).optional(),
+        admittedOn: z.string().trim().max(10).optional(),
+        guardian: z
+          .object({
+            name: z.string().trim().min(1).max(160),
+            phone: z.string().trim().max(40).optional(),
+            email: z.string().trim().max(200).optional(),
+            relation: z.string().trim().max(60).optional(),
+          })
+          .nullable()
+          .optional(),
+        feeWaived: z.boolean().optional(),
+        feeOverrideCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      // A date arriving at a WRITE boundary is validated, never trusted: a regex is not enough,
+      // because `2026-13-45` has the right shape and is not a day (§9).
+      for (const [k, v] of Object.entries({ dob: input.dob, admittedOn: input.admittedOn })) {
+        if (v && !isIsoDay(v)) throw new TRPCError({ code: 'BAD_REQUEST', message: `That ${k === 'dob' ? 'date of birth' : 'admission date'} is not a real date.` });
+      }
+      return convertInquiry({ ...input, inquiryId: input.id }, { ...auditActor(ctx), name: recordingActor(ctx).name });
     }),
 
   // ── Settings for the public form ──────────────────────────────────────────
