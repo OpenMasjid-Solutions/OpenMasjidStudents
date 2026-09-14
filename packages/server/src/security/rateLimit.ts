@@ -48,25 +48,31 @@ export interface LimiterOpts {
 const MAX_KEYS = 50_000;
 
 /**
- * Bound a limiter map without ever dropping a live penalty.
+ * Make room for one more key without ever dropping a live penalty.
+ *
+ * Runs when the map is AT its ceiling rather than over it, because these maps never go over: the
+ * caller refuses a new key once `size >= MAX_KEYS`, so a prune written to trigger above the ceiling
+ * is dead code — and a limiter that only ever refuses would, after one busy day of expired entries,
+ * refuse every new key forever. That was the first version of this function, and the mutation check
+ * for "a live block survives a flood" is what showed it never ran.
  *
  * Insertion order is the eviction order within each pass (Map preserves it), so this is oldest-first
  * among the entries it is allowed to touch. Two passes, and the order between them is the point:
  *
- *   1. entries that are completely dead — nothing is being remembered about them anyway;
+ *   1. entries that are completely dead — expired, remembering nothing, free to drop;
  *   2. entries carrying no live block — a partial counter, which is the cheap thing to forgive.
  *
- * An entry under a live block is never dropped, so the map can legitimately stay above MAX_KEYS. The
- * caller checks its own size afterwards and stops admitting new keys rather than growing.
+ * An entry under a live block is never dropped. If every entry is one, nothing is freed and the
+ * caller's own check refuses the new key rather than growing the map.
  */
 function prune<T>(m: Map<string, T>, dead: (e: T) => boolean, blocked: (e: T) => boolean): void {
-  if (m.size <= MAX_KEYS) return;
+  if (m.size < MAX_KEYS) return;
+  // Dead entries are worthless to everybody, so take all of them in one sweep rather than stopping
+  // at the first free slot — this runs once the map is full, not on the hot path.
+  for (const [k, e] of m) if (dead(e)) m.delete(k);
+  if (m.size < MAX_KEYS) return;
   for (const [k, e] of m) {
-    if (m.size <= MAX_KEYS) return;
-    if (dead(e)) m.delete(k);
-  }
-  for (const [k, e] of m) {
-    if (m.size <= MAX_KEYS) return;
+    if (m.size < MAX_KEYS) return;
     if (!blocked(e)) m.delete(k);
   }
 }
@@ -207,24 +213,33 @@ export class SubmitLimiter {
  *
  * The day is derived from the caller's clock rather than stored, so a restart neither resets the
  * ceiling to zero mid-afternoon nor carries yesterday's; in-process because an install is one process.
+ *
+ * The ceiling itself is passed IN rather than held, because it is an office setting that can change
+ * between two submissions and a limiter holding a stale copy of a number an admin just lowered is a
+ * limiter that is quietly not doing what the screen says.
  */
 export class DailyCeiling {
   private day = '';
   private count = 0;
-  constructor(private readonly max: number) {}
 
-  /** The count so far today — for the office's own diagnostics, never for the response. */
+  /** The count so far today — for the office's own diagnostics, never for the response (§14: being
+   *  over the ceiling must not be observable from outside). */
   get used(): number {
     return this.count;
   }
 
-  allow(now = Date.now()): boolean {
+  /** Today's count without consuming one — for a screen that reports how close the install is. */
+  usedOn(now = Date.now()): number {
+    return new Date(now).toISOString().slice(0, 10) === this.day ? this.count : 0;
+  }
+
+  allow(max: number, now = Date.now()): boolean {
     const day = new Date(now).toISOString().slice(0, 10);
     if (day !== this.day) {
       this.day = day;
       this.count = 0;
     }
-    if (this.count >= this.max) return false;
+    if (this.count >= max) return false;
     this.count += 1;
     return true;
   }

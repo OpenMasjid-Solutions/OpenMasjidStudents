@@ -77,6 +77,20 @@ describe('SubmitLimiter', () => {
     expect(l.allow('someone-new', now)).toBe(false); // public surfaces fail CLOSED (see the header)
   });
 
+  it('reclaims expired entries, so a full map is not full forever', () => {
+    // The failure this catches is not a bypass, it is the opposite: a limiter that fills up with
+    // yesterday's entries and then refuses EVERY new key, permanently, on a public surface that
+    // fails closed. The first version of `prune` only ran above the ceiling — which these maps never
+    // reach, because the caller refuses at it — so it never ran at all.
+    const l = new SubmitLimiter(1, 60_000);
+    const morning = 1_000_000;
+    for (let i = 0; i < 50_000; i++) l.allow('old-' + i, morning);
+    expect(l.size).toBe(50_000);
+    const afternoon = morning + 3_600_000; // every one of those windows is long gone
+    expect(l.allow('someone-new', afternoon)).toBe(true);
+    expect(l.size).toBeLessThanOrEqual(50_000);
+  });
+
   it('forgives a partial counter rather than a live cap, when it has to choose', () => {
     const l = new SubmitLimiter(3, 3_600_000); // room for a partial count below the cap
     const now = 3_000_000;
@@ -156,19 +170,32 @@ describe('foldIpForKey', () => {
 
 describe('DailyCeiling', () => {
   it('counts to its ceiling and then refuses for the rest of the day', () => {
-    const c = new DailyCeiling(2);
+    const c = new DailyCeiling();
     const noon = Date.parse('2026-09-14T12:00:00Z');
-    expect(c.allow(noon)).toBe(true);
-    expect(c.allow(noon)).toBe(true);
-    expect(c.allow(noon)).toBe(false);
-    expect(c.allow(noon + 11 * 3_600_000)).toBe(false); // 11pm the same day
+    expect(c.allow(2, noon)).toBe(true);
+    expect(c.allow(2, noon)).toBe(true);
+    expect(c.allow(2, noon)).toBe(false);
+    expect(c.allow(2, noon + 11 * 3_600_000)).toBe(false); // 11pm the same day
   });
 
   it('starts again on the next day', () => {
-    const c = new DailyCeiling(1);
+    const c = new DailyCeiling();
     const day1 = Date.parse('2026-09-14T23:00:00Z');
-    expect(c.allow(day1)).toBe(true);
-    expect(c.allow(day1)).toBe(false);
-    expect(c.allow(Date.parse('2026-09-15T01:00:00Z'))).toBe(true);
+    expect(c.allow(1, day1)).toBe(true);
+    expect(c.allow(1, day1)).toBe(false);
+    expect(c.allow(1, Date.parse('2026-09-15T01:00:00Z'))).toBe(true);
+  });
+
+  it('takes the ceiling at the call, so lowering it in Settings bites immediately', () => {
+    // The office setting can change between two submissions. A limiter holding the number it was
+    // constructed with would keep accepting past a ceiling an admin had just lowered, with the screen
+    // saying otherwise.
+    const c = new DailyCeiling();
+    const noon = Date.parse('2026-09-14T12:00:00Z');
+    expect(c.allow(5, noon)).toBe(true);
+    expect(c.allow(5, noon)).toBe(true);
+    expect(c.allow(2, noon)).toBe(false); // already at 2 today, and 2 is now the cap
+    expect(c.usedOn(noon)).toBe(2);
+    expect(c.usedOn(Date.parse('2026-09-15T12:00:00Z'))).toBe(0); // a new day reports zero, unconsumed
   });
 });

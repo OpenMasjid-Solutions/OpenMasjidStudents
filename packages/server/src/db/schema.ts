@@ -5,7 +5,14 @@
  * students (each with a generated Student ID), fee plans assigned PER STUDENT, family
  * invoices, a derived ledger, manual + Stripe payments, saved cards and autopay — plus the
  * `students/billing` Fabric provider that powers the tuition option on OpenMasjidDonations
- * and OpenMasjidKiosk. No SIS/academics (classes, grades, attendance, exams, report cards).
+ * and OpenMasjidKiosk.
+ *
+ * THE ACADEMIC LAYER IS BEING BUILT BACK (0.52.0, CLAUDE.md §4a — this line said "No SIS/academics"
+ * for fifteen releases and the v0.35.0 pivot that made it true is reversed). Shipped so far: the
+ * student record's own columns and `student_notes` (Phase 1), and the admissions tables below
+ * (Phase 2). Still to come, per §4a's status table: enrollment history, the calendar and the daily
+ * register; subjects, teachers, assessments, marks and hifz; report cards. A timetable, a teacher
+ * login and any file upload stay OUT (§4 ❌).
  *
  * Rules: money in integer cents; balances DERIVED, never stored; payments IMMUTABLE
  * (corrections are reversal rows); FKs RESTRICT on money paths; every table has
@@ -161,6 +168,25 @@ export const schoolYears = sqliteTable(
     endMonth: integer('end_month').notNull(),
     isCurrent: integer('is_current', { mode: 'boolean' }).notNull().default(false),
     status: text('status').$type<'active' | 'archived'>().notNull().default('active'),
+    /**
+     * WHAT THIS YEAR CHARGES TO JOIN, AND TO COME BACK (0.52.0, §4a Phase 2).
+     *
+     * Integer cents like all money, and **null means no fee**, which is an ordinary madrasah rather
+     * than an unconfigured one — most charge nothing to enrol. Two figures because they are two
+     * different decisions: a family arriving for the first time and a family confirming for another
+     * year are not obviously worth the same, and several madāris charge the second and not the first.
+     *
+     * They live on the YEAR rather than in settings because that is the thing they change with: last
+     * year's fee must stay readable after this year's is raised, and a re-admission approved in
+     * August is charged what August's year says. A per-family waive or override sits on the
+     * `inquiries` / `readmissions` row instead, mirroring `student_fees.override_amount_cents` —
+     * hardship is real and it is per family, not per year.
+     *
+     * Nothing here touches the ledger. The charge is raised through `billing/charges.ts`
+     * `raiseChargeOnce` like any other (§11, §4a) — admissions opens no second path into the money.
+     */
+    admissionFeeCents: integer('admission_fee_cents'),
+    readmissionFeeCents: integer('readmission_fee_cents'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
   },
@@ -1087,3 +1113,211 @@ export const autopayRuns = sqliteTable(
   (t) => ({ famDateUq: unique('autopay_runs_family_date_uq').on(t.familyId, t.runDate), piIdx: index('autopay_runs_pi_idx').on(t.stripePaymentIntentId) }),
 );
 export type AutopayRun = typeof autopayRuns.$inferSelect;
+
+// ── Admissions (0.52.0, CLAUDE.md §4a Phase 2 — full spec in docs/ADMISSIONS.md) ─────────────
+//
+// THE HARDEST RULE IN THIS SECTION, AND THE SHAPE OF THE TABLES IS THE ENFORCEMENT: an inquiry is
+// not a student and not a household. It has its own table, it never mints a Student ID, it never
+// appears in the directory, it is never billable, and nothing in the ledger can see it. The Student
+// ID is minted at CONVERSION and nowhere else (`admissions/convert.ts`).
+//
+// Every shortcut that would be convenient here — "just create the student as pending", "reserve the
+// ID now" — puts an unconfirmed, PUBLICLY SUBMITTED record on the payment path (§11.2, §14), which
+// is the exact surface this app spent three releases narrowing. `inquiries.student_id` is therefore
+// the ONLY link between the two, it is null until conversion, and it points forward rather than the
+// student pointing back.
+
+/** The pipeline (docs/ADMISSIONS.md §3). `declined` is terminal and the row is RETAINED — an office
+ *  asked "did we ever hear from them?" needs an answer. */
+export type InquiryState = 'new' | 'reviewing' | 'waitlisted' | 'offered' | 'declined' | 'admitted' | 'withdrawn';
+
+/**
+ * ONE FAMILY'S ASKING — a record of a conversation, not a child on the roster.
+ *
+ * `state` IS STORED TRUTH AND IS NEVER DERIVED from the presence of other records (§9). A row with a
+ * `student_id` set does not make the state `admitted`; the TRANSITION does, and the transition is
+ * what is audited and what writes an `inquiry_events` row. Deriving the state from its side-effects
+ * is precisely how a half-failed conversion reads back as a success.
+ *
+ * Almost everything here arrives from a stranger through an unauthenticated form, so every column is
+ * INERT TEXT: stored as typed, escaped at every render, never interpolated into a document or an
+ * email without escaping, and never written to a log line — §14 plus the addition that a body this
+ * app did not author is also a place to inject.
+ */
+export const inquiries = sqliteTable(
+  'inquiries',
+  {
+    id: text('id').primaryKey(),
+    /**
+     * Which program, once the OFFICE has decided — never set by the public form.
+     *
+     * A stranger picking a school by id is the same probe `asked_about` exists to prevent: it would
+     * tell an unauthenticated caller which schools exist and which ids are real. The family says
+     * what they want in their own words; the office assigns the school while reviewing.
+     */
+    schoolId: text('school_id').references(() => schools.id, { onDelete: 'restrict' }),
+    /** The year asked about. Nullable, because a family may well ask before that year exists. */
+    schoolYearId: text('school_year_id').references(() => schoolYears.id, { onDelete: 'restrict' }),
+    /** ONE name field, for the same reason `students.full_name` is one (§9). */
+    childName: text('child_name').notNull(),
+    childDob: text('child_dob'), // optional ISO day, validated by isIsoDay at the write boundary (§9)
+    /** "Hifz 1", "the Sunday class" — FREE TEXT and deliberately not an FK: a stranger typing into a
+     *  public form must not be able to probe which classes this madrasah runs. */
+    askedAbout: text('asked_about'),
+    parentName: text('parent_name').notNull(),
+    email: text('email'),
+    phone: text('phone'),
+    message: text('message'),
+    state: text('state').$type<InquiryState>().notNull().default('new'),
+    /** `public` came through the form; `office` was typed in by staff for a walk-in or a phone call. */
+    source: text('source').$type<'public' | 'office'>().notNull().default('public'),
+    /** Manual ordering, no capacity (decision 7). Only meaningful while `waitlisted`. */
+    waitlistPosition: integer('waitlist_position'),
+    waitlistReason: text('waitlist_reason'),
+    /** What came back from the admission form, held INERT until conversion reads it (§4a Phase 2). */
+    submittedPayload: text('submitted_payload', { mode: 'json' }).$type<Record<string, unknown>>(),
+    /**
+     * Set ONLY at conversion, and together. They are what answers "when did this family first ask?"
+     * long after the child is on the roster.
+     *
+     * `set null` rather than `restrict`, unlike every money path: `people.studentDelete` with `force`
+     * is a deliberate door (§9) and an inquiry must not be what jams it. A record of a conversation
+     * outlives the record it led to, and reads as an admission whose student was later erased —
+     * which is the honest thing for it to say.
+     */
+    studentId: text('student_id').references(() => students.id, { onDelete: 'set null' }),
+    familyId: text('family_id').references(() => families.id, { onDelete: 'set null' }),
+    /**
+     * A one-way digest of the child's name plus the contact given, so the same family submitting the
+     * same form twice in a week is recognized without storing a second copy of their details to
+     * compare against. Hashed rather than plain because a readable "name|email" column would be PII
+     * duplicated for no reason; not UNIQUE, because a family asking again next year is not a mistake.
+     */
+    dedupeKey: text('dedupe_key'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({
+    stateIdx: index('inquiries_state_idx').on(t.state),
+    yearIdx: index('inquiries_year_idx').on(t.schoolYearId),
+    dedupeIdx: index('inquiries_dedupe_idx').on(t.dedupeKey, t.createdAt),
+  }),
+);
+export type Inquiry = typeof inquiries.$inferSelect;
+
+/**
+ * THE TRAIL THE OFFICE READS — who moved this, when, and why.
+ *
+ * **This deliberately duplicates a facet of `audit_log`, and the reason is recorded rather than
+ * glossed** (§9). §5 states plainly that nothing reads the audit log: it is forensic, reached with
+ * `sqlite3`, with no procedure and no screen. The admissions screen needs "who declined this, and
+ * why, on what day" as a PRODUCT surface. Building a real reader for `audit_log` would make this
+ * table unnecessary and remains worth doing (§4 🔭).
+ *
+ * Until then a transition writes BOTH rows — the audit row because §14 requires it, this one because
+ * the office has to see it — and `admissions/transition.ts` is the one place that writes either, so
+ * they cannot disagree.
+ *
+ * Actor is plain fields with no FK, like `audit_log`: the trail must survive a staff account being
+ * deleted, and an SSO admin has no local user row at all.
+ */
+export const inquiryEvents = sqliteTable(
+  'inquiry_events',
+  {
+    id: text('id').primaryKey(),
+    inquiryId: text('inquiry_id')
+      .notNull()
+      .references(() => inquiries.id, { onDelete: 'cascade' }),
+    /** Null on the row that records the inquiry arriving — there was no state before it. */
+    fromState: text('from_state').$type<InquiryState>(),
+    toState: text('to_state').$type<InquiryState>().notNull(),
+    /** The office's own words. Shown on the screen, so it is escaped at render like everything else. */
+    reason: text('reason'),
+    actorUserId: text('actor_user_id'),
+    actorName: text('actor_name'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ inquiryIdx: index('inquiry_events_inquiry_idx').on(t.inquiryId, t.createdAt) }),
+);
+export type InquiryEvent = typeof inquiryEvents.$inferSelect;
+
+/**
+ * A ONE-TIME LINK a family follows to fill in their own form (admission or re-admission).
+ *
+ * **The same token machinery as `invites` and `password_resets`, not a second one** (§14,
+ * docs/ADMISSIONS.md §1.3): CSPRNG, single-use, expiring, and only the SHA-256 HASH is stored, so a
+ * stolen database row cannot be replayed as a link. `auth/tokens.ts` is the shared minting and
+ * redemption both now go through — a second implementation is a second place to get expiry,
+ * single-use or hashing wrong, and this one is reachable from the internet.
+ *
+ * Exactly one of `inquiry_id` / `readmission_id` is set; `kind` says which, so a caller never has to
+ * infer it from which column is null.
+ */
+export const admissionLinks = sqliteTable(
+  'admission_links',
+  {
+    id: text('id').primaryKey(),
+    tokenHash: text('token_hash').notNull().unique(),
+    kind: text('kind').$type<'admission' | 'readmission'>().notNull(),
+    inquiryId: text('inquiry_id').references(() => inquiries.id, { onDelete: 'cascade' }),
+    readmissionId: text('readmission_id').references(() => readmissions.id, { onDelete: 'cascade' }),
+    createdByUserId: text('created_by_user_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    usedAt: integer('used_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => ({ inquiryIdx: index('admission_links_inquiry_idx').on(t.inquiryId), readmissionIdx: index('admission_links_readmission_idx').on(t.readmissionId) }),
+);
+export type AdmissionLink = typeof admissionLinks.$inferSelect;
+
+/** Where a returning family's confirmation has got to (docs/ADMISSIONS.md §5). `lapsed` is what a
+ *  family that never answers BECOMES, by the office's action or a dated sweep — never an inference
+ *  from silence at read time, which would make a screen disagree with itself between refreshes. */
+export type ReadmissionState = 'pending' | 'submitted' | 'approved' | 'enrolled' | 'not_returning' | 'lapsed';
+
+/**
+ * ONE ROW PER RETURNING CHILD PER YEAR — not a second trip through the admissions funnel.
+ *
+ * The child, the household and the guardians all already exist; what is being collected is "is
+ * anything different, and are you coming back?". So the form is PRE-FILLED from the current record
+ * and what comes back is a DIFF the office approves, never a blind overwrite (§5 of the spec).
+ *
+ * **UNIQUE (student_id, school_year_id) is the whole idempotency story**, and it is load-bearing
+ * rather than tidy: the normal mode of use is "send to three hundred families, twice, because the
+ * first send half worked", and every bulk button here is pressed again by somebody who thought the
+ * first press had not registered.
+ *
+ * The Student ID never changes and is never re-minted — this row's entire relationship with the
+ * student is that it points at one.
+ */
+export const readmissions = sqliteTable(
+  'readmissions',
+  {
+    id: text('id').primaryKey(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => students.id, { onDelete: 'cascade' }),
+    schoolYearId: text('school_year_id')
+      .notNull()
+      .references(() => schoolYears.id, { onDelete: 'restrict' }),
+    state: text('state').$type<ReadmissionState>().notNull().default('pending'),
+    /** What the family sent back, held inert until the office approves the diff. */
+    submittedPayload: text('submitted_payload', { mode: 'json' }).$type<Record<string, unknown>>(),
+    /** Hardship, per family, mirroring `student_fees.override_amount_cents` — the precedent this app
+     *  already has for "the list price is not what this family pays". `feeWaived` is the separate
+     *  answer "nothing at all", which an override of 0 would say ambiguously. */
+    feeOverrideCents: integer('fee_override_cents'),
+    feeWaived: integer('fee_waived', { mode: 'boolean' }).notNull().default(false),
+    remindedAt: integer('reminded_at', { mode: 'timestamp_ms' }),
+    submittedAt: integer('submitted_at', { mode: 'timestamp_ms' }),
+    approvedAt: integer('approved_at', { mode: 'timestamp_ms' }),
+    approvedByUserId: text('approved_by_user_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({
+    studentYearUq: unique('readmissions_student_year_uq').on(t.studentId, t.schoolYearId),
+    yearStateIdx: index('readmissions_year_state_idx').on(t.schoolYearId, t.state),
+  }),
+);
+export type Readmission = typeof readmissions.$inferSelect;

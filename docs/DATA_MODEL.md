@@ -16,7 +16,7 @@
 > …), while every table added since was missing. It is now generated from the real
 > `packages/server/src/db/schema.ts`. If you change the schema, change this.
 
-The **35 tables** that exist, grouped by what they are for:
+The **39 tables** that exist, grouped by what they are for:
 
 | Area | Tables |
 | --- | --- |
@@ -27,6 +27,7 @@ The **35 tables** that exist, grouped by what they are for:
 | Fees | `fee_plans`, `student_fees`, `charge_items`, `charges` |
 | Billing | `invoices`, `invoice_items`, `payments`, `payment_allocations`, `carry_ins`, `past_due_reminders`, `standing_payments` |
 | Cards | `payment_methods`, `autopay_enrollments`, `autopay_runs` |
+| Admissions | `inquiries`, `inquiry_events`, `admission_links`, `readmissions` *(0.52.0-dev.7)* |
 | Notifications | `alert_recipients`, `whatsapp_log` |
 | Trail | `audit_log` |
 
@@ -60,18 +61,27 @@ Notable absences, each deliberate:
 | Roster over time | `enrollments` | 3 |
 | Calendar | `closure_days`, `sessions` *(+ `school_years.teaching_days`)* | 3 |
 | Attendance | `attendance_marks`, `registers` | 3 |
-| Admissions | `inquiries`, `inquiry_events`, `admission_links`, `readmissions` | 2 |
 | Academics | `subjects`, `teachers`, `teaching_assignments`, `assessments`, `marks`, `hifz_records` | 4 |
 | Report cards | `grading_schemes`, `grading_bands`, `report_cards`, `report_card_comments` | 5 |
 
-Plus columns rather than tables: `school_years.teaching_days`, `admission_fee_cents` and
-`readmission_fee_cents`.
+Plus one column rather than a table: `school_years.teaching_days`.
 
-**Phase 0 and Phase 1 have SHIPPED** and their tables are in the list above, not here:
-`charges.source_key` (migration 0041 — a nullable UNIQUE natural key, because `charges` had no unique
-index at all and `chargeAdd` inserted with no existence check, so re-approving a re-admission would
-have charged a family twice); the student-record columns and `student_notes` (0042); and the household
-details on `families` (0043).
+**Phases 0 and 1 have SHIPPED, and Phase 2's SCHEMA has**, so their tables are in the list above and
+not here: `charges.source_key` (migration 0041 — a nullable UNIQUE natural key, because `charges` had
+no unique index at all and `chargeAdd` inserted with no existence check, so re-approving a
+re-admission would have charged a family twice); the student-record columns and `student_notes`
+(0042); the household details on `families` (0043); and **`inquiries`, `inquiry_events`,
+`admission_links`, `readmissions` plus `school_years.admission_fee_cents` /
+`readmission_fee_cents` (0044)**.
+
+**0044 landed all four admissions tables at once, one build ahead of two of their writers**, and the
+trade is worth recording. `admission_links` and `readmissions` have no writer until conversion and
+re-admission ship. Normally that is exactly what CLAUDE.md §9 warns about — "a money schema with a
+table nobody writes is an invitation to wire the next thing to it" — but these are not on the money
+path, and the competing risk is larger: a hand-typed `_journal.json` `when` that is not strictly
+greater applies perfectly on a fresh database and is **skipped forever** on a live one, so four
+migrations is four chances at the highest-consequence mistake in this repo rather than one. An inert
+table is the cheaper of the two.
 
 Non-negotiable rules live in CLAUDE.md §9: Student IDs unique and always generated; money in integer
 cents; idempotency keys UNIQUE; **balances derived, never stored**; payments immutable (reversals, not
@@ -125,6 +135,43 @@ and `updated_at` wherever a row is ever updated.
   read for a new child and refused as a CHANGE to an existing one. Repeating an exported fee plan or
   guardian unchanged is silent — without that the export could never round-trip, which the test suite
   found rather than a masjid.
+- **An inquiry is a table of its own, and `inquiries.student_id` points FORWARD** (0.52.0-dev.7).
+  The convenient design is to create the student straight away and mark them pending, so the rest of
+  the app can already see them. That would put an unconfirmed, publicly submitted record on the
+  payment path — a Student ID is the whole credential at the kiosk and on the donation site (§11.2),
+  so minting one for somebody who filled in a web form is an escalation, not a shortcut. So an inquiry
+  never mints an ID, never appears in the directory and is never billable; the ID is minted at
+  conversion and nowhere else. The link is one nullable column on the INQUIRY, set only at conversion,
+  which means nothing on the money path can reach back into it. `ON DELETE SET NULL` rather than
+  `RESTRICT`, unlike every money path, so the deliberate hard-delete door (§9) is never jammed by a
+  record of a conversation: the inquiry survives as an admission whose student was later erased, which
+  is the honest thing for it to say.
+- **`admitted` is unreachable from the office's own transition, by TYPE** (0.52.0-dev.7).
+  `transitionInquiry`'s parameter excludes it, and `markAdmitted` is a separate export that
+  `admissions/convert.ts` calls inside the transaction that created the child. A student existing is
+  what `admitted` MEANS, so without the split, "mark it admitted" is one plausible-looking mutation
+  away from an inquiry that claims a student nobody created. The tRPC enum excludes it too — two
+  guards, one against a caller naming the state, one against the sequence.
+- **`inquiry_events` deliberately duplicates a facet of `audit_log`** (0.52.0-dev.7). §5 records that
+  nothing in this app READS the audit log; the admissions screen needs "who declined this, and why, on
+  what day" as a product surface. So a transition writes both rows, from one function
+  (`admissions/transition.ts`), and they cannot disagree. Building a real reader for `audit_log` would
+  make this table unnecessary and is still worth doing (CLAUDE.md §4 🔭). The two halves carry
+  different things on purpose: the office's own prose about a family is on the event row it will be
+  read from, and never in the forensic trail (§14).
+- **The public form's policy is one JSON settings row, and every switch in it reads `=== true`**
+  (0.52.0-dev.7). `getExternalPaymentsEnabled` uses `!== '0'` because its safe value is ON; none of
+  these is. A truncated or hand-edited row must fail into a form that does not answer. The
+  `embedOrigins` list is the sharpest case of re-validate-on-read in the codebase — those strings are
+  interpolated into a `Content-Security-Policy: frame-ancestors` header, so anything that is not a
+  bare scheme-and-host is dropped rather than repaired, and `*` cannot be produced because it cannot
+  survive the predicate.
+- **The form's minimum time-to-submit is SIGNED, and the key is stored rather than per process**
+  (0.52.0-dev.7). An unsigned render timestamp is a number a bot edits, so it is HMAC'd. Holding the
+  key in memory would have been the obvious choice and the wrong one: a restart between opening the
+  form and sending it would turn a real family's inquiry into a silently discarded one, and — because
+  the response is identical whatever happens — nobody would ever find out. It authenticates nothing
+  and grants nothing; the database file is already a secret whatever is in it (§9).
 - **Medical fields exist, and the column allow-list is what makes them safe** (0.52.0). §14's
   "no medical fields" is amended, not excepted — and adding the column is only half the work, because
   `people.familyGet` is an `adminOrFinanceProcedure` doing a bare `SELECT` and the finance shell renders

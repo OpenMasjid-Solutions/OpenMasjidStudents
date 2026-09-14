@@ -419,7 +419,7 @@ phase reads "built" only when it has shipped, and until then this section descri
 | --- | --- | :-- |
 | **0** | Foundations: these amendments; the migration-journal guard; `charges.source_key`; the CSV round-trip fix | **BUILT** *(0.52.0-dev.2)* |
 | **1** | The student record — real fields, a screen to edit them on, the field registry, Settings tabs, import | **BUILT** *(0.52.0-dev.4)* |
-| **2** | Admissions — inquiry → waitlist → offer → admission → re-admission (`docs/ADMISSIONS.md`) | **specified** |
+| **2** | Admissions — inquiry → waitlist → offer → admission → re-admission (`docs/ADMISSIONS.md`) | **part built** *(0.52.0-dev.7)* |
 | **3** | Attendance — enrollment history, the calendar, the daily register (`docs/ATTENDANCE.md`) | **specified** |
 | **4** | Academics — subjects, teachers, assessments, marks, hifz (`docs/ACADEMICS.md`) | **specified** |
 | **5** | Report cards — grading scheme, draft → finalized, the frozen snapshot (`docs/ACADEMICS.md`) | **specified** |
@@ -513,6 +513,26 @@ the **public inquiry form is the only new unauthenticated write surface in the w
 that way** (§14); admission and re-admission links **reuse the existing hashed one-time token
 machinery**; conversion and enrollment-fee raising are **idempotent**; and the **enrollment fee is an
 ordinary charge** through the existing charge procedures — admissions opens no new path into the ledger.
+
+> **WHAT OF IT IS BUILT (0.52.0-dev.7), and what is not.** The phase ships in two halves because the
+> first one stands on its own: a masjid can put the form on their website and work the pipeline from
+> the desk, with nothing half-finished on screen, before conversion exists.
+>
+> **Built:** all four tables and the two `school_years` fee columns (migration 0044, verified against
+> a live database holding students, invoices, payments and charges); the **public form** —
+> `/public/inquiry`, its embed page and its one-line snippet, in `admissions/publicRoutes.ts`, with
+> every §14 control written into the handler because there are no Fastify hooks in this repo; the
+> **pipeline** (`admissions/transition.ts`, the ONE writer of a state, of `inquiry_events` and of the
+> audit row); the **desk** (`trpc/admissions.ts`, admin-only and therefore LAN-only, plus the
+> Admissions screen and the Settings tab); the `admissions-inquiry` alert; and the limiter hardening
+> the phase depended on, which shipped a build earlier as the security fix it also was (dev.6).
+>
+> **Not built yet:** `admissions/convert.ts` and `admissions/fees.ts` — so an inquiry can reach
+> `offered` and no further, `markAdmitted` has no caller, and `admission_links` and `readmissions`
+> are tables with no writer. That is deliberate rather than forgotten: `admitted` is unreachable from
+> the office's transition (its type excludes it), so nothing can claim a student that does not exist.
+> Re-admission follows conversion, since it is the same machinery pointed at a child who is already
+> on the roster.
 
 **Phase 3 — attendance.** Full spec in `docs/ATTENDANCE.md`. It opens with **enrollment history**, which
 is a schema reversal (`enrollments`, recorded in `docs/DATA_MODEL.md` as deliberately not re-created) and
@@ -876,20 +896,21 @@ The tables, as they actually exist: `settings`, `users`, `sessions`, `invites`, 
 `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts`, `fee_plans`, `student_fees`,
 `invoices`, `invoice_items`, `charge_items`, `charges`, `payments`, `payment_allocations`, `carry_ins`,
 `past_due_reminders`, `payment_methods`, `autopay_enrollments`, `autopay_runs`, `standing_payments`,
-`alert_recipients`, `whatsapp_log`, `audit_log`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
+`alert_recipients`, `whatsapp_log`, `audit_log`, and — from 0.52.0-dev.7, §4a Phase 2 — `inquiries`,
+`inquiry_events`, `admission_links`, `readmissions`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
 printed on statements). That list is the whole schema: `stripe_events` was dropped in 0.48.0 (migration
 0037) because it deduped webhook deliveries and there is no webhook (§13.4) — a money schema with a table
 nobody writes is an invitation to wire the next thing to it. The DB file holds minors' PII and every
 payment record, so the file itself is a secret regardless.
 
-**The academic layer adds roughly eighteen more, and this list is updated AS EACH PHASE SHIPS, not now**
+**The academic layer's REMAINING tables, and this list is updated AS EACH PHASE SHIPS, not in advance**
 (§4a — what is specified is not what exists): `enrollments`; `closure_days`, `sessions`,
-`attendance_marks`, `registers`; `inquiries`, `inquiry_events`, `admission_links`, `readmissions`;
-`subjects`, `teachers`, `teaching_assignments`, `assessments`, `marks`, `hifz_records`;
-`grading_schemes`, `grading_bands`, `report_cards`, `report_card_comments` — plus new columns on
-`students` (§4a Phase 1), on `school_years` (teaching weekdays, enrollment fees) and on `charges`
-(`source_key`). `docs/DATA_MODEL.md` carries the same list with each table's shape; the three `docs/`
-specs carry the reasoning.
+`attendance_marks`, `registers`; `subjects`, `teachers`, `teaching_assignments`, `assessments`,
+`marks`, `hifz_records`; `grading_schemes`, `grading_bands`, `report_cards`, `report_card_comments` —
+plus new columns on `school_years` (teaching weekdays). Phase 1's columns on `students`, Phase 0's
+`charges.source_key` and Phase 2's four tables plus `school_years.admission_fee_cents` /
+`readmission_fee_cents` have shipped and have moved up into the list above. `docs/DATA_MODEL.md`
+carries the same list with each table's shape; the three `docs/` specs carry the reasoning.
 
 Non-negotiable rules:
 
@@ -1151,7 +1172,8 @@ Non-negotiable rules:
   many NULLs in a UNIQUE column, as `student_code` already relies on) with deterministic keys
   (`admission:<inquiryId>`, `readmission:<studentId>:<schoolYearId>`) makes a repeat a **no-op returning
   the existing charge**, not an error: the caller is a bulk approve button and "already done" is success.
-- **AN ADMISSIONS STATE IS STORED TRUTH, NEVER DERIVED** (§4a Phase 2). An inquiry's state is what a
+- **AN ADMISSIONS STATE IS STORED TRUTH, NEVER DERIVED** (§4a Phase 2, BUILT 0.52.0-dev.7 in
+  `admissions/transition.ts`). An inquiry's state is what a
   transition set it to, recorded with who, when and why — not an inference from whether a student row
   exists. Deriving it is how a half-failed conversion reads as successful. And **an inquiry is not a
   student and not a household**: it never mints a Student ID, never appears in the directory, and is
@@ -1749,7 +1771,9 @@ secrets). Additions:
   the enrollment row and the current pointer together; one **`structure/calendar.ts`** for whether the
   madrasah teaches on a given day, so a denominator cannot differ between two screens; one
   **`attendance/derive.ts`** for every rate, count and streak; one **`academics/derive.ts`** for every
-  percentage, weighted average and band, rounding **once**; one **`admissions/convert.ts`** for turning an
+  percentage, weighted average and band, rounding **once**; one **`admissions/transition.ts`** for moving an inquiry
+  along the pipeline — the one writer of a state, of the `inquiry_events` trail and of the audit row
+  beside it (BUILT, 0.52.0-dev.7); one **`admissions/convert.ts`** for turning an
   inquiry into a student; and one **`admissions/fees.ts`** for raising an enrollment fee, which it does
   through the existing charge procedures rather than beside them.
 - Unit tests for the ledger: exact pay, partial, overpay→credit, multi-invoice, replayed idempotency key,
@@ -2026,6 +2050,8 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | whether the madrasah teaches on a given day | `structure/calendar.ts` |
   | an attendance rate, count or streak | `attendance/derive.ts` |
   | a percentage, a weighted average or a grade band | `academics/derive.ts` |
+  | where an inquiry has got to, or who moved it and why | `admissions/transition.ts` — never `UPDATE inquiries SET state` |
+  | what the public inquiry form accepts, answers, or refuses | `admissions/publicRoutes.ts`; what it SAYS is `admissions/text.ts` |
   | an inquiry becoming a student | `admissions/convert.ts`, then `admissions/fees.ts` for the enrollment fee |
   | what a report card shows once it is finalized | its stored snapshot — not the live tables (§9) |
 

@@ -23,6 +23,7 @@ import { createContext } from './trpc/trpc';
 import { registerStatementRoutes } from './billing/statementRoutes';
 import { registerFabricProvider } from './fabric/provider';
 import { registerFabricCommands } from './fabric/commands';
+import { registerPublicInquiryRoutes } from './admissions/publicRoutes';
 import { refreshSiteInfo } from './fabric/platform';
 import { backfillStudentCodes } from './billing/studentCodes';
 import { ensureDefaultSchool } from './schools';
@@ -43,8 +44,13 @@ const log = makeLog('main');
  * the first was listed, so a mistyped or stale link to one of the other three answered `200` with the
  * app shell. Nothing leaks (the shell is `no-store` and carries no data) but the office sees the app
  * appear in a print dialog instead of an error, which is a worse thing to debug than a 404.
+ *
+ * `/public` joins them in 0.52.0 with the admissions inquiry form (§4a Phase 2). Same reasoning and a
+ * sharper case: that prefix is reachable from the internet with no session, so an unmatched
+ * extensionless GET under it — a typo, a stale link, `/public/inquiry/thanks` — would hand a stranger
+ * the whole app shell rather than a 404.
  */
-const NON_SPA_PREFIXES = ['/trpc', '/api', '/fabric', '/statements', '/sheets', '/invoices', '/healthz'];
+const NON_SPA_PREFIXES = ['/trpc', '/api', '/fabric', '/statements', '/sheets', '/invoices', '/healthz', '/public'];
 
 async function main(): Promise<void> {
   // Apply committed migrations before accepting traffic, then clear stale sessions.
@@ -121,6 +127,14 @@ async function main(): Promise<void> {
   // caller header. NOT a Fabric capability — `commands` is reserved precisely so no other app can
   // reach this handler through the broker.
   registerFabricCommands(app);
+
+  // The public admissions inquiry form /public/inquiry* (0.52.0, §4a Phase 2). UNAUTHENTICATED BY
+  // DESIGN and reachable from LAN and tunnel alike — the only such write surface in this project, and
+  // it stays that way. There are no Fastify hooks here, so every control §14 lists (the identical
+  // acknowledgement, honeypot, signed render time, per-source and install-wide caps, field caps, the
+  // route's own body limit, the frame-ancestors allowlist) is written into the handler itself. Off
+  // until an office switches it on, when all of it 404s.
+  registerPublicInquiryRoutes(app);
 
   /**
    * The school logo, as an image. Deliberately UNAUTHENTICATED, like the appearance relay: a

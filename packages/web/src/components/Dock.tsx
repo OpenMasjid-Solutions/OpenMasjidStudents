@@ -9,12 +9,12 @@
  */
 import { type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { LayoutGrid, GraduationCap, Wallet, CalendarRange, Layers, UserCog, Settings as SettingsIcon, AppWindow } from 'lucide-react';
+import { LayoutGrid, GraduationCap, Wallet, CalendarRange, Layers, UserCog, Inbox, Settings as SettingsIcon, AppWindow } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { useWindows } from './Windows';
 
 /** Admin sections (Dock is generic; this union just types the admin shell's state). */
-export type Section = 'dashboard' | 'students' | 'year' | 'structure' | 'billing' | 'staff' | 'settings';
+export type Section = 'dashboard' | 'students' | 'admissions' | 'year' | 'structure' | 'billing' | 'staff' | 'settings';
 /** Finance sections — finance runs billing, and READS the year view and the student roster (§5). */
 export type FinanceSection = 'billing' | 'year' | 'students';
 
@@ -28,6 +28,9 @@ export interface DockItem {
 export const ADMIN_ITEMS: DockItem[] = [
   { id: 'dashboard', icon: <LayoutGrid size={20} />, labelKey: 'nav.dashboard' },
   { id: 'students', icon: <GraduationCap size={20} />, labelKey: 'nav.students' },
+  // Beside Students rather than at the end: an inquiry becomes a student, and the two screens are
+  // worked in the same half-hour. Admin only, like everything in §4a, and so LAN-only.
+  { id: 'admissions', icon: <Inbox size={20} />, labelKey: 'nav.admissions' },
   { id: 'year', icon: <CalendarRange size={20} />, labelKey: 'nav.year' },
   { id: 'structure', icon: <Layers size={20} />, labelKey: 'nav.structure' },
   { id: 'billing', icon: <Wallet size={20} />, labelKey: 'nav.billing' },

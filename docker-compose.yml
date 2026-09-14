@@ -8,8 +8,11 @@
 # no Docker socket.
 #
 # (This header described teachers, a public admissions form and a Stripe webhook
-# until 0.48.0. None of the three exist: the academics went in v0.35.0 and there
-# has never been a webhook — payments are pulled, see CLAUDE.md §13.4.)
+# until 0.48.0, when none of the three existed. Two still do not: there are no
+# teachers, and there has never been a webhook — payments are pulled, see
+# CLAUDE.md §13.4. The public admissions form came BACK in 0.52.0-dev.7 with the
+# academic layer, and is served from this same container at /public/inquiry —
+# off until an office switches it on, §4a Phase 2.)
 #
 # Nothing to configure at install time beyond the settings below — install it, open
 # it, create the admin account, and set up the rest inside the app (saved to /data).
@@ -40,7 +43,7 @@ services:
     #   ghcr.io/openmasjid-solutions/openmasjidstudents:0.51.0@sha256:d5df93e5…
     # Restoring that pin is a step OF the merge-to-main release (CLAUDE.md "Branching policy" + §19); CI
     # refuses to publish a v* tag whose compose is not digest-pinned.
-    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.52.0-dev.6
+    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.52.0-dev.7
     restart: unless-stopped
     environment:
       PORT: "8080"

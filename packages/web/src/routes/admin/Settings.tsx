@@ -12,6 +12,7 @@ import { formatMoney } from '../../lib/money';
 import { trpc, type RouterOutputs } from '../../lib/trpc';
 import { WhatsAppSettings } from '../../components/WhatsAppSettings';
 import { StudentFieldsSettings } from '../../components/StudentFieldsSettings';
+import { AdmissionsSettings } from '../../components/AdmissionsSettings';
 
 /** The alert catalog comes from the server (alerts/index.ts owns it), so the UI never hard-codes the
  *  event list — adding an event there makes a new checkbox appear here with no change on this side. */
@@ -34,7 +35,9 @@ type OnboardingKey = RouterOutputs['settings']['onboardingTextGet']['keys'][numb
  * School first because it holds "can we actually reach a parent", which silently blocks invites and
  * resets and is the panel every "the email never arrived" report resolves to.
  */
-const TABS = ['school', 'students', 'documents', 'messages', 'payments'] as const;
+// `admissions` sits after `students` because that is the order an office meets them — a child is an
+// inquiry before they are a record — and because the two screens are worked in the same sitting.
+const TABS = ['school', 'students', 'admissions', 'documents', 'messages', 'payments'] as const;
 type Tab = (typeof TABS)[number];
 
 export function Settings() {
@@ -557,6 +560,11 @@ export function Settings() {
           <StudentFieldsSettings />
         </section>
       )}
+
+      {/* Several sections of its own, so it renders them itself rather than being wrapped here —
+          the WhatsAppSettings convention. It switches on the only unauthenticated write surface in
+          this app, which is why the copy in it says so out loud (§14). */}
+      {tab === 'admissions' && <AdmissionsSettings />}
 
       {tab === 'documents' && (<>
       {/* ── The wording on the printed family sheet (0.48.0) ─────────────────────

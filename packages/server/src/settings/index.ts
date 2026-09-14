@@ -95,6 +95,14 @@ export const SETTING_KEYS = {
   // JSON {textKey: string} — the madrasah's own wording for each WhatsApp message (0.50.0). A partial
   // map; anything absent uses the shipped sentence. Stored opaquely, like `sheet_text`.
   whatsappTexts: 'whatsapp_texts',
+  // JSON — the office's policy for the PUBLIC admissions inquiry form (0.52.0, §4a Phase 2): whether
+  // it answers at all, whether intake is open, which origins may frame it, and the two caps. Every
+  // switch in it defaults to the CLOSED direction; see getAdmissions, which re-validates each field.
+  admissions: 'admissions',
+  // JSON {textKey: string} — the madrasah's own wording for the public admissions form (0.52.0). A
+  // partial map; anything absent uses the shipped sentence. Stored opaquely, like `sheet_text`, with
+  // the registry in admissions/text.ts beside the page that renders it.
+  admissionsText: 'admissions_text',
 } as const;
 
 /** Image types a logo may be. Kept to the three that every browser, print path and mail client
@@ -508,6 +516,85 @@ export function setPastDue(patch: Partial<PastDueConfig>): void {
 }
 
 /**
+ * THE OFFICE'S POLICY FOR THE PUBLIC ADMISSIONS FORM (0.52.0, §4a Phase 2, docs/ADMISSIONS.md §2).
+ *
+ * This is the only unauthenticated write surface in the whole project, so every boolean here reads
+ * `=== true` — the `!== '0'` idiom is for settings whose SAFE value is true, and none of these is.
+ * A hand-edited, truncated or half-written row must fail into a form that does not answer, not into
+ * one that does. `getWebhookNamesStudent` states the same rule for the same reason.
+ *
+ * `embedOrigins` is the sharpest instance of "re-validate on read" in the file: those strings are
+ * interpolated into a `Content-Security-Policy: frame-ancestors` header, so an entry that is not a
+ * bare scheme-and-host is DROPPED rather than repaired, and `*` can never be produced because it
+ * cannot survive the predicate. Same argument as `getAccentColor`, which lands inside a `<style>`.
+ */
+export interface AdmissionsConfig {
+  /** Does `/public/inquiry` answer at all? OFF on every install — an office opens this door on purpose. */
+  publicForm: boolean;
+  /** Is intake open? Closing it is what an office does when the year is full: the form keeps answering
+   *  and says so plainly, rather than accepting submissions nobody will read. */
+  open: boolean;
+  /** Origins permitted to frame the form. EMPTY means nobody, i.e. the hosted page only. */
+  embedOrigins: string[];
+  /** The whole-install ceiling for one day. Above it the form answers identically and stores nothing. */
+  dailyMax: number;
+  /** Seconds a form must have been open before a submission is believed. A bot fills one instantly. */
+  minSeconds: number;
+  /** Email the family an acknowledgement. OFF by default: the address is typed by a stranger, so
+   *  switching it on turns this into something that can send mail to somebody who did not ask for it.
+   *  The on-page acknowledgement always shows, and it is what a family actually sees. */
+  ackEmail: boolean;
+}
+
+const ADMISSIONS_DEFAULTS: AdmissionsConfig = {
+  publicForm: false,
+  open: true,
+  embedOrigins: [],
+  dailyMax: 200,
+  minSeconds: 3,
+  ackEmail: false,
+};
+
+/** At most this many allowlisted origins — a CSP header is not a place for an unbounded list. */
+export const MAX_EMBED_ORIGINS = 10;
+
+/**
+ * Is this a bare origin we are willing to name in a CSP header?
+ *
+ * Scheme + host + optional port, and nothing else: no path, no wildcard, no `*`, no scheme-relative
+ * form. `frame-ancestors` treats a malformed source by ignoring it, which is safe — but a source that
+ * parses as something WIDER than intended is not, and the cheapest defense is refusing to store or
+ * emit anything that is not exactly a host.
+ */
+export function isEmbedOrigin(v: unknown): v is string {
+  return typeof v === 'string' && /^https?:\/\/[a-z0-9.-]{1,120}(:\d{1,5})?$/i.test(v.trim());
+}
+
+export function getAdmissions(): AdmissionsConfig {
+  const raw = getSetting(SETTING_KEYS.admissions);
+  if (!raw) return { ...ADMISSIONS_DEFAULTS, embedOrigins: [] };
+  try {
+    const p = JSON.parse(raw) as Partial<AdmissionsConfig>;
+    return {
+      publicForm: p.publicForm === true,
+      open: p.open === true,
+      embedOrigins: [
+        ...new Set((Array.isArray(p.embedOrigins) ? p.embedOrigins : []).filter(isEmbedOrigin).map((o) => o.trim().toLowerCase())),
+      ].slice(0, MAX_EMBED_ORIGINS),
+      dailyMax: clampDays(p.dailyMax, ADMISSIONS_DEFAULTS.dailyMax, 5_000),
+      minSeconds: clampDays(p.minSeconds, ADMISSIONS_DEFAULTS.minSeconds, 60),
+      ackEmail: p.ackEmail === true,
+    };
+  } catch {
+    return { ...ADMISSIONS_DEFAULTS, embedOrigins: [] };
+  }
+}
+
+export function setAdmissions(patch: Partial<AdmissionsConfig>): void {
+  setSetting(SETTING_KEYS.admissions, JSON.stringify({ ...getAdmissions(), ...patch }));
+}
+
+/**
  * Does the PAYER cover Stripe's cut, or does the school? (0.51.0)
  *
  * Off by default and that is not a shrug — turning it on changes what every parent is charged, so it
@@ -690,8 +777,27 @@ export function setSchoolContact(patch: Partial<SchoolContact>): void {
  */
 const SHEET_TEXT_CAP = 1000;
 
-export function getSheetTextOverrides(): Record<string, string> {
-  const raw = getSetting(SETTING_KEYS.sheetText);
+/**
+ * ── ONE IMPLEMENTATION OF "THE BOXES THIS MADRASAH RE-WROTE" (0.52.0) ────────
+ *
+ * There are four of these maps now — the printed sheet, the onboarding message, the WhatsApp
+ * templates and the public admissions form — and until this release there were three IDENTICAL
+ * copies of the same twenty lines, differing only in which key they read and how long a box may be.
+ * A fourth copy is how the four quietly stop agreeing about what an empty box means (§20).
+ *
+ * Every rule of the shape lives here:
+ *
+ *  - the map is stored OPAQUELY: this module knows nothing about which keys exist, so each registry
+ *    stays next to the code that renders it and adding a sentence there needs no change in settings.
+ *    An unknown key is simply never read back, and the tRPC boundary validates against the real list;
+ *  - values are trimmed and capped on the way OUT as well as in, because a settings row can be edited
+ *    by hand and this text is interpolated into a printed page, an email and a WhatsApp message;
+ *  - a key set to `''` or `null` is REMOVED rather than stored blank — clearing the box means "use the
+ *    shipped sentence again", and empty wording would print a blank line or send an empty message;
+ *  - an empty map is stored as `''` rather than `'{}'`, matching how every other cleared setting reads.
+ */
+function readTextOverrides(key: string, cap: number): Record<string, string> {
+  const raw = getSetting(key);
   if (!raw) return {};
   try {
     const p = JSON.parse(raw) as unknown;
@@ -699,7 +805,7 @@ export function getSheetTextOverrides(): Record<string, string> {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
       if (typeof v !== 'string') continue;
-      const text = v.trim().slice(0, SHEET_TEXT_CAP);
+      const text = v.trim().slice(0, cap);
       if (text) out[k] = text;
     }
     return out;
@@ -708,17 +814,22 @@ export function getSheetTextOverrides(): Record<string, string> {
   }
 }
 
-/** Merge in changed boxes. A key set to `''` or `null` is REMOVED rather than stored blank — clearing the
- *  field in Settings means "use the shipped sentence again", and an empty string stored as wording would
- *  print a blank line on a family's sheet. */
-export function setSheetTextOverrides(patch: Record<string, string | null | undefined>): void {
-  const next = getSheetTextOverrides();
+function writeTextOverrides(key: string, cap: number, patch: Record<string, string | null | undefined>): void {
+  const next = readTextOverrides(key, cap);
   for (const [k, v] of Object.entries(patch)) {
-    const text = (v ?? '').trim().slice(0, SHEET_TEXT_CAP);
+    const text = (v ?? '').trim().slice(0, cap);
     if (text) next[k] = text;
     else delete next[k];
   }
-  setSetting(SETTING_KEYS.sheetText, Object.keys(next).length ? JSON.stringify(next) : '');
+  setSetting(key, Object.keys(next).length ? JSON.stringify(next) : '');
+}
+
+export function getSheetTextOverrides(): Record<string, string> {
+  return readTextOverrides(SETTING_KEYS.sheetText, SHEET_TEXT_CAP);
+}
+
+export function setSheetTextOverrides(patch: Record<string, string | null | undefined>): void {
+  writeTextOverrides(SETTING_KEYS.sheetText, SHEET_TEXT_CAP, patch);
 }
 
 /**
@@ -733,33 +844,11 @@ export function setSheetTextOverrides(patch: Record<string, string | null | unde
 const ONBOARDING_TEXT_CAP = 1200;
 
 export function getOnboardingText(): Record<string, string> {
-  const raw = getSetting(SETTING_KEYS.onboardingText);
-  if (!raw) return {};
-  try {
-    const p = JSON.parse(raw) as unknown;
-    if (!p || typeof p !== 'object' || Array.isArray(p)) return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
-      if (typeof v !== 'string') continue;
-      const text = v.trim().slice(0, ONBOARDING_TEXT_CAP);
-      if (text) out[k] = text;
-    }
-    return out;
-  } catch {
-    return {};
-  }
+  return readTextOverrides(SETTING_KEYS.onboardingText, ONBOARDING_TEXT_CAP);
 }
 
-/** Merge in changed boxes. A key set to `''` or `null` is REMOVED rather than stored blank — clearing the
- *  field means "use the shipped wording again", and a message with an empty body is not a message. */
 export function setOnboardingText(patch: Record<string, string | null | undefined>): void {
-  const next = getOnboardingText();
-  for (const [k, v] of Object.entries(patch)) {
-    const text = (v ?? '').trim().slice(0, ONBOARDING_TEXT_CAP);
-    if (text) next[k] = text;
-    else delete next[k];
-  }
-  setSetting(SETTING_KEYS.onboardingText, Object.keys(next).length ? JSON.stringify(next) : '');
+  writeTextOverrides(SETTING_KEYS.onboardingText, ONBOARDING_TEXT_CAP, patch);
 }
 
 /**
@@ -1004,32 +1093,34 @@ export function setWhatsAppEmailRequest(text: string | null): void {
  * sentence again", and empty wording would send a family an empty message.
  */
 export function getWhatsAppTexts(): Record<string, string> {
-  const raw = getSetting(SETTING_KEYS.whatsappTexts);
-  if (!raw) return {};
-  try {
-    const p = JSON.parse(raw) as unknown;
-    if (!p || typeof p !== 'object' || Array.isArray(p)) return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(p as Record<string, unknown>)) {
-      if (typeof v !== 'string') continue;
-      const text = v.trim().slice(0, WA_TEXT_MAX);
-      if (text) out[k] = text;
-    }
-    return out;
-  } catch {
-    return {};
-  }
+  return readTextOverrides(SETTING_KEYS.whatsappTexts, WA_TEXT_MAX);
 }
 
 export function setWhatsAppTexts(patch: Record<string, string | null | undefined>): void {
-  const next = getWhatsAppTexts();
-  for (const [k, v] of Object.entries(patch)) {
-    const text = (v ?? '').trim().slice(0, WA_TEXT_MAX);
-    if (text) next[k] = text;
-    else delete next[k];
-  }
-  setSetting(SETTING_KEYS.whatsappTexts, Object.keys(next).length ? JSON.stringify(next) : '');
+  writeTextOverrides(SETTING_KEYS.whatsappTexts, WA_TEXT_MAX, patch);
 }
+
+/**
+ * The madrasah's own wording for the PUBLIC admissions form (0.52.0, §4a Phase 2).
+ *
+ * The fourth map through `readTextOverrides`, and the one with the sharpest reason to be the
+ * madrasah's voice rather than ours: this copy is read by a family who has never met the school, on
+ * a page that may be embedded in the masjid's own website. The registry is `admissions/text.ts`.
+ *
+ * A shorter cap than the onboarding message: these are a paragraph of welcome and two sentences, not
+ * a whole message, and the page they land on is served to anybody on the internet.
+ */
+const ADMISSIONS_TEXT_CAP = 800;
+
+export function getAdmissionsText(): Record<string, string> {
+  return readTextOverrides(SETTING_KEYS.admissionsText, ADMISSIONS_TEXT_CAP);
+}
+
+export function setAdmissionsText(patch: Record<string, string | null | undefined>): void {
+  writeTextOverrides(SETTING_KEYS.admissionsText, ADMISSIONS_TEXT_CAP, patch);
+}
+
+export { ADMISSIONS_TEXT_CAP };
 
 /** When the mid-year go-live step was committed, or null. Only used to stop nagging about it. */
 export function getMidYearDoneAt(): string | null {

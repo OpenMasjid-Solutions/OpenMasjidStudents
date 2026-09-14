@@ -48,8 +48,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   error, add another saying so — but an admin can delete one, and the trail keeps who wrote it and
   when without keeping what it said. Anything in the old notes box has been kept and appears as the
   first note on that child.
-- **Settings is in tabs** — School, Students, Documents, Messages, Payments — instead of one very long
-  page.
+- **Families can ask about a place from your website.** A new **Admissions** screen holds every
+  inquiry, where each conversation has got to, and a waiting list you order by hand. Put the form on
+  your own site with one line of HTML, or share the link. It is **off until you turn it on** under
+  Settings → Admissions, and you can close intake when the year is full — the page then says so
+  rather than quietly swallowing what somebody writes. Nothing here is a student yet: a child joins
+  your roster, and gets their Student ID, only when you admit them.
+- **Settings is in tabs** — School, Students, Admissions, Documents, Messages, Payments — instead of
+  one very long page.
 - **Fill in your whole roster from a spreadsheet.** Download your students **with everything the app
   already knows already in the file**, add the missing details in Excel, and upload it back. A row
   with a Student ID fills in that child rather than adding a new one, an empty cell leaves what is
@@ -85,6 +91,37 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   family twice; a natural key lands before admissions does. And a migration whose hand-typed `when`
   is not strictly increasing applies on a fresh database and is skipped forever on a live one, so a
   journal guard test lands first.
+- **Admissions, first half: the door and the desk** (§4a Phase 2, `docs/ADMISSIONS.md`). Four tables
+  and two fee columns on the school year, in one migration verified against a live database holding
+  students, invoices, payments and charges. The hardest rule in the phase is what the shape enforces:
+  **an inquiry is not a student and not a household.** It never mints a Student ID, never reaches the
+  directory, is never billable, and the one column linking it to a child points forward and is null
+  until conversion — so nothing on the payment path can reach back into an unconfirmed, publicly
+  submitted record. Its state is **stored truth**, never inferred from whether some other row exists,
+  which is how a half-failed conversion would otherwise read back as a success; and `admitted` is
+  unreachable from the office's own transition by TYPE, so nothing can claim a student nobody created.
+  Every move writes two rows from one function — the audit row §14 requires, and the trail row the
+  office actually reads, because nothing in this app reads the audit log (§5, §9).
+- **The public form is the only unauthenticated write surface in this project, and every control on
+  it is written out rather than inherited** — there are no Fastify hooks in this repo, so nothing is
+  applied to a plain route by default. It answers `{"ok":true}` and nothing else, byte for byte,
+  whether the submission was stored, recognized as a repeat, missing a field, caught by the honeypot,
+  filled in faster than a person types, over one source's hourly cap, over the install's ceiling for
+  the day, or sent after intake closed — because any difference answers "is this child already known
+  to you?" for anybody who asks, on a surface with no lockout behind it. The minimum time-to-submit
+  is **signed**, since an unsigned timestamp is a number a bot edits, and the key is stored rather
+  than held in memory: a restart between opening the form and sending it would otherwise discard a
+  real family's inquiry silently, and the identical response means nobody would ever find out.
+  `frame-ancestors` comes from an origin allowlist re-validated on read, never `*`; nothing submitted
+  reaches a log line or an audit detail, the body being attacker-controlled and therefore also an
+  injection sink; and the new `admissions-inquiry` alert names the child only in the mail going to
+  addresses an office typed — the platform channel and the webhook get "1 new admission inquiry" and
+  no name, the per-event naming exception staying granted to `payment-received` alone.
+- **Forty new tests, nine guards proven by mutation**, and one of those mutations found a real bug
+  rather than confirming a fix: the hardened limiter's eviction never ran at all, because the map
+  refuses new keys AT its ceiling and so can never exceed it — which would have left a limiter that
+  filled with expired entries and then refused every new key forever, on a surface that fails closed.
+  Reclaiming dead entries now has its own test.
 - **The rate limiters stopped forgiving themselves under a flood**, which they had been doing since
   they were written, and two live surfaces were bypassable through it with no secret needed. Both
   limiter maps were bounded by evicting the oldest entry, and the repo's own test asserted the

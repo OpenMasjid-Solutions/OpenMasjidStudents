@@ -4,7 +4,7 @@ id: students
 name: OpenMasjid Students
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
-version: 0.52.0-dev.6
+version: 0.52.0-dev.7
 author: OpenMasjid-Solutions
 license: AGPL-3.0-only
 icon: icon.svg
@@ -84,6 +84,13 @@ alerts:
   - id: payment-refunded
     label: A payment was refunded
     description: Somebody in the office gave a tuition payment back. Money leaving is worth knowing about even when it is entirely correct.
+  # Declared in the same release as the code that raises it (0.52.0, §4a Phase 2). The public inquiry
+  # form is the only unauthenticated write surface in this app, so somebody has to be told it was used
+  # — an admissions screen nobody opens is the same as no form at all. The platform alert channel is a
+  # third-party sink, so this one's text names NOBODY: "1 new admission inquiry", never the child.
+  - id: admissions-inquiry
+    label: A family asked about a place
+    description: Somebody submitted the admissions inquiry form on your website. Open the app to read it — the message itself never leaves the masjid's own hardware.
   - id: test
     label: Test message
     description: A test you trigger from Settings to confirm OpenMasjidOS is reaching you by email or webhook.

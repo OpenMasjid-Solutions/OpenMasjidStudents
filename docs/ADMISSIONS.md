@@ -3,11 +3,21 @@
 
 # ADMISSIONS — inquiry → waitlist → offer → admission → re-admission
 
-> **Status: SPECIFIED, NOT BUILT.** This is Phase 2 of the academic layer (CLAUDE.md §4a). Nothing
-> described here exists in the code yet. It is written before the code deliberately — the same
-> discipline `docs/PAYMENTS.md` and `docs/WHATSAPP.md` follow — so the schema and the wire rules are
-> argued once, in one place, rather than discovered per screen. **When it is built, this file moves
-> from future tense to present tense and says which release shipped it.**
+> **Status: HALF BUILT (0.52.0-dev.7).** This is Phase 2 of the academic layer (CLAUDE.md §4a). It was
+> written before the code deliberately — the same discipline `docs/PAYMENTS.md` and `docs/WHATSAPP.md`
+> follow — so the schema and the wire rules were argued once, in one place, rather than discovered per
+> screen.
+>
+> **Built:** every table in §1 (migration 0044, verified against a live database holding students,
+> invoices, payments and charges); the **public inquiry endpoint** of §2 in full, including the
+> limiter hardening it depended on, which shipped a build earlier as the security fix it also was;
+> the **pipeline** of §3, in `admissions/transition.ts`; the office's desk and its settings, in
+> `trpc/admissions.ts`; and the `admissions-inquiry` alert of §6.
+>
+> **Not built:** §4 (conversion) and §5 (re-admission). `admission_links` and `readmissions` exist as
+> tables with no writer, and an inquiry can reach `offered` and no further — `admitted` is
+> unreachable from the office's transition by TYPE, so nothing can claim a student who does not
+> exist. Those sections are still written in the future tense; everything above them is now present.
 >
 > Owner sections in `CLAUDE.md`: §4a (scope), §5 (roles), §9 (data rules), §12.4 (origin), §14
 > (the public endpoint), §16 (one place decides).
