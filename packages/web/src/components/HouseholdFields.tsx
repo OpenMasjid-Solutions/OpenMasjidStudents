@@ -8,11 +8,14 @@
  * remember how many children were on the record. Same rule guardians and emergency contacts have
  * always followed (§9) — which is also why linking a sibling is what makes them apply.
  *
- * Rendered in BOTH windows — the household record and a child's record — because an office looking at
- * a child is exactly who needs to correct an address, and making them navigate elsewhere is how a
- * correction does not get made. One component and one mutation (`people.familyUpdate`), so "the same
- * field in two places" is one field shown twice rather than two code paths that can disagree. The
- * panel says the value applies to every child on the record, because it does.
+ * **ON THE HOUSEHOLD RECORD, AND NOWHERE ELSE** (0.52.0-dev.5). It was briefly rendered on a child's
+ * record too, on the argument that an office looking at a child is who needs to correct an address.
+ * Hasan's correction, and he is right: a household value on a child's screen is the same value on
+ * three screens for a family of three, which is exactly the duplication that moved these columns off
+ * the student a release earlier. One place holds it, one place shows it, one place edits it.
+ *
+ * The panel says out loud that the value applies to every child on the record, because it does — and
+ * because that is the thing an office has to know before typing into it.
  */
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

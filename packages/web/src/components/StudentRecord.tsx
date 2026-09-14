@@ -10,26 +10,27 @@
  *
  * ── The server decides what this renders, and that is the point ──────────────
  *
- * `people.studentGet` returns `fields` and `householdFields`: what THIS caller may see of the child and
- * of their household, already filtered for what the office switched off and for the role's own
- * allow-list (`people/fields.ts`, §5's medical wall). This component holds no list of fields and never
- * decides who may see one — it renders what came back. Two consequences worth keeping:
+ * `people.studentGet` returns `fields`: what THIS caller may see of the child, already filtered for
+ * what the office switched off and for the role's own allow-list (`people/fields.ts`, §5's medical
+ * wall). This component holds no list of fields and never decides who may see one — it renders what
+ * came back. Two consequences worth keeping:
  *
  *   - a field added to the registry appears here with no change to this file, and
  *   - finance is not shown a medical box it would be refused on saving, because finance was not told
  *     the field exists. The old failure mode was the opposite: the finance shell renders the SAME
  *     household component the admin shell does, with a `readOnly` prop that only ever wrapped buttons.
  *
- * The household's own details (address, languages, nationality) are shown here as well as on the
- * household window — one component, one mutation — because an office looking at a child is exactly who
- * needs to correct an address. The panel says the value applies to every child on the record.
+ * **The household's own details are NOT here** (0.52.0-dev.5). Address, languages and nationality live
+ * on the household record and only there — Hasan's correction after they were briefly shown on both.
+ * Putting a household value on the child's screen puts it on three screens for a family of three,
+ * which is the shape of the problem that moved those columns off the student to begin with. The line
+ * at the top names the household; the household's record is where its details are kept.
  */
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NotebookPen, Save, Stethoscope, Trash2 } from 'lucide-react';
 import { trpc } from '../lib/trpc';
 import { formatDate } from '../lib/dates';
-import { HouseholdFields } from './HouseholdFields';
 import { FieldGrid, changedFields, seedDraft, type FieldSpec, type FieldValue } from './RecordFields';
 
 export function StudentRecord({ studentId, readOnly = false }: { studentId: string; readOnly?: boolean }) {
@@ -125,7 +126,7 @@ export function StudentRecord({ studentId, readOnly = false }: { studentId: stri
         <p className="muted" style={{ fontSize: '0.9rem', margin: 0 }}>
           <span className="code">{(row.studentCode as string) ?? '—'}</span>
           {row.dob ? <> · {t('directory.dob')}: {formatDate(row.dob as string, dateFmt)}</> : null}
-          {q.data.family ? <> · {String((q.data.family as Record<string, unknown>).name ?? '')}</> : null}
+          {q.data.family ? <> · {q.data.family.name}</> : null}
         </p>
       </section>
 
@@ -161,18 +162,6 @@ export function StudentRecord({ studentId, readOnly = false }: { studentId: stri
         </div>
       )}
       {err && <p className="form-error">{err}</p>}
-
-      {/* The household's details, editable from here — one component and one mutation, shared with the
-          household window, so this is one field shown twice rather than two code paths. */}
-      {q.data.family && (
-        <HouseholdFields
-          familyId={String((q.data.family as Record<string, unknown>).id)}
-          family={q.data.family as Record<string, unknown>}
-          fields={q.data.householdFields as FieldSpec[]}
-          readOnly={readOnly}
-          onSaved={() => Promise.all([utils.people.studentGet.invalidate({ id: studentId }), utils.people.familyGet.invalidate()])}
-        />
-      )}
 
       {/* Notes. Admin only — the server returns an empty list to finance, so this whole panel is absent
           for them rather than empty. */}

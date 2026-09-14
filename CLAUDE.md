@@ -449,6 +449,10 @@ so per-child meant three copies that drift and an office correcting an address h
 children were on the record. It is the rule guardians, phones and emails have always followed (§9), and
 it is what makes linking a sibling share them. `people/fields.ts` carries a `scope` per field, and a
 household field submitted to the student procedure is REFUSED rather than written into the wrong table.
+**They are shown and edited on the HOUSEHOLD record and nowhere else** (0.52.0-dev.5). They were briefly
+rendered on a child's record too, which put one value on three screens for a family of three — the same
+duplication the move existed to end. `people.studentGet` therefore returns the household's id and name
+and nothing more, so the screen could not render one even if somebody added the markup.
 
 Plus **office notes with an author and a timestamp** (the existing free-text `students.notes` was
 written by two paths and rendered by none — this replaces it with something that has a reader). They

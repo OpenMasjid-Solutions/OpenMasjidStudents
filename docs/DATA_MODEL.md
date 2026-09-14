@@ -109,7 +109,10 @@ and `updated_at` wherever a row is ever updated.
   before any stable release carried them. A family shares all three, so per-child meant three copies
   that drift and an office correcting an address had to remember how many children were on the record
   — the same reasoning that has always put guardians and emergency contacts on `families` (§9), and
-  what makes linking a sibling share them. `people/fields.ts` gained a `scope` per field so one
+  what makes linking a sibling share them, and — from 0.52.0-dev.5, a second correction — they are
+  shown and edited on the HOUSEHOLD record and nowhere else: rendering them on a child's record as
+  well put one value on three screens for a family of three, which is the duplication the move
+  existed to end. `people/fields.ts` gained a `scope` per field so one
   registry still answers every question about one; `familyColumnsFor` projects the household through
   the same role allow-list the child goes through; and a field submitted to the wrong procedure is
   **refused**, because writing it into the wrong table would look on screen like a save that did

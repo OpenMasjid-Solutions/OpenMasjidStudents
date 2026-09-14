@@ -58,8 +58,9 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 - **The import template now downloads as an Excel file.** A CSV opened in Excel and saved back is
   where a date column quietly changes meaning; a workbook skips that step. The CSV is still there.
 - **Address, languages and nationality belong to the household, not to each child.** Type an address
-  once and every child on the record has it — including a sibling linked in later. They are on both
-  the household screen and each child's record, and editing either is the same change.
+  once and every child on the record has it — including a sibling linked in later. They are kept on
+  the household record, and only there: a child's record shows which household they are in, and the
+  household's own details are one screen away rather than repeated on each child.
 
 ### Also in this release
 

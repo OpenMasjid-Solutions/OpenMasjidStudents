@@ -205,14 +205,25 @@ describe('writing a field', () => {
     await expect(admin.people.familyUpdate({ id: familyId, fields: { priorHifz: 'Juz 3' } })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
-  it('keeps the household fields OFF the child, which is the whole reason they moved', async () => {
+  it('keeps the household fields OFF the child entirely — not even read-only', async () => {
+    // 0.52.0-dev.5, Hasan's correction. They were briefly returned with the child and rendered on the
+    // record screen; a household value on a child's screen is the same value on three screens for a
+    // family of three, which is the duplication that moved these columns off the student to begin
+    // with. `studentGet` now sends the household's NAME and nothing else, so the screen could not
+    // render one even if somebody added the markup.
     const { admin, familyId, studentId } = await seed();
     await admin.people.familyUpdate({ id: familyId, fields: { address: '12 Mill Lane', languages: 'Urdu, English' } });
+
+    // It really is stored — so the assertions below are not passing on an empty record.
+    const fam = await admin.people.familyGet({ id: familyId });
+    expect(fam.family).toMatchObject({ address: '12 Mill Lane', languages: 'Urdu, English' });
+    expect(fam.householdFields.map((f) => f.key)).toEqual(expect.arrayContaining(['address', 'languages', 'nationality']));
+
     const a = await admin.people.studentGet({ id: studentId });
-    expect(a.family).toMatchObject({ address: '12 Mill Lane', languages: 'Urdu, English' });
-    expect(a.householdFields.map((f) => f.key)).toEqual(expect.arrayContaining(['address', 'languages', 'nationality']));
-    // The child's own field list does not offer them, so the screen cannot put them in the wrong place.
+    expect(Object.keys(a.family ?? {}).sort()).toEqual(['id', 'name']);
+    expect(a).not.toHaveProperty('householdFields');
     expect(a.fields.map((f) => f.key)).not.toContain('address');
+    expect(JSON.stringify(a)).not.toContain('12 Mill Lane');
   });
 
   it('refuses a date that is the right SHAPE but not a real day (§9)', async () => {

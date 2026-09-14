@@ -593,18 +593,24 @@ export const peopleRouter = router({
     // `studentColumnsFor` returns a role-dependent column map, so the row's type is only known at
     // runtime; `familyId` is in the core set and is always there.
     const familyId = (student as unknown as { familyId: string }).familyId;
-    // The household's details come back WITH the child, and are editable from here, because an office
-    // looking at a child is exactly who needs to correct an address. One mutation writes them
-    // (`familyUpdate`), so editing from this screen or from the household window is the same write —
-    // and the screen says they apply to every child on the record, because they do.
-    const fam = db.select(familyColumnsFor(role)).from(families).where(eq(families.id, familyId)).get() ?? null;
+    /**
+     * THE HOUSEHOLD'S ID AND LABEL, AND NOTHING ELSE (0.52.0-dev.5).
+     *
+     * This briefly returned the household's own details — address, languages, nationality — and
+     * rendered them on the child's record as well as on the household's. Hasan's correction: a
+     * household field belongs on the household record and nowhere else. Showing it on the child put
+     * the same value on three screens for a family of three, which is the shape of the problem that
+     * moved these columns off the student in the first place.
+     *
+     * So the name is all that comes back, for the one line that says whose child this is — and the
+     * rule "don't send what you don't render" does the rest.
+     */
+    const fam = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.id, familyId)).get() ?? null;
     return {
       student,
       family: fam,
       /** What this role may see of the CHILD, in catalog order, so the screen needs no copy of the registry. */
       fields: visibleFields(role, 'student').map((f) => ({ key: f.key, kind: f.kind, sensitivity: f.sensitivity })),
-      /** …and of the HOUSEHOLD. */
-      householdFields: visibleFields(role, 'household').map((f) => ({ key: f.key, kind: f.kind, sensitivity: f.sensitivity })),
       notes: role === 'admin' ? studentNotesFor(input.id) : [],
     };
   }),
