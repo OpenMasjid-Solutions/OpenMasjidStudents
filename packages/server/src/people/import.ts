@@ -27,6 +27,7 @@ import { rid } from '../db/ids';
 import { generateUniqueStudentCode } from '../billing/studentCodes';
 import { displayName } from './names';
 import { familyLabel } from './household';
+import { addStudentNote } from './notes';
 import { defaultSchoolId, schoolIdForClass } from '../schools';
 import { DATE_FORMAT_SAMPLES, getDateFormat, parseDateInput, type DateFormat } from '../settings/dates';
 
@@ -448,6 +449,12 @@ export interface ImportOpts {
   schoolId?: string | null;
   /** Where each unrecognized relation label goes, keyed by the lowercased label. */
   placements?: Placements;
+  /**
+   * Who the file's Note column is attributed to (0.52.0). An office note is authored now, so a note
+   * arriving in a spreadsheet is attributed to the admin who ran the import — which is the truth, and
+   * is better than the old column's answer of nobody. Absent (tests, `validateRows`) → `Office`.
+   */
+  noteBy?: { userId: string | null; name: string | null };
 }
 
 /** Dry run: resolve every row and collect problems. Writes nothing. */
@@ -632,7 +639,6 @@ export function commitRows(rows: ImportRow[], opts: ImportOpts): CommitResult {
           fullName,
           dob,
           status: 'active',
-          notes: norm(r.note) || null,
           schoolId,
           classId,
           studentCode,
@@ -641,6 +647,8 @@ export function commitRows(rows: ImportRow[], opts: ImportOpts): CommitResult {
         })
         .run();
       tx.insert(studentFees).values({ id: rid('stf'), studentId, feePlanId, overrideAmountCents, note: null, createdAt: ts, updatedAt: ts }).run();
+      // The file's Note column becomes the child's first authored note (0.52.0) — see people/notes.ts.
+      addStudentNote(studentId, norm(r.note), opts.noteBy ?? { userId: null, name: null }, ts, tx);
 
       // Every adult the child's rows named, filed where the office said. There is no cross-STUDENT
       // dedupe: two children's blocks naming the same parent get a guardian record each, because

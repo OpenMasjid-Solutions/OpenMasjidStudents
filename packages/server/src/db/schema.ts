@@ -281,7 +281,53 @@ export const students = sqliteTable(
     fullName: text('full_name').notNull(),
     dob: text('dob'), // optional ISO date (YYYY-MM-DD); minimal by design (§14)
     status: text('status').$type<'active' | 'withdrawn'>().notNull().default('active'),
-    notes: text('notes'),
+
+    // ── THE STUDENT RECORD (0.52.0, §4a Phase 1) ────────────────────────────
+    //
+    // Everything above this line is the BILLING record: a name, an id, a status, a class. These are
+    // what a madrasa actually keeps about a child, and the v0.35.0 pivot is what had removed them.
+    //
+    // **Do not read these columns directly.** `people/fields.ts` is the one place that decides whether
+    // a field exists, whether the office switched it off, and which ROLE may see it — because the
+    // default without it is the wrong way round: `familyGet` is admin-or-finance and selected the whole
+    // row, so a medical column would have reached finance through an ALTER TABLE and no code change at
+    // all (§5's medical wall). Use `studentColumnsFor(role)`.
+    //
+    // Every one of them is nullable: they were added to a populated table, and "not recorded" is a real
+    // and common answer for all of them.
+    /** ISO day. When this child joined — not `created_at`, which is when somebody typed them in. */
+    admittedOn: text('admitted_on'),
+    /** ISO day, with the office's own reason beside it. Separate from `status`, which is the switch. */
+    withdrawnOn: text('withdrawn_on'),
+    withdrawalReason: text('withdrawal_reason'),
+    /**
+     * The CHILD's address, and nothing else about contact moves here: guardians, phone numbers and
+     * email addresses stay on the HOUSEHOLD (§9), which is what makes linking a sibling share them.
+     * An address is on the child because a child can live at a different address from their siblings.
+     */
+    address: text('address'),
+    /** Where they studied before, and how far they had memorized on arrival. */
+    priorSchool: text('prior_school'),
+    priorHifz: text('prior_hifz'),
+    languages: text('languages'),
+    nationality: text('nationality'),
+    /**
+     * ── THE §14 AMENDMENT. READ §14 BEFORE TOUCHING THESE THREE. ──
+     *
+     * §14 read "no SSNs, no medical fields, no photos" for the whole life of the project, and this
+     * column is the amendment to it (0.52.0, Hasan's explicit sign-off). SSNs and photos are NOT
+     * amended and stay forbidden. The reason these are in: an office that cannot write down a child's
+     * allergy keeps it on paper in a drawer, which is worse in every direction.
+     *
+     * The conditions are the amendment, not decoration, and they live in `people/fields.ts`:
+     * ADMIN ONLY (finance never sees them), OFF until an office turns them on, and never on a
+     * parent-facing page, in an alert of either text, in a log, in an export a non-admin can run, in a
+     * Fabric response (§11) or in Stripe metadata.
+     */
+    medicalNotes: text('medical_notes'),
+    allergies: text('allergies'),
+    /** Emergency medical consent. Null is a third state and a meaningful one: nobody has asked yet. */
+    medicalConsent: integer('medical_consent', { mode: 'boolean' }),
     /**
      * Which school this child attends (0.47.0). Their SIBLING may attend another one — the household
      * is deliberately not scoped (see `schools`), which is what keeps one family on one sheet with one
@@ -323,6 +369,46 @@ export const students = sqliteTable(
   }),
 );
 export type Student = typeof students.$inferSelect;
+
+/**
+ * OFFICE NOTES on a child — authored, timestamped, and APPEND-ONLY (0.52.0, §4a Phase 1).
+ *
+ * It replaces `students.notes`, which was a single anonymous free-text column written by `studentAdd`
+ * and by the importer and **rendered by nothing**: a field the office could fill in and never read
+ * back. Migration 0042 moves whatever an install had into here as one note and then drops the column,
+ * because a column with no reader is the same invitation as a table with no writer (§9 on
+ * `stripe_events`).
+ *
+ * What makes it a record rather than a textarea:
+ *
+ *  - **An author and a time.** `author_name` is the person, mirroring `payments.recorded_by_name` vs
+ *    `audit_log.actor_name` (§9): the office reads back "who wrote this?" and wants a name, while the
+ *    forensic trail keeps the account. An SSO admin has no local account and records plain `Admin`.
+ *  - **Append-only.** No `updated_at`, no update procedure, no delete. A correction is another note,
+ *    the same shape as a ledger reversal — because a note about a child is often the record of what
+ *    somebody was told, and quietly rewriting it destroys the only copy of that.
+ *  - **CASCADE, not RESTRICT.** Notes are not money, so they follow the child rather than blocking
+ *    their deletion; `people.studentDelete` needs no new step.
+ *
+ * A note is ADMIN-ONLY to read and to write (§5) — it is the office's own record and finance has no
+ * business in it. Nothing here is ever sent to a parent, an alert, a webhook or a log.
+ */
+export const studentNotes = sqliteTable(
+  'student_notes',
+  {
+    id: text('id').primaryKey(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => students.id, { onDelete: 'cascade' }),
+    body: text('body').notNull(),
+    /** Plain actor fields, no FK — like `audit_log`: they survive a staff account being deleted. */
+    authorUserId: text('author_user_id'),
+    authorName: text('author_name').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => ({ studentIdx: index('student_notes_student_idx').on(t.studentId, t.createdAt) }),
+);
+export type StudentNote = typeof studentNotes.$inferSelect;
 
 /** A guardian (name + contact). May span multiple families via guardian_families. */
 export const guardians = sqliteTable('guardians', {

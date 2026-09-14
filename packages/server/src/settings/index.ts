@@ -23,6 +23,10 @@ export const SETTING_KEYS = {
   stripeAccount: 'stripe_account', // the OS-vault Stripe account id the admin picked for tuition (§10).
   // Empty → fall back to the STRIPE_ACCOUNT manifest default (resolved in payments/stripe.ts).
   selfRegistration: 'self_registration', // parent self-registration door on/off (§12, default ON).
+  // JSON string[] — which of the extended STUDENT RECORD fields this office keeps (0.52.0, §4a Phase 1).
+  // The catalog, the defaults and the role allow-list all live in `people/fields.ts`, which is the one
+  // place that decides what a student field is; this row only records what the office switched on.
+  studentFields: 'student_fields',
   yearViewColumns: 'year_view_columns', // JSON string[] — optional columns on the year grid.
   // '0' → keep the fee-override note off the year grid (0.48.0). The note is the office's own words about
   // why a child pays less; see `getYearViewFeeNote`.

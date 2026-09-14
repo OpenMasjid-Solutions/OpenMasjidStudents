@@ -63,7 +63,9 @@
     "select": "Select…",
     "saving": "Saving…",
     "dismiss": "Dismiss",
-    "show": "Show"
+    "show": "Show",
+    "yes": "Yes",
+    "no": "No"
   },
   "picker": {
     "placeholder": "Type a name or Student ID…",
@@ -171,7 +173,35 @@
     "forceDeleteStripe": "It does not touch Stripe. Any card payment or refund stays on your Stripe account exactly as it is — only this app’s record of it goes.",
     "forceDeleteType": "Type {{name}} to confirm",
     "forceDeleteAction": "Erase for good",
-    "forceDeleted": "{{name}} and their billing history have been erased."
+    "forceDeleted": "{{name}} and their billing history have been erased.",
+    "record": "Record"
+  },
+  "record": {
+    "title": "Record",
+    "details": "Details",
+    "medical": "Medical",
+    "medicalHint": "Office use only. The finance manager never sees these, and they never appear on anything a parent reads, in an alert, or in an export. Switch them off entirely under Settings.",
+    "notes": "Office notes",
+    "notesHint": "Notes are kept with who wrote them and when, and can’t be edited or removed afterwards — if something was written in error, add another note saying so.",
+    "addNote": "Add a note",
+    "saveNote": "Add note",
+    "noNotes": "No notes yet.",
+    "notRecorded": "Not recorded",
+    "saved": "Saved.",
+    "noFields": "No record fields are switched on. An admin can choose which ones this madrasah keeps under Settings.",
+    "field": {
+      "admittedOn": "Date of admission",
+      "withdrawnOn": "Date of withdrawal",
+      "withdrawalReason": "Reason for leaving",
+      "address": "Address",
+      "priorSchool": "Previous school or madrasah",
+      "priorHifz": "Hifz on arrival",
+      "languages": "Languages spoken",
+      "nationality": "Nationality",
+      "medicalNotes": "Medical notes",
+      "allergies": "Allergies",
+      "medicalConsent": "Emergency medical consent"
+    }
   },
   "students": {
     "title": "Students",
@@ -881,7 +911,20 @@
     "waSuspectCause_session_expired": "the WhatsApp session had signed itself out",
     "waSuspectCause_needs_relink": "the phone needs linking again",
     "waSuspectCause_key_rejected": "the gateway rejected its key",
-    "waSuspectCause_unknown": "the cause was not recorded"
+    "waSuspectCause_unknown": "the cause was not recorded",
+    "tab": {
+      "school": "School",
+      "students": "Students",
+      "documents": "Documents",
+      "messages": "Messages",
+      "payments": "Payments"
+    },
+    "fields": "What you keep about a student",
+    "fieldsHint": "Choose which details this madrasah records on a child. Anything switched off is hidden from every screen, export and printed page — it is not shown as an empty box. The Student ID, name, date of birth, class and status are always kept.",
+    "fieldsMedicalHint": "Only an admin can see or edit these — the finance manager never can. They never appear on anything a parent reads, in an alert, in a log, or in a payment record. Leave them off unless your madrasah needs them.",
+    "fieldsHolds": "Has data",
+    "fieldsHideConfirm": "Switch off “{{field}}”?\n\nIt disappears from every screen, but what is already recorded is kept — switch it back on and it reappears. Nothing is deleted.",
+    "fieldsSaved": "Saved."
   },
   "relation": {
     "father": "Father",
