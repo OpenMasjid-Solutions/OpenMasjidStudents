@@ -1798,6 +1798,14 @@ secrets). Additions:
   is used by BOTH the office's preview and the approval that applies it, which is what makes "preview
   and commit agree" a property rather than a hope.
 
+  And one that is a list rather than a decision, but decays the same way: **`structure/blockers.ts`**,
+  what still points at a school or a school year and therefore refuses its delete. It was two
+  hand-written count lists inside two procedures, and Phase 2 added three `RESTRICT` references
+  without either being revisited — so a masjid that assigned one inquiry to a second school could
+  never delete that school, and got "Something went wrong at our end" forever (§18 forbids exactly
+  that). Phase 3 adds `enrollments`, `sessions` and `closure_days` pointing at a year; **adding a
+  RESTRICT reference to `schools` or `school_years` means adding a count there.**
+
   Two more landed with Phase 2 that are not academic at all, and both replaced copies rather than
   adding a place: **`auth/tokens.ts`** (the one place a one-time link token is minted, hashed and
   checked — invites, resets and both admission links now share it, where there had been three copies
@@ -2082,6 +2090,7 @@ must point at the same commit lineage. Commit messages per house style (`chore: 
   | what the public inquiry form accepts, answers, or refuses | `admissions/publicRoutes.ts`; what it SAYS is `admissions/text.ts` |
   | an inquiry becoming a student | `admissions/convert.ts`, then `admissions/fees.ts` for the enrollment fee |
   | a returning child confirming another year, or what an approval writes | `admissions/readmission.ts` |
+  | what refuses a school or a school-year delete | `structure/blockers.ts` — a new RESTRICT reference means a count THERE |
   | a one-time link token — minting it, hashing it, whether it is still good | `auth/tokens.ts` |
   | creating a student, or where a Student ID comes from | `people/create.ts` — the ONLY place one is minted |
   | what a report card shows once it is finalized | its stored snapshot — not the live tables (§9) |

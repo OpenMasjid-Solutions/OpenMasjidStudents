@@ -127,6 +127,28 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   injection sink; and the new `admissions-inquiry` alert names the child only in the mail going to
   addresses an office typed — the platform channel and the webhook get "1 new admission inquiry" and
   no name, the per-event naming exception staying granted to `payment-received` alone.
+- **What an adversarial review of the phase found, and what it cost to fix** (0.52.0-dev.10). Seven
+  real defects, every one of them the same shape: **something new was added without revisiting the
+  code that already depended on there being less of it.** Three new `ON DELETE restrict` foreign keys
+  landed while the two delete procedures kept refusing on their old hand-written lists — so a masjid
+  that assigned one inquiry to a second school could never delete that school, and saw "Something
+  went wrong at our end" with nothing on any screen naming the one record in the way. Those lists now
+  live in `structure/blockers.ts`, together, with the rule stated once, because Phase 3 adds three
+  more references to the same two tables. The screen's warning is built from the same function the
+  refusal uses, so they cannot name different things.
+  Alongside it: clearing a guardian's name on a re-admission form no longer silently discards the
+  phone number changed in the same submission (a rule about ONE field was deciding the fate of two
+  others); a reorder list that names the same waitlist row twice can no longer leave a hole in the
+  queue; opening re-admission for a year no longer reaches the other school's children, since a year
+  belongs to one school and "everyone" did not; and clearing the daily-ceiling box to retype it no
+  longer reads as a ceiling of zero and quietly closes the form.
+- **Two things that were shipped as switches and did nothing, now do it.** The year's **enrollment
+  fee** had columns, a procedure and a charge path, and no screen anywhere that could set one — it is
+  now on the school-year form, where blank means no fee, which is what most madāris charge. And the
+  **acknowledgement email** had a switch and an editable message with no sender behind them; it sends
+  now, holding the master parent-mail pause first, the office's own switch second, and carrying
+  nothing the sender wrote — quoting a stranger's message back to an address the same stranger typed
+  is how a form becomes a way to deliver text to somebody else over the madrasah's name.
 - **Re-admission — the children who are already here** (§5 of the spec). Opening a year for a cohort
   goes through the SAME `structure/audience.ts` that mass fee apply and the onboarding send use, which
   is also what enforces "withdrawn students are excluded" — that resolver returns active students

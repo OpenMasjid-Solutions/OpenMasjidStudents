@@ -63,7 +63,7 @@ beforeEach(() => {
   for (const t of [inquiryEvents, inquiries, auditLog]) db.delete(t).run();
   // Clear THIS feature's settings rows by key. Wiping the whole table would drop rows other seeds
   // rely on, and leaving them lets one test's policy leak into the next.
-  for (const key of ['admissions', 'admissions_text', 'school_name', 'school_logo']) {
+  for (const key of ['admissions', 'admissions_text', 'school_name', 'school_logo', 'parent_mail_paused']) {
     db.delete(settings).where(eq(settings.key, key)).run();
   }
   calls = [];
@@ -397,6 +397,52 @@ describe('what is written, and what is told', () => {
     expect(trail).toContain('public');
     expect(trail).not.toContain('Secretname');
     expect(trail).not.toContain('nobody else should ever read');
+  });
+
+  it('does not email the family unless the office asked for it', async () => {
+    // OFF by default, and that is the design rather than caution: the address was typed by somebody
+    // nobody at the madrasah has met, so switching this on makes the public form into something that
+    // can send mail to an inbox that never asked for any.
+    openForm({ ackEmail: false });
+    await post(submission({ childName: 'Unacknowledged Child' }));
+    await settle();
+    expect(calls.filter((c) => c.url.endsWith('/api/fabric/email'))).toHaveLength(0);
+    expect(rows()).toHaveLength(1); // the control: it WAS stored, so the silence is the switch
+  });
+
+  it('sends the acknowledgement when it is on, carrying nothing the sender wrote', async () => {
+    openForm({ ackEmail: true });
+    await post(
+      submission({
+        childName: 'Ruqayyah Secretname',
+        message: 'A sentence nobody else should ever read.',
+        email: 'family@example.org',
+      }),
+    );
+    await settle();
+    const mail = calls.filter((c) => c.url.endsWith('/api/fabric/email'));
+    expect(mail).toHaveLength(1);
+    const sent = JSON.stringify(mail[0].body);
+    expect(sent).toContain('family@example.org'); // it went to them
+    // ...and it quotes NOTHING back. Repeating a stranger's input to an address the same stranger
+    // supplied is how a form becomes a way to deliver text to a third party over the madrasah's name.
+    expect(sent).not.toContain('Secretname');
+    expect(sent).not.toContain('nobody else should ever read');
+  });
+
+  it('holds the acknowledgement behind the master parent-mail pause', async () => {
+    // An install that has stopped all outbound family mail has stopped it. A new surface is not the
+    // place to make an exception to that switch.
+    openForm({ ackEmail: true });
+    settingsMod.setParentMailPaused(true);
+    try {
+      await post(submission({ childName: 'Paused Child', email: 'paused@example.org' }));
+      await settle();
+      expect(calls.filter((c) => c.url.endsWith('/api/fabric/email'))).toHaveLength(0);
+      expect(rows()).toHaveLength(1);
+    } finally {
+      settingsMod.setParentMailPaused(false);
+    }
   });
 
   it('tells the office, and tells the sinks it cannot see nothing at all', async () => {

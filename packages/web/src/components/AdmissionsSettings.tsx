@@ -192,9 +192,16 @@ export function AdmissionsSettings() {
               className="input glass-inset"
               defaultValue={cfg.dailyMax}
               onBlur={(e) => {
-                // On blur rather than per keystroke: an empty box mid-edit reads as NaN, and the
-                // server would refuse it in front of somebody who is still typing.
-                const n = Number(e.target.value);
+                // On blur rather than per keystroke, and an EMPTY box means "no change" rather than
+                // zero. `Number('')` is 0, which is a finite number and a legal ceiling — so clearing
+                // this box to retype it would have set the cap to nothing and silently closed the
+                // form, with the screen showing 0 as though somebody had asked for it.
+                const raw = e.target.value.trim();
+                if (!raw) {
+                  e.target.value = String(cfg.dailyMax);
+                  return;
+                }
+                const n = Number(raw);
                 if (Number.isFinite(n) && n !== cfg.dailyMax) void apply({ dailyMax: Math.trunc(n) });
               }}
             />
@@ -209,7 +216,12 @@ export function AdmissionsSettings() {
               className="input glass-inset"
               defaultValue={cfg.minSeconds}
               onBlur={(e) => {
-                const n = Number(e.target.value);
+                const raw = e.target.value.trim();
+                if (!raw) {
+                  e.target.value = String(cfg.minSeconds);
+                  return;
+                }
+                const n = Number(raw);
                 if (Number.isFinite(n) && n !== cfg.minSeconds) void apply({ minSeconds: Math.trunc(n) });
               }}
             />

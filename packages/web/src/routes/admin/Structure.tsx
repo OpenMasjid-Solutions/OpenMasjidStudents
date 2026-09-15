@@ -23,6 +23,7 @@ import { ArrowRightLeft, CalendarRange, Layers, Pencil, Plus, School, UserPlus }
 import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { MONTH_NAMES, schoolYearSpan } from '../../lib/months';
+import { parseCents } from '../../lib/money';
 import { useWindows } from '../../components/Windows';
 import { SchoolTabs, useRequiredSchool } from '../../components/SchoolTabs';
 import { ClassEnrol } from '../../components/ClassEnrol';
@@ -38,6 +39,10 @@ interface YearEdit {
   startYear: string;
   startMonth: string;
   endMonth: string;
+  /** What this year charges to join and to come back (0.52.0, §4a Phase 2). Held as the typed text
+   *  so an empty box stays empty — "" means no fee, which is what most madāris charge. */
+  admissionFee: string;
+  readmissionFee: string;
 }
 
 export function Structure() {
@@ -183,6 +188,13 @@ export function Structure() {
           startYear: Number(yearEdit.startYear),
           startMonth: Number(yearEdit.startMonth),
           endMonth: Number(yearEdit.endMonth),
+          // An empty box is NO FEE, not zero-as-a-price: `null` is what "this madrasah charges
+          // nothing to enrol" looks like, and the server stores 0 as null for the same reason.
+          // Empty is spelled out rather than leaned on: `parseCents('')` happens to return 0 and the
+          // server happens to store 0 as null, but "no fee" is the common answer here and it should
+          // not depend on two coincidences lining up.
+          admissionFeeCents: yearEdit.admissionFee.trim() ? (parseCents(yearEdit.admissionFee) ?? null) : null,
+          readmissionFeeCents: yearEdit.readmissionFee.trim() ? (parseCents(yearEdit.readmissionFee) ?? null) : null,
         }),
       () => setYearEdit(null),
     );
@@ -440,6 +452,8 @@ export function Structure() {
                             startYear: String(y.startYear ?? thisYear),
                             startMonth: String(y.startMonth),
                             endMonth: String(y.endMonth),
+                            admissionFee: y.admissionFeeCents != null ? (y.admissionFeeCents / 100).toString() : '',
+                            readmissionFee: y.readmissionFeeCents != null ? (y.readmissionFeeCents / 100).toString() : '',
                           })
                         }
                       >
@@ -485,9 +499,37 @@ export function Structure() {
                 {MONTH_NAMES.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
               </select>
             </div>
+            {/* What this year charges a family to join, and to come back (§4a Phase 2). Blank means
+                nothing, which is what most madāris charge — so these are the one pair of boxes on
+                this form where empty is a real answer rather than an unfinished one. The fee is
+                raised as an ordinary charge when a child is admitted or re-admitted; it is never
+                taken before a student record exists. */}
+            <div className="field" style={{ flex: '0 1 10rem' }}>
+              <label className="label" htmlFor="yr-adm-fee">{t('structure.admissionFee')}</label>
+              <input
+                id="yr-adm-fee"
+                className="input glass-inset"
+                inputMode="decimal"
+                placeholder={t('structure.noFee')}
+                value={yearEdit.admissionFee}
+                onChange={(e) => setYearEdit({ ...yearEdit, admissionFee: e.target.value })}
+              />
+            </div>
+            <div className="field" style={{ flex: '0 1 10rem' }}>
+              <label className="label" htmlFor="yr-rdm-fee">{t('structure.readmissionFee')}</label>
+              <input
+                id="yr-rdm-fee"
+                className="input glass-inset"
+                inputMode="decimal"
+                placeholder={t('structure.noFee')}
+                value={yearEdit.readmissionFee}
+                onChange={(e) => setYearEdit({ ...yearEdit, readmissionFee: e.target.value })}
+              />
+            </div>
             <button type="submit" className="btn btn--primary" disabled={yearUpdate.isPending}>{t('common.save')}</button>
             <button type="button" className="btn btn--ghost" onClick={() => setYearEdit(null)}>{t('common.cancel')}</button>
             <p className="hint">{t('structure.wrapHint')}</p>
+            <p className="hint">{t('structure.feeHint')}</p>
           </form>
         )}
 

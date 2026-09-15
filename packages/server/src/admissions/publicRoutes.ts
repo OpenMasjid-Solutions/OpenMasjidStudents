@@ -55,6 +55,7 @@ import { z } from 'zod';
 import { makeLog } from '../logger';
 import { esc } from '../billing/statements';
 import { alertStaff } from '../alerts';
+import { sendInquiryAck } from '../mail/notify';
 import { DailyCeiling, SubmitLimiter } from '../security/rateLimit';
 import { rateLimitKey } from '../security/origin';
 import { config } from '../config';
@@ -143,6 +144,19 @@ export function formTokenOk(token: string, minSeconds: number, now = Date.now())
  */
 const POST_PATH = `${config.basePath}/public/inquiry`;
 const EMBED_PATH = `${config.basePath}/public/inquiry/embed`;
+const READMISSION_POST_PATH = `${config.basePath}/public/readmission`;
+
+/**
+ * A JSON literal safe to put INSIDE a `<script>` block.
+ *
+ * `JSON.stringify` escapes for JSON, not for HTML, and the HTML parser closes a script element at the
+ * first literal `</script` wherever it appears — including inside a string. The values here come from
+ * the platform's own public URL rather than from a stranger, so this is not a live hole; it is one
+ * line that removes the class, on the one page in this app served to the open internet.
+ */
+function jsonInScript(v: unknown): string {
+  return JSON.stringify(v).replace(/</g, '\\u003c');
+}
 
 /**
  * The submitted shape. Every field capped, nothing required at this layer — `isSubmittable` decides
@@ -332,7 +346,7 @@ function renderPage(opts: { open: boolean; token: string }): string {
         b.disabled = true;
         var data = {};
         new FormData(f).forEach(function (v, k) { data[k] = String(v); });
-        fetch(${JSON.stringify(POST_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+        fetch(${jsonInScript(POST_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
           .then(function () { f.style.display = 'none'; var p = document.getElementById('privacy'); if (p) p.style.display = 'none'; d.style.display = 'block'; })
           .catch(function () { b.disabled = false; });
       });
@@ -409,7 +423,7 @@ function renderReadmissionPage(found: ReturnType<typeof readmissionByToken>, tok
         b.disabled = true; n.disabled = true;
         var data = { returning: returning };
         new FormData(f).forEach(function (v, k) { data[k] = String(v); });
-        fetch(${JSON.stringify(`${config.basePath}/public/readmission`)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+        fetch(${jsonInScript(READMISSION_POST_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
           .then(function (r) { return r.json(); })
           .then(function (r) { if (r && r.ok) { f.style.display = 'none'; d.style.display = 'block'; } else { b.disabled = false; n.disabled = false; } })
           .catch(function () { b.disabled = false; n.disabled = false; });
@@ -458,7 +472,7 @@ export function registerPublicInquiryRoutes(app: FastifyInstance): void {
     if (!cfg.publicForm) return off(reply);
     const src = `${baseUrlOf(req)}${EMBED_PATH}`;
     const js = `(function(){var s=document.currentScript;var f=document.createElement('iframe');
-f.src=${JSON.stringify(src)};f.loading='lazy';f.title='Admissions inquiry';f.style.cssText='width:100%;max-width:36rem;height:52rem;border:0';
+f.src=${jsonInScript(src)};f.loading='lazy';f.title='Admissions inquiry';f.style.cssText='width:100%;max-width:36rem;height:52rem;border:0';
 (s&&s.parentNode?s.parentNode:document.body).insertBefore(f,s||null);})();`;
     return reply
       .code(200)
@@ -530,6 +544,12 @@ f.src=${JSON.stringify(src)};f.loading='lazy';f.title='Admissions inquiry';f.sty
 
     if (res.outcome === 'stored' && res.inquiry) {
       const name = res.inquiry.childName;
+      // The acknowledgement, if the office asked for one. Fire-and-forget and never awaited: the
+      // response must not take longer for a submission that was stored than for one that was not,
+      // or the timing becomes the difference the body carefully is not. `sendInquiryAck` holds every
+      // gate — the master parent-mail pause, the office's switch, the transport — and it carries
+      // nothing the sender wrote.
+      if (res.inquiry.email) void sendInquiryAck(res.inquiry.email);
       void alertStaff('admissions-inquiry', {
         title: 'New admissions inquiry',
         // Goes only to addresses an admin typed into Settings. A name beside no amount has always

@@ -266,9 +266,14 @@ export function reorderWaitlist(orderedIds: string[], actor: AuditActor, at = ne
   return db.transaction((tx) => {
     const current = tx.select().from(inquiries).where(eq(inquiries.state, 'waitlisted')).all();
     const byId = new Map(current.map((r) => [r.id, r]));
-    const named = orderedIds.filter((id) => byId.has(id));
+    // DEDUPED, because this list arrives from a browser. The same id twice would be numbered twice —
+    // the second write winning, the count wrong, and every row after it shifted by one — which is
+    // precisely the hole in the queue this function exists to prevent. A Set also makes the
+    // "everything not named" pass below a lookup rather than a scan per row.
+    const named = [...new Set(orderedIds.filter((id) => byId.has(id)))];
+    const namedSet = new Set(named);
     const rest = current
-      .filter((r) => !named.includes(r.id))
+      .filter((r) => !namedSet.has(r.id))
       .sort((a, b) => (a.waitlistPosition ?? 0) - (b.waitlistPosition ?? 0))
       .map((r) => r.id);
     const finalOrder = [...named, ...rest];

@@ -26,6 +26,7 @@ import { schoolYears, schools, terms, courses, classes, students, families } fro
 import { rid } from '../db/ids';
 import { audit } from '../audit';
 import { commitRollover, rolloverPlan } from '../structure/rollover';
+import { blockerCounts, describeBlockers, schoolBlockers, schoolYearBlockers } from '../structure/blockers';
 import { canAccessSchool, defaultSchoolId, listSchools, newSchoolId, nextSchoolSortOrder, resolveSchoolScope, schoolCounts, schoolIdForClass, visibleSchoolIds } from '../schools';
 
 const ID = z.string().min(1).max(64);
@@ -125,6 +126,9 @@ export const structureRouter = router({
       students: db.select({ id: students.id }).from(students).where(eq(students.schoolId, input.id)).all().length,
       courses: db.select({ id: courses.id }).from(courses).where(eq(courses.schoolId, input.id)).all().length,
       years: db.select({ id: schoolYears.id }).from(schoolYears).where(eq(schoolYears.schoolId, input.id)).all().length,
+      /** Everything that would REFUSE the delete, from the one list `schoolDelete` refuses on
+       *  (`structure/blockers.ts`) — so the warning and the refusal cannot name different things. */
+      blockers: blockerCounts(schoolBlockers(input.id)),
       /** The last one standing cannot go: every student has to be filed somewhere. */
       isLast: listSchools().length <= 1,
     };
@@ -150,13 +154,15 @@ export const structureRouter = router({
   schoolDelete: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
     assertSchool(ctx, input.id);
     if (listSchools().length <= 1) throw new TRPCError({ code: 'CONFLICT', message: 'This is the only school — add another one first.' });
-    const kids = db.select({ id: students.id }).from(students).where(eq(students.schoolId, input.id)).all().length;
-    const crs = db.select({ id: courses.id }).from(courses).where(eq(courses.schoolId, input.id)).all().length;
-    const yrs = db.select({ id: schoolYears.id }).from(schoolYears).where(eq(schoolYears.schoolId, input.id)).all().length;
-    if (kids || crs || yrs) {
+    // One list, in `structure/blockers.ts`. It was three counts written out here, and Phase 2 added a
+    // fourth RESTRICT reference (`inquiries.school_id`) that this did not know about — so a school
+    // with one inquiry and nothing else passed the check and then died on a raw FK error (§18: no raw
+    // error reaches the user). Adding a RESTRICT reference means adding a count THERE.
+    const blockers = schoolBlockers(input.id);
+    if (blockers.length) {
       throw new TRPCError({
         code: 'CONFLICT',
-        message: `Move or remove this school’s ${[kids && `${kids} student(s)`, crs && `${crs} course(s)`, yrs && `${yrs} school year(s)`].filter(Boolean).join(', ')} first, or archive it instead.`,
+        message: `Move or remove this school’s ${describeBlockers(blockers)} first, or archive it instead.`,
       });
     }
     db.delete(schools).where(eq(schools.id, input.id)).run();
@@ -333,6 +339,16 @@ export const structureRouter = router({
   schoolYearDelete: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
     const y = requireSchoolYear(input.id);
     if (y.isCurrent) throw new TRPCError({ code: 'CONFLICT', message: 'Make another year current before deleting this one.' });
+    // A year holds no money, but from 0.52.0 it does hold admissions: a re-admission is ABOUT a
+    // particular year, and an inquiry may name one. Both are `ON DELETE restrict`, so without this
+    // the delete reaches SQLite and comes back as "Something went wrong at our end".
+    const blockers = schoolYearBlockers(input.id);
+    if (blockers.length) {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: `This year still has ${describeBlockers(blockers)} against it. Clear those first, or archive the year instead.`,
+      });
+    }
     let removedTerms = 0;
     db.transaction((tx) => {
       removedTerms = tx.delete(terms).where(eq(terms.schoolYearId, input.id)).run().changes;

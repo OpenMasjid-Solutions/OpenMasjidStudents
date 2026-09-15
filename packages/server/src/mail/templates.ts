@@ -445,6 +445,30 @@ export function resetEmail(schoolName: string, url: string): Email {
  * than at any particular screen — finance can follow it from anywhere, and an admin will be on the
  * masjid network anyway (§12.4).
  */
+/**
+ * The acknowledgement a family gets for an admissions inquiry (0.52.0-dev.10).
+ *
+ * The office's own words (`admissions/text.ts`), so the madrasah's voice reaches somebody who has
+ * never met it. It says ONE thing and deliberately not a second: that the form arrived. It must not
+ * imply the family is or is not already known to the school, must promise no timescale, and must
+ * carry nothing they sent back to them — an address typed by a stranger is where a confirmation
+ * email becomes a way to send somebody else's words to somebody else's inbox.
+ *
+ * No contact footer and no app link: the recipient has no account, and nothing here is actionable.
+ */
+export function admissionsAckEmail(schoolName: string, body: string): Email {
+  const subject = `${schoolName}: we have your message`;
+  const text = [body, '', `— ${schoolName}`].join('\n');
+  const html = shell(
+    'We have your message',
+    body.split(/\n{2,}/).map((p) => esc(p)),
+    undefined,
+    `You're receiving this because somebody used the admissions form on ${schoolName}'s website with this address.`,
+    { contact: false },
+  );
+  return { subject, text, html };
+}
+
 export function alertEmail(schoolName: string, title: string, body: string, appUrl: string): Email {
   const subject = `${schoolName}: ${title}`;
   const text = [body, '', appUrl ? `Open the app:\n${appUrl}` : '', `— ${schoolName}`].filter(Boolean).join('\n');

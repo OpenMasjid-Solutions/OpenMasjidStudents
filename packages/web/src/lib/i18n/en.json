@@ -489,7 +489,11 @@
     "confirmCourseArchive_other": "Archive the course “{{name}}”?\n\nIt disappears from the roster and the year view along with its {{count}} classes. Nothing is deleted and no student loses their record.",
     "confirmClassArchive_one": "Archive the class “{{name}}”?\n\nIts 1 student is left without a class until you put them in another one — they keep their fees and their history.",
     "confirmClassArchive_other": "Archive the class “{{name}}”?\n\nIts {{count}} students are left without a class until you put them in another one — they keep their fees and their history.",
-    "confirmClassArchive_zero": "Archive the class “{{name}}”?\n\nNobody is in it, so nothing else changes. Nothing is deleted."
+    "confirmClassArchive_zero": "Archive the class “{{name}}”?\n\nNobody is in it, so nothing else changes. Nothing is deleted.",
+    "admissionFee": "Fee to join",
+    "readmissionFee": "Fee to come back",
+    "noFee": "none",
+    "feeHint": "Leave the two fee boxes empty if your madrasah charges nothing to enrol — most do. When there is a fee, it is added to the child’s record as an ordinary charge the moment you admit or re-admit them, and you can waive it for a family at that point."
   },
   "onboarding": {
     "button": "Onboarding message",

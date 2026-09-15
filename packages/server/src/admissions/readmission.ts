@@ -176,16 +176,21 @@ export function applyDiff(tx: Tx, current: CurrentRecord, changes: FieldDiff[], 
   const guardian: Record<string, string | null> = {};
   for (const c of changes) {
     if (c.field === 'address' || c.field === 'languages' || c.field === 'nationality') household[c.field] = c.to || null;
-    if (c.field === 'guardianName') guardian.name = c.to;
+    // A guardian's NAME may not be emptied — a nameless adult on a household is worse than a stale
+    // one, and the form asks for it. Dropped from the patch rather than used to reject the whole
+    // update: the first cut skipped the guardian row entirely when the name came back blank, which
+    // silently discarded a phone number and an email address changed in the SAME submission. A rule
+    // about one field must not decide the fate of the other two.
+    if (c.field === 'guardianName' && c.to) guardian.name = c.to;
     if (c.field === 'guardianPhone') guardian.phone = c.to || null;
     if (c.field === 'guardianEmail') guardian.email = c.to ? c.to.toLowerCase() : null;
   }
   if (Object.keys(household).length) {
     tx.update(families).set({ ...household, updatedAt: at }).where(eq(families.id, current.familyId)).run();
   }
-  // A guardian's NAME may not be emptied — a nameless adult on a household is worse than a stale one,
-  // and the form's own validation asks for it. Everything else may legitimately be cleared.
-  if (Object.keys(guardian).length && current.guardianId && (guardian.name === undefined || guardian.name)) {
+  // A household with no guardian row yet has nothing to update; the office adds one from the family's
+  // record. Writing a guardian here would be inventing a person from a form nobody has approved.
+  if (Object.keys(guardian).length && current.guardianId) {
     tx.update(guardians).set({ ...guardian, updatedAt: at }).where(eq(guardians.id, current.guardianId)).run();
   }
 }
@@ -211,12 +216,33 @@ export interface OpenResult {
  * rather than remembered here.
  */
 export function openReadmissions(target: Audience, schoolYearId: string, actor: AuditActor, at = new Date()): OpenResult {
-  const year = db.select({ id: schoolYears.id }).from(schoolYears).where(eq(schoolYears.id, schoolYearId)).get();
+  const year = db.select({ id: schoolYears.id, schoolId: schoolYears.schoolId }).from(schoolYears).where(eq(schoolYears.id, schoolYearId)).get();
   if (!year) throw new TRPCError({ code: 'NOT_FOUND', message: 'That school year no longer exists.' });
 
   const wanted = target.kind === 'students' ? target.studentIds : [];
-  const ids = resolveAudience(target);
-  const skippedWithdrawn = Math.max(0, wanted.length - ids.length);
+  const resolved = resolveAudience(target);
+
+  /**
+   * A YEAR BELONGS TO ONE SCHOOL, so its re-admissions do too.
+   *
+   * `resolveAudience` deliberately applies no school scope — its header says so, and it is right,
+   * because a course and a class are inside one school by construction and `all` is the one shape
+   * that reaches across. For mass fee apply and the onboarding send that is fine. Here it is not:
+   * "ask everyone about the maktab's 2027 year" would put the hifz school's children on the maktab's
+   * list, and a madrasah running two programs on different calendars is the entire reason `schools`
+   * exists (§9). So the audience answers WHO, and the year answers WHICH SCHOOL, and this is where
+   * the two meet rather than inside the shared resolver.
+   *
+   * A year with no school (a row that predates 0.47.0 and has not been backfilled) scopes nothing,
+   * which is the same answer the rest of the app gives for those rows.
+   */
+  const ids = year.schoolId
+    ? resolved.filter((id) => {
+        const s = db.select({ schoolId: students.schoolId }).from(students).where(eq(students.id, id)).get();
+        return !s?.schoolId || s.schoolId === year.schoolId;
+      })
+    : resolved;
+  const skippedWithdrawn = Math.max(0, wanted.length - resolved.length);
 
   const already = new Set(
     ids.length
