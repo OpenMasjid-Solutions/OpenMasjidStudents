@@ -104,7 +104,7 @@ describe('an inquiry is not a student', () => {
     expect(r.familyId).toBeNull();
     expect(app.dbmod.db.select().from(students).all()).toHaveLength(0);
     // Nothing in the whole record looks like a code, in any state the office can reach.
-    for (const to of ['reviewing', 'waitlisted', 'offered'] as const) {
+    for (const to of ['waitlisted', 'admission'] as const) {
       await caller('admin').admissions.transition({ id, to });
       expect(JSON.stringify(row(id))).not.toMatch(/[A-Z]{3}\d{4}/);
       expect(row(id).studentId).toBeNull();
@@ -113,25 +113,25 @@ describe('an inquiry is not a student', () => {
 
   it('cannot be marked admitted by the office — that state means a student exists', async () => {
     const id = await anInquiry();
-    await caller('admin').admissions.transition({ id, to: 'offered' });
+    await caller('admin').admissions.transition({ id, to: 'admission' });
     // `admitted` is absent from the procedure's enum, so it cannot even be named. The machine allows
-    // offered → admitted; only `admissions/convert.ts` may apply it, inside the transaction that
+    // admission → admitted; only `admissions/convert.ts` may apply it, inside the transaction that
     // created the child.
     await expect(
       (caller('admin').admissions.transition as unknown as (i: unknown) => Promise<unknown>)({ id, to: 'admitted' }),
     ).rejects.toBeTruthy();
-    expect(row(id).state).toBe('offered');
-    expect(transition.canTransition('offered', 'admitted')).toBe(true);
+    expect(row(id).state).toBe('admission');
+    expect(transition.canTransition('admission', 'admitted')).toBe(true);
   });
 });
 
 describe('the pipeline', () => {
   it('records who moved it, when and why — in the trail AND in the audit log', async () => {
     const id = await anInquiry();
-    await caller('admin').admissions.transition({ id, to: 'reviewing', reason: 'Called them back on Tuesday' });
+    await caller('admin').admissions.transition({ id, to: 'waitlisted', reason: 'Called them back on Tuesday' });
     const trail = events(id);
     expect(trail).toHaveLength(2); // arrival, then the move
-    const move = trail.find((e) => e.toState === 'reviewing')!;
+    const move = trail.find((e) => e.toState === 'waitlisted')!;
     expect(move.fromState).toBe('new');
     expect(move.reason).toBe('Called them back on Tuesday');
     expect(move.actorName).toBeTruthy();
@@ -140,14 +140,14 @@ describe('the pipeline', () => {
     // NOT the office's prose about a family (§14).
     const audit = JSON.stringify(app.dbmod.db.select().from(auditLog).all());
     expect(audit).toContain('inquiry.transition');
-    expect(audit).toContain('reviewing');
+    expect(audit).toContain('waitlisted');
     expect(audit).not.toContain('Called them back');
   });
 
   it('refuses a move the pipeline does not allow, and says what is in the way', async () => {
     const id = await anInquiry();
     await caller('admin').admissions.transition({ id, to: 'declined' });
-    await expect(caller('admin').admissions.transition({ id, to: 'offered' })).rejects.toMatchObject({
+    await expect(caller('admin').admissions.transition({ id, to: 'waitlisted' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: expect.stringContaining('declined'),
     });
@@ -160,7 +160,72 @@ describe('the pipeline', () => {
     const got = await caller('admin').admissions.get({ id });
     expect(got.inquiry.state).toBe('declined');
     expect(got.events.some((e) => e.reason === 'Full for this year')).toBe(true);
-    expect(got.next).toEqual([]); // terminal
+    // Declining is not deleting: the row and its reason survive. The one way onward is REOPEN, which
+    // is the undo for a mis-click (0.52.0-dev.11) — declining must not be a one-way door whose only
+    // remedy is re-typing the family from memory. Deleting is a separate, explicit act.
+    expect(got.next).toEqual(['new']);
+  });
+
+  it('reopens a declined inquiry, and the trail says so', async () => {
+    const id = await anInquiry();
+    await caller('admin').admissions.transition({ id, to: 'declined' });
+    await caller('admin').admissions.transition({ id, to: 'new', reason: 'They rang back in August' });
+    const got = await caller('admin').admissions.get({ id });
+    expect(got.inquiry.state).toBe('new');
+    // The decline is still in the history — reopening is a new event, never an erasure of the old one.
+    expect(got.events.map((e) => e.toState)).toEqual(expect.arrayContaining(['declined', 'new']));
+    expect(got.events.some((e) => e.reason === 'They rang back in August')).toBe(true);
+  });
+});
+
+describe('deleting an inquiry for good', () => {
+  it('erases the row and its whole trail', async () => {
+    const id = await anInquiry();
+    await caller('admin').admissions.transition({ id, to: 'declined' });
+    expect(events(id).length).toBeGreaterThan(0);
+
+    await caller('admin').admissions.remove({ id });
+    expect(app.dbmod.db.select().from(inquiries).where(eq(inquiries.id, id)).get()).toBeUndefined();
+    // `inquiry_events` is ON DELETE cascade — a trail pointing at a row that no longer exists is a
+    // trail nothing can render, and it would keep the family's details in the database after an
+    // office believed they had removed them.
+    expect(events(id)).toHaveLength(0);
+  });
+
+  it('writes the audit row FIRST, and it carries the names — never the message body', async () => {
+    const id = await anInquiry({ message: 'Please do not repeat this anywhere' });
+    await caller('admin').admissions.remove({ id });
+    const trail = JSON.stringify(app.dbmod.db.select().from(auditLog).all());
+    expect(trail).toContain('inquiry.delete');
+    // The audit row is the ONLY trace that survives, so an id alone would document nothing (§9's
+    // studentDelete precedent).
+    expect(trail).toContain('Yusuf Ismail');
+    expect(trail).toContain('Ibrahim Ismail');
+    // …and what a stranger typed is exactly the part that must not outlive the record it was
+    // deleted with (§14).
+    expect(trail).not.toContain('Please do not repeat this anywhere');
+  });
+
+  it('refuses to erase one that became a student — that row is how the child joined', async () => {
+    const id = await anInquiry();
+    // The state is set directly rather than through `markAdmitted`, which insists on a real student
+    // and household: what is under test is the DELETE's guard, and conversion has its own file.
+    app.dbmod.db.update(inquiries).set({ state: 'admitted' }).where(eq(inquiries.id, id)).run();
+    await expect(caller('admin').admissions.remove({ id })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(row(id)).toBeTruthy();
+  });
+
+  it('closes the waitlist gap when the deleted row was in the queue', async () => {
+    const ids: string[] = [];
+    for (const name of ['One Child', 'Two Child', 'Three Child']) {
+      const id = await anInquiry({ childName: name, email: `${name.split(' ')[0].toLowerCase()}@example.org` });
+      await caller('admin').admissions.transition({ id, to: 'waitlisted' });
+      ids.push(id);
+    }
+    // Deleting is the one exit from the queue that is NOT a transition, so the renumber has to be
+    // wired up separately — without it the list runs 1, 3 and the office stops trusting the numbers.
+    await caller('admin').admissions.remove({ id: ids[1] });
+    expect([ids[0], ids[2]].map((i) => row(i).waitlistPosition)).toEqual([1, 2]);
   });
 });
 
@@ -176,7 +241,7 @@ describe('the waitlist', () => {
 
     // Offering from the waitlist is the same transition as offering from review; leaving takes its
     // position with it. A list with a hole at 1 is a list an office stops trusting.
-    await caller('admin').admissions.transition({ id: ids[0], to: 'offered' });
+    await caller('admin').admissions.transition({ id: ids[0], to: 'admission' });
     expect(row(ids[0]).waitlistPosition).toBeNull();
     expect(ids.slice(1).map((i) => row(i).waitlistPosition)).toEqual([1, 2]);
   });

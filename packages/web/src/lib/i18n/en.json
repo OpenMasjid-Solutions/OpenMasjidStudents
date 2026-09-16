@@ -604,29 +604,26 @@
     "filter": {
       "open": "Live",
       "new": "New",
-      "reviewing": "Reviewing",
       "waitlisted": "Waiting list",
-      "offered": "Offered",
+      "admission": "In admission",
       "declined": "Declined",
-      "withdrawn": "Withdrawn",
       "admitted": "Admitted"
     },
     "state": {
       "new": "New",
-      "reviewing": "Reviewing",
       "waitlisted": "Waiting list",
-      "offered": "Offered",
+      "admission": "In admission",
       "declined": "Declined",
       "admitted": "Admitted",
+      "reviewing": "Reviewing",
+      "offered": "Offered",
       "withdrawn": "Withdrawn"
     },
     "moveTo": {
-      "new": "Put back to new",
-      "reviewing": "Start reviewing",
-      "waitlisted": "Put on the waiting list",
-      "offered": "Offer a place",
-      "declined": "Decline",
-      "withdrawn": "They withdrew"
+      "new": "Reopen",
+      "waitlisted": "Waiting list",
+      "admission": "Start admission",
+      "declined": "Decline"
     },
     "source": {
       "public": "Came through your website",
@@ -675,7 +672,12 @@
     "waiveFee": "Waive the {{amount}} enrollment fee for this family",
     "waiveFeeHint": "What the year charges everybody else is unchanged. Leave it off and the fee is raised as an ordinary charge on their record.",
     "viewInquiries": "Inquiries",
-    "viewReadmission": "Coming back"
+    "viewReadmission": "Coming back",
+    "deleteTitle": "Delete",
+    "deleteHint": "Removes this inquiry and its history for good. Use it for test entries, duplicates and spam.",
+    "deleteConfirm": "Delete the inquiry from {{name}}? This cannot be undone.",
+    "delete": "Delete this inquiry",
+    "deleteYes": "Yes, delete it"
   },
   "profile": {
     "menu": "Account",

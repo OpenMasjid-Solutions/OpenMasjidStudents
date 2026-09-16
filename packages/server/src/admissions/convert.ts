@@ -146,8 +146,10 @@ export function convertInquiry(input: ConvertInput, actor: AuditActor, at = new 
   const already = existingConversion(inquiry);
   if (already) return already;
 
-  if (inquiry.state === 'declined' || inquiry.state === 'withdrawn') {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: `That inquiry is ${inquiry.state} — put it back to reviewing before admitting.` });
+  // A declined inquiry is not admitted by accident. The office reopens it first, which is one click
+  // and leaves a trail row saying they did — the alternative is a decline that silently means nothing.
+  if (inquiry.state === 'declined') {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'That inquiry was declined. Reopen it first if you want to admit this child.' });
   }
 
   const fullName = (input.fullName ?? inquiry.childName).trim();

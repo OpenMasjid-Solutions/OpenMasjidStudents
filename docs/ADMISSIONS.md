@@ -33,7 +33,7 @@
 
 ## 0. What this is, and the one thing it must never become
 
-A funnel a family walks: they ask, the office reviews, a place is offered, a form comes back, and a
+A funnel a family walks: they ask, the office decides, a form comes back, and a
 **student record exists at the end of it**. Everything before that last step is a record of a
 conversation, not a child on the roster.
 
@@ -65,7 +65,7 @@ Seven new tables. Names are final; column lists are the spec the migration imple
 | `child_dob` | optional ISO day, validated by `isIsoDay` like every other date on a write boundary |
 | `asked_about` | free text ("Hifz 1", "the Sunday class") — **not** an FK, because a stranger typing into a public form must not be able to probe which classes exist |
 | `parent_name`, `email`, `phone`, `message` | the whole of the public field set (decision 9: fixed, not configurable) |
-| `state` | `new \| reviewing \| waitlisted \| offered \| declined \| admitted \| withdrawn` |
+| `state` | `new \| waitlisted \| admission \| declined \| admitted` |
 | `source` | `public \| office` — an office can enter a walk-in inquiry |
 | `waitlist_position` | integer, nullable; only meaningful in `waitlisted` |
 | `waitlist_reason` | the office's own words, shown on the waitlist screen |
@@ -216,20 +216,40 @@ whose family only asked a question.
 ## 3. The pipeline
 
 ```
-                    ┌──────────── declined (terminal, retained)
-new → reviewing ────┼──────────── waitlisted ──┐
-                    └──────────── offered ◄────┘
-                                     │
-                                     ├── admitted   (conversion — a student exists)
-                                     └── withdrawn  (the family dropped out)
+new ──┬──▶ waitlisted ──┬──▶ admission ──▶ admitted   (conversion — a student exists)
+      │                 │
+      └─────────────────┴──▶ declined ──▶ new (reopened)  ·  or deleted for good
 ```
 
-**ONE DEVIATION FROM THE DRAWING, MADE ON PURPOSE (0.52.0-dev.8):** `admitted` is reachable from
-every live state, not only from `offered`. A family who walks into the office and is admitted the same
-morning would otherwise need four actions for one conversation — type the inquiry, start reviewing,
-offer a place, admit — and the middle two would be recording an offer nobody made. Nothing is weakened
-by it: `admitted` still means a student EXISTS, and the only way to apply it is still `markAdmitted`
-from inside conversion's own transaction. The trail records the move that actually happened.
+**FOUR STATES AND A TERMINAL ONE — cut down from seven in 0.52.0-dev.11, on Hasan's instruction**
+("there are so many tags, unnecessary tags… all we need is put them on waitlist or decline or move to
+admission"). `reviewing` and `offered` described a conversation the app never witnesses — a phone
+call, an interview — so they were either forgotten, and the board lied, or maintained as bookkeeping
+for their own sake. A pipeline that asks to be groomed stops being used and the office goes back to a
+notebook. `withdrawn` and `declined` were two words for one outcome. What is left is only what the app
+can act on.
+
+`new` **draws no tag at all**: an inquiry that arrived and has not been touched is the ordinary case,
+and labelling the ordinary case is what made the board noisy.
+
+`admission` means the admission form has been issued to the family — the one state that exists because
+of something the app itself did.
+
+**`admitted` IS REACHABLE FROM EVERY LIVE STATE, and that is deliberate.** A family who walks into the
+office and is admitted the same morning should not be walked through states nobody used. Nothing is
+weakened by it: `admitted` still means a student EXISTS, and the only way to apply it is still
+`markAdmitted` from inside conversion's own transaction.
+
+**`declined` is terminal but is not a dead end.** It can be **reopened** — a family that said no in
+March and rang back in August is ordinary, and without a way back the only remedy was to delete the
+record and re-type it from memory, losing the date they first asked. And it can be **deleted for
+good** (`admissions.remove`): admin-only, refused on `admitted`, with the audit row written FIRST
+carrying the child's and parent's names and *never the message body*. Retaining every refusal forever
+was this app's own choice, not a requirement, and an office that cannot clear a test row or a piece of
+abuse is an office that stops opening the board. Migration 0045 maps the old states
+(`reviewing`→`new`, `offered`→`admission`, `withdrawn`→`declined`) and deliberately does **not**
+rewrite `inquiry_events`: the trail records what actually happened, and editing history so it matches
+a later vocabulary is how a trail stops being evidence.
 
 Every transition records **who, when, and why**, in `inquiry_events` and in `audit_log`. `declined` is
 terminal but the record is retained — an office asked "did we ever hear from them?" needs an answer.

@@ -120,14 +120,14 @@ describe('admitting a child', () => {
     await admin.admissions.transition({ id: inquiryId, to: 'declined' });
     await expect(admin.admissions.convert({ id: inquiryId, feePlanId: planId })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: expect.stringContaining('reviewing'),
+      message: expect.stringContaining('Reopen'),
     });
     expect(allStudents()).toHaveLength(0);
   });
 
   it('mints no Student ID in any state short of admitted', async () => {
     const { admin, inquiryId } = await seed();
-    for (const to of ['reviewing', 'waitlisted', 'offered'] as const) {
+    for (const to of ['waitlisted', 'admission'] as const) {
       await admin.admissions.transition({ id: inquiryId, to });
       expect(allStudents()).toHaveLength(0);
       expect(JSON.stringify(inquiryRow(inquiryId))).not.toMatch(/[A-Z]{3}\d{4}/);

@@ -221,11 +221,16 @@ describe('one response, whatever happened', () => {
 
 describe('what it says out loud, and what it does not', () => {
   it('says intake is closed rather than silently discarding', async () => {
+    // The madrasah's OWN closed text, not the shipped default. Pinning a test to default prose is
+    // what broke this one when the wording was rewritten in 0.52.0-dev.11 — and it was testing the
+    // registry's copy rather than the behavior, which is that a closed form renders the closed text
+    // and no form at all.
+    settingsMod.setAdmissionsText({ closed: 'Intake reopens after Ramadan.' });
     openForm({ open: false });
     const page = await http.inject({ method: 'GET', url: '/public/inquiry' });
     expect(page.statusCode).toBe(200);
     expect(page.body).not.toContain('<form');
-    expect(page.body).toContain('not taking new admissions inquiries');
+    expect(page.body).toContain('Intake reopens after Ramadan.');
   });
 
   it('carries the document headers every served page in this app carries', async () => {
@@ -307,6 +312,97 @@ describe('what it says out loud, and what it does not', () => {
     expect(page.body).not.toContain('<img src=x onerror=alert(2)>');
     expect(page.body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(page.body).toContain('&lt;img src=x onerror=alert(2)&gt;');
+  });
+});
+
+describe('the page reads in both themes', () => {
+  /**
+   * THE DARK BRANCH MAY ONLY REDEFINE TOKENS — and this is not a style preference, it is the bug.
+   *
+   * The first version put `@media (prefers-color-scheme: dark)` ABOVE the rules it overrode, and a
+   * media query adds no specificity: `.box { background: #fff }` on the next line won, while `body`'s
+   * color stayed the dark theme's near-white because nothing later re-declared it. On a dark phone
+   * that is a white card with pale grey labels — unreadable, on the one page in this app served to
+   * the open internet, embedded in somebody's website.
+   *
+   * Asserting "the dark block declares nothing but custom properties" is the rule itself rather than
+   * a symptom: any RULE in there can lose to a later one on source order, and a variable cannot.
+   *
+   * Both assertions below are brace-matched rather than sliced at the first `}`. The first version of
+   * this test used index arithmetic, and the mutation check caught it passing vacuously — it skipped
+   * any fragment containing `{`, which is precisely what an injected rule looks like.
+   */
+  /**
+   * The served stylesheet, with CSS comments stripped.
+   *
+   * Stripping is not tidiness: a comment explaining this very rule USED to sit in the stylesheet, its
+   * prose contained a literal `@media (prefers-color-scheme: dark)` and a `{ background: #fff }`, and
+   * the brace matcher below found those first. The comment has since moved to the TS docblock where
+   * it belongs — and the third test in this block is what keeps it there — but a parser that can be
+   * fooled by prose is a parser that will be.
+   */
+  const style = (body: string) =>
+    body.slice(body.indexOf('<style'), body.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /** The body of the block opening at or after `from`, brace-matched — nested blocks and all. */
+  function block(css: string, from: number): { body: string; end: number } {
+    const open = css.indexOf('{', from);
+    let depth = 0;
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === '{') depth++;
+      else if (css[i] === '}' && --depth === 0) return { body: css.slice(open + 1, i), end: i };
+    }
+    throw new Error('unbalanced css');
+  }
+
+  /** Every `:root { … }` block removed, so what is left is whatever ELSE the block declares. */
+  function withoutRootBlocks(css: string): string {
+    let out = css;
+    for (;;) {
+      const at = out.indexOf(':root');
+      if (at === -1) return out;
+      const { end } = block(out, at);
+      out = out.slice(0, at) + out.slice(end + 1);
+    }
+  }
+
+  it('declares nothing but custom properties inside the dark-scheme block', async () => {
+    openForm();
+    const css = style((await http.inject({ method: 'GET', url: '/public/inquiry' })).body);
+    const dark = block(css, css.indexOf('@media (prefers-color-scheme: dark)')).body;
+    expect(dark).toContain('--ink');
+    // Strip the `:root { … }` that is supposed to be the whole of it. Anything left with a brace in
+    // it is a real rule, and a real rule is one source-order edit away from being ignored.
+    expect(withoutRootBlocks(dark)).not.toContain('{');
+  });
+
+  it('ships no commentary to the open internet', async () => {
+    openForm();
+    const page = await http.inject({ method: 'GET', url: '/public/inquiry' });
+    const css = page.body.slice(page.body.indexOf('<style'), page.body.indexOf('</style>'));
+    // This constant is served in full to strangers, often inside somebody else's website. A paragraph
+    // of English explaining a bug we once had is bytes on every request and internal reasoning
+    // published to people who did not ask for it — so the reasoning lives in the TS docblock above
+    // PAGE_STYLE, and the CSS carries only what a reader editing that line needs.
+    expect(css).not.toContain('/*');
+  });
+
+  it('names no theme color as a literal — every one of them is a token', async () => {
+    openForm();
+    const css = style((await http.inject({ method: 'GET', url: '/public/inquiry' })).body);
+    // LINE-BASED ON PURPOSE. The first version of this walked the stylesheet with brace matching and
+    // set arithmetic, and the mutation check caught it passing while `.box { background: #ffffff }`
+    // sat in the served page — a guard clever enough to be wrong in a way nobody reads. Every line
+    // carrying a color literal must be a token DEFINITION, and there is exactly one exception.
+    const offenders = css
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => /#[0-9a-fA-F]{3,8}/.test(l))
+      .filter((l) => !/^--[\w-]+:\s*#[0-9a-fA-F]{3,8};$/.test(l))
+      // The button's foreground sits on the accent in both themes, so it is not a theme color and
+      // flipping it with the scheme would be the bug rather than the fix.
+      .filter((l) => !l.startsWith('button {'));
+    expect(offenders).toEqual([]);
   });
 });
 

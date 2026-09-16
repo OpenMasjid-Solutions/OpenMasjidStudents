@@ -546,11 +546,32 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > copies of "randomBytes, then sha256, then an expiry" and the fourth was about to be written — which
 > is three places to get single-use wrong on surfaces reachable from the internet (§16).
 >
-> **One deviation from the spec's own diagram, recorded rather than slipped in:** `admitted` is
-> reachable from every live state, not only from `offered`, because a family admitted the morning they
-> walked in would otherwise need four actions for one conversation, two of them recording an offer
-> nobody made. The invariant is untouched — `admitted` still means a student EXISTS, and only
-> `markAdmitted`, inside conversion's transaction, can apply it.
+> **THE PIPELINE WAS CUT FROM SEVEN STATES TO FOUR IN 0.52.0-dev.11, ON HASAN'S INSTRUCTION** — "there
+> are so many tags, unnecessary tags… all we need is put them on waitlist or decline or move to
+> admission." `reviewing` and `offered` described a conversation the app never witnesses (a phone
+> call, an interview), so they were either forgotten — and the board lied — or maintained as
+> bookkeeping for their own sake; a pipeline that asks to be groomed stops being used and the office
+> goes back to a notebook. `withdrawn` and `declined` were two words for one outcome. What is left is
+> `new` (which draws NO tag, because labelling the ordinary case is what made the board noisy),
+> `waitlisted`, `admission`, `declined` and `admitted`. Migration 0045 maps the old rows and
+> deliberately does not rewrite `inquiry_events` — the trail records what happened, not a later
+> vocabulary.
+>
+> `admitted` is reachable from every live state, not only through `admission`, because a family
+> admitted the morning they walked in would otherwise need actions that record steps nobody took. The
+> invariant is untouched — `admitted` still means a student EXISTS, and only `markAdmitted`, inside
+> conversion's transaction, can apply it.
+>
+> **A DECLINED INQUIRY CAN NOW BE REOPENED, AND ANY INQUIRY CAN BE DELETED FOR GOOD**
+> (`admissions.remove`, 0.52.0-dev.11). The old rule retained every refusal forever, on the argument
+> that "did we ever hear from them?" needs an answer. That holds for a real family and for nothing
+> else, and a public form collects the rest — the test submission made while setting the widget up,
+> the abuse, the duplicate from a parent who pressed the button twice. An office that cannot clear
+> those stops opening the board. It is **admin-only**, **refused on `admitted`** (that row is the
+> provenance of a child on the roster, and erasing an inquiry is not a way to unpick an admission),
+> and **the audit row is written FIRST** carrying the child's and the parent's names, the state and
+> the date — but never the message body, which is the part that could be abuse and the part §14 keeps
+> out of anything outliving the record. The trail and any outstanding form link cascade with it.
 
 **Phase 3 — attendance.** Full spec in `docs/ATTENDANCE.md`. It opens with **enrollment history**, which
 is a schema reversal (`enrollments`, recorded in `docs/DATA_MODEL.md` as deliberately not re-created) and
@@ -1196,6 +1217,10 @@ Non-negotiable rules:
   exists. Deriving it is how a half-failed conversion reads as successful. And **an inquiry is not a
   student and not a household**: it never mints a Student ID, never appears in the directory, and is
   never billable. The ID is minted at conversion, in `admissions/convert.ts`, and nowhere else.
+  **The state set is `new | waitlisted | admission | declined | admitted`** since 0.52.0-dev.11;
+  `LegacyInquiryState` carries the three that were removed, **read-only, and only from
+  `inquiry_events`** — migration 0045 moved every live row off them and left the trail alone, because
+  a history rewritten to match a later vocabulary is a history that has stopped being evidence.
 - **ATTENDANCE, MARKS AND GRADES FOLLOW THE LEDGER'S RULE: DERIVED, NEVER STORED** (§4a Phases 3–5).
   Store the raw mark and nothing else; every rate, count, streak, percentage, weighted average and band
   is computed on read — `attendance/derive.ts` and `academics/derive.ts` are the two places (§16). A

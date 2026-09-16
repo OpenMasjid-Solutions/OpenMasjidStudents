@@ -138,9 +138,9 @@ export function AdmissionsSettings() {
         {cfg.embedOrigins.length === 0 ? (
           <p className="muted" style={{ fontSize: '0.9rem' }}>{t('settings.admissionsNoOrigins')}</p>
         ) : (
-          <ul className="picker-list">
+          <ul className="data-list">
             {cfg.embedOrigins.map((o) => (
-              <li key={o} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem' }}>
+              <li key={o}>
                 <span>{o}</span>
                 <span className="spacer" />
                 <button type="button" className="btn btn--ghost btn--sm" aria-label={t('common.delete')} disabled={save.isPending} onClick={() => void apply({ embedOrigins: cfg.embedOrigins.filter((x) => x !== o) })}>

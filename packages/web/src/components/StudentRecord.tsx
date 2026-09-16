@@ -183,9 +183,9 @@ export function StudentRecord({ studentId, readOnly = false }: { studentId: stri
           {q.data.notes.length === 0 ? (
             <p className="muted" style={{ fontSize: '0.9rem' }}>{t('record.noNotes')}</p>
           ) : (
-            <ul className="picker-list">
+            <ul className="data-list">
               {q.data.notes.map((n) => (
-                <li key={n.id} style={{ display: 'block', padding: '0.5rem 0.6rem' }}>
+                <li key={n.id} style={{ display: 'block' }}>
                   <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{n.body}</p>
                   <p className="muted" style={{ fontSize: '0.8rem', margin: '0.2rem 0 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span>{n.authorName} · {formatDate(new Date(n.createdAt).toISOString().slice(0, 10), dateFmt)}</span>

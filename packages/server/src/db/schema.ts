@@ -1127,9 +1127,49 @@ export type AutopayRun = typeof autopayRuns.$inferSelect;
 // the ONLY link between the two, it is null until conversion, and it points forward rather than the
 // student pointing back.
 
-/** The pipeline (docs/ADMISSIONS.md §3). `declined` is terminal and the row is RETAINED — an office
- *  asked "did we ever hear from them?" needs an answer. */
-export type InquiryState = 'new' | 'reviewing' | 'waitlisted' | 'offered' | 'declined' | 'admitted' | 'withdrawn';
+/**
+ * THE PIPELINE — FOUR STATES AND A TERMINAL ONE (docs/ADMISSIONS.md §3).
+ *
+ * It had seven until 0.52.0-dev.11, and Hasan cut it: "there are so many tags, unnecessary tags…
+ * all we need is put them on waitlist or decline or move to admission." He is right, and the reason
+ * is worth keeping rather than just the outcome. `reviewing` and `offered` were states the OFFICE
+ * had to remember to set, describing a conversation the app never witnesses — a phone call, an
+ * interview — so they were either forgotten (and the board lied) or maintained as bookkeeping for
+ * their own sake. A pipeline that asks to be groomed stops being used, and the office goes back to
+ * a notebook. What is left is only what the app can act on:
+ *
+ *   new ──▶ waitlisted ──▶ admission ──▶ admitted
+ *    └──────────┴─────────────┴───────▶ declined ──▶ (reopen, or delete for good)
+ *
+ * `new` DRAWS NO TAG AT ALL. An inquiry that arrived and has not been touched is the ordinary case,
+ * and labelling the ordinary case is what made the board noisy.
+ *
+ * `admission` means the admission form has been issued to the family — the one state that exists
+ * because something real happened that the app itself did.
+ *
+ * `admitted` is terminal and means a STUDENT EXISTS. Only `markAdmitted`, inside conversion's
+ * transaction, can apply it (see `admissions/transition.ts`).
+ *
+ * `declined` is terminal but no longer a dead end: it can be REOPENED (a family that said no in
+ * March and rang back in August is ordinary), and it can be DELETED for good — admin-only, audited,
+ * and asked for by name. Retaining every refusal forever was this app's own choice, not a
+ * requirement, and an office that cannot clear a test row or a piece of abuse from its board is an
+ * office that stops opening the board.
+ */
+export type InquiryState = 'new' | 'waitlisted' | 'admission' | 'declined' | 'admitted';
+
+/**
+ * States that EXISTED and no longer do. Migration 0045 moves every live row off them
+ * (`reviewing`→`new`, `offered`→`admission`, `withdrawn`→`declined`), but `inquiry_events` rows are
+ * NOT rewritten: the trail records what actually happened, and editing history so it matches a
+ * later vocabulary is how a trail stops being evidence. So these are still READ — and only read,
+ * from the event list — which is why they live in their own type rather than back in the union
+ * where a transition could reach them again.
+ */
+export type LegacyInquiryState = 'reviewing' | 'offered' | 'withdrawn';
+
+/** What an `inquiry_events` row may name: anything the pipeline has ever been able to say. */
+export type AnyInquiryState = InquiryState | LegacyInquiryState;
 
 /**
  * ONE FAMILY'S ASKING — a record of a conversation, not a child on the roster.
@@ -1229,8 +1269,10 @@ export const inquiryEvents = sqliteTable(
       .notNull()
       .references(() => inquiries.id, { onDelete: 'cascade' }),
     /** Null on the row that records the inquiry arriving — there was no state before it. */
-    fromState: text('from_state').$type<InquiryState>(),
-    toState: text('to_state').$type<InquiryState>().notNull(),
+    fromState: text('from_state').$type<AnyInquiryState>(),
+    /** `AnyInquiryState`, not `InquiryState`: rows written before 0.52.0-dev.11 name states the
+     *  pipeline no longer has, and they are deliberately left saying so (see `LegacyInquiryState`). */
+    toState: text('to_state').$type<AnyInquiryState>().notNull(),
     /** The office's own words. Shown on the screen, so it is escaped at render like everything else. */
     reason: text('reason'),
     actorUserId: text('actor_user_id'),

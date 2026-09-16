@@ -30,7 +30,7 @@ import { InquiryDetail } from '../../components/InquiryDetail';
 import { Readmissions } from '../../components/Readmissions';
 
 /** The filters, in the order an office works them: everything live, then one state at a time. */
-const FILTERS = ['open', 'new', 'reviewing', 'waitlisted', 'offered', 'declined', 'withdrawn', 'admitted'] as const;
+const FILTERS = ['open', 'new', 'waitlisted', 'admission', 'declined', 'admitted'] as const;
 type Filter = (typeof FILTERS)[number];
 
 export function Admissions() {
@@ -192,7 +192,12 @@ export function Admissions() {
                       <td>{r.askedAbout ?? '—'}</td>
                       <td>{formatDate(new Date(r.createdAt).toISOString().slice(0, 10), dateFmt)}</td>
                       <td>
-                        <span className={cn('chip', (r.state === 'declined' || r.state === 'withdrawn') && 'is-muted')}>{t(`admissions.state.${r.state}`)}</span>
+                        {/* `new` draws NO tag. An inquiry that arrived and has not been touched is the
+                            ordinary case, and labelling the ordinary case is what made this board noisy
+                            enough to be worth cutting (0.52.0-dev.11). */}
+                        {r.state !== 'new' && (
+                          <span className={cn('chip', r.state === 'declined' && 'is-muted')}>{t(`admissions.state.${r.state}`)}</span>
+                        )}
                         {r.state === 'waitlisted' && (
                           <>
                             <span className="chip is-muted">#{r.waitlistPosition ?? '—'}</span>

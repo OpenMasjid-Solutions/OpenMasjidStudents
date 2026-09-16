@@ -42,7 +42,7 @@ import {
   reviewReadmission,
   setReadmissionState,
 } from '../admissions/readmission';
-import { canTransition, inquiryById, reorderWaitlist, transitionInquiry, TransitionRefused, type OfficeTransition } from '../admissions/transition';
+import { canTransition, inquiryById, reorderWaitlist, transitionInquiry, TransitionRefused, vacateWaitlistPosition, type OfficeTransition } from '../admissions/transition';
 import { INQUIRY_CAPS, storeInquiry } from '../admissions/inquiry';
 import { ADMISSIONS_TEXT_DEFAULTS, ADMISSIONS_TEXT_KEYS } from '../admissions/text';
 import { conversionPreview, convertInquiry } from '../admissions/convert';
@@ -64,11 +64,11 @@ import { config } from '../config';
 const ID = z.string().min(1).max(64);
 /** Everything the office may move an inquiry to. `admitted` is absent and that is the enforcement:
  *  it is reachable only from `admissions/convert.ts`, inside the transaction that made the child. */
-const OFFICE_STATES = ['new', 'reviewing', 'waitlisted', 'offered', 'declined', 'withdrawn'] as const;
+const OFFICE_STATES = ['new', 'waitlisted', 'admission', 'declined'] as const;
 const REASON = z.string().trim().max(500);
 
 /** The states an office normally wants to see together, and the order they are worked in. */
-const OPEN_STATES: InquiryState[] = ['new', 'reviewing', 'waitlisted', 'offered'];
+const OPEN_STATES: InquiryState[] = ['new', 'waitlisted', 'admission'];
 
 function requireInquiry(id: string) {
   const row = inquiryById(id);
@@ -187,6 +187,58 @@ export const admissionsRouter = router({
       audit(auditActor(ctx), 'inquiry.assign', { entity: 'inquiry', entityId: input.id, detail: { keys: Object.keys(input).filter((k) => k !== 'id') } });
       return { ok: true as const };
     }),
+
+  /**
+   * ERASE AN INQUIRY FOR GOOD — the record, its trail, and any link minted for it.
+   *
+   * Asked for by Hasan in 0.52.0-dev.11: "if there's a way to fully, fully delete, like the ones
+   * that you decline, you should be able to delete too." The old rule was that a declined row is
+   * retained forever, on the argument that an office asked "did we ever hear from them?" needs an
+   * answer. That argument holds for a real family and holds for nothing else, and a public form
+   * collects the rest: the test submission somebody made while setting the widget up, the abuse, the
+   * duplicate typed in by a parent who pressed the button twice on a bad connection. An office that
+   * cannot clear those stops opening the board, which costs more than the retained row was worth.
+   *
+   * Three things keep it honest, and they are the same three that make `people.studentDelete`'s
+   * `force` door tolerable (§9):
+   *
+   * 1. **Admin only.** Finance cannot reach admissions at all (§5), so this is stated by the
+   *    procedure it is built on rather than by a check inside it.
+   * 2. **`admitted` IS REFUSED.** That row is the provenance of a child on the roster — when the
+   *    family first asked, and what they said. Erasing an inquiry is not a way to quietly unpick an
+   *    admission, and the student's own delete (with `force`) is the deliberate door for that; it
+   *    leaves the inquiry standing on purpose, which this must not undo from the other side.
+   * 3. **THE AUDIT ROW IS WRITTEN FIRST AND CARRIES THE NAMES.** It is the only trace that survives,
+   *    and an id that no longer resolves documents nothing. The child's name, the parent's name and
+   *    the state it was in — never the message body, which is the part that could be abuse and is
+   *    the part §14 keeps out of anything that outlives the record.
+   *
+   * `inquiry_events` and `admission_links` are `ON DELETE cascade`, so the row takes its trail and
+   * any outstanding form link with it — a link that outlived its inquiry would be a token pointing
+   * at nothing, redeemable by whoever still has the URL.
+   */
+  remove: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    const row = requireInquiry(input.id);
+    if (row.state === 'admitted') {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'This inquiry became a student, so it is the record of how they joined. Delete the student instead if that is what you meant.',
+      });
+    }
+    audit(auditActor(ctx), 'inquiry.delete', {
+      entity: 'inquiry',
+      entityId: row.id,
+      detail: { childName: row.childName, parentName: row.parentName, state: row.state, source: row.source, createdAt: row.createdAt.toISOString() },
+    });
+    // Leaving the waitlist by being deleted leaves the same hole as leaving it by being declined, so
+    // the renumber and the delete commit together — `vacateWaitlistPosition` is the waitlist's one
+    // owner (§16), reached here because a delete is the one exit that is not a transition.
+    db.transaction((tx) => {
+      tx.delete(inquiries).where(eq(inquiries.id, row.id)).run();
+      if (row.state === 'waitlisted' && row.waitlistPosition != null) vacateWaitlistPosition(row.waitlistPosition, tx);
+    });
+    return { ok: true as const };
+  }),
 
   /** Reorder the waitlist by hand (decision 7: manual ordering, no capacity — classes carry none, and
    *  adding one means enforcing it in rollover, bulk assign and admission, three paths that currently

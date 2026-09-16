@@ -17,10 +17,11 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CalendarDays, GraduationCap, Mail, MessageSquare, Phone, School, User } from 'lucide-react';
+import { CalendarDays, GraduationCap, Mail, MessageSquare, Phone, School, Trash2, User } from 'lucide-react';
 import { trpc, type RouterOutputs } from '../lib/trpc';
 import { formatDate } from '../lib/dates';
 import { AdmitInquiry } from './AdmitInquiry';
+import { useWindows } from './Windows';
 
 type NextState = RouterOutputs['admissions']['get']['next'][number];
 
@@ -33,8 +34,11 @@ export function InquiryDetail({ id }: { id: string }) {
   const years = trpc.structure.schoolYearList.useQuery({});
   const move = trpc.admissions.transition.useMutation();
   const assign = trpc.admissions.assign.useMutation();
+  const remove = trpc.admissions.remove.useMutation();
+  const { closeByKey } = useWindows();
 
   const [reason, setReason] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [err, setErr] = useState('');
 
   if (q.isLoading || !q.data) return <p className="empty">{t('common.loading')}</p>;
@@ -49,6 +53,19 @@ export function InquiryDetail({ id }: { id: string }) {
       await move.mutateAsync({ id, to, reason: reason.trim() || undefined, waitlistReason: to === 'waitlisted' ? reason.trim() || undefined : undefined });
       setReason('');
       await Promise.all([utils.admissions.get.invalidate({ id }), utils.admissions.list.invalidate()]);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  async function erase() {
+    setErr('');
+    try {
+      await remove.mutateAsync({ id });
+      await utils.admissions.list.invalidate();
+      // The record it was showing no longer exists, so the window goes with it rather than sitting
+      // there rendering a stale copy of something an office just deleted.
+      closeByKey(`inquiry:${id}`);
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -70,7 +87,9 @@ export function InquiryDetail({ id }: { id: string }) {
         <div className="section-head">
           <h2>{inquiry.childName}</h2>
           <span className="spacer" />
-          <span className="chip">{t(`admissions.state.${inquiry.state}`)}</span>
+          {/* `new` draws no tag — see db/schema.ts's InquiryState. An inquiry nobody has touched yet is
+              the ordinary case and labelling it is what made this screen noisy. */}
+          {inquiry.state !== 'new' && <span className="chip">{t(`admissions.state.${inquiry.state}`)}</span>}
           {inquiry.waitlistPosition != null && <span className="chip is-muted">#{inquiry.waitlistPosition}</span>}
         </div>
         <p className="muted" style={{ fontSize: '0.9rem', margin: 0 }}>
@@ -83,23 +102,25 @@ export function InquiryDetail({ id }: { id: string }) {
         <div className="section-head">
           <h2>{t('admissions.whatTheyWrote')}</h2>
         </div>
-        <ul className="picker-list">
-          <li style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '0.4rem 0.6rem' }}>
-            <User size={13} /> <span className="muted">{t('admissions.parentName')}</span> <span className="spacer" /> {inquiry.parentName}
+        {/* `data-list`, never `picker-list`: the latter is `position: absolute` and painted this list
+            on top of the section below it (admin.css, and 0.52.0-dev.11's changelog entry). */}
+        <ul className="data-list">
+          <li>
+            <User size={13} /> <span className="muted">{t('admissions.parentName')}</span> <span className="spacer" /> <span className="data-value">{inquiry.parentName}</span>
           </li>
           {inquiry.email && (
-            <li style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '0.4rem 0.6rem' }}>
-              <Mail size={13} /> <span className="muted">{t('admissions.email')}</span> <span className="spacer" /> {inquiry.email}
+            <li>
+              <Mail size={13} /> <span className="muted">{t('admissions.email')}</span> <span className="spacer" /> <span className="data-value">{inquiry.email}</span>
             </li>
           )}
           {inquiry.phone && (
-            <li style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '0.4rem 0.6rem' }}>
-              <Phone size={13} /> <span className="muted">{t('admissions.phone')}</span> <span className="spacer" /> {inquiry.phone}
+            <li>
+              <Phone size={13} /> <span className="muted">{t('admissions.phone')}</span> <span className="spacer" /> <span className="data-value">{inquiry.phone}</span>
             </li>
           )}
           {inquiry.askedAbout && (
-            <li style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '0.4rem 0.6rem' }}>
-              <School size={13} /> <span className="muted">{t('admissions.askedAbout')}</span> <span className="spacer" /> {inquiry.askedAbout}
+            <li>
+              <School size={13} /> <span className="muted">{t('admissions.askedAbout')}</span> <span className="spacer" /> <span className="data-value">{inquiry.askedAbout}</span>
             </li>
           )}
         </ul>
@@ -179,13 +200,46 @@ export function InquiryDetail({ id }: { id: string }) {
         </section>
       )}
 
+      {/* DELETING IS NOT A MOVE, so it is not a fifth button in the row above. It destroys the record
+          and its trail, and the confirmation is a step rather than a dialog because a dialog on a
+          destructive action in a window that can be behind another window is a dialog people dismiss
+          without reading (§15). An admitted inquiry has no delete at all — the server refuses it, and
+          offering a button that always fails is worse than not offering one. */}
+      {inquiry.state !== 'admitted' && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head">
+            <h2><Trash2 size={15} /> {t('admissions.deleteTitle')}</h2>
+          </div>
+          {!confirmDelete ? (
+            <>
+              <p className="hint">{t('admissions.deleteHint')}</p>
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setConfirmDelete(true)}>
+                {t('admissions.delete')}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="hint">{t('admissions.deleteConfirm', { name: inquiry.childName })}</p>
+              <div className="inline-form">
+                <button type="button" className="btn btn--danger btn--sm" disabled={remove.isPending} onClick={() => void erase()}>
+                  {t('admissions.deleteYes')}
+                </button>
+                <button type="button" className="btn btn--ghost btn--sm" disabled={remove.isPending} onClick={() => setConfirmDelete(false)}>
+                  {t('common.cancel')}
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head">
           <h2><CalendarDays size={15} /> {t('admissions.trail')}</h2>
         </div>
-        <ul className="picker-list">
+        <ul className="data-list">
           {events.map((e) => (
-            <li key={e.id} style={{ display: 'block', padding: '0.5rem 0.6rem' }}>
+            <li key={e.id} style={{ display: 'block' }}>
               <p style={{ margin: 0 }}>
                 {e.fromState ? t('admissions.movedFromTo', { from: t(`admissions.state.${e.fromState}`), to: t(`admissions.state.${e.toState}`) }) : t('admissions.arrived')}
               </p>

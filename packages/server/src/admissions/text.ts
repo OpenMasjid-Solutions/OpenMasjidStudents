@@ -44,18 +44,27 @@ export const ADMISSIONS_TEXT_KEYS = [
 export type AdmissionsTextKey = (typeof ADMISSIONS_TEXT_KEYS)[number];
 
 /**
- * The shipped wording. Plain and warm (§15), and written so that none of it promises anything the app
- * cannot keep: no timescale, no "we will call you on Monday", and nothing that implies the family is
- * or is not already known to the school.
+ * THE SHIPPED WORDING — MINIMAL, AND THAT IS THE POINT (rewritten 0.52.0-dev.11).
+ *
+ * The first cut was chatty: "Tell us a little about your child… Nothing here is a commitment — it
+ * starts a conversation." Hasan cut it — "you gotta be professional and minimal… these wordings are
+ * so much extra wordings" — and he is right about more than taste. This is a form, and prose above a
+ * form is read once and skipped forever after; every sentence that is not an instruction is a
+ * sentence between a parent and the first field. Reassurance a family did not ask for also reads as
+ * a school that expects to be doubted.
+ *
+ * So: one line saying what the form is for, and nothing that promises a timescale or implies the
+ * family is or is not already known to the school. An office that wants warmer words has the box to
+ * type them in — that is what this registry is FOR — and warmth in a madrasah's own voice is worth
+ * more than warmth in ours.
  */
 export const ADMISSIONS_TEXT_DEFAULTS: Record<AdmissionsTextKey, string> = {
-  intro:
-    'Assalamu alaikum. Tell us a little about your child and we will be in touch about a place at [school]. Nothing here is a commitment — it starts a conversation.',
-  closed: 'We are not taking new admissions inquiries for [school] at the moment. Please contact the office and they will tell you when we open again.',
-  thanks: 'Jazak Allah khayran — we have your message. Someone from [school] will be in touch.',
+  intro: 'Tell us about your child and the office at [school] will be in touch.',
+  closed: '[school] is not taking admissions inquiries at the moment. Please contact the office.',
+  thanks: 'Thank you. The office at [school] will be in touch.',
   ackEmail:
-    'Assalamu alaikum,\n\nThank you for your interest in [school]. We have received your inquiry and someone from the office will be in touch.\n\nThis message is a confirmation that the form reached us; there is nothing you need to do now.',
-  privacy: 'What you type here goes to the madrasah office and nowhere else.',
+    'Assalamu alaikum,\n\nWe have received your admissions inquiry for [school]. The office will be in touch.\n\nThere is nothing you need to do now.',
+  privacy: 'This goes to the [school] office only.',
 };
 
 /** The values `[tags]` may take. One, today, and the list is here so adding a second is one edit. */

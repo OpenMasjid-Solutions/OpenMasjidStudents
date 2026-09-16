@@ -27,7 +27,7 @@ The **39 tables** that exist, grouped by what they are for:
 | Fees | `fee_plans`, `student_fees`, `charge_items`, `charges` |
 | Billing | `invoices`, `invoice_items`, `payments`, `payment_allocations`, `carry_ins`, `past_due_reminders`, `standing_payments` |
 | Cards | `payment_methods`, `autopay_enrollments`, `autopay_runs` |
-| Admissions | `inquiries`, `inquiry_events`, `admission_links`, `readmissions` *(0.52.0-dev.7)* |
+| Admissions | `inquiries`, `inquiry_events`, `admission_links`, `readmissions` *(0.52.0-dev.7; states cut to four in -dev.11)* |
 | Notifications | `alert_recipients`, `whatsapp_log` |
 | Trail | `audit_log` |
 
@@ -170,6 +170,22 @@ and `updated_at` wherever a row is ever updated.
   `RESTRICT`, unlike every money path, so the deliberate hard-delete door (§9) is never jammed by a
   record of a conversation: the inquiry survives as an admission whose student was later erased, which
   is the honest thing for it to say.
+- **THE PIPELINE IS FOUR STATES, AND THE TRAIL STILL NAMES THE THREE THAT WENT** (0.52.0-dev.11).
+  `new | waitlisted | admission | declined | admitted`, cut from seven on Hasan's instruction:
+  `reviewing` and `offered` described a conversation the app never witnesses, so they were maintained
+  as bookkeeping for their own sake, and `withdrawn` duplicated `declined`. Migration 0045 maps live
+  rows (`reviewing`→`new`, `offered`→`admission`, `withdrawn`→`declined`) and **deliberately does not
+  touch `inquiry_events`** — a trail edited to match a later vocabulary has stopped being evidence.
+  So `LegacyInquiryState` exists as a READ-only type, `AnyInquiryState` is what an event row is typed
+  as, and `NEXT_STATES` keeps entries for the three removed keys so a hand-edited row or a restored
+  mid-upgrade backup is workable rather than a crash on every board render.
+- **A declined inquiry can be reopened, and any inquiry can be erased for good** (0.52.0-dev.11).
+  Retaining every refusal forever was a choice, not a requirement, and it is wrong for what a public
+  form actually collects — test rows, duplicates, abuse. `admissions.remove` is admin-only, refused on
+  `admitted` (that row is a child's provenance), writes its audit row FIRST with the names and never
+  the message body, and cascades the trail and any outstanding link. Deleting is the one exit from the
+  waitlist that is not a transition, so it calls `vacateWaitlistPosition` in the same transaction —
+  the numbering has one owner (§16) and a queue that runs 1, 3 is a queue an office stops trusting.
 - **`admitted` is unreachable from the office's own transition, by TYPE** (0.52.0-dev.7).
   `transitionInquiry`'s parameter excludes it, and `markAdmitted` is a separate export that
   `admissions/convert.ts` calls inside the transaction that created the child. A student existing is

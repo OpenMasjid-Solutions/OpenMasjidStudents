@@ -787,6 +787,49 @@
   cursor: pointer;
 }
 .picker-btn:hover { color: var(--color-ink); background: var(--glass-bg-inset); }
+
+/*
+ * ── A PLAIN LIST OF FACTS — AND WHY IT IS NOT `.picker-list` ──────────────────
+ *
+ * `ul.picker-list` below is a DROPDOWN: `position: absolute`, `top: 100%`, `z-index: 40`, and its
+ * `:has()` rules lift the whole containing section to `z-index: 30`. Borrowing it for a static list
+ * of label/value rows — which reads perfectly well in a screenshot of a short list — takes the list
+ * OUT OF FLOW, so its section collapses to the height of its heading and the list is painted over
+ * whatever follows.
+ *
+ * That is exactly what happened in 0.52.0-dev.10: the inquiry's parent/email/phone rows floated on
+ * top of the school and year selects underneath them, and the same mistake was in the settings
+ * origin list and the student's office notes. Three screens, one borrowed class.
+ *
+ * So this is the in-flow one, and the rule to carry forward is: `picker-list` is only ever for a
+ * list that FLOATS UNDER AN INPUT. Anything laid out in the page uses `data-list`.
+ *
+ * No `backdrop-filter` here, deliberately — §15's paint-cost block: an inset surface inside a glass
+ * section has nothing left to blur, and this one renders once per row.
+ */
+ul.data-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: var(--glass-border); /* shows through the 1px gaps as hairline dividers */
+}
+ul.data-list > li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.45rem 0.65rem;
+  background: var(--glass-bg-inset);
+}
+/* The value half wraps rather than forcing the row wide — an email address on a phone is longer than
+   the panel, and a table that scrolls sideways is how a detail panel stops being readable. */
+ul.data-list > li > .data-value { min-width: 0; overflow-wrap: anywhere; text-align: end; }
+
 /*
  * The dropdown itself. Two things here are load-bearing, both learned the hard way.
  *

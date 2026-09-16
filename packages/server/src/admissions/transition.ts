@@ -3,9 +3,9 @@
 /**
  * THE ONE PLACE AN INQUIRY'S STATE CHANGES (0.52.0, CLAUDE.md §16, §4a Phase 2).
  *
- * docs/ADMISSIONS.md §3. Everything the office does to an inquiry — start reviewing it, waitlist it,
- * offer a place, decline, record that the family dropped out — is this function. Conversion is the
- * one caller that does something more (`admissions/convert.ts`), and it still ends here.
+ * docs/ADMISSIONS.md §3. Everything the office does to an inquiry — waitlist it, decline it, start
+ * its admission, reopen one declined by mistake — is this function. Conversion is the one caller
+ * that does something more (`admissions/convert.ts`), and it still ends here.
  *
  * ── Why a module for what looks like an UPDATE ──────────────────────────────
  *
@@ -19,9 +19,9 @@
  *    it, and the `inquiry_events` row because the admissions screen has to SHOW the trail and nothing
  *    in this app reads the audit log (§5). That duplication is recorded rather than glossed in §9;
  *    what makes it safe is that they are written together and cannot disagree.
- * 3. **The waitlist closes its gaps.** A place is offered from the waitlist by the same transition as
- *    from review, so leaving `waitlisted` renumbers everybody below in the same transaction. A list
- *    with a hole at position 3 is a list an office stops trusting.
+ * 3. **The waitlist closes its gaps.** An admission is started from the waitlist by the same
+ *    transition as from anywhere else, so leaving `waitlisted` renumbers everybody below in the same
+ *    transaction. A list with a hole at position 3 is a list an office stops trusting.
  *
  * ── `admitted` IS NOT AN OFFICE TRANSITION, AND THAT IS ENFORCED BY THE TYPES ──
  *
@@ -33,7 +33,7 @@
 import { and, eq, gt, isNotNull, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { rid } from '../db/ids';
-import { inquiries, inquiryEvents, type Inquiry, type InquiryState } from '../db/schema';
+import { inquiries, inquiryEvents, type AnyInquiryState, type Inquiry, type InquiryState } from '../db/schema';
 import { audit, type AuditActor } from '../audit';
 
 /** A drizzle transaction or the database itself — every writer here takes one so a caller can fold
@@ -48,46 +48,50 @@ export type OfficeTransition = Exclude<InquiryState, 'admitted'>;
 /**
  * THE PIPELINE, as data rather than as a chain of `if`s.
  *
- *   new → reviewing → { waitlisted, offered, declined }
- *                      waitlisted → offered
- *                      offered    → admitted (conversion) | withdrawn
+ *   new ──▶ waitlisted ──▶ admission ──▶ admitted   (only ever by conversion)
+ *    └──────────┴─────────────┴───────▶ declined ──▶ new (reopened)
  *
- * `declined` is TERMINAL and the row is retained — an office asked "did we ever hear from them?"
- * needs an answer, and deleting the record is how that question stops having one.
+ * **THREE ACTIONS, BECAUSE THREE IS WHAT AN OFFICE ACTUALLY DOES** (0.52.0-dev.11). There were six,
+ * including `reviewing` and `offered`, and `db/schema.ts`'s `InquiryState` carries the reasoning for
+ * cutting them: they described a conversation the app never witnesses, so they were bookkeeping an
+ * office had to maintain for its own sake. Waitlist them, decline them, or start their admission.
  *
- * `withdrawn` is not terminal, and that is one deliberate liberty: a family who dropped out and came
- * back is ordinary, and the alternative is a second record for the same conversation. Going back from
- * `offered` to `waitlisted` is likewise allowed, because an offer is sometimes retracted and the
- * honest record of that is the place they went back to.
+ * `admitted` IS REACHABLE FROM EVERY LIVE STATE and that is deliberate — a family who walks in and
+ * is admitted the same morning should not have to be walked through states nobody used. Nothing is
+ * weakened by it: `admitted` still means a student EXISTS, and the only way to apply it is still
+ * `markAdmitted` from inside `admissions/convert.ts`'s transaction.
  *
- * **`admitted` IS REACHABLE FROM EVERY LIVE STATE, AND THAT IS A DEVIATION FROM THE DIAGRAM IN
- * docs/ADMISSIONS.md §3, MADE ON PURPOSE.** The drawing has one arrow into it, from `offered`. A
- * family who walks into the office and is admitted the same morning would then need four actions for
- * one conversation — type the inquiry, start reviewing, offer a place, admit — and the middle two
- * would be recording an offer nobody made. Friction like that is how a pipeline stops being used and
- * the office goes back to a notebook.
+ * `declined → new` IS THE UNDO. A decline is one click and sometimes the wrong one, and without a
+ * way back the only remedy was to delete the record and re-type it from memory — which loses the
+ * date the family first asked, the thing the record exists for. Deleting is still available and is
+ * a different act with a different confirmation (`admissions.remove`).
  *
- * Nothing is weakened by it: `admitted` still means a student EXISTS, and the only way to apply it is
- * still `markAdmitted` from inside `admissions/convert.ts`'s transaction. The trail records the move
- * that actually happened — `new → admitted` for a walk-in — rather than a tidier one that did not.
+ * THE THREE LEGACY KEYS ARE NOT DEAD CODE. Migration 0045 moves every live row off them, but a
+ * hand-edited row, a restored backup taken mid-upgrade, or a database a developer stepped the
+ * migrations back on would otherwise hit `NEXT_STATES[from]` as `undefined` and crash the board for
+ * every inquiry, not just that one. They map to the same choices the state they became would offer,
+ * so such a row is workable rather than a wall.
  */
-export const NEXT_STATES: Record<InquiryState, readonly InquiryState[]> = {
-  new: ['reviewing', 'waitlisted', 'offered', 'admitted', 'declined', 'withdrawn'],
-  reviewing: ['waitlisted', 'offered', 'admitted', 'declined', 'withdrawn'],
-  waitlisted: ['reviewing', 'offered', 'admitted', 'declined', 'withdrawn'],
-  offered: ['waitlisted', 'admitted', 'declined', 'withdrawn'],
-  declined: [],
+export const NEXT_STATES: Record<AnyInquiryState, readonly InquiryState[]> = {
+  new: ['waitlisted', 'admission', 'admitted', 'declined'],
+  waitlisted: ['admission', 'admitted', 'declined'],
+  admission: ['waitlisted', 'admitted', 'declined'],
+  declined: ['new'],
   admitted: [],
-  withdrawn: ['reviewing'],
+  // Legacy — see the header. `reviewing` behaved as `new`, `offered` as `admission`, `withdrawn` as
+  // `declined`, so each offers what its successor offers.
+  reviewing: ['waitlisted', 'admission', 'admitted', 'declined'],
+  offered: ['waitlisted', 'admitted', 'declined'],
+  withdrawn: ['new'],
 };
 
-export function canTransition(from: InquiryState, to: InquiryState): boolean {
-  return NEXT_STATES[from].includes(to);
+export function canTransition(from: AnyInquiryState, to: InquiryState): boolean {
+  return (NEXT_STATES[from] ?? []).includes(to);
 }
 
 export class TransitionRefused extends Error {
   constructor(
-    readonly from: InquiryState,
+    readonly from: AnyInquiryState,
     readonly to: InquiryState,
   ) {
     super(`an inquiry cannot go from ${from} to ${to}`);
@@ -129,6 +133,20 @@ function closeWaitlistGap(tx: Tx, vacated: number, at: Date): void {
     .set({ waitlistPosition: sql`${inquiries.waitlistPosition} - 1`, updatedAt: at })
     .where(and(eq(inquiries.state, 'waitlisted'), isNotNull(inquiries.waitlistPosition), gt(inquiries.waitlistPosition, vacated)))
     .run();
+}
+
+/**
+ * Close the gap left by a waitlisted inquiry being DELETED rather than moved on.
+ *
+ * Exported because the waitlist's numbering has exactly one owner (§16) and a delete is the one way
+ * out of the queue that is not a transition — `admissions.remove` erases the row, so there is no
+ * state change for `writeTransition` to hang the renumber off. Without this, deleting the family at
+ * position 3 leaves the list running 1, 2, 4, 5, and a list with a hole in it is a list an office
+ * stops trusting. The caller passes its own transaction so the delete and the renumber commit
+ * together or not at all.
+ */
+export function vacateWaitlistPosition(vacated: number, tx: Tx, at: Date = new Date()): void {
+  closeWaitlistGap(tx, vacated, at);
 }
 
 /**

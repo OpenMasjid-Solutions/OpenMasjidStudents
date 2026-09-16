@@ -52,11 +52,16 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   inquiry, where each conversation has got to, and a waiting list you order by hand. Put the form on
   your own site with one line of HTML, or share the link. It is **off until you turn it on** under
   Settings → Admissions, and you can close intake when the year is full — the page then says so
-  rather than quietly swallowing what somebody writes. Nothing here is a student yet: a child joins
-  your roster, and gets their Student ID, only when you **admit** them — one press that creates the
-  household, the child, their Student ID and their fee plan, and raises your enrollment fee if the
-  year has one. If the family already has a child with you, the screen says so before you press it,
-  so a younger brother or sister joins the household they belong to instead of starting a second one.
+  rather than quietly swallowing what somebody writes. There are three things to do with an inquiry —
+  put them on the **waiting list**, **decline** them, or **start their admission** — and an inquiry
+  nobody has touched carries no label at all. A decline can be **reopened** if it was a mis-click or
+  the family rings back, and anything that is not a real family — a test entry, a duplicate, spam off
+  your website — can be **deleted for good**, after the screen asks you by name. Nothing here is a
+  student yet: a child joins your roster, and gets their Student ID, only when you **admit** them —
+  one press that creates the household, the child, their Student ID and their fee plan, and raises
+  your enrollment fee if the year has one. If the family already has a child with you, the screen
+  says so before you press it, so a younger brother or sister joins the household they belong to
+  instead of starting a second one.
 
   The same screen asks the families you **already** have whether they are coming back. Open
   re-admission for a school year and every active student goes on a list — withdrawn children are
@@ -79,6 +84,21 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   household's own details are one screen away rather than repeated on each child.
 
 ### Also in this release
+
+- **The admissions form reads properly on a dark phone.** Its stylesheet set the dark colors *above*
+  the rules they were meant to replace, and a browser takes the later rule — so a phone in dark mode
+  got a white card with pale grey labels on it, which is close to unreadable. Every color on that page
+  is now a single named value with one dark override, and two tests hold it there. The page also
+  stopped shipping a paragraph of our own notes to everybody who opens it.
+- **Panels stopped overlapping their own contents.** An inquiry's parent and contact details were
+  drawn with the styling used for the list that drops down under a search box — which floats above the
+  page by design — so it covered the school and year boxes underneath it. The same borrowed styling
+  was on the settings origin list and a student's office notes. There is now a separate style for a
+  list that sits *in* the page, and a test that fails the build if the floating one is used for a list
+  again.
+- **The wording on the public form is shorter.** "Nothing here is a commitment — it starts a
+  conversation" and the rest of it are gone; the form says what it is for and stops. Every one of
+  those sentences is still yours to rewrite under Settings → Admissions.
 
 - **The academic layer is specified.** The v0.35.0 decision to narrow this app to fees and money is
   reversed: a real student record, admissions, a daily register, a gradebook and report cards are

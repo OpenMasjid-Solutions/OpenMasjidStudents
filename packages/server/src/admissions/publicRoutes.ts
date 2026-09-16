@@ -268,23 +268,68 @@ const FIELDS: { name: string; label: string; type: string; cap: number; required
  * `__ACCENT__` is substituted rather than interpolated so this stays a constant: the accent is
  * re-validated against a hex pattern on read (`getAccentColor`), because it lands inside a `<style>`
  * block, and a template literal here would make it look like any other value.
+ *
+ * ── EVERY COLOR IS A TOKEN, AND THE DARK BRANCH ONLY REDEFINES TOKENS ────────
+ *
+ * It was written the other way until 0.52.0-dev.11 and shipped visibly broken: the
+ * `prefers-color-scheme: dark` block sat ABOVE the rules it meant to override, and a media query
+ * adds no specificity — so the card's white background on the next line won, while `body`'s color
+ * stayed the dark theme's near-white because nothing later re-declared it. On a dark phone that is a
+ * white card carrying pale grey labels, which is unreadable; it is the same lesson §15 records about
+ * overriding every branch of a ported rule. Tokens make source order irrelevant.
+ *
+ * `test/publicInquiry.test.ts` holds the rule: the dark block may declare nothing but custom
+ * properties, and no rule outside the token blocks may name a color literal.
+ *
+ * A LABEL USES `--ink`, NOT `--ink-muted`. It is read at a glance while typing, and grey labels were
+ * the other half of what made the first version unreadable. `--ink-muted` is for the small print
+ * under the button, which is read once or never.
+ *
+ * ── AND THE REASONING STAYS UP HERE, NOT IN THE STYLESHEET ───────────────────
+ *
+ * This constant is served, in full, on the one page in this app that strangers load — often embedded
+ * in a masjid's own website. A paragraph of English explaining a bug we once had is bytes on every
+ * request and internal reasoning published to people who did not ask for it. The CSS itself carries
+ * only what a reader editing THAT LINE needs.
  */
 const PAGE_STYLE = `
-    :root { color-scheme: light dark; --accent: __ACCENT__; }
+    :root {
+      color-scheme: light dark;
+      --accent: __ACCENT__;
+      --ink: #17211f;
+      --ink-muted: #5b6b66;
+      --page: #f6f8f7;
+      --card: #ffffff;
+      --line: #dfe6e3;
+      --field: #ffffff;
+      --field-line: #cfd8d5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #e8efec;
+        --ink-muted: #9fb3ac;
+        --page: #10161a;
+        --card: #182026;
+        --line: #2a3740;
+        --field: #0f161a;
+        --field-line: #33424c;
+      }
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 1.25rem; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #17211f; background: #f6f8f7; }
-    @media (prefers-color-scheme: dark) { body { color: #e8efec; background: #10161a; } .box { background: #182026; border-color: #2a3740; } input, textarea { background: #0f161a; color: inherit; border-color: #33424c; } }
+    body { margin: 0; padding: 1.25rem; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--page); }
     .wrap { max-width: 34rem; margin: 0 auto; }
     .logo { max-height: 56px; max-width: 60%; display: block; margin-block-end: 0.75rem; }
     h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
     p { margin: 0 0 0.75rem; }
-    .box { background: #fff; border: 1px solid #dfe6e3; border-radius: 14px; padding: 1.1rem; }
-    label { display: block; font-weight: 600; font-size: 0.92rem; margin-block: 0.85rem 0.25rem; }
-    input, textarea { width: 100%; padding: 0.55rem 0.65rem; font: inherit; border: 1px solid #cfd8d5; border-radius: 9px; }
+    .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem; }
+    label { display: block; font-weight: 600; font-size: 0.92rem; margin-block: 0.85rem 0.25rem; color: var(--ink); }
+    label .opt { font-weight: 400; color: var(--ink-muted); }
+    input, textarea { width: 100%; padding: 0.55rem 0.65rem; font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--field-line); border-radius: 9px; }
+    input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     textarea { min-height: 6rem; resize: vertical; }
     button { margin-block-start: 1.1rem; width: 100%; padding: 0.7rem 1rem; font: inherit; font-weight: 600; color: #fff; background: var(--accent); border: 0; border-radius: 10px; cursor: pointer; }
     button[disabled] { opacity: 0.6; cursor: default; }
-    .hint { font-size: 0.85rem; opacity: 0.75; }
+    .hint { font-size: 0.85rem; color: var(--ink-muted); }
     .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
     button.ghost { color: var(--accent); background: transparent; border: 1px solid currentColor; }
     .done { display: none; }
