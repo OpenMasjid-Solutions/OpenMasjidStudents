@@ -63,6 +63,7 @@ import { getAccentColor, getAdmissions, getSchoolLogo, getSchoolName, getSetting
 import { INQUIRY_CAPS, storeInquiry } from './inquiry';
 import { admissionsTextHtml, admissionsTextPlain } from './text';
 import { READMISSION_CAPS, READMISSION_FIELDS, readmissionByToken, submitReadmission } from './readmission';
+import { ADMISSION_CAPS, admissionByToken, submitAdmission, type AdmissionLookup } from './admissionForm';
 
 /** Ids and outcome words only — never a name, an address or a body (§14). */
 const log = makeLog('admissions');
@@ -411,6 +412,21 @@ const READMISSION_BOXES: { name: (typeof READMISSION_FIELDS)[number]; label: str
   { name: 'nationality', label: 'Nationality' },
 ];
 
+/**
+ * The admission form's body.
+ *
+ * `passthrough`-shaped on purpose — the FIELD SET IS NOT KNOWN HERE. It is whatever the student-field
+ * registry has switched on, which an office changes in Settings, so a fixed zod shape would silently
+ * drop a field the moment somebody enabled one. What this schema does is bound the SHAPE: a token, a
+ * sane number of keys, and every value a string or boolean within a cap. Which keys are meaningful,
+ * and what each may contain, is settled once in `admissions/admissionForm.ts` against the fields the
+ * form actually rendered — a key nobody was asked for is dropped there rather than stored.
+ */
+const ADMISSION_BODY = z
+  .object({ token: z.string().min(1).max(200) })
+  .catchall(z.union([z.string().max(ADMISSION_CAPS.longtext * 2), z.boolean()]))
+  .refine((o) => Object.keys(o).length <= 60, { message: 'too many fields' });
+
 const READMISSION_BODY = z.object({
   token: z.string().min(1).max(200),
   returning: z.boolean(),
@@ -429,6 +445,86 @@ const READMISSION_BODY = z.object({
  * what was already there, and `diffSubmission` writes only what actually moved. Every value is
  * escaped on the way into the attribute, like every other document this app assembles.
  */
+const ADMISSION_POST_PATH = `${config.basePath}/public/admission`;
+
+/**
+ * THE ADMISSION FORM, server-rendered like every other family-facing page here (0.52.0-dev.12).
+ *
+ * Not React, and that is forced rather than chosen: the React app is behind a login and this page is
+ * opened by somebody with a token and no session. The whole family-facing surface of this app —
+ * inquiry, re-admission, and now this — is assembled here, escaped here, and served with the same
+ * headers and the same CSP.
+ *
+ * The field set comes from `admissions/admissionForm.ts`, which asks the student-field registry, so
+ * this function renders whatever the office switched on and never carries a list of its own.
+ */
+function renderAdmissionPage(found: AdmissionLookup, token: string): string {
+  const school = esc(getSchoolName());
+  const accent = esc(getAccentColor());
+  const style = PAGE_STYLE.replace('__ACCENT__', accent);
+
+  if (!found.ok) {
+    // Says WHICH failure, unlike the inquiry form — see `admissionByToken`'s header. A token holder
+    // is not a stranger being probed, they are somebody staring at a form that will not open.
+    const says: Record<string, string> = {
+      unknown: 'We could not find that link. Please ask the office for a new one.',
+      expired: 'That link has expired. Please ask the office for a new one.',
+      used: 'That form has already been sent — thank you.',
+      closed: 'The office has already dealt with this one. Thank you.',
+    };
+    return page(school, style, `<h1>${school}</h1><div class="box"><p>${esc(says[found.reason] ?? says.unknown)}</p></div>`);
+  }
+
+  const boxes = found.fields
+    .map((f) => {
+      const id = `a_${f.key}`;
+      const req = f.required ? ' <span class="opt">(required)</span>' : '';
+      const label = `<label for="${id}">${esc(f.label)}${req}</label>`;
+      if (f.kind === 'flag') {
+        // A flag is a real three-state in the registry — yes, no, and "nobody has asked yet" — so it
+        // is a select rather than a checkbox. An unticked checkbox and a question nobody answered are
+        // the same bytes, and for a medical consent that difference is the whole point.
+        return `${label}<select id="${id}" name="${f.key}"><option value="">—</option><option value="1">Yes</option><option value="0">No</option></select>`;
+      }
+      if (f.kind === 'longtext') {
+        return `${label}<textarea id="${id}" name="${f.key}" maxlength="${ADMISSION_CAPS.longtext}">${esc(f.prefill)}</textarea>`;
+      }
+      const type = f.kind === 'date' ? 'date' : 'text';
+      return `${label}<input id="${id}" name="${f.key}" type="${type}" maxlength="${ADMISSION_CAPS[f.kind]}" value="${esc(f.prefill)}">`;
+    })
+    .join('\n');
+
+  const body = `<p>Please complete this form for <b>${esc(found.inquiry.childName)}</b>.</p>
+      <form id="frm" novalidate>
+        ${boxes}
+        <input type="hidden" name="token" value="${esc(token)}">
+        <button type="submit" id="btn">Send to the office</button>
+      </form>
+      <p class="hint">The office checks this before anything is added to their records.</p>`;
+
+  const done = `<div class="done" id="done"><p>Thank you — we have your form. The office will be in touch.</p></div>`;
+
+  const script = `
+    (function () {
+      var f = document.getElementById('frm'), b = document.getElementById('btn'), d = document.getElementById('done');
+      f.addEventListener('submit', function (e) {
+        e.preventDefault();
+        b.disabled = true;
+        var data = {};
+        new FormData(f).forEach(function (v, k) { data[k] = String(v); });
+        fetch(${jsonInScript(ADMISSION_POST_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+          .then(function (r) { return r.json(); })
+          .then(function (r) {
+            if (r && r.ok) { f.style.display = 'none'; d.style.display = 'block'; }
+            else { b.disabled = false; if (r && r.reason === 'incomplete') { alert('Please fill in everything marked required.'); } }
+          })
+          .catch(function () { b.disabled = false; });
+      });
+    })();`;
+
+  return page(school, style, `<h1>${school}</h1><div class="box">${body}${done}</div>`, script);
+}
+
 function renderReadmissionPage(found: ReturnType<typeof readmissionByToken>, token: string): string {
   const school = esc(getSchoolName());
   const accent = esc(getAccentColor());
@@ -562,6 +658,32 @@ f.src=${jsonInScript(src)};f.loading='lazy';f.title='Admissions inquiry';f.style
     const { token, returning, ...fields } = parsed.data;
     const res = submitReadmission(token, fields, { returning, actor: { userId: null, role: 'public', name: 'Re-admission form' } });
     log.info('readmission', { ok: res.ok, reason: res.reason ?? null });
+    return reply.code(res.ok ? 200 : 409).header('cache-control', 'no-store').send({ ok: res.ok, reason: res.reason ?? null });
+  });
+
+  app.get('/public/admission', async (req: FastifyRequest, reply: FastifyReply) => {
+    // Gated on the SAME switch as everything else family-facing here. An office that has not opened
+    // admissions has not opened this either, and one switch is one thing to reason about.
+    if (!getAdmissions().publicForm) return off(reply);
+    const token = String((req.query as { token?: string } | undefined)?.token ?? '');
+    const found = token ? admissionByToken(token) : ({ ok: false, reason: 'unknown' } as const);
+    // `'none'` — this page is never embedded. The inquiry form is the one an office puts on their
+    // website; an admission form carries a child's details and belongs in nobody's iframe.
+    return sendPage(reply, renderAdmissionPage(found, token), "'none'");
+  });
+
+  app.post('/public/admission', { bodyLimit: BODY_LIMIT }, async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!getAdmissions().publicForm) return off(reply);
+    const parsed = ADMISSION_BODY.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ ok: false, reason: 'invalid' });
+    // Throttled per source like every internet-facing submission, even behind a token: the token is
+    // unguessable, but the endpoint is still a place to hammer.
+    if (!inquiryLimiter.allow(rateLimitKey(req))) return reply.code(429).send({ ok: false, reason: 'rate' });
+    const { token, ...fields } = parsed.data;
+    const res = submitAdmission(token, fields, { actor: { userId: null, role: 'public', name: 'Admission form' } });
+    // NOTHING THE FAMILY TYPED REACHES THIS LINE — not a name, not a field key, and above all not an
+    // allergy (§14). The outcome word and nothing else.
+    log.info('admission', { ok: res.ok, reason: res.reason ?? null });
     return reply.code(res.ok ? 200 : 409).header('cache-control', 'no-store').send({ ok: res.ok, reason: res.reason ?? null });
   });
 

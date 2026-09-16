@@ -356,6 +356,22 @@
   background: color-mix(in srgb, var(--color-gold) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-gold) 35%, transparent);
 }
+/*
+ * THE CONFIRMATION THAT NEVER LOOKED LIKE ONE (added 0.52.0-dev.12).
+ *
+ * `.notice--ok` has been used in seven screens — the admissions settings, the admit panel,
+ * re-admissions, the household fields, a student's record, the family detail and the parent's
+ * pay-now — and it has never had a rule. `.notice` sets a radius, some padding and a font size and
+ * nothing else, so every "saved", "admitted" and "payment received" in this app has been rendering
+ * as plain unstyled text beside a form, which reads as part of the form rather than as an answer to
+ * it. Nothing threw and nothing looked broken, which is why it survived eleven releases.
+ *
+ * Same shape as `--warn`, on the success token, so the pair reads as a pair.
+ */
+.notice--ok {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent);
+}
 
 /* ── Year view: students × months payment grid ─────────────────────────────────
    Twelve month columns never fit a phone, so the grid scrolls horizontally with the

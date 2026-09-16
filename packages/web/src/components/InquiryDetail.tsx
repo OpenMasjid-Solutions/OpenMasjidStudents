@@ -17,7 +17,7 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CalendarDays, GraduationCap, Mail, MessageSquare, Phone, School, Trash2, User } from 'lucide-react';
+import { CalendarDays, ClipboardList, Copy, GraduationCap, Mail, MessageSquare, Phone, School, Trash2, User } from 'lucide-react';
 import { trpc, type RouterOutputs } from '../lib/trpc';
 import { formatDate } from '../lib/dates';
 import { AdmitInquiry } from './AdmitInquiry';
@@ -35,10 +35,16 @@ export function InquiryDetail({ id }: { id: string }) {
   const move = trpc.admissions.transition.useMutation();
   const assign = trpc.admissions.assign.useMutation();
   const remove = trpc.admissions.remove.useMutation();
+  const startAdmission = trpc.admissions.admissionStart.useMutation();
+  const proposal = trpc.admissions.admissionProposal.useQuery({ id });
   const { closeByKey } = useWindows();
 
   const [reason, setReason] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [link, setLink] = useState<{ token: string; url: string } | null>(null);
+  /** Field keys the office has struck off the family's form. Rejecting is the exception, so the set
+   *  holds what is REFUSED rather than what is kept — an empty set means "approve what they sent". */
+  const [rejected, setRejected] = useState<Set<string>>(new Set());
   const [err, setErr] = useState('');
 
   if (q.isLoading || !q.data) return <p className="empty">{t('common.loading')}</p>;
@@ -56,6 +62,26 @@ export function InquiryDetail({ id }: { id: string }) {
     } catch (e) {
       setErr((e as Error).message);
     }
+  }
+
+  async function issueLink() {
+    setErr('');
+    try {
+      const r = await startAdmission.mutateAsync({ id });
+      setLink({ token: r.token, url: r.url });
+      await Promise.all([utils.admissions.get.invalidate({ id }), utils.admissions.list.invalidate()]);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  function toggleReject(key: string) {
+    setRejected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   async function erase() {
@@ -187,6 +213,78 @@ export function InquiryDetail({ id }: { id: string }) {
         {err && <p className="form-error">{err}</p>}
       </section>
 
+      {/* ── THE ADMISSION FORM: issue it, then read back what the family sent ──────────────────
+          Sits ABOVE the admit panel because that is the order it happens in: send the form, read the
+          answers, then admit. An office that would rather type everything in themselves can still
+          skip straight to the panel below — the form is an offer, not a gate. */}
+      {next.length > 0 && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head">
+            <h2><ClipboardList size={15} /> {t('admissions.formTitle')}</h2>
+          </div>
+          <p className="hint">{t('admissions.formHint')}</p>
+          <button type="button" className="btn btn--ghost btn--sm" disabled={startAdmission.isPending} onClick={() => void issueLink()}>
+            {inquiry.state === 'admission' ? t('admissions.formNewLink') : t('admissions.formSend')}
+          </button>
+
+          {/* Shown ONCE — the token is stored hashed, so closing this without copying means minting a
+              new one. Same rule, and the same sentence, as the re-admission link box. */}
+          {link && (
+            <>
+              <div className="inline-form" style={{ alignItems: 'center', marginBlockStart: '0.7rem' }}>
+                <input className="input glass-inset" readOnly value={link.url || link.token} style={{ flex: '2 1 20rem' }} />
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => void navigator.clipboard?.writeText(link.url || link.token)}>
+                  <Copy size={13} /> {t('common.copy')}
+                </button>
+              </div>
+              {!link.url && <p className="notice">{t('admissions.formNoUrl')}</p>}
+              <p className="hint">{t('admissions.formLinkHint')}</p>
+            </>
+          )}
+
+          {/* What came back. It has changed nothing yet — it is a proposal sitting on the inquiry
+              until the admit button below writes it. */}
+          {proposal.data?.submitted && (
+            <>
+              <p className="label" style={{ marginBlockStart: '1rem' }}>{t('admissions.formAnswers')}</p>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>{t('admissions.formField')}</th>
+                      <th>{t('admissions.formAnswer')}</th>
+                      <th>{t('admissions.formUse')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {proposal.data.fields
+                      .filter((f) => (proposal.data!.answers[f.key] ?? '').length > 0)
+                      .map((f) => (
+                        <tr key={f.key}>
+                          <td>
+                            {f.label}
+                            {/* A note about a child's allergy should not look like a note about their
+                                previous school. */}
+                            {f.medical && <> <span className="chip is-muted">{t('admissions.formMedical')}</span></>}
+                          </td>
+                          <td style={{ whiteSpace: 'pre-wrap' }}>{proposal.data!.answers[f.key]}</td>
+                          <td>
+                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                              <input type="checkbox" checked={!rejected.has(f.key)} onChange={() => toggleReject(f.key)} />
+                              <span className="muted">{rejected.has(f.key) ? t('admissions.formSkip') : t('admissions.formKeep')}</span>
+                            </label>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="hint">{t('admissions.formApplyHint')}</p>
+            </>
+          )}
+        </section>
+      )}
+
       {/* Admitting is its own panel rather than another button in the row above, because it is the one
           action here that CREATES something — a household, a child, a Student ID and a charge — and
           the others only move a record along. It is hidden once the state is terminal. */}
@@ -196,7 +294,14 @@ export function InquiryDetail({ id }: { id: string }) {
             <h2><GraduationCap size={15} /> {t('admissions.admitTitle')}</h2>
           </div>
           <p className="hint">{t('admissions.admitHint')}</p>
-          <AdmitInquiry id={id} onAdmitted={() => utils.admissions.get.invalidate({ id })} />
+          <AdmitInquiry
+            id={id}
+            rejectFields={[...rejected]}
+            onAdmitted={() => {
+              void utils.admissions.get.invalidate({ id });
+              void utils.admissions.admissionProposal.invalidate({ id });
+            }}
+          />
         </section>
       )}
 

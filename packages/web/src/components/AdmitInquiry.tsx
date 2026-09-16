@@ -26,7 +26,18 @@ import { trpc } from '../lib/trpc';
 import { formatMoney } from '../lib/money';
 import { cn } from '../lib/cn';
 
-export function AdmitInquiry({ id, onAdmitted }: { id: string; onAdmitted?: () => void | Promise<unknown> }) {
+export function AdmitInquiry({
+  id,
+  onAdmitted,
+  rejectFields,
+}: {
+  id: string;
+  onAdmitted?: () => void | Promise<unknown>;
+  /** Keys from the family's admission form the office struck off on the review table above. Passed
+   *  down rather than read here, because the review and the approval are one decision made on one
+   *  screen — this component is the button at the end of it. */
+  rejectFields?: string[];
+}) {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
   const q = trpc.admissions.convertPreview.useQuery({ id });
@@ -59,6 +70,7 @@ export function AdmitInquiry({ id, onAdmitted }: { id: string; onAdmitted?: () =
         familyId: familyId ?? undefined,
         classId: classId || undefined,
         feeWaived: waive || undefined,
+        rejectFields: rejectFields?.length ? rejectFields : undefined,
       });
       await Promise.all([utils.admissions.get.invalidate({ id }), utils.admissions.convertPreview.invalidate({ id }), utils.admissions.list.invalidate()]);
       await onAdmitted?.();

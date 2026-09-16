@@ -176,6 +176,48 @@ export function AdmissionsSettings() {
         )}
       </section>
 
+      {/* ── THE ADMISSION FORM: which answers a family must give ──────────────────────────────
+          The field LIST is not configured here — it is the student-field registry on the Students
+          tab, and this panel only decides which of them a family may leave blank. That split is
+          deliberate: one place decides what a field IS (§16), and switching a field off there takes
+          it off this list rather than leaving a requirement pointing at nothing. */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head">
+          <h2>{t('settings.admissionsRequiredTitle')}</h2>
+        </div>
+        <p className="hint">{t('settings.admissionsRequiredHint')}</p>
+        <ul className="data-list">
+          {cfg.admissionFields.map((f) => (
+            <li key={f.key}>
+              <span>{f.label}</span>
+              {f.medical && <span className="chip is-muted">{t('settings.admissionsMedical')}</span>}
+              <span className="spacer" />
+              {f.key === 'childName' ? (
+                // Required whatever anybody says — a submission with no child's name is a blank page,
+                // and there would be nothing to show the office on the other side.
+                <span className="muted">{t('settings.admissionsAlwaysRequired')}</span>
+              ) : (
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={cfg.requiredAdmissionFields.includes(f.key)}
+                    disabled={save.isPending}
+                    onChange={() =>
+                      void apply({
+                        requiredAdmissionFields: cfg.requiredAdmissionFields.includes(f.key)
+                          ? cfg.requiredAdmissionFields.filter((k) => k !== f.key)
+                          : [...cfg.requiredAdmissionFields, f.key],
+                      })
+                    }
+                  />
+                  <span className="muted">{t('settings.admissionsRequired')}</span>
+                </label>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head">
           <h2>{t('settings.admissionsLimits')}</h2>

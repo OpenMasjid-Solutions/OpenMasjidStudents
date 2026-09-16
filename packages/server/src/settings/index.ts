@@ -544,6 +544,19 @@ export interface AdmissionsConfig {
    *  switching it on turns this into something that can send mail to somebody who did not ask for it.
    *  The on-page acknowledgement always shows, and it is what a family actually sees. */
   ackEmail: boolean;
+  /**
+   * Which ADMISSION-form fields a family must answer (0.52.0-dev.12).
+   *
+   * Keys from `admissions/admissionForm.ts` — the core five plus whatever the student-field registry
+   * has switched on. Empty means "nothing is required", which is the right default: a madrasah that
+   * has not thought about it should not have families bouncing off a form. `childName` is required
+   * whatever this says, because a submission without one is a blank page.
+   *
+   * Stored as a list of keys rather than a flag per field so that switching a registry field OFF
+   * cannot leave a requirement behind pointing at a field nobody is asked for — the form derives its
+   * fields first and consults this second.
+   */
+  requiredAdmissionFields: string[];
 }
 
 const ADMISSIONS_DEFAULTS: AdmissionsConfig = {
@@ -553,6 +566,7 @@ const ADMISSIONS_DEFAULTS: AdmissionsConfig = {
   dailyMax: 200,
   minSeconds: 3,
   ackEmail: false,
+  requiredAdmissionFields: [],
 };
 
 /** At most this many allowlisted origins — a CSP header is not a place for an unbounded list. */
@@ -572,7 +586,7 @@ export function isEmbedOrigin(v: unknown): v is string {
 
 export function getAdmissions(): AdmissionsConfig {
   const raw = getSetting(SETTING_KEYS.admissions);
-  if (!raw) return { ...ADMISSIONS_DEFAULTS, embedOrigins: [] };
+  if (!raw) return { ...ADMISSIONS_DEFAULTS, embedOrigins: [], requiredAdmissionFields: [] };
   try {
     const p = JSON.parse(raw) as Partial<AdmissionsConfig>;
     return {
@@ -584,9 +598,19 @@ export function getAdmissions(): AdmissionsConfig {
       dailyMax: clampDays(p.dailyMax, ADMISSIONS_DEFAULTS.dailyMax, 5_000),
       minSeconds: clampDays(p.minSeconds, ADMISSIONS_DEFAULTS.minSeconds, 60),
       ackEmail: p.ackEmail === true,
+      // Re-validated on READ like every other field here: a hand-edited settings row must not be able
+      // to name something that is not a string, and the cap keeps a pathological row out of a form
+      // render. Which keys are MEANINGFUL is settled by the form itself, not here — this list is only
+      // consulted for fields the registry actually produced.
+      requiredAdmissionFields: [
+        ...new Set(
+          (Array.isArray(p.requiredAdmissionFields) ? p.requiredAdmissionFields : [])
+            .filter((k): k is string => typeof k === 'string' && /^[a-zA-Z]{1,40}$/.test(k)),
+        ),
+      ].slice(0, 40),
     };
   } catch {
-    return { ...ADMISSIONS_DEFAULTS, embedOrigins: [] };
+    return { ...ADMISSIONS_DEFAULTS, embedOrigins: [], requiredAdmissionFields: [] };
   }
 }
 

@@ -263,6 +263,82 @@ actually works from. Reordering is audited. Revisit only if a madrasah asks.
 
 ---
 
+## 3a. The admission form — what the family actually fills in
+
+*Added 0.52.0-dev.12, on Hasan's brief: "someone inquires online. And then we call them for like an
+interview. And then once it works out… then you would give them the admission form."*
+
+The inquiry is six boxes, deliberately (decision 9: a fixed, minimal public field set, because a
+configurable public form is a configurable attack surface). The **admission form is the real one** —
+the thing a madrasah actually collects once it has decided to take a child — and it is a different
+surface with a different threat model, because **nobody reaches it without being given something**.
+
+### 3a.1 Two doors, two origin policies
+
+| Door | Who opens it | Origin |
+| --- | --- | --- |
+| **The family's link** | a parent, on their own phone, from a one-time URL | LAN **and** tunnel |
+| **Tablet mode** | the office, on a device in the waiting room | **LAN only by default**, opt-in for remote |
+
+Both carry a token, which is what keeps §14's "the public inquiry form is the only unauthenticated
+write surface" true. The family's link is `admission_links` of kind `admission`, minted against the
+inquiry through `auth/tokens.ts` — one-time, hashed, expiring, exactly like an invite.
+
+**Tablet mode carries a DEVICE token instead**, because the two situations are not the same. A link is
+addressed to one family and expires when used; a tablet stands open all morning and is handed to
+whoever walks in. So an admin starts tablet mode from inside the app, which mints a revocable device
+token listed in Settings, and the device carries that. **Not an admin session** — the obvious
+implementation is to leave the app signed in on the tablet, and then the whole student directory is
+behind the back button of a device you just handed to a stranger. What the device token buys is the
+names of families with a live inquiry, and the right to submit one admission form against one of them.
+
+LAN-only is the default for it on Hasan's instruction, and the reason is that the network is what
+replaces the addressing: nobody is holding a per-family token, so being inside the building is the
+control. An office whose tablet cannot reach the LAN turns on remote access explicitly.
+
+### 3a.2 It is PRE-FILLED from the inquiry, and that is why you pick the family first
+
+*"There should be an option to select which student the admission form is for because I wanted to
+pre-fill the fields from the inquiry form."*
+
+A family that has already typed their child's name, date of birth, their own name, email and phone
+into the inquiry must not be asked for all of it again — that is the difference between a form that
+gets finished and one that gets abandoned. So opening the form always starts by naming an inquiry:
+the family's link carries it in the token, and tablet mode shows a picker of live inquiries. A
+walk-in with no inquiry at all is an ordinary case too, so the picker offers a blank start, which
+creates the inquiry as it goes (`source: 'office'`) rather than inventing a second path.
+
+### 3a.3 The fields are the Phase 1 registry, not a second list
+
+`people/fields.ts` already answers "does this field exist, has the office switched it off, and who
+may see it" (§16, CLAUDE.md §9). The admission form asks it, rather than hard-coding a field list that
+would drift from the student record the moment either changed. Which fields are **required** is the
+office's own answer, set in Settings — per field, for this form and for the inquiry form separately,
+because a madrasah that wants a date of birth before it will consider a child is making a different
+demand from one that wants it eventually.
+
+**MEDICAL FIELDS APPEAR HERE IF THE OFFICE ENABLED THEM, AND THIS IS THE ONE PLACE A FAMILY EVER MEETS
+ONE** (Hasan's explicit sign-off; CLAUDE.md §14 is amended, not excepted). The line that makes it
+coherent is **providing is not disclosure**: a parent typing their child's allergy into an intake form
+is telling the madrasah something, while a screen showing them what the office has since written about
+their child is the thing the rule exists to prevent. So they are **write-only — nothing stored is ever
+pre-filled into a medical box** — which is exactly why they are on the admission form, where the child
+does not exist yet and there is nothing to show, and **not on the re-admission form**, which is
+pre-filled by design and would hand a family the office's own notes.
+
+### 3a.4 What comes back is a PROPOSAL, and nothing else
+
+The submission is stored **inert** in `inquiries.submitted_payload` and changes no record. The office
+opens it, reads what the family said, and **approves** — and approving is what runs §4's conversion.
+This is the same shape re-admission already uses and for the same reason (§4 of CLAUDE.md: a family's
+submission "lands as a proposal the office reviews as a diff before anything is written"), and it is
+what keeps a token link from being a way to write onto a roster.
+
+Re-submitting before the office has looked replaces the proposal rather than making a second one — a
+family who realizes they mistyped a phone number should not need to ring up about it.
+
+---
+
 ## 4. Conversion — the delicate step
 
 `admissions/convert.ts` is the **one place** an inquiry becomes a student (§16). Everything below happens

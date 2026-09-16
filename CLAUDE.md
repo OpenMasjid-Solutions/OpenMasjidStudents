@@ -562,6 +562,22 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > invariant is untouched — `admitted` still means a student EXISTS, and only `markAdmitted`, inside
 > conversion's transaction, can apply it.
 >
+> **THE ADMISSION FORM LANDED IN 0.52.0-dev.12** (`admissions/admissionForm.ts`, §3a of the spec) —
+> the thing "start an admission" was always meant to produce. A one-time token link, opened by the
+> family on their phone, PRE-FILLED from what they already said on the inquiry (Hasan asked for that
+> directly), asking whatever the Phase 1 field registry has switched on rather than a second list of
+> its own. What comes back is stored inert on the inquiry and is a **proposal** until an admin
+> approves it, at which point conversion writes it — child fields to the child, household fields to
+> the household, and the guardian to the household as guardians always go. The office can strike any
+> single answer off before approving, and the **admission date is stamped as today** rather than
+> asked for.
+>
+> **`admittedOn` is UTC-today, like every other date this app stamps** — `billing/invoices.ts`,
+> autopay and the scheduler all derive a day the same way. It is worth knowing that a masjid west of
+> UTC admitting a child late in the evening records tomorrow, and worth NOT fixing here: admissions
+> disagreeing with billing about what day it is would be exactly the §20 defect ("two places
+> disagreeing about the same rule"). If it is ever fixed it is fixed once, for the whole app.
+>
 > **A DECLINED INQUIRY CAN NOW BE REOPENED, AND ANY INQUIRY CAN BE DELETED FOR GOOD**
 > (`admissions.remove`, 0.52.0-dev.11). The old rule retained every refusal forever, on the argument
 > that "did we ever hear from them?" needs an answer. That holds for a real family and for nothing
@@ -668,8 +684,29 @@ account may additionally be restricted to certain **schools**, which narrows a v
 | `parent` | ✅ | ✅ |
 | *(login / invite / reset / register pages)* | ✅ | ✅ *(§14 rate limits)* |
 | *(admission / re-admission token links)* | ✅ | ✅ *(one-time hashed token, §4a Phase 2)* |
+| *(the admission form in TABLET mode)* | ✅ | ❌ **refused unless an office opts in** — see below |
 | *(`/public/inquiry*` — the embeddable form)* | ✅ | ✅ **unauthenticated, by design — §14** |
 | *(`/fabric/*`)* | ✅ | ❌ **404 outright** |
+
+**THE ADMISSION FORM HAS TWO DOORS AND THEY GET DIFFERENT POLICIES, WHICH IS A DECISION AND NOT AN
+OVERSIGHT** (0.52.0-dev.12, Hasan: "I'm thinking it'll be a local only URL so you don't access it
+publicly and only on the network… then you can enable remote access").
+
+- **The link sent to a family** works wherever that family is, because a parent filling it in on their
+  phone is the whole point of it. One-time, hashed, expiring, `auth/tokens.ts` like every other.
+- **Tablet mode** — the form standing open on a device in the waiting room, the way a doctor's office
+  hands you a clipboard — is **LAN-only by default**, refused over the tunnel, with an explicit opt-in
+  for an office that needs otherwise. A form standing open on a shared device is a different risk from
+  a link addressed to one family, and the network is the control that replaces the addressing.
+
+**AND TABLET MODE IS STILL TOKEN-GATED, SO §14'S "THE PUBLIC INQUIRY FORM IS THE ONLY UNAUTHENTICATED
+WRITE SURFACE" IS UNTOUCHED.** An admin starts it from inside the app, which mints a **device token** —
+hashed, expiring, listed and revocable in Settings — and the tablet carries that, not an admin
+session. What the token buys is deliberately tiny: the names of families with a live inquiry, and the
+right to submit one admission form against one of them. No roster, no money, no settings, and no way
+back into the app. Handing a parent a tablet that holds an admin session would be the obvious
+implementation and the wrong one — they can navigate, and the whole directory is behind the back
+button.
 
 **The whole academic layer is admin-only and therefore LAN-only**, at login and at session use, and that
 is not being weakened to make admissions or mark entry more convenient (§4a). One consequence is worth
@@ -1625,8 +1662,25 @@ invariant here is load-bearing:
   - **Admin only, through the role-keyed column allow-list in `people/fields.ts`** (§5's medical wall,
     §9). **Finance never sees them** — and the default without that mechanism is the opposite, because
     `familyGet` is `adminOrFinanceProcedure` doing a bare `SELECT` and finance renders the same component.
-  - **Never on a parent-facing page, in any text of any alert, in a log, in a CSV a non-admin can run, in
-    a Fabric response, or in Stripe metadata.** Not "not by default" — never.
+  - **Never READ BACK to a family, in any text of any alert, in a log, in a CSV a non-admin can run, in
+    a Fabric response, or in Stripe metadata.** Not "not by default" — never. The parent portal has no
+    medical field on any screen and gains none.
+  - **THE ONE PLACE A FAMILY MEETS THEM IS THE ADMISSION FORM, WHERE THEY ARE ANSWERING ABOUT THEIR OWN
+    CHILD** (0.52.0-dev.12, Hasan's explicit sign-off: "if medical questions are enabled in settings,
+    show in admission form"). This is a narrowing of the line above rather than a hole in it, and the
+    distinction is the whole of it: **providing is not disclosure.** A parent typing their child's
+    allergy into an intake form is telling the madrasah something; a screen showing them what the
+    office has since written about their child is the thing the rule exists to prevent. So:
+    - the fields appear **only if the office enabled them** in the registry — the same switch, not a
+      second one, so a madrasah that keeps no medical information is never asked for any;
+    - they are **WRITE-ONLY on that form. Nothing stored is ever pre-filled into a medical box**, which
+      is exactly why they are on the ADMISSION form (a child who does not exist yet, so there is
+      nothing to show) and **not on the re-admission form**, which is pre-filled by design and would
+      hand a family back the office's own notes about their child;
+    - what comes back is **inert like the rest of the submission** and is written only when an admin
+      approves it, so nothing a stranger with a link types lands on a record unreviewed;
+    - and it changes **nothing** about who may read one afterwards: admin only, through the same
+      role-keyed allow-list, on the LAN.
   - **The DB file is already a secret** (§9) and these fields do not change that; what they change is the
     cost of getting the allow-list wrong, which is why it has its own tests and its own mutation check.
 - **ATTACHMENT RULES — written so that §4's citation resolves to something.** §4 said for several releases
@@ -1650,7 +1704,11 @@ invariant here is load-bearing:
   6. **What deletion means** when money or a record references the file.
 - **THE PUBLIC INQUIRY ENDPOINT IS THE ONLY NEW UNAUTHENTICATED WRITE SURFACE IN THE ACADEMIC LAYER, AND
   IT STAYS THAT WAY** (§4a Phase 2; full spec in `docs/ADMISSIONS.md` §2). Nothing else in admissions or
-  academics is reachable without a session. Its controls, each load-bearing: **identical response every
+  academics is reachable without a session — **and the admission form added in 0.52.0-dev.12 did not
+  change that**, which is worth stating because it looks at a glance like a second one. Every door into
+  it carries a token: the family's one-time link, or tablet mode's revocable device token (§5). A
+  token is not a session, but it is not nothing, and "somebody has to have been given something" is
+  the line this invariant is actually drawing. Its controls, each load-bearing: **identical response every
   time** — stored, deduplicated, honeypotted or rate-limited all return the same acknowledgement, so
   submitting can never reveal whether a child, an email, a household or a Student ID is already known
   (the same no-enumeration rule `lookup` follows, on a surface with no lockout to fall back on); **a

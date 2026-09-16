@@ -677,7 +677,21 @@
     "deleteHint": "Removes this inquiry and its history for good. Use it for test entries, duplicates and spam.",
     "deleteConfirm": "Delete the inquiry from {{name}}? This cannot be undone.",
     "delete": "Delete this inquiry",
-    "deleteYes": "Yes, delete it"
+    "deleteYes": "Yes, delete it",
+    "formTitle": "Admission form",
+    "formHint": "Send the family a one-time link to fill in their own details. It comes back for you to check — nothing is added to your records until you admit them below.",
+    "formSend": "Send the admission form",
+    "formNewLink": "Get a new link",
+    "formNoUrl": "Remote access is off, so there is no web address to share. Turn it on in OpenMasjidOS, or read the code out to the family.",
+    "formLinkHint": "Copy it now — it is not stored anywhere, so closing this means getting a new one.",
+    "formAnswers": "What the family sent",
+    "formField": "Question",
+    "formAnswer": "Their answer",
+    "formUse": "Use it?",
+    "formKeep": "Keep",
+    "formSkip": "Skip",
+    "formMedical": "Medical",
+    "formApplyHint": "Anything ticked is written to the record when you admit them. Untick something you would rather type in yourself."
   },
   "profile": {
     "menu": "Account",
@@ -1106,7 +1120,12 @@
     "admissionsText_ackEmail": "The email, if you send one",
     "admissionsText_privacy": "The small print under the button",
     "admissionsResetWords": "Use our wording again",
-    "admissionsSaved": "Saved."
+    "admissionsSaved": "Saved.",
+    "admissionsRequiredTitle": "What the admission form must ask",
+    "admissionsRequiredHint": "Tick anything a family has to answer before they can send the form. Which questions appear at all is set under Students.",
+    "admissionsRequired": "Required",
+    "admissionsAlwaysRequired": "Always required",
+    "admissionsMedical": "Medical"
   },
   "relation": {
     "father": "Father",

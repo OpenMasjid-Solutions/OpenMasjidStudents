@@ -67,6 +67,15 @@ export interface ConvertInput {
   guardian?: { name: string; phone?: string | null; email?: string | null; relation?: string | null } | null;
   feeWaived?: boolean;
   feeOverrideCents?: number | null;
+  /**
+   * The family's own answers from the admission form, already split by table (0.52.0-dev.12).
+   *
+   * Passed in rather than read from the inquiry here, because the OFFICE approves a proposal — they
+   * may have corrected a name or rejected a field before pressing the button, and conversion must
+   * write what was approved rather than re-reading what was submitted. `admissionPatch` is what
+   * produces it, and it is the one place that knows which answer belongs to which table.
+   */
+  fields?: { student: Record<string, string | null>; family: Record<string, string | null> } | null;
 }
 
 export interface ConvertResult {
@@ -185,11 +194,29 @@ export function convertInquiry(input: ConvertInput, actor: AuditActor, at = new 
 
     // When this child actually joined, which is not `created_at` — that is when somebody typed them
     // in. Defaults to today, because an admission approved today is an admission today.
+    //
+    // The registry answers ride along in the SAME update rather than a second one: they are columns
+    // on the row this statement is already writing, and two updates would be two chances for half of
+    // an approved form to land. Column names come from `people/fields.ts` via `admissionPatch`, which
+    // re-derives them from the catalog, so a key that is not a real enabled field never arrives here.
     txx
       .update(students)
-      .set({ admittedOn: (input.admittedOn ?? at.toISOString().slice(0, 10)) || null, updatedAt: at })
+      .set({
+        admittedOn: (input.admittedOn ?? at.toISOString().slice(0, 10)) || null,
+        ...(input.fields?.student ?? {}),
+        updatedAt: at,
+      })
       .where(eq(students.id, student.id))
       .run();
+
+    // Address, languages and nationality belong to the HOUSEHOLD, not the child (§9, 0.52.0-dev.4) —
+    // which is why the same form's answers land in two tables. Skipped when joining an existing
+    // household: a younger sibling's form must not silently overwrite the address their brother's
+    // record already carries, and the office can see the answer on the proposal either way.
+    const familyPatch = input.fields?.family ?? {};
+    if (!input.familyId && Object.keys(familyPatch).length) {
+      txx.update(families).set({ ...familyPatch, updatedAt: at }).where(eq(families.id, familyId)).run();
+    }
 
     // The adult goes on the HOUSEHOLD, as guardians always have — nothing is copied onto the child,
     // and there are no columns there to copy it into (§9). Skipped entirely when joining an existing

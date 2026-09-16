@@ -46,6 +46,7 @@ import { canTransition, inquiryById, reorderWaitlist, transitionInquiry, Transit
 import { INQUIRY_CAPS, storeInquiry } from '../admissions/inquiry';
 import { ADMISSIONS_TEXT_DEFAULTS, ADMISSIONS_TEXT_KEYS } from '../admissions/text';
 import { conversionPreview, convertInquiry } from '../admissions/convert';
+import { admissionFormFields, admissionPatch, admissionProposal, mintAdmissionLink } from '../admissions/admissionForm';
 import { resolveEnrollmentFee } from '../admissions/fees';
 import { isIsoDay } from '../settings/dates';
 import {
@@ -331,6 +332,9 @@ export const admissionsRouter = router({
           .optional(),
         feeWaived: z.boolean().optional(),
         feeOverrideCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+        /** Field keys from the family's admission form the office does NOT want written. Everything
+         *  else on an approved proposal is applied — the office reviewed it. */
+        rejectFields: z.array(z.string().max(40)).max(40).optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
@@ -339,8 +343,68 @@ export const admissionsRouter = router({
       for (const [k, v] of Object.entries({ dob: input.dob, admittedOn: input.admittedOn })) {
         if (v && !isIsoDay(v)) throw new TRPCError({ code: 'BAD_REQUEST', message: `That ${k === 'dob' ? 'date of birth' : 'admission date'} is not a real date.` });
       }
-      return convertInquiry({ ...input, inquiryId: input.id }, { ...auditActor(ctx), name: recordingActor(ctx).name });
+
+      // WHAT THE FAMILY SENT, MINUS WHAT THE OFFICE REJECTED, AND THE OFFICE'S OWN EDITS WIN.
+      // The proposal has been sitting inert on the inquiry; this is the moment it becomes a record,
+      // and it is the office's approval that makes it one — so a name typed on the review screen
+      // overrides the one on the form, and a rejected key is dropped before the patch is built.
+      const proposal = admissionProposal(input.id);
+      const rejected = new Set(input.rejectFields ?? []);
+      const accepted = Object.fromEntries(Object.entries(proposal.answers).filter(([k]) => !rejected.has(k)));
+      const patch = admissionPatch(accepted);
+
+      return convertInquiry(
+        {
+          ...input,
+          inquiryId: input.id,
+          fullName: input.fullName ?? patch.core.fullName,
+          dob: input.dob ?? patch.core.dob,
+          guardian:
+            input.guardian ??
+            (patch.guardian.name ? { name: patch.guardian.name, phone: patch.guardian.phone ?? null, email: patch.guardian.email ?? null, relation: null } : undefined),
+          fields: { student: patch.student, family: patch.family },
+        },
+        { ...auditActor(ctx), name: recordingActor(ctx).name },
+      );
     }),
+
+  // ── The admission form: issuing it, and reading back what a family sent ────
+
+  /**
+   * Start a family's admission: move the inquiry along AND hand back their one-time link.
+   *
+   * One press, because it is one decision. The transition and the mint are separate functions on
+   * purpose (`transition.ts` is the only writer of a state, §16) and are called together here, which
+   * is the right place for "these two things happen when the office presses this button" to live.
+   *
+   * Pressing it again on an inquiry already in `admission` re-mints rather than refusing: a link gets
+   * lost, a parent deletes the email, somebody needs to read it out over the phone. The old one keeps
+   * working until it expires, which is correct — both point at the same inquiry and a submission
+   * replaces the proposal rather than making a second one.
+   */
+  admissionStart: adminProcedure.input(z.object({ id: ID, reason: REASON.optional() })).mutation(({ ctx, input }) => {
+    const row = requireInquiry(input.id);
+    const actor = { ...auditActor(ctx), name: recordingActor(ctx).name };
+    if (row.state !== 'admission') {
+      if (!canTransition(row.state, 'admission')) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: `That inquiry is ${row.state}, so an admission cannot be started from here.` });
+      }
+      transitionInquiry({ inquiryId: input.id, to: 'admission', reason: input.reason ?? null, actor });
+    }
+    const link = mintAdmissionLink(input.id, ctx.user?.id ?? null);
+    audit(auditActor(ctx), 'admission.link', { entity: 'inquiry', entityId: input.id, detail: {} });
+    return { ok: true as const, token: link.token, url: link.url };
+  }),
+
+  /** The form as it was asked, beside what came back — what the office reviews before admitting. */
+  admissionProposal: adminProcedure.input(z.object({ id: ID })).query(({ input }) => {
+    const p = admissionProposal(input.id);
+    // The office is `admin`, which is the only role that reaches this router at all (§5), so the
+    // medical answers are theirs to see. They are flagged rather than filtered so the screen can say
+    // which ones they are — a note about a child's allergy should not look like a note about their
+    // previous school.
+    return { fields: p.fields, answers: p.answers, submitted: p.submitted };
+  }),
 
   // ── Re-admission: the children who are already here ───────────────────────
 
@@ -450,6 +514,15 @@ export const admissionsRouter = router({
       textDefaults: ADMISSIONS_TEXT_DEFAULTS,
       textOverrides: getAdmissionsText(),
       textMaxLength: ADMISSIONS_TEXT_CAP,
+      /**
+       * The admission form as it stands today, so Settings can offer a required-checkbox per field
+       * without carrying its own list.
+       *
+       * Derived, never stored: which fields exist is the student-field registry's answer and an
+       * office changes it on another tab. A stored list here would go stale the moment they did, and
+       * the staleness would be invisible — a checkbox for a field nobody is asked for.
+       */
+      admissionFields: admissionFormFields(null).map((f) => ({ key: f.key, label: f.label, medical: f.medical, required: f.required })),
     };
   }),
 
@@ -470,6 +543,7 @@ export const admissionsRouter = router({
         dailyMax: z.number().int().min(0).max(5_000).optional(),
         minSeconds: z.number().int().min(0).max(60).optional(),
         ackEmail: z.boolean().optional(),
+        requiredAdmissionFields: z.array(z.string().trim().max(40)).max(40).optional(),
       }),
     )
     .mutation(({ ctx, input }) => {

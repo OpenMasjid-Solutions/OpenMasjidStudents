@@ -69,6 +69,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   they correct what has changed and say yes or no. You see **exactly what they changed, before and
   after**, and approve it field by field — nothing they send is written until you have looked at it.
   The screen says who has answered and who has not, which during re-enrollment fortnight is the job.
+- **A real admission form, filled in by the family.** Once you have spoken to a family and decided
+  to take their child, press **Send the admission form** on their inquiry. They get a one-time link
+  they can open on a phone — already filled in with what they told you on the inquiry, so nobody is
+  asked their own name twice — and what comes back sits on the inquiry as a **proposal**. You read
+  it, tick anything you would rather type yourself, and press Admit; only then does a child, a
+  household and a Student ID exist. **The admission date is stamped for you** — the day you admit
+  them. Which questions the form asks is the same list you control under Settings → Students, and
+  Settings → Admissions is where you say which of them a family must answer. **If you keep medical
+  notes, allergies or consent, the form asks for those too** — they are the one thing a family is
+  ever asked about that nobody outside the office can read, and the form only ever asks: it never
+  shows a family anything your office has written.
 - **Settings is in tabs** — School, Students, Admissions, Documents, Messages, Payments — instead of
   one very long page.
 - **Fill in your whole roster from a spreadsheet.** Download your students **with everything the app
@@ -84,6 +95,12 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   household's own details are one screen away rather than repeated on each child.
 
 ### Also in this release
+
+- **"Saved" now looks like an answer.** The green confirmation style used by seven screens — the
+  admissions settings, admitting a child, re-admissions, a household's details, a student's record,
+  a family's record and the parent portal's payment screen — had no styling behind it at all, so
+  every confirmation in the app rendered as plain text beside the form it belonged to. It has looked
+  like that since the style was first used.
 
 - **The admissions form reads properly on a dark phone.** Its stylesheet set the dark colors *above*
   the rules they were meant to replace, and a browser takes the later rule — so a phone in dark mode
