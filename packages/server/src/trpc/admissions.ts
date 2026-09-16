@@ -43,7 +43,7 @@ import {
   setReadmissionState,
 } from '../admissions/readmission';
 import { canTransition, inquiryById, reorderWaitlist, transitionInquiry, TransitionRefused, vacateWaitlistPosition, type OfficeTransition } from '../admissions/transition';
-import { INQUIRY_CAPS, storeInquiry } from '../admissions/inquiry';
+import { INQUIRY_CAPS, INQUIRY_FIELDS, storeInquiry } from '../admissions/inquiry';
 import { ADMISSIONS_TEXT_DEFAULTS, ADMISSIONS_TEXT_KEYS } from '../admissions/text';
 import { conversionPreview, convertInquiry } from '../admissions/convert';
 import {
@@ -541,7 +541,15 @@ export const admissionsRouter = router({
       publicUrl,
       /** The two addresses an office copies: the link to share, and the one-line embed snippet. */
       formUrl: publicUrl ? `${publicUrl.replace(/\/+$/, '')}/public/inquiry` : '',
-      embedSnippet: publicUrl ? `<script src="${publicUrl.replace(/\/+$/, '')}/public/inquiry.js" async></script>` : '',
+      /**
+       * The QuickSchools shape Hasan asked for: a named div the script fills in. Two lines rather
+       * than one, and the div is the half that matters — `document.currentScript` is null when a
+       * site's optimizer defers or re-inserts the tag, which is most WordPress caching plugins.
+       */
+      embedSnippet: publicUrl
+        ? `<div id="admissions-form"></div>
+<script src="${publicUrl.replace(/\/+$/, '')}/public/inquiry.js?divId=admissions-form" async></script>`
+        : '',
       /** Nothing is reachable from the internet without one, and a masjid that has not switched on
        *  Remote access in OpenMasjidOS has none — which looks like a bug in this screen otherwise. */
       hasPublicUrl: !!publicUrl,
@@ -558,6 +566,9 @@ export const admissionsRouter = router({
        * the staleness would be invisible — a checkbox for a field nobody is asked for.
        */
       admissionFields: admissionFormFields(null).map((f) => ({ key: f.key, label: f.label, medical: f.medical, required: f.required })),
+      /** The public inquiry form's boxes, for the same kind of required-checkbox list. Fixed in code
+       *  (decision 9), so unlike the admission form's this one cannot change shape. */
+      inquiryFields: INQUIRY_FIELDS.map((f) => ({ key: f.key, label: f.label, alwaysRequired: f.alwaysRequired })),
     };
   }),
 
@@ -579,6 +590,7 @@ export const admissionsRouter = router({
         minSeconds: z.number().int().min(0).max(60).optional(),
         ackEmail: z.boolean().optional(),
         requiredAdmissionFields: z.array(z.string().trim().max(40)).max(40).optional(),
+        requiredInquiryFields: z.array(z.string().trim().max(40)).max(20).optional(),
         kiosk: z.boolean().optional(),
         kioskRemote: z.boolean().optional(),
       }),

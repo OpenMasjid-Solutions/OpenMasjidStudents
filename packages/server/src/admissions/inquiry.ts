@@ -33,6 +33,7 @@ import { db } from '../db';
 import { rid } from '../db/ids';
 import { inquiries, type Inquiry } from '../db/schema';
 import { isIsoDay } from '../settings/dates';
+import { getAdmissions } from '../settings';
 import { type AuditActor } from '../audit';
 import { recordArrival } from './transition';
 
@@ -119,10 +120,44 @@ export function normalizeInquiry(input: InquiryInput): NormalizedInquiry {
   };
 }
 
-/** The minimum that makes a row worth an office's attention: who the child is, and who wrote. A
- *  submission below this is discarded — with the same acknowledgement as one that was stored. */
-export function isSubmittable(n: NormalizedInquiry): boolean {
-  return n.childName.length > 0 && n.parentName.length > 0 && (n.email !== null || n.phone !== null);
+/**
+ * THE PUBLIC FORM'S FIELDS — the fixed set (decision 9), with the names Settings uses.
+ *
+ * `childName` and `parentName` are not here as options: they are required whatever an office says,
+ * because a row without them is not an inquiry an office can act on. Everything else is the office's
+ * choice — and the LABELS are English literals for the same reason `people/fields.ts` keeps its
+ * own: this list is rendered into a page served outside React, which has no i18n.
+ */
+export const INQUIRY_FIELDS = [
+  { key: 'childName', label: "Child's name", alwaysRequired: true },
+  { key: 'childDob', label: 'Date of birth', alwaysRequired: false },
+  { key: 'askedAbout', label: 'What are you asking about?', alwaysRequired: false },
+  { key: 'parentName', label: 'Your name', alwaysRequired: true },
+  { key: 'email', label: 'Email', alwaysRequired: false },
+  { key: 'phone', label: 'Phone', alwaysRequired: false },
+  { key: 'message', label: 'Anything you would like to tell us', alwaysRequired: false },
+] as const;
+export type InquiryFieldKey = (typeof INQUIRY_FIELDS)[number]['key'];
+
+/**
+ * The minimum that makes a row worth an office's attention.
+ *
+ * Two floors, and they are different things. The FIRST is structural and cannot be configured: a
+ * child's name, somebody's name, and a way to reply. The SECOND is whatever else the office marked
+ * required in Settings (0.52.0-dev.14).
+ *
+ * **A submission below either is discarded with the SAME acknowledgement as one that was stored**
+ * (§14). That is uncomfortable — a family who missed a box is never told — which is exactly why the
+ * form marks required fields and checks them in the browser before it posts. The silence is the
+ * no-enumeration rule; the marking is what stops it costing a real family a place.
+ */
+export function isSubmittable(n: NormalizedInquiry, required: readonly string[] = getAdmissions().requiredInquiryFields): boolean {
+  if (!(n.childName.length > 0 && n.parentName.length > 0 && (n.email !== null || n.phone !== null))) return false;
+  for (const key of required) {
+    const v = (n as unknown as Record<string, unknown>)[key];
+    if (typeof v !== 'string' || !v.trim()) return false;
+  }
+  return true;
 }
 
 /**

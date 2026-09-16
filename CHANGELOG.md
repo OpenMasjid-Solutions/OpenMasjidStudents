@@ -87,6 +87,11 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   because the tablet holds a one-off pass rather than your login, and you can end it whenever you
   like. **It works on the masjid's own network only** unless you say otherwise, since a form left
   open on a shared device is safest when being in the building is what unlocks it.
+
+  And the form on **your own website now looks like your website** — it is built into the page
+  instead of sitting in a box on it, so it takes on your site's fonts, colours and spacing. Copy the
+  two lines from Settings → Admissions and paste them where you want it. You can also say which
+  questions a family must answer before the form will send.
 - **Settings is in tabs** — School, Students, Admissions, Documents, Messages, Payments — instead of
   one very long page.
 - **Fill in your whole roster from a spreadsheet.** Download your students **with everything the app

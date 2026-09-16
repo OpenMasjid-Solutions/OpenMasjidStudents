@@ -1135,7 +1135,10 @@
     "admissionsKioskStart": "Sign a tablet in",
     "admissionsKioskOpenHint": "Open this on the tablet. Copy it now — it is not stored anywhere. It ends by itself after about fourteen hours.",
     "admissionsKioskDevice": "A tablet is signed in",
-    "admissionsKioskEnd": "End it"
+    "admissionsKioskEnd": "End it",
+    "admissionsInquiryRequiredTitle": "What the website form must ask",
+    "admissionsInquiryRequiredHint": "Tick anything a family has to fill in before the form will send. A child’s name and your contact’s name are always needed, and so is an email address or a phone number.",
+    "admissionsSnippetHint": "Paste both lines where you want the form to appear. It takes on your website’s own fonts and colours."
   },
   "relation": {
     "father": "Father",

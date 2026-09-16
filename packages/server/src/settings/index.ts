@@ -574,6 +574,15 @@ export interface AdmissionsConfig {
    * genuinely cannot reach the LAN turns this on knowing what it gives up.
    */
   kioskRemote: boolean;
+  /**
+   * Which of the public INQUIRY form's optional boxes a family must fill in (0.52.0-dev.14).
+   *
+   * Separate from `requiredAdmissionFields` because they are different forms asked at different
+   * moments: a madrasah that wants a date of birth before it will CONSIDER a child is making a
+   * different demand from one that wants it eventually. `childName` and `parentName` are required
+   * whatever this says — a row without them is not an inquiry.
+   */
+  requiredInquiryFields: string[];
 }
 
 const ADMISSIONS_DEFAULTS: AdmissionsConfig = {
@@ -586,6 +595,7 @@ const ADMISSIONS_DEFAULTS: AdmissionsConfig = {
   requiredAdmissionFields: [],
   kiosk: false,
   kioskRemote: false,
+  requiredInquiryFields: [],
 };
 
 /** At most this many allowlisted origins — a CSP header is not a place for an unbounded list. */
@@ -605,7 +615,7 @@ export function isEmbedOrigin(v: unknown): v is string {
 
 export function getAdmissions(): AdmissionsConfig {
   const raw = getSetting(SETTING_KEYS.admissions);
-  if (!raw) return { ...ADMISSIONS_DEFAULTS, embedOrigins: [], requiredAdmissionFields: [] };
+  if (!raw) return { ...ADMISSIONS_DEFAULTS, embedOrigins: [], requiredAdmissionFields: [], requiredInquiryFields: [] };
   try {
     const p = JSON.parse(raw) as Partial<AdmissionsConfig>;
     return {
@@ -631,9 +641,16 @@ export function getAdmissions(): AdmissionsConfig {
       // `=== true` so a hand-edited settings row cannot turn the LAN-only default off by carrying a
       // truthy string — the same coercion `webhookNamesStudent` uses, for the same reason (§9).
       kioskRemote: p.kioskRemote === true,
+      requiredInquiryFields: [
+        ...new Set(
+          (Array.isArray(p.requiredInquiryFields) ? p.requiredInquiryFields : []).filter(
+            (k): k is string => typeof k === 'string' && /^[a-zA-Z]{1,40}$/.test(k),
+          ),
+        ),
+      ].slice(0, 20),
     };
   } catch {
-    return { ...ADMISSIONS_DEFAULTS, embedOrigins: [], requiredAdmissionFields: [] };
+    return { ...ADMISSIONS_DEFAULTS, embedOrigins: [], requiredAdmissionFields: [], requiredInquiryFields: [] };
   }
 }
 

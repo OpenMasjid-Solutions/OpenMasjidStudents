@@ -86,12 +86,16 @@ let peerN = 0;
 /** Each test gets its own source address — the limiters are process-wide singletons. */
 const freshPeer = () => `10.77.${Math.floor(peerN / 250)}.${(peerN++ % 250) + 1}`;
 
-function post(body: Record<string, unknown>, opts: { peer?: string; tunnel?: boolean } = {}) {
+function post(body: Record<string, unknown>, opts: { peer?: string; tunnel?: boolean; origin?: string } = {}) {
   return http.inject({
     method: 'POST',
     url: '/public/inquiry',
     remoteAddress: opts.peer ?? freshPeer(),
-    headers: { 'content-type': 'application/json', ...(opts.tunnel ? { 'cf-ray': 'test-ray' } : {}) },
+    headers: {
+      'content-type': 'application/json',
+      ...(opts.tunnel ? { 'cf-ray': 'test-ray' } : {}),
+      ...(opts.origin ? { origin: opts.origin } : {}),
+    },
     payload: JSON.stringify(body),
   });
 }
@@ -558,13 +562,113 @@ describe('what is written, and what is told', () => {
   });
 });
 
-describe('the embed snippet', () => {
-  it('points at the embed page, not at the hosted one', async () => {
+describe('required fields on the public form', () => {
+  it('drops a submission missing one — SILENTLY, and identically', async () => {
+    openForm({ requiredInquiryFields: ['childDob'] });
+    const withIt = await post(submission({ childDob: '2015-03-02' }));
+    const without = await post(submission({ childName: 'Maryam Khan', email: 'm@example.org' }));
+
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]!.childName).toBe('Yusuf Ismail');
+    // The uncomfortable half, and the reason the form marks required boxes and checks them in the
+    // browser: the server cannot tell them, because telling them would be the enumeration oracle.
+    expect(without.statusCode).toBe(withIt.statusCode);
+    expect(without.body).toBe(withIt.body);
+  });
+
+  it('cannot be configured into refusing everything — the two structural ones are separate', async () => {
+    // A hand-edited settings row naming a field that is not on the form must not silently close the
+    // door: `isSubmittable` reads the value off the normalized row, and an unknown key has none.
+    openForm({ requiredInquiryFields: ['notAField'] });
+    const res = await post(submission());
+    expect(res.statusCode).toBe(200);
+    // …and it IS refused, because an unknown key can never be satisfied. That is the safe direction
+    // for a settings row nobody can have meant, and it is worth knowing rather than assuming.
+    expect(rows()).toHaveLength(0);
+  });
+});
+
+describe('the embeddable widget', () => {
+  it('builds the form IN the page — no iframe, and it posts back to us', async () => {
     openForm({ embedOrigins: ['https://masjid.example'] });
-    const js = await http.inject({ method: 'GET', url: '/public/inquiry.js', headers: { host: 'students.masjid.example' } });
+    const js = await http.inject({ method: 'GET', url: '/public/inquiry.js?divId=enquiry-form', headers: { host: 'students.masjid.example' } });
     expect(js.statusCode).toBe(200);
     expect(js.headers['content-type']).toContain('javascript');
-    expect(js.body).toContain('/public/inquiry/embed');
-    expect(js.body).toContain('students.masjid.example');
+    // The old version injected an iframe, which is why it never blended with a masjid's own site.
+    expect(js.body).not.toContain('createElement(\'iframe\')');
+    expect(js.body).toContain('enquiry-form');
+    expect(js.body).toContain('students.masjid.example/public/inquiry');
+  });
+
+  it('never builds markup from a string — this code runs in somebody else\u2019s document', async () => {
+    openForm();
+    const js = await http.inject({ method: 'GET', url: '/public/inquiry.js' });
+    // `innerHTML` here would make one escaping mistake an XSS on the MASJID's website rather than on
+    // ours, and would break on any host CSP without unsafe-inline. Nodes + textContent cannot inject
+    // markup at all, which is a stronger claim than "we escaped it".
+    for (const banned of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write']) {
+      expect(js.body).not.toContain(banned);
+    }
+  });
+
+  it('carries the office\u2019s own wording and the field list, so all three renderings agree', async () => {
+    settingsMod.setAdmissionsText({ intro: 'Ask us about a place.' });
+    openForm({ requiredInquiryFields: ['childDob'] });
+    const js = await http.inject({ method: 'GET', url: '/public/inquiry.js' });
+    expect(js.body).toContain('Ask us about a place.');
+    // A box the office marked required must be marked required in the WIDGET too — the hosted page
+    // and the widget dropping different submissions is invisible, because both answer identically.
+    expect(js.body).toContain('"name":"childDob"');
+    expect(js.body).toMatch(/"name":"childDob"[^}]*"required":true/);
+  });
+
+  it('says the form is closed rather than rendering one', async () => {
+    settingsMod.setAdmissionsText({ closed: 'Intake reopens after Ramadan.' });
+    openForm({ open: false });
+    const js = await http.inject({ method: 'GET', url: '/public/inquiry.js' });
+    expect(js.body).toContain('Intake reopens after Ramadan.');
+    expect(js.body).toContain('oms-closed');
+  });
+});
+
+describe('cross-origin permission for the widget', () => {
+  const OURS = 'https://masjid.example';
+
+  it('allows a site the office listed, and nobody else', async () => {
+    openForm({ embedOrigins: [OURS] });
+    const ok = await post(submission(), { origin: OURS });
+    const no = await post(submission({ childName: 'Other Child' }), { origin: 'https://evil.example' });
+    expect(ok.headers['access-control-allow-origin']).toBe(OURS);
+    // Not `*`, and not echoed for a site nobody named: `*` would let any page on the internet post
+    // from a visitor's browser.
+    expect(no.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('never allows credentials, and varies on Origin', async () => {
+    openForm({ embedOrigins: [OURS] });
+    const res = await post(submission(), { origin: OURS });
+    // Absent, so the request is anonymous whatever cookies a visitor holds.
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+    // Without Vary a shared cache can hand one site's allow header to another.
+    expect(String(res.headers['vary'] ?? '')).toContain('Origin');
+  });
+
+  it('answers the preflight for an allowlisted site', async () => {
+    openForm({ embedOrigins: [OURS] });
+    const pre = await http.inject({ method: 'OPTIONS', url: '/public/inquiry', headers: { origin: OURS } });
+    expect(pre.statusCode).toBe(204);
+    expect(pre.headers['access-control-allow-origin']).toBe(OURS);
+    expect(String(pre.headers['access-control-allow-headers'] ?? '')).toContain('content-type');
+  });
+
+  it('is written before the gates, so a dropped submission and a stored one still look identical', async () => {
+    openForm({ embedOrigins: [OURS] });
+    const stored = await post(submission(), { origin: OURS });
+    // A honeypot hit stores nothing. If the CORS header were written after the gate, the presence of
+    // the header would be the difference the body carefully is not (§14).
+    const dropped = await post(submission({ website: 'bot', childName: 'Bot Child' }), { origin: OURS });
+    expect(dropped.statusCode).toBe(stored.statusCode);
+    expect(dropped.body).toBe(stored.body);
+    expect(dropped.headers['access-control-allow-origin']).toBe(stored.headers['access-control-allow-origin']);
   });
 });

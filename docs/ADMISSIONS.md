@@ -20,6 +20,9 @@
 > made deletable (Hasan's review).
 > **dev.12:** §3a, the **admission form** a family fills in — `admissions/admissionForm.ts`.
 > **dev.13:** §3a.1, **tablet mode** — the device token, the picker, and the LAN-only default.
+> **dev.14:** the embeddable widget rebuilt to render INTO the host page (it injected an iframe
+> before, which is why it never blended), the CORS allowlist that makes its cross-origin POST
+> possible, and per-field required marking on both forms.
 >
 > Two things this phase changed OUTSIDE admissions, both of which removed a copy rather than adding a
 > place: `createStudentRow` moved to **`people/create.ts`** (the one implementation of "create a

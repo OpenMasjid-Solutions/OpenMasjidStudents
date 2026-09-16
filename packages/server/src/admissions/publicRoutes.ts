@@ -59,7 +59,7 @@ import { sendInquiryAck } from '../mail/notify';
 import { DailyCeiling, SubmitLimiter } from '../security/rateLimit';
 import { classifyOrigin, rateLimitKey } from '../security/origin';
 import { config } from '../config';
-import { getAccentColor, getAdmissions, getSchoolLogo, getSchoolName, getSetting, parseLogoDataUri, setSetting } from '../settings';
+import { getAccentColor, getAdmissions, getSchoolLogo, getSchoolName, getSetting, isEmbedOrigin, parseLogoDataUri, setSetting } from '../settings';
 import { INQUIRY_CAPS, storeInquiry } from './inquiry';
 import { admissionsTextHtml, admissionsTextPlain } from './text';
 import { READMISSION_CAPS, READMISSION_FIELDS, readmissionByToken, submitReadmission } from './readmission';
@@ -192,6 +192,39 @@ const BODY = z.object({
 /** The acknowledgement. One frozen string, so there is nothing to accidentally vary. */
 const ACK = JSON.stringify({ ok: true });
 
+/**
+ * CROSS-ORIGIN PERMISSION FOR THE WIDGET — the allowlist an office already keeps, reused.
+ *
+ * The embedded form now lives IN the masjid's page rather than in an iframe of ours, so its POST is
+ * cross-origin and the browser will not make it without being told. What decides is
+ * `admissions.embedOrigins` — the same list that was already the `frame-ancestors` allowlist, and
+ * the same validator (`isEmbedOrigin`) refusing anything that is not exactly a scheme, host and
+ * port. Two lists would be two answers to "whose site may carry our form".
+ *
+ * The origin is ECHOED, never `*`, and only when it is on the list. `*` would let any page on the
+ * internet post to this endpoint from a visitor's browser; echoing an allowlisted origin says the
+ * office named this site.
+ *
+ * Note what this does NOT do: it grants no credentials (`Access-Control-Allow-Credentials` is
+ * absent, so the request is anonymous whatever cookies a visitor holds), and it is not a security
+ * boundary for the DATA — the endpoint answers identically to everybody with or without CORS, and
+ * every control in §14 applies before this header is ever written. It is a browser permission, not
+ * an authorization.
+ */
+function allowEmbedOrigin(req: FastifyRequest, reply: FastifyReply): void {
+  const origin = String(req.headers.origin ?? '').trim().toLowerCase();
+  if (!origin || !isEmbedOrigin(origin)) return;
+  if (!getAdmissions().embedOrigins.includes(origin)) return;
+  reply
+    .header('access-control-allow-origin', origin)
+    // Tells a cache that the answer depends on who asked — without it a shared cache can hand one
+    // site's allow header to another.
+    .header('vary', 'Origin')
+    .header('access-control-allow-methods', 'POST, OPTIONS')
+    .header('access-control-allow-headers', 'content-type')
+    .header('access-control-max-age', '600');
+}
+
 function sendAck(reply: FastifyReply): FastifyReply {
   return reply
     .code(200)
@@ -251,15 +284,43 @@ function logoTag(): string {
  * is assembled server-side and served to somebody who has not loaded the app. The PROSE around them
  * is the madrasah's own (`admissions/text.ts`), which is the part that actually needed a voice.
  */
-const FIELDS: { name: string; label: string; type: string; cap: number; required?: boolean; multiline?: boolean }[] = [
-  { name: 'childName', label: 'Child’s name', type: 'text', cap: INQUIRY_CAPS.childName, required: true },
-  { name: 'childDob', label: 'Date of birth (optional)', type: 'date', cap: INQUIRY_CAPS.childDob },
-  { name: 'askedAbout', label: 'What are you asking about? (optional)', type: 'text', cap: INQUIRY_CAPS.askedAbout },
-  { name: 'parentName', label: 'Your name', type: 'text', cap: INQUIRY_CAPS.parentName, required: true },
+interface InquiryBox {
+  name: string;
+  label: string;
+  type: string;
+  cap: number;
+  required: boolean;
+  multiline?: boolean;
+}
+
+const FIELDS: { name: string; label: string; type: string; cap: number; alwaysRequired?: boolean; multiline?: boolean }[] = [
+  { name: 'childName', label: 'Child’s name', type: 'text', cap: INQUIRY_CAPS.childName, alwaysRequired: true },
+  { name: 'childDob', label: 'Date of birth', type: 'date', cap: INQUIRY_CAPS.childDob },
+  { name: 'askedAbout', label: 'What are you asking about?', type: 'text', cap: INQUIRY_CAPS.askedAbout },
+  { name: 'parentName', label: 'Your name', type: 'text', cap: INQUIRY_CAPS.parentName, alwaysRequired: true },
   { name: 'email', label: 'Email', type: 'email', cap: INQUIRY_CAPS.email },
   { name: 'phone', label: 'Phone', type: 'tel', cap: INQUIRY_CAPS.phone },
-  { name: 'message', label: 'Anything you would like to tell us (optional)', type: 'text', cap: INQUIRY_CAPS.message, multiline: true },
+  { name: 'message', label: 'Anything you would like to tell us', type: 'text', cap: INQUIRY_CAPS.message, multiline: true },
 ];
+
+/**
+ * The form's boxes as this install actually asks them — ONE list, read by all three renderings.
+ *
+ * The hosted page, the iframe page and the embeddable widget must ask for the same things and mark
+ * the same ones required, or a family filling in the widget is silently dropped for a box the hosted
+ * page never showed them (§14's identical-response rule makes that failure invisible, which is
+ * exactly why it must not be possible).
+ *
+ * "(optional)" is APPENDED rather than written into the label, because whether a box is optional is
+ * now the office's answer and a baked-in suffix would go stale the moment they changed it.
+ */
+function inquiryBoxes(): InquiryBox[] {
+  const req = new Set(getAdmissions().requiredInquiryFields);
+  return FIELDS.map((f) => {
+    const required = f.alwaysRequired === true || req.has(f.name);
+    return { name: f.name, type: f.type, cap: f.cap, multiline: f.multiline, required, label: required ? f.label : `${f.label} (optional)` };
+  });
+}
 
 /**
  * The page, whole. Assembled server-side and escaped, like every other document this app serves.
@@ -369,7 +430,7 @@ function renderPage(opts: { open: boolean; token: string }): string {
   const style = PAGE_STYLE.replace('__ACCENT__', esc(getAccentColor()));
 
   const fields = opts.open
-    ? FIELDS.map((f) => {
+    ? inquiryBoxes().map((f) => {
         const id = `f_${f.name}`;
         const input = f.multiline
           ? `<textarea id="${id}" name="${f.name}" maxlength="${f.cap}"></textarea>`
@@ -705,13 +766,106 @@ export function registerPublicInquiryRoutes(app: FastifyInstance): void {
   });
 
   /** The one-line embed: a script tag on the masjid's own site that writes an iframe pointing here. */
+  /**
+   * THE EMBEDDABLE WIDGET — the form INSIDE the masjid's own page, not in a box on it.
+   *
+   * Hasan asked for the QuickSchools shape: `<div id="enquiry-form"></div>` plus one async script
+   * that fills it in, "where it blends in with the website perfectly". The old version injected an
+   * IFRAME, which is why it never blended: an iframe is a separate document with its own stylesheet,
+   * so it is a rectangle of our design sitting on somebody else's page, with a scrollbar and a height
+   * we had to guess.
+   *
+   * So this builds real DOM in the host page and SETS ALMOST NO STYLES. Inputs inherit the site's
+   * font, its colors and its form styling, because we do not fight it — that is what blending is.
+   * Every node carries an `oms-` class so a site that wants to style it can.
+   *
+   * ── Built with createElement, never innerHTML ───────────────────────────────
+   *
+   * This is the one piece of code this app runs inside somebody else's document. `innerHTML` there
+   * would mean one escaping mistake becomes an XSS on the masjid's website rather than on ours, and
+   * a host CSP with no `unsafe-inline` would break it besides. Building nodes and assigning
+   * `textContent` cannot inject markup at all, which is a stronger statement than "we escaped it".
+   *
+   * ── Why `divId` and not just "beside the script tag" ────────────────────────
+   *
+   * `document.currentScript` is null when a site's optimizer defers, bundles or re-inserts the tag,
+   * which is most WordPress caching plugins. A named div is a promise the page keeps. Both are
+   * supported: the div wins, the script's own position is the fallback.
+   */
   app.get('/public/inquiry.js', async (req: FastifyRequest, reply: FastifyReply) => {
     const cfg = getAdmissions();
     if (!cfg.publicForm) return off(reply);
-    const src = `${baseUrlOf(req)}${EMBED_PATH}`;
-    const js = `(function(){var s=document.currentScript;var f=document.createElement('iframe');
-f.src=${jsonInScript(src)};f.loading='lazy';f.title='Admissions inquiry';f.style.cssText='width:100%;max-width:36rem;height:52rem;border:0';
-(s&&s.parentNode?s.parentNode:document.body).insertBefore(f,s||null);})();`;
+    const divId = String((req.query as { divId?: string } | undefined)?.divId ?? '').slice(0, 80);
+    const payload = {
+      action: `${baseUrlOf(req)}${config.basePath}/public/inquiry`,
+      divId,
+      open: cfg.open,
+      token: mintFormToken(),
+      intro: admissionsTextPlain('intro'),
+      privacy: admissionsTextPlain('privacy'),
+      thanks: admissionsTextPlain('thanks'),
+      closed: admissionsTextPlain('closed'),
+      fields: inquiryBoxes(),
+    };
+    const js = `(function(){
+  var C = ${jsonInScript(payload)};
+  var s = document.currentScript;
+  function mount() {
+    var root = C.divId ? document.getElementById(C.divId) : null;
+    if (!root && s && s.parentNode) { root = document.createElement('div'); s.parentNode.insertBefore(root, s); }
+    if (!root) return;
+    root.className = (root.className ? root.className + ' ' : '') + 'oms-admissions';
+    function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+    if (!C.open) { root.appendChild(el('p', 'oms-closed', C.closed)); return; }
+    if (C.intro) root.appendChild(el('p', 'oms-intro', C.intro));
+    var form = el('form', 'oms-form');
+    form.setAttribute('novalidate', 'novalidate');
+    var inputs = {};
+    C.fields.forEach(function (f) {
+      var wrap = el('div', 'oms-field');
+      var id = 'oms_' + f.name;
+      var lab = el('label', 'oms-label', f.label);
+      lab.setAttribute('for', id);
+      var box = f.multiline ? el('textarea', 'oms-input') : el('input', 'oms-input');
+      box.id = id; box.name = f.name;
+      if (!f.multiline) box.type = f.type;
+      box.setAttribute('maxlength', String(f.cap));
+      if (f.required) box.setAttribute('required', 'required');
+      inputs[f.name] = box;
+      wrap.appendChild(lab); wrap.appendChild(box); form.appendChild(wrap);
+    });
+    var hp = el('div', 'oms-hp');
+    hp.setAttribute('aria-hidden', 'true');
+    hp.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden';
+    var hpi = el('input'); hpi.name = 'website'; hpi.tabIndex = -1; hpi.setAttribute('autocomplete', 'off');
+    hp.appendChild(hpi); form.appendChild(hp);
+    var btn = el('button', 'oms-submit', 'Send');
+    btn.type = 'submit';
+    form.appendChild(btn);
+    var note = el('p', 'oms-note', '');
+    var priv = el('p', 'oms-privacy', C.privacy);
+    root.appendChild(form); root.appendChild(note); root.appendChild(priv);
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var missing = C.fields.filter(function (f) { return f.required && !String(inputs[f.name].value || '').trim(); });
+      if (missing.length) { note.textContent = 'Please fill in: ' + missing.map(function (f) { return f.label; }).join(', '); return; }
+      if (!String(inputs.email.value || '').trim() && !String(inputs.phone.value || '').trim()) {
+        note.textContent = 'Please give an email address or a phone number so we can reply.';
+        return;
+      }
+      note.textContent = '';
+      btn.disabled = true;
+      var data = { t: C.token, website: hpi.value };
+      C.fields.forEach(function (f) { data[f.name] = String(inputs[f.name].value || ''); });
+      fetch(C.action, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+        .then(function (r) { return r.json(); })
+        .then(function () { root.textContent = ''; root.appendChild(el('p', 'oms-thanks', C.thanks)); })
+        .catch(function () { btn.disabled = false; note.textContent = 'That did not send. Please try again, or contact the office.'; });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
+  else mount();
+})();`;
     return reply
       .code(200)
       .header('content-type', 'application/javascript; charset=utf-8')
@@ -824,9 +978,20 @@ f.src=${jsonInScript(src)};f.loading='lazy';f.title='Admissions inquiry';f.style
     return reply.code(res.ok ? 200 : 409).header('cache-control', 'no-store').send({ ok: res.ok, reason: res.reason ?? null });
   });
 
+  // The browser's preflight for the widget's POST. Answers 204 with the same allowlist check and
+  // nothing else — a preflight that told an un-allowlisted site anything would be the leak.
+  app.options('/public/inquiry', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!getAdmissions().publicForm) return off(reply);
+    allowEmbedOrigin(req, reply);
+    return reply.code(204).header('cache-control', 'no-store').send();
+  });
+
   app.post('/public/inquiry', { bodyLimit: BODY_LIMIT }, async (req: FastifyRequest, reply: FastifyReply) => {
     const cfg = getAdmissions();
     if (!cfg.publicForm) return off(reply);
+    // Written before any gate below, so the ONE response really is one response: a submission that
+    // was dropped and one that was stored must not differ by a header either.
+    allowEmbedOrigin(req, reply);
 
     // From here on there is exactly ONE response. Every `return sendAck(reply)` below is the same
     // bytes, and the only thing that differs is whether a row was written.

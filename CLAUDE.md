@@ -578,6 +578,18 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > disagreeing with billing about what day it is would be exactly the §20 defect ("two places
 > disagreeing about the same rule"). If it is ever fixed it is fixed once, for the whole app.
 >
+> **THE EMBEDDABLE WIDGET RENDERS INTO THE HOST PAGE FROM 0.52.0-dev.14**, on Hasan's brief ("make
+> it like the quickschools form where it blends in with the website perfectly"). It injected an
+> IFRAME before, which is why it never blended — a separate document with its own stylesheet is a
+> rectangle of our design on somebody else's page. It now builds real DOM with `createElement` and
+> sets almost no styles, so it inherits the site's own fonts and form styling. **`innerHTML` is
+> forbidden there and a test asserts it**: this is the one piece of this app that runs inside
+> somebody else's document, and an escaping mistake would be an XSS on the MASJID's website rather
+> than on ours. The cross-origin POST that follows is permitted by **the embed-origin allowlist an
+> office already keeps** — the same list, the same validator, echoed per-origin and never `*`, with
+> no credentials — and the header is written BEFORE the gates so a dropped submission and a stored
+> one still cannot be told apart (§14).
+>
 > **TABLET MODE LANDED IN 0.52.0-dev.13.** An admin starts it from Settings, which mints a
 > **device token** — hashed, expiring after a working day, listed and revocable — and the tablet
 > carries that rather than an admin session. It is **LAN-only unless an office opts in** (Hasan), and

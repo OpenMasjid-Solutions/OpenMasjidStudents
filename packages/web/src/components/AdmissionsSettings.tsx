@@ -193,14 +193,54 @@ export function AdmissionsSettings() {
         {cfg.publicForm && cfg.hasPublicUrl && cfg.embedOrigins.length > 0 && (
           <div className="field" style={{ marginBlockStart: '0.8rem' }}>
             <label className="label" htmlFor="adm-snippet">{t('settings.admissionsSnippet')}</label>
-            <div className="inline-form" style={{ alignItems: 'center' }}>
-              <input id="adm-snippet" className="input glass-inset" readOnly value={cfg.embedSnippet} style={{ flex: '2 1 18rem' }} />
+            {/* A TEXTAREA, because the snippet is two lines: a named div plus the script that fills
+                it in. An <input> would collapse the newline and hand an office a broken paste. */}
+            <textarea id="adm-snippet" className="input glass-inset" readOnly rows={2} value={cfg.embedSnippet} style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: '0.8rem' }} />
+            <div className="inline-form" style={{ alignItems: 'center', marginBlockStart: '0.4rem' }}>
               <button type="button" className="btn btn--ghost btn--sm" onClick={() => void navigator.clipboard?.writeText(cfg.embedSnippet)}>
                 <Copy size={13} /> {t('common.copy')}
               </button>
+              <span className="hint">{t('settings.admissionsSnippetHint')}</span>
             </div>
           </div>
         )}
+      </section>
+
+      {/* ── THE PUBLIC INQUIRY FORM: which answers a family must give ─────────────────────────
+          Its field list is FIXED in code (decision 9 — a configurable public form is a configurable
+          attack surface), so this panel only decides which of the seven are compulsory. */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head">
+          <h2>{t('settings.admissionsInquiryRequiredTitle')}</h2>
+        </div>
+        <p className="hint">{t('settings.admissionsInquiryRequiredHint')}</p>
+        <ul className="data-list">
+          {cfg.inquiryFields.map((f) => (
+            <li key={f.key}>
+              <span>{f.label}</span>
+              <span className="spacer" />
+              {f.alwaysRequired ? (
+                <span className="muted">{t('settings.admissionsAlwaysRequired')}</span>
+              ) : (
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={cfg.requiredInquiryFields.includes(f.key)}
+                    disabled={save.isPending}
+                    onChange={() =>
+                      void apply({
+                        requiredInquiryFields: cfg.requiredInquiryFields.includes(f.key)
+                          ? cfg.requiredInquiryFields.filter((k) => k !== f.key)
+                          : [...cfg.requiredInquiryFields, f.key],
+                      })
+                    }
+                  />
+                  <span className="muted">{t('settings.admissionsRequired')}</span>
+                </label>
+              )}
+            </li>
+          ))}
+        </ul>
       </section>
 
       {/* ── TABLET MODE ───────────────────────────────────────────────────────────────────────
