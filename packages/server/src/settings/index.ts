@@ -557,6 +557,23 @@ export interface AdmissionsConfig {
    * fields first and consults this second.
    */
   requiredAdmissionFields: string[];
+  /**
+   * TABLET MODE — the admission form standing open on a device in the waiting room (0.52.0-dev.13).
+   *
+   * Off by default like every other door here. What it enables is an admin's ability to START a
+   * tablet; the device still carries a token, so switching this on grants nothing by itself.
+   */
+  kiosk: boolean;
+  /**
+   * May a tablet be used over remote access? **OFF**, on Hasan's instruction ("a local only URL so
+   * you don't access it publicly and only on the network").
+   *
+   * A form addressed to one family can travel anywhere — that is the point of a link. A form
+   * standing open on a shared device is a different risk: nobody is holding a per-family token, so
+   * being inside the building is the control that replaces the addressing. An office whose tablet
+   * genuinely cannot reach the LAN turns this on knowing what it gives up.
+   */
+  kioskRemote: boolean;
 }
 
 const ADMISSIONS_DEFAULTS: AdmissionsConfig = {
@@ -567,6 +584,8 @@ const ADMISSIONS_DEFAULTS: AdmissionsConfig = {
   minSeconds: 3,
   ackEmail: false,
   requiredAdmissionFields: [],
+  kiosk: false,
+  kioskRemote: false,
 };
 
 /** At most this many allowlisted origins — a CSP header is not a place for an unbounded list. */
@@ -608,6 +627,10 @@ export function getAdmissions(): AdmissionsConfig {
             .filter((k): k is string => typeof k === 'string' && /^[a-zA-Z]{1,40}$/.test(k)),
         ),
       ].slice(0, 40),
+      kiosk: p.kiosk === true,
+      // `=== true` so a hand-edited settings row cannot turn the LAN-only default off by carrying a
+      // truthy string — the same coercion `webhookNamesStudent` uses, for the same reason (§9).
+      kioskRemote: p.kioskRemote === true,
     };
   } catch {
     return { ...ADMISSIONS_DEFAULTS, embedOrigins: [], requiredAdmissionFields: [] };

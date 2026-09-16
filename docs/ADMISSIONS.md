@@ -3,7 +3,7 @@
 
 # ADMISSIONS — inquiry → waitlist → offer → admission → re-admission
 
-> **Status: BUILT (0.52.0-dev.7 → -dev.9).** This is Phase 2 of the academic layer (CLAUDE.md §4a). It
+> **Status: BUILT (0.52.0-dev.7 → -dev.13).** This is Phase 2 of the academic layer (CLAUDE.md §4a). It
 > was written before the code deliberately — the same discipline `docs/PAYMENTS.md` and
 > `docs/WHATSAPP.md` follow — so the schema and the wire rules were argued once, in one place, rather
 > than discovered per screen. It now describes what exists.
@@ -16,6 +16,10 @@
 > **dev.8:** §4, **conversion** — `admissions/convert.ts` and `admissions/fees.ts`.
 > **dev.9:** §5, **re-admission** — `admissions/readmission.ts`, the family's one-time link through
 > the extracted `auth/tokens.ts`, and the office's diff.
+> **dev.11:** the pipeline cut from seven states to four, a decline made reversible, and an inquiry
+> made deletable (Hasan's review).
+> **dev.12:** §3a, the **admission form** a family fills in — `admissions/admissionForm.ts`.
+> **dev.13:** §3a.1, **tablet mode** — the device token, the picker, and the LAN-only default.
 >
 > Two things this phase changed OUTSIDE admissions, both of which removed a copy rather than adding a
 > place: `createStudentRow` moved to **`people/create.ts`** (the one implementation of "create a
@@ -92,7 +96,7 @@ either, so they cannot disagree.
 
 ### 1.3 `admission_links` — the one-time token
 
-`id`, `token_hash` UNIQUE, `kind` (`admission | readmission`), `inquiry_id` (nullable),
+`id`, `token_hash` UNIQUE, `kind` (`admission | readmission | kiosk`), `inquiry_id` (nullable),
 `readmission_id` (nullable), `created_by_user_id`, `created_at`, `expires_at`, `used_at`.
 
 **Reuses the existing token machinery rather than inventing a second one** — CSPRNG, single-use,
@@ -284,6 +288,14 @@ Both carry a token, which is what keeps §14's "the public inquiry form is the o
 write surface" true. The family's link is `admission_links` of kind `admission`, minted against the
 inquiry through `auth/tokens.ts` — one-time, hashed, expiring, exactly like an invite.
 
+**BUILT in 0.52.0-dev.13** — `mintKioskToken` / `kioskByToken` / `kioskInquiries` / `kioskForm` /
+`submitAdmissionFromKiosk` in `admissions/admissionForm.ts`, two routes in `publicRoutes.ts`, and
+`kioskStart` / `kioskList` / `kioskRevoke` on the router. The origin check is written out at the top
+of BOTH handlers rather than inherited, because there are no Fastify hooks in this repo, and it calls
+the same `classifyOrigin` the tRPC middleware consults so tablet mode cannot drift from the policy
+the rest of the app enforces. Gating only the page and not the POST would leave the write open to
+anybody who had once seen the URL; a test asserts both.
+
 **Tablet mode carries a DEVICE token instead**, because the two situations are not the same. A link is
 addressed to one family and expires when used; a tablet stands open all morning and is handed to
 whoever walks in. So an admin starts tablet mode from inside the app, which mints a revocable device
@@ -305,8 +317,11 @@ A family that has already typed their child's name, date of birth, their own nam
 into the inquiry must not be asked for all of it again — that is the difference between a form that
 gets finished and one that gets abandoned. So opening the form always starts by naming an inquiry:
 the family's link carries it in the token, and tablet mode shows a picker of live inquiries. A
-walk-in with no inquiry at all is an ordinary case too, so the picker offers a blank start, which
-creates the inquiry as it goes (`source: 'office'`) rather than inventing a second path.
+**A WALK-IN WITH NO INQUIRY IS NOT HANDLED BY THE TABLET, and that is a narrowing made on the way
+in** (0.52.0-dev.13). The picker lists inquiries that already exist; a family nobody has heard of is
+typed in by the office first — `officeAdd`, thirty seconds, already audited as an office action.
+Letting a tablet MINT records would make it a surface that CREATES rather than one that proposes,
+which is a different thing to reason about and not what a clipboard is for.
 
 ### 3a.3 The fields are the Phase 1 registry, not a second list
 

@@ -1125,7 +1125,17 @@
     "admissionsRequiredHint": "Tick anything a family has to answer before they can send the form. Which questions appear at all is set under Students.",
     "admissionsRequired": "Required",
     "admissionsAlwaysRequired": "Always required",
-    "admissionsMedical": "Medical"
+    "admissionsMedical": "Medical",
+    "admissionsKioskTitle": "Tablet mode",
+    "admissionsKioskHint": "Leave the admission form open on a tablet in the office, the way a waiting room does. Whoever is holding it picks the child’s name and fills the form in — they cannot reach anything else in the app.",
+    "admissionsKiosk": "Allow tablet mode",
+    "admissionsKioskNote": "Off until you turn it on. The tablet still has to be signed in below.",
+    "admissionsKioskRemote": "Allow it over remote access",
+    "admissionsKioskRemoteNote": "Off, and best left off: on your own network the form can only be opened by someone inside the building. Turn this on only if the tablet cannot reach the masjid network.",
+    "admissionsKioskStart": "Sign a tablet in",
+    "admissionsKioskOpenHint": "Open this on the tablet. Copy it now — it is not stored anywhere. It ends by itself after about fourteen hours.",
+    "admissionsKioskDevice": "A tablet is signed in",
+    "admissionsKioskEnd": "End it"
   },
   "relation": {
     "father": "Father",

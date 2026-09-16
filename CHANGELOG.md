@@ -80,6 +80,13 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   notes, allergies or consent, the form asks for those too** — they are the one thing a family is
   ever asked about that nobody outside the office can read, and the form only ever asks: it never
   shows a family anything your office has written.
+
+  The same form can stand open on a **tablet in the office**, the way a doctor's waiting room does
+  it — turn on tablet mode under Settings → Admissions, sign a tablet in, and a family taps their
+  child's name from the list and fills it in there. They cannot reach anything else in the app,
+  because the tablet holds a one-off pass rather than your login, and you can end it whenever you
+  like. **It works on the masjid's own network only** unless you say otherwise, since a form left
+  open on a shared device is safest when being in the building is what unlocks it.
 - **Settings is in tabs** — School, Students, Admissions, Documents, Messages, Payments — instead of
   one very long page.
 - **Fill in your whole roster from a spreadsheet.** Download your students **with everything the app

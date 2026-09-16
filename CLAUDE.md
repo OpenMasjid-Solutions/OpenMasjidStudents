@@ -578,6 +578,14 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > disagreeing with billing about what day it is would be exactly the §20 defect ("two places
 > disagreeing about the same rule"). If it is ever fixed it is fixed once, for the whole app.
 >
+> **TABLET MODE LANDED IN 0.52.0-dev.13.** An admin starts it from Settings, which mints a
+> **device token** — hashed, expiring after a working day, listed and revocable — and the tablet
+> carries that rather than an admin session. It is **LAN-only unless an office opts in** (Hasan), and
+> the picker hands the page a child's NAME and id and nothing else, because whoever is holding the
+> tablet is not necessarily the family whose turn it is. A walk-in with no inquiry is typed in by the
+> office first: letting a tablet mint records would make it a surface that creates rather than one
+> that proposes.
+>
 > **A DECLINED INQUIRY CAN NOW BE REOPENED, AND ANY INQUIRY CAN BE DELETED FOR GOOD**
 > (`admissions.remove`, 0.52.0-dev.11). The old rule retained every refusal forever, on the argument
 > that "did we ever hear from them?" needs an answer. That holds for a real family and for nothing

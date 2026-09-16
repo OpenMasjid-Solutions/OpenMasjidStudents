@@ -49,7 +49,7 @@
  * re-admission uses and the same rule §4 states for every family-submitted form: it lands as a
  * proposal the office reviews, never as a write.
  */
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import { db } from '../db';
 import { rid } from '../db/ids';
@@ -258,8 +258,25 @@ export function submitAdmission(
   const found = admissionByToken(token, at);
   if (!found.ok) return { ok: false, reason: found.reason };
 
+  return storeAnswers(found.inquiry, found.fields, payload, opts.actor, at);
+}
+
+/**
+ * Validate a submission against the form that was ASKED, and store it inert.
+ *
+ * Shared by both doors — a family's link and a tablet — because they authorize differently and then
+ * do exactly the same thing. Two copies of "which answers count and which are required" is two
+ * places to get a required field wrong (§16).
+ */
+function storeAnswers(
+  inquiry: Inquiry,
+  fields: AdmissionField[],
+  payload: Record<string, unknown>,
+  actor: AuditActor,
+  at: Date,
+): { ok: boolean; reason?: string } {
   const answers: Record<string, string> = {};
-  for (const field of found.fields) {
+  for (const field of fields) {
     // A field the form never rendered is absent, and absent is not the same as blank — the same rule
     // `diffSubmission` draws. Only what was ASKED can be answered.
     if (!(field.key in payload)) continue;
@@ -268,18 +285,18 @@ export function submitAdmission(
     answers[field.key] = v;
   }
   if (!answers.childName?.trim()) return { ok: false, reason: 'incomplete' };
-  for (const field of found.fields) {
+  for (const field of fields) {
     if (field.required && !answers[field.key]?.trim()) return { ok: false, reason: 'incomplete' };
   }
 
-  db.update(inquiries).set({ submittedPayload: answers, updatedAt: at }).where(eq(inquiries.id, found.inquiry.id)).run();
+  db.update(inquiries).set({ submittedPayload: answers, updatedAt: at }).where(eq(inquiries.id, inquiry.id)).run();
 
   // COUNTS ONLY. What a family typed about their child — an allergy above all — does not belong in a
   // trail that outlives the proposal (§14). The office reads the answers on the screen, from the row.
-  audit(opts.actor, 'admission.submit', {
+  audit(actor, 'admission.submit', {
     entity: 'inquiry',
-    entityId: found.inquiry.id,
-    detail: { answered: Object.keys(answers).length, medical: found.fields.some((f) => f.medical && answers[f.key]) },
+    entityId: inquiry.id,
+    detail: { answered: Object.keys(answers).length, medical: fields.some((f) => f.medical && answers[f.key]) },
   });
   return { ok: true };
 }
@@ -363,4 +380,136 @@ export function admissionPatch(answers: Record<string, string>): {
     else student[spec.column] = stored;
   }
   return { core, student, family, guardian };
+}
+
+// ── TABLET MODE ───────────────────────────────────────────────────────────────
+//
+// The form standing open on a device in the waiting room, the way a doctor's office hands you a
+// clipboard. Hasan asked for it, and asked that it be "a local only URL so you don't access it
+// publicly and only on the network… then you can enable remote access".
+//
+// THE DEVICE CARRIES A TOKEN, NOT AN ADMIN SESSION, and that is the whole design. The obvious
+// implementation is to leave the app signed in on the tablet — and then the entire student
+// directory, every household's balance and every setting is one back-button away on a device you
+// just handed to a stranger. So a kiosk token buys exactly two things: the names of families with a
+// live inquiry, and the right to submit one admission form against one of them.
+//
+// It is LAN-only unless an office says otherwise, because a form standing open on a shared device is
+// a different risk from a link addressed to one family: nobody is holding a per-family token, so
+// being inside the building is the control that replaces the addressing.
+//
+// **A WALK-IN WITH NO INQUIRY IS NOT HANDLED HERE, DELIBERATELY.** The picker lists inquiries that
+// already exist; a family nobody has heard of is typed in by the office first (`officeAdd`, which
+// takes thirty seconds and is already audited as an office action). Letting a tablet MINT records
+// would make it a write surface that creates rather than one that proposes, which is a different
+// thing to reason about and not what the clipboard is for.
+
+/** How long a tablet stays signed in before an admin has to start it again. A working day. */
+export const KIOSK_TTL_MS = 14 * 60 * 60 * 1000;
+
+export interface KioskDevice {
+  id: string;
+  createdAt: Date;
+  expiresAt: Date;
+  createdByUserId: string | null;
+}
+
+/** Start tablet mode on a device: mint the token an admin then opens on it. */
+export function mintKioskToken(createdByUserId: string | null, at = new Date()): { token: string; url: string; id: string } {
+  const { token, tokenHash } = mintToken();
+  const id = rid('adl');
+  db.insert(admissionLinks)
+    .values({
+      id,
+      tokenHash,
+      kind: 'kiosk',
+      inquiryId: null,
+      readmissionId: null,
+      createdByUserId,
+      createdAt: at,
+      expiresAt: new Date(at.getTime() + KIOSK_TTL_MS),
+    })
+    .run();
+  const base = portalBase();
+  return { token, id, url: base ? `${base}/public/admission/kiosk?token=${token}` : '', };
+}
+
+/** Every tablet currently signed in, so Settings can show them and end one. */
+export function kioskDevices(now = new Date()): KioskDevice[] {
+  return db
+    .select()
+    .from(admissionLinks)
+    .where(eq(admissionLinks.kind, 'kiosk'))
+    .all()
+    .filter((r) => r.expiresAt > now && !r.usedAt)
+    .map((r) => ({ id: r.id, createdAt: r.createdAt, expiresAt: r.expiresAt, createdByUserId: r.createdByUserId }));
+}
+
+/**
+ * End a tablet's session.
+ *
+ * The row is DELETED rather than marked used. A revoked device token has nothing to say afterwards —
+ * unlike a family's link, whose `used_at` is the difference between "already sent, thank you" and
+ * "we have never heard of that link", and is worth keeping in order to say the right one.
+ */
+export function revokeKiosk(id: string): void {
+  db.delete(admissionLinks).where(and(eq(admissionLinks.id, id), eq(admissionLinks.kind, 'kiosk'))).run();
+}
+
+/** Is this a live tablet token? */
+export function kioskByToken(token: string, now = new Date()): { ok: true; id: string } | { ok: false } {
+  const link = db
+    .select()
+    .from(admissionLinks)
+    .where(and(eq(admissionLinks.tokenHash, hashToken(token)), eq(admissionLinks.kind, 'kiosk')))
+    .get();
+  if (!link || link.expiresAt <= now || link.usedAt) return { ok: false };
+  return { ok: true, id: link.id };
+}
+
+/**
+ * The families a tablet may offer — NAMES AND IDS ONLY.
+ *
+ * Not the parent's email, not their phone, not what they wrote in their inquiry, and not a child who
+ * has already been admitted or declined. Somebody else's turn is visible to whoever is holding the
+ * tablet, which is the same exposure as a receptionist's screen and is the reason this returns the
+ * child's name and nothing else.
+ */
+export function kioskInquiries(): { id: string; childName: string }[] {
+  return db
+    .select({ id: inquiries.id, childName: inquiries.childName })
+    .from(inquiries)
+    .where(inArray(inquiries.state, ['new', 'waitlisted', 'admission']))
+    .orderBy(desc(inquiries.createdAt))
+    .limit(200)
+    .all();
+}
+
+/** One inquiry's form, for a tablet that has chosen a family. */
+export function kioskForm(inquiryId: string): { inquiry: Inquiry; fields: AdmissionField[] } | null {
+  const inquiry = db.select().from(inquiries).where(eq(inquiries.id, inquiryId)).get();
+  if (!inquiry) return null;
+  if (inquiry.state === 'admitted' || inquiry.state === 'declined') return null;
+  return { inquiry, fields: admissionFormFields(inquiry) };
+}
+
+/**
+ * Store a tablet's submission.
+ *
+ * Deliberately a separate function from `submitAdmission` rather than a flag on it, because the two
+ * authorize differently — one proves it holds a family's link, the other proves it is a signed-in
+ * device AND names which family. Everything after that is shared, so the validation and the write
+ * live in `storeAnswers` and neither door has its own copy of the rules.
+ */
+export function submitAdmissionFromKiosk(
+  token: string,
+  inquiryId: string,
+  payload: Record<string, unknown>,
+  opts: { actor: AuditActor; at?: Date },
+): { ok: boolean; reason?: string } {
+  const at = opts.at ?? new Date();
+  if (!kioskByToken(token, at).ok) return { ok: false, reason: 'unknown' };
+  const form = kioskForm(inquiryId);
+  if (!form) return { ok: false, reason: 'closed' };
+  return storeAnswers(form.inquiry, form.fields, payload, opts.actor, at);
 }

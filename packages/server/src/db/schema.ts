@@ -1292,15 +1292,23 @@ export type InquiryEvent = typeof inquiryEvents.$inferSelect;
  * redemption both now go through — a second implementation is a second place to get expiry,
  * single-use or hashing wrong, and this one is reachable from the internet.
  *
- * Exactly one of `inquiry_id` / `readmission_id` is set; `kind` says which, so a caller never has to
- * infer it from which column is null.
+ * Exactly one of `inquiry_id` / `readmission_id` is set — except for a `kiosk` token, which sets
+ * neither. `kind` says which, so a caller never has to infer it from which column is null.
  */
 export const admissionLinks = sqliteTable(
   'admission_links',
   {
     id: text('id').primaryKey(),
     tokenHash: text('token_hash').notNull().unique(),
-    kind: text('kind').$type<'admission' | 'readmission'>().notNull(),
+    /**
+     * `kiosk` (0.52.0-dev.13) is the odd one and carries NEITHER id: it is a DEVICE token, not a
+     * family's link. A tablet in the waiting room is handed to whoever walks in, so it cannot be
+     * addressed to one household the way the other two are — what it grants instead is the names of
+     * families with a live inquiry and the right to submit one form against one of them. It lives
+     * here rather than in a table of its own because it is the same thing: a hashed, expiring,
+     * revocable string somebody was handed (§16 — `auth/tokens.ts` is the one place one is minted).
+     */
+    kind: text('kind').$type<'admission' | 'readmission' | 'kiosk'>().notNull(),
     inquiryId: text('inquiry_id').references(() => inquiries.id, { onDelete: 'cascade' }),
     readmissionId: text('readmission_id').references(() => readmissions.id, { onDelete: 'cascade' }),
     createdByUserId: text('created_by_user_id'),

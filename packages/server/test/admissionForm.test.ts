@@ -66,6 +66,16 @@ async function anInquiry(over: Record<string, unknown> = {}) {
   return r.id as string;
 }
 
+/**
+ * A source address nobody else in this file has used.
+ *
+ * The rate limiters are process-wide singletons, so without this the LAST tests in the file are
+ * refused 429 by the FIRST ones and start asserting the limiter rather than themselves — which is a
+ * guard that passes for the wrong reason, the failure §18 calls worse than none.
+ */
+let peerN = 0;
+const freshPeer = () => `10.66.${Math.floor(peerN / 250)}.${(peerN++ % 250) + 1}`;
+
 /** Start the admission and get the family's link, the way the office does. */
 async function issueLink(id: string) {
   const r = await caller('admin').admissions.admissionStart({ id });
@@ -121,6 +131,16 @@ describe('the medical fields — the §14 amendment', () => {
     }
   });
 
+  /**
+   * DEFENSIVE, WITH NO REACHABLE COUNTER-EXAMPLE TODAY — and recorded rather than pretended.
+   *
+   * Deleting the `medical ? '' :` guard in `admissionFormFields` does NOT turn this red, because
+   * `prefillFor` has no case for a medical key and returns '' for one anyway. The guard is a second
+   * lock on a door that is already shut, and it earns its place because the thing that would open
+   * the first one — teaching `prefillFor` to read from a record — is exactly the plausible future
+   * edit. The same shape as §9's note about `webhookTextFor`: a test that cannot fail is worth
+   * naming as such instead of counting as proof.
+   */
   it('IS NEVER PRE-FILLED — providing is not disclosure', () => {
     fields.setEnabledFieldKeys([...fields.MEDICAL_FIELD_KEYS]);
     // Hand the builder an inquiry whose every readable string is a medical secret. Whatever a future
@@ -153,7 +173,7 @@ describe('the medical fields — the §14 amendment', () => {
 
 describe('a submission is a proposal, not a write', () => {
   async function submit(token: string, body: Record<string, unknown>) {
-    return http.inject({ method: 'POST', url: '/public/admission', payload: { token, ...body } });
+    return http.inject({ method: 'POST', url: '/public/admission', remoteAddress: freshPeer(), payload: { token, ...body } });
   }
 
   it('stores what came back and creates NOTHING', async () => {
@@ -225,6 +245,7 @@ describe('approval is what makes it a record', () => {
     await http.inject({
       method: 'POST',
       url: '/public/admission',
+      remoteAddress: freshPeer(),
       payload: { token, childName: 'Yusuf Ismail', priorSchool: 'Al-Falah', address: '12 Mill Road', allergies: 'Peanuts', medicalConsent: '1' },
     });
 
@@ -245,7 +266,7 @@ describe('approval is what makes it a record', () => {
   it('stamps the admission date as TODAY without anybody typing one', async () => {
     const id = await anInquiry();
     const token = await issueLink(id);
-    await http.inject({ method: 'POST', url: '/public/admission', payload: { token, childName: 'Yusuf Ismail' } });
+    await http.inject({ method: 'POST', url: '/public/admission', remoteAddress: freshPeer(), payload: { token, childName: 'Yusuf Ismail' } });
     const plan = await caller('admin').billing.feePlanCreate({ name: 'Monthly', amountCents: 5000, cadence: 'monthly' });
     // Nothing in the office's approval names a date, and nothing on the family's form asks for one —
     // an admission approved today is an admission today (Hasan, 0.52.0-dev.12).
@@ -264,6 +285,7 @@ describe('approval is what makes it a record', () => {
     await http.inject({
       method: 'POST',
       url: '/public/admission',
+      remoteAddress: freshPeer(),
       payload: { token, childName: 'Yusuf Ismail', priorSchool: 'Nonsense typed by mistake', address: '12 Mill Road' },
     });
 
@@ -312,5 +334,113 @@ describe('the door', () => {
     const page = await http.inject({ method: 'GET', url: `/public/admission?token=x` });
     expect(page.body).not.toContain('<form');
     expect(id).toBeTruthy();
+  });
+});
+
+describe('tablet mode', () => {
+  /** A signed-in tablet, the way an admin starts one. */
+  async function aTablet() {
+    settingsMod.setAdmissions({ kiosk: true });
+    const r = await caller('admin').admissions.kioskStart();
+    return r.token;
+  }
+
+  it('is off until the office turns it on', async () => {
+    settingsMod.setAdmissions({ kiosk: false });
+    await expect(caller('admin').admissions.kioskStart()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // …and the route answers nothing at all, not an error page that admits it exists.
+    const page = await http.inject({ method: 'GET', url: '/public/admission/kiosk?token=x' });
+    expect(page.body).not.toContain('<form');
+  });
+
+  it('IS REFUSED OVER THE TUNNEL BY DEFAULT — the network is the control', async () => {
+    const token = await aTablet();
+    const lan = await http.inject({ method: 'GET', url: `/public/admission/kiosk?token=${token}` });
+    const tunnel = await http.inject({ method: 'GET', url: `/public/admission/kiosk?token=${token}`, headers: { 'cf-ray': 'test-ray' } });
+    expect(lan.statusCode).toBe(200);
+    expect(lan.body).toContain('choose your child');
+    // A form addressed to one family can travel anywhere; a form standing open on a shared device
+    // cannot, because nobody is holding a per-family token (Hasan, 0.52.0-dev.13).
+    expect(tunnel.body).not.toContain('choose your child');
+  });
+
+  it('opens over the tunnel once an office explicitly allows it', async () => {
+    const token = await aTablet();
+    settingsMod.setAdmissions({ kioskRemote: true });
+    const tunnel = await http.inject({ method: 'GET', url: `/public/admission/kiosk?token=${token}`, headers: { 'cf-ray': 'test-ray' } });
+    expect(tunnel.body).toContain('choose your child');
+  });
+
+  it('refuses a submission over the tunnel too, not just the page', async () => {
+    const token = await aTablet();
+    const id = await anInquiry();
+    const res = await http.inject({
+      method: 'POST',
+      url: '/public/admission/kiosk',
+      headers: { 'cf-ray': 'test-ray' },
+      remoteAddress: freshPeer(),
+      payload: { token, inquiry: id, childName: 'Yusuf Ismail' },
+    });
+    // Gating only the page would leave the write open to anybody who had once seen the URL.
+    expect(res.statusCode).not.toBe(200);
+    expect(app.dbmod.db.select().from(inquiries).where(eq(inquiries.id, id)).get()!.submittedPayload).toBeNull();
+  });
+
+  it('offers names and NOTHING else — whoever holds the tablet is not that family', async () => {
+    const token = await aTablet();
+    await anInquiry({ childName: 'Yusuf Ismail', email: 'secret@example.org', phone: '5559999', message: 'private note' });
+
+    // THE ROW, not just the page. The guard is the narrowed `select` — the same reasoning
+    // `studentColumnsFor` gives for returning columns rather than filtering after the read: what is
+    // never read cannot be logged on the way through, and a renderer that starts printing one more
+    // field is a one-line change. Asserting only the HTML would pass with the whole row in memory.
+    const rows = form.kioskInquiries();
+    expect(rows).toHaveLength(1);
+    expect(Object.keys(rows[0]!).sort()).toEqual(['childName', 'id']);
+
+    const page = await http.inject({ method: 'GET', url: `/public/admission/kiosk?token=${token}` });
+    expect(page.body).toContain('Yusuf Ismail');
+    for (const leak of ['secret@example.org', '5559999', 'private note']) expect(page.body).not.toContain(leak);
+  });
+
+  it('does not offer a child who has been admitted or declined', async () => {
+    const token = await aTablet();
+    const gone = await anInquiry({ childName: 'Already Declined', email: 'a@example.org' });
+    await caller('admin').admissions.transition({ id: gone, to: 'declined' });
+    const page = await http.inject({ method: 'GET', url: `/public/admission/kiosk?token=${token}` });
+    expect(page.body).not.toContain('Already Declined');
+  });
+
+  it('stores a submission against the family the tablet chose', async () => {
+    const token = await aTablet();
+    const id = await anInquiry();
+    const res = await http.inject({ method: 'POST', url: '/public/admission/kiosk', remoteAddress: freshPeer(), payload: { token, inquiry: id, childName: 'Yusuf Ismail', guardianPhone: '5551111' } });
+    expect(res.statusCode).toBe(200);
+    const row = app.dbmod.db.select().from(inquiries).where(eq(inquiries.id, id)).get()!;
+    expect(row.submittedPayload).toMatchObject({ guardianPhone: '5551111' });
+    // Still a proposal — a tablet proposes exactly like a link does.
+    expect(app.dbmod.db.select().from(students).all()).toHaveLength(0);
+  });
+
+  it('stops working the moment the office ends it', async () => {
+    const token = await aTablet();
+    const devices = await caller('admin').admissions.kioskList();
+    expect(devices.devices).toHaveLength(1);
+    await caller('admin').admissions.kioskRevoke({ id: devices.devices[0]!.id });
+
+    const page = await http.inject({ method: 'GET', url: `/public/admission/kiosk?token=${token}` });
+    expect(page.body).toContain('not signed in');
+    const id = await anInquiry();
+    const res = await http.inject({ method: 'POST', url: '/public/admission/kiosk', remoteAddress: freshPeer(), payload: { token, inquiry: id, childName: 'Yusuf Ismail' } });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('carries no session — the token is the whole of what the device holds', async () => {
+    const token = await aTablet();
+    const page = await http.inject({ method: 'GET', url: `/public/admission/kiosk?token=${token}` });
+    // Handing a parent a tablet holding an admin session would put the whole directory one
+    // back-button away. Nothing here sets a cookie.
+    expect(page.headers['set-cookie']).toBeUndefined();
+    expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'");
   });
 });

@@ -46,7 +46,15 @@ import { canTransition, inquiryById, reorderWaitlist, transitionInquiry, Transit
 import { INQUIRY_CAPS, storeInquiry } from '../admissions/inquiry';
 import { ADMISSIONS_TEXT_DEFAULTS, ADMISSIONS_TEXT_KEYS } from '../admissions/text';
 import { conversionPreview, convertInquiry } from '../admissions/convert';
-import { admissionFormFields, admissionPatch, admissionProposal, mintAdmissionLink } from '../admissions/admissionForm';
+import {
+  admissionFormFields,
+  admissionPatch,
+  admissionProposal,
+  kioskDevices,
+  mintAdmissionLink,
+  mintKioskToken,
+  revokeKiosk,
+} from '../admissions/admissionForm';
 import { resolveEnrollmentFee } from '../admissions/fees';
 import { isIsoDay } from '../settings/dates';
 import {
@@ -396,6 +404,33 @@ export const admissionsRouter = router({
     return { ok: true as const, token: link.token, url: link.url };
   }),
 
+  // ── Tablet mode ───────────────────────────────────────────────────────────
+
+  /**
+   * Start tablet mode on a device: mint the token an admin opens on it.
+   *
+   * The URL is handed back ONCE, like every other token this app mints. What makes this one different
+   * from a family's link is that it names no family — see `admissionForm.ts`'s tablet-mode header for
+   * why a device gets a token of its own rather than an admin session.
+   */
+  kioskStart: adminProcedure.mutation(({ ctx }) => {
+    if (!getAdmissions().kiosk) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Turn on tablet mode in Settings → Admissions first.' });
+    }
+    const r = mintKioskToken(ctx.user?.id ?? null);
+    audit(auditActor(ctx), 'admission.kioskStart', { entity: 'admissionLink', entityId: r.id, detail: {} });
+    return { ok: true as const, token: r.token, url: r.url, id: r.id };
+  }),
+
+  /** Which tablets are signed in — so an office can see one they forgot and end it. */
+  kioskList: adminProcedure.query(() => ({ devices: kioskDevices() })),
+
+  kioskRevoke: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    revokeKiosk(input.id);
+    audit(auditActor(ctx), 'admission.kioskRevoke', { entity: 'admissionLink', entityId: input.id, detail: {} });
+    return { ok: true as const };
+  }),
+
   /** The form as it was asked, beside what came back — what the office reviews before admitting. */
   admissionProposal: adminProcedure.input(z.object({ id: ID })).query(({ input }) => {
     const p = admissionProposal(input.id);
@@ -544,6 +579,8 @@ export const admissionsRouter = router({
         minSeconds: z.number().int().min(0).max(60).optional(),
         ackEmail: z.boolean().optional(),
         requiredAdmissionFields: z.array(z.string().trim().max(40)).max(40).optional(),
+        kiosk: z.boolean().optional(),
+        kioskRemote: z.boolean().optional(),
       }),
     )
     .mutation(({ ctx, input }) => {

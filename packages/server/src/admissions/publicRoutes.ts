@@ -57,13 +57,23 @@ import { esc } from '../billing/statements';
 import { alertStaff } from '../alerts';
 import { sendInquiryAck } from '../mail/notify';
 import { DailyCeiling, SubmitLimiter } from '../security/rateLimit';
-import { rateLimitKey } from '../security/origin';
+import { classifyOrigin, rateLimitKey } from '../security/origin';
 import { config } from '../config';
 import { getAccentColor, getAdmissions, getSchoolLogo, getSchoolName, getSetting, parseLogoDataUri, setSetting } from '../settings';
 import { INQUIRY_CAPS, storeInquiry } from './inquiry';
 import { admissionsTextHtml, admissionsTextPlain } from './text';
 import { READMISSION_CAPS, READMISSION_FIELDS, readmissionByToken, submitReadmission } from './readmission';
-import { ADMISSION_CAPS, admissionByToken, submitAdmission, type AdmissionLookup } from './admissionForm';
+import {
+  ADMISSION_CAPS,
+  admissionByToken,
+  kioskByToken,
+  kioskForm,
+  kioskInquiries,
+  submitAdmission,
+  submitAdmissionFromKiosk,
+  type AdmissionField,
+  type AdmissionLookup,
+} from './admissionForm';
 
 /** Ids and outcome words only — never a name, an address or a body (§14). */
 const log = makeLog('admissions');
@@ -333,6 +343,7 @@ const PAGE_STYLE = `
     .hint { font-size: 0.85rem; color: var(--ink-muted); }
     .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
     button.ghost { color: var(--accent); background: transparent; border: 1px solid currentColor; }
+    .pick { display: block; padding: 0.8rem 0.9rem; margin-block-end: 0.5rem; border: 1px solid var(--field-line); border-radius: 10px; color: var(--ink); text-decoration: none; font-weight: 600; }
     .done { display: none; }
   `;
 
@@ -427,6 +438,11 @@ const ADMISSION_BODY = z
   .catchall(z.union([z.string().max(ADMISSION_CAPS.longtext * 2), z.boolean()]))
   .refine((o) => Object.keys(o).length <= 60, { message: 'too many fields' });
 
+const KIOSK_BODY = z
+  .object({ token: z.string().min(1).max(200), inquiry: z.string().min(1).max(64) })
+  .catchall(z.union([z.string().max(ADMISSION_CAPS.longtext * 2), z.boolean()]))
+  .refine((o) => Object.keys(o).length <= 60, { message: 'too many fields' });
+
 const READMISSION_BODY = z.object({
   token: z.string().min(1).max(200),
   returning: z.boolean(),
@@ -446,6 +462,34 @@ const READMISSION_BODY = z.object({
  * escaped on the way into the attribute, like every other document this app assembles.
  */
 const ADMISSION_POST_PATH = `${config.basePath}/public/admission`;
+
+/**
+ * The form's boxes, from the field list.
+ *
+ * ONE renderer for both doors — the family's link and the tablet. Two would be two places for the
+ * medical select to become a checkbox, or for a cap to be forgotten, and the whole point of the
+ * field list is that neither door has an opinion of its own about what the form asks.
+ */
+function admissionBoxes(fields: AdmissionField[]): string {
+  return fields
+    .map((f) => {
+      const id = `a_${f.key}`;
+      const req = f.required ? ' <span class="opt">(required)</span>' : '';
+      const label = `<label for="${id}">${esc(f.label)}${req}</label>`;
+      if (f.kind === 'flag') {
+        // A flag is a real three-state in the registry — yes, no, and "nobody has asked yet" — so it
+        // is a select rather than a checkbox. An unticked checkbox and a question nobody answered are
+        // the same bytes, and for a medical consent that difference is the whole point.
+        return `${label}<select id="${id}" name="${f.key}"><option value="">—</option><option value="1">Yes</option><option value="0">No</option></select>`;
+      }
+      if (f.kind === 'longtext') {
+        return `${label}<textarea id="${id}" name="${f.key}" maxlength="${ADMISSION_CAPS.longtext}">${esc(f.prefill)}</textarea>`;
+      }
+      const type = f.kind === 'date' ? 'date' : 'text';
+      return `${label}<input id="${id}" name="${f.key}" type="${type}" maxlength="${ADMISSION_CAPS[f.kind]}" value="${esc(f.prefill)}">`;
+    })
+    .join('\n');
+}
 
 /**
  * THE ADMISSION FORM, server-rendered like every other family-facing page here (0.52.0-dev.12).
@@ -475,24 +519,7 @@ function renderAdmissionPage(found: AdmissionLookup, token: string): string {
     return page(school, style, `<h1>${school}</h1><div class="box"><p>${esc(says[found.reason] ?? says.unknown)}</p></div>`);
   }
 
-  const boxes = found.fields
-    .map((f) => {
-      const id = `a_${f.key}`;
-      const req = f.required ? ' <span class="opt">(required)</span>' : '';
-      const label = `<label for="${id}">${esc(f.label)}${req}</label>`;
-      if (f.kind === 'flag') {
-        // A flag is a real three-state in the registry — yes, no, and "nobody has asked yet" — so it
-        // is a select rather than a checkbox. An unticked checkbox and a question nobody answered are
-        // the same bytes, and for a medical consent that difference is the whole point.
-        return `${label}<select id="${id}" name="${f.key}"><option value="">—</option><option value="1">Yes</option><option value="0">No</option></select>`;
-      }
-      if (f.kind === 'longtext') {
-        return `${label}<textarea id="${id}" name="${f.key}" maxlength="${ADMISSION_CAPS.longtext}">${esc(f.prefill)}</textarea>`;
-      }
-      const type = f.kind === 'date' ? 'date' : 'text';
-      return `${label}<input id="${id}" name="${f.key}" type="${type}" maxlength="${ADMISSION_CAPS[f.kind]}" value="${esc(f.prefill)}">`;
-    })
-    .join('\n');
+  const boxes = admissionBoxes(found.fields);
 
   const body = `<p>Please complete this form for <b>${esc(found.inquiry.childName)}</b>.</p>
       <form id="frm" novalidate>
@@ -523,6 +550,76 @@ function renderAdmissionPage(found: AdmissionLookup, token: string): string {
     })();`;
 
   return page(school, style, `<h1>${school}</h1><div class="box">${body}${done}</div>`, script);
+}
+
+const KIOSK_PATH = `${config.basePath}/public/admission/kiosk`;
+
+/** Shared chrome for the three tablet screens. */
+function kioskShell(inner: string, script = ''): string {
+  const school = esc(getSchoolName());
+  return page(school, PAGE_STYLE.replace('__ACCENT__', esc(getAccentColor())), `<h1>${school}</h1><div class="box">${inner}</div>`, script);
+}
+
+/** The tablet's session has ended, or nobody started one. Says so plainly — whoever is looking at
+ *  this is staff, standing beside the device. */
+function renderKioskGone(): string {
+  return kioskShell('<p>This tablet is not signed in. Someone in the office needs to start tablet mode again.</p>');
+}
+
+/**
+ * WHO IS THIS FORM FOR? — the picker, and the reason tablet mode exists at all.
+ *
+ * Hasan: "there should be an option to select which student the admission form is for because I
+ * wanted to pre-fill the fields from the inquiry form." Names and ids only; `kioskInquiries` will
+ * not hand this page an email, a phone number or anything a family wrote, because whoever is holding
+ * the tablet is not necessarily the family whose turn it is.
+ */
+function renderKioskPicker(token: string): string {
+  const rows = kioskInquiries();
+  const list = rows.length
+    ? rows
+        .map(
+          (r) =>
+            `<p><a class="pick" href="${esc(KIOSK_PATH)}?token=${encodeURIComponent(token)}&amp;inquiry=${encodeURIComponent(r.id)}">${esc(r.childName)}</a></p>`,
+        )
+        .join('\n')
+    : '<p class="hint">There is nobody waiting on an admission form. The office adds a family first.</p>';
+  return kioskShell(`<p>Please choose your child’s name.</p>${list}`);
+}
+
+/** The form itself, once a family has been chosen. Same fields, same rules, same renderer shape as
+ *  the family's own link — only the door differed. */
+function renderKioskForm(chosen: { inquiry: { id: string; childName: string }; fields: AdmissionField[] }, token: string): string {
+  const boxes = admissionBoxes(chosen.fields);
+  const body = `<p>Please complete this form for <b>${esc(chosen.inquiry.childName)}</b>.</p>
+      <form id="frm" novalidate>
+        ${boxes}
+        <input type="hidden" name="token" value="${esc(token)}">
+        <input type="hidden" name="inquiry" value="${esc(chosen.inquiry.id)}">
+        <button type="submit" id="btn">Send to the office</button>
+      </form>
+      <p class="hint">The office checks this before anything is added to their records.</p>`;
+  // Returns to the picker so the tablet is ready for the next family without anybody touching it.
+  const done = `<div class="done" id="done"><p>Thank you. Please hand the tablet back to the office.</p>
+      <p><a class="pick" href="${esc(KIOSK_PATH)}?token=${esc(token)}">Start again</a></p></div>`;
+  const script = `
+    (function () {
+      var f = document.getElementById('frm'), b = document.getElementById('btn'), d = document.getElementById('done');
+      f.addEventListener('submit', function (e) {
+        e.preventDefault();
+        b.disabled = true;
+        var data = {};
+        new FormData(f).forEach(function (v, k) { data[k] = String(v); });
+        fetch(${jsonInScript(KIOSK_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+          .then(function (r) { return r.json(); })
+          .then(function (r) {
+            if (r && r.ok) { f.style.display = 'none'; d.style.display = 'block'; }
+            else { b.disabled = false; if (r && r.reason === 'incomplete') { alert('Please fill in everything marked required.'); } }
+          })
+          .catch(function () { b.disabled = false; });
+      });
+    })();`;
+  return kioskShell(`${body}${done}`, script);
 }
 
 function renderReadmissionPage(found: ReturnType<typeof readmissionByToken>, token: string): string {
@@ -684,6 +781,46 @@ f.src=${jsonInScript(src)};f.loading='lazy';f.title='Admissions inquiry';f.style
     // NOTHING THE FAMILY TYPED REACHES THIS LINE — not a name, not a field key, and above all not an
     // allergy (§14). The outcome word and nothing else.
     log.info('admission', { ok: res.ok, reason: res.reason ?? null });
+    return reply.code(res.ok ? 200 : 409).header('cache-control', 'no-store').send({ ok: res.ok, reason: res.reason ?? null });
+  });
+
+  /**
+   * TABLET MODE — the picker, and the form once a family is chosen.
+   *
+   * THE ORIGIN CHECK IS THE FIRST THING IN BOTH HANDLERS, before the token is even looked at, and it
+   * is written out here rather than inherited because there are no Fastify hooks in this repo (§14).
+   * `classifyOrigin` is the same function the tRPC middleware consults, so tablet mode cannot drift
+   * from the origin policy the rest of the app enforces.
+   */
+  function kioskBlocked(req: FastifyRequest, reply: FastifyReply): FastifyReply | null {
+    const cfg = getAdmissions();
+    if (!cfg.publicForm || !cfg.kiosk) return off(reply);
+    // LAN-only unless an office opted in. `cf-ray` short-circuits before the client IP is examined,
+    // so a tablet on masjid Wi-Fi that opened the bookmarked PUBLIC url is `tunnel` and is refused —
+    // correctly, and the Settings copy says to use the LAN address.
+    if (!cfg.kioskRemote && classifyOrigin(req) === 'tunnel') return off(reply);
+    return null;
+  }
+
+  app.get('/public/admission/kiosk', async (req: FastifyRequest, reply: FastifyReply) => {
+    const blocked = kioskBlocked(req, reply);
+    if (blocked) return blocked;
+    const q = (req.query ?? {}) as { token?: string; inquiry?: string };
+    const token = String(q.token ?? '');
+    if (!kioskByToken(token).ok) return sendPage(reply, renderKioskGone(), "'none'");
+    const chosen = q.inquiry ? kioskForm(String(q.inquiry)) : null;
+    return sendPage(reply, chosen ? renderKioskForm(chosen, token) : renderKioskPicker(token), "'none'");
+  });
+
+  app.post('/public/admission/kiosk', { bodyLimit: BODY_LIMIT }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const blocked = kioskBlocked(req, reply);
+    if (blocked) return blocked;
+    const parsed = KIOSK_BODY.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ ok: false, reason: 'invalid' });
+    if (!inquiryLimiter.allow(rateLimitKey(req))) return reply.code(429).send({ ok: false, reason: 'rate' });
+    const { token, inquiry, ...fields } = parsed.data;
+    const res = submitAdmissionFromKiosk(token, inquiry, fields, { actor: { userId: null, role: 'public', name: 'Admission form (tablet)' } });
+    log.info('admission', { via: 'kiosk', ok: res.ok, reason: res.reason ?? null });
     return reply.code(res.ok ? 200 : 409).header('cache-control', 'no-store').send({ ok: res.ok, reason: res.reason ?? null });
   });
 

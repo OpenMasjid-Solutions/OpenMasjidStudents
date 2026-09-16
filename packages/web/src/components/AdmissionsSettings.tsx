@@ -29,8 +29,13 @@ export function AdmissionsSettings() {
   const q = trpc.admissions.settingsGet.useQuery();
   const save = trpc.admissions.settingsSet.useMutation();
   const saveText = trpc.admissions.textSet.useMutation();
+  const startKiosk = trpc.admissions.kioskStart.useMutation();
+  const revoke = trpc.admissions.kioskRevoke.useMutation();
+  const devices = trpc.admissions.kioskList.useQuery();
 
   const [origin, setOrigin] = useState('');
+  /** Shown once, like every other token this app mints — it is stored hashed. */
+  const [kioskLink, setKioskLink] = useState('');
   const [wording, setWording] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
@@ -54,6 +59,28 @@ export function AdmissionsSettings() {
     } catch (e) {
       setErr((e as Error).message);
     }
+  }
+
+  /** Anything that mutates then refreshes the device list, so the panel is never stale after an end. */
+  async function run(fn: () => Promise<unknown>) {
+    setErr('');
+    setMsg('');
+    try {
+      await fn();
+      await utils.admissions.kioskList.invalidate();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  async function openKiosk() {
+    await run(async () => {
+      const r = await startKiosk.mutateAsync();
+      // The URL when the platform has told us our own address, the raw token otherwise — an office
+      // with Remote access off still has a LAN address to type, and the token is the half that
+      // matters. Same fallback as the re-admission link box.
+      setKioskLink(r.url || r.token);
+    });
   }
 
   async function addOrigin() {
@@ -173,6 +200,65 @@ export function AdmissionsSettings() {
               </button>
             </div>
           </div>
+        )}
+      </section>
+
+      {/* ── TABLET MODE ───────────────────────────────────────────────────────────────────────
+          LAN-only by default and the copy says why, because an office that turns on remote access
+          should know what it is giving up rather than discovering it later. */}
+      <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+        <div className="section-head">
+          <h2>{t('settings.admissionsKioskTitle')}</h2>
+        </div>
+        <p className="hint">{t('settings.admissionsKioskHint')}</p>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBlockEnd: '0.9rem', cursor: 'pointer' }}>
+          <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={cfg.kiosk} disabled={save.isPending} onChange={() => void apply({ kiosk: !cfg.kiosk })} />
+          <span>
+            {t('settings.admissionsKiosk')}
+            <br />
+            <span className="hint">{t('settings.admissionsKioskNote')}</span>
+          </span>
+        </label>
+        {cfg.kiosk && (
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBlockEnd: '0.9rem', cursor: 'pointer' }}>
+            <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={cfg.kioskRemote} disabled={save.isPending} onChange={() => void apply({ kioskRemote: !cfg.kioskRemote })} />
+            <span>
+              {t('settings.admissionsKioskRemote')}
+              <br />
+              <span className="hint">{t('settings.admissionsKioskRemoteNote')}</span>
+            </span>
+          </label>
+        )}
+        {cfg.kiosk && (
+          <>
+            <button type="button" className="btn btn--ghost btn--sm" disabled={startKiosk.isPending} onClick={() => void openKiosk()}>
+              {t('settings.admissionsKioskStart')}
+            </button>
+            {kioskLink && (
+              <>
+                <div className="inline-form" style={{ alignItems: 'center', marginBlockStart: '0.7rem' }}>
+                  <input className="input glass-inset" readOnly value={kioskLink} style={{ flex: '2 1 20rem' }} />
+                  <button type="button" className="btn btn--ghost btn--sm" onClick={() => void navigator.clipboard?.writeText(kioskLink)}>
+                    <Copy size={13} /> {t('common.copy')}
+                  </button>
+                </div>
+                <p className="hint">{t('settings.admissionsKioskOpenHint')}</p>
+              </>
+            )}
+            {(devices.data?.devices.length ?? 0) > 0 && (
+              <ul className="data-list" style={{ marginBlockStart: '0.8rem' }}>
+                {devices.data!.devices.map((d) => (
+                  <li key={d.id}>
+                    <span>{t('settings.admissionsKioskDevice')}</span>
+                    <span className="spacer" />
+                    <button type="button" className="btn btn--ghost btn--sm" disabled={revoke.isPending} onClick={() => void run(() => revoke.mutateAsync({ id: d.id }))}>
+                      {t('settings.admissionsKioskEnd')}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </section>
 
