@@ -32,6 +32,8 @@ import { db } from '../db';
 import { feePlans, inquiries, inquiryEvents, readmissions, schoolYears, schools, type InquiryState } from '../db/schema';
 import { audit } from '../audit';
 import { AUDIENCE } from '../structure/audience';
+import { alertStaff } from '../alerts';
+import { isSchoolRestricted, visibleSchoolIds } from '../schools';
 import {
   READMISSION_FIELDS,
   approveReadmission,
@@ -79,9 +81,55 @@ const REASON = z.string().trim().max(500);
 /** The states an office normally wants to see together, and the order they are worked in. */
 const OPEN_STATES: InquiryState[] = ['new', 'waitlisted', 'admission'];
 
-function requireInquiry(id: string) {
+/**
+ * ADMISSIONS ARE SCOPED TO THE SCHOOLS A STAFF ACCOUNT MAY SEE (0.52.0-dev.16).
+ *
+ * Hasan asked how a masjid running two programs handles this: "admission sometimes is done by the
+ * school itself, not just a global admission thing… someone at the global level would select who
+ * manages this… it would notify the person in charge of that specific school, and then they would
+ * get the inquiry and work on it."
+ *
+ * That is exactly the shape `user_schools` already has (§9): **no rows means all schools**, so an
+ * unrestricted admin is the "global level" and a restricted one is the school's own person. Nothing
+ * new was needed to express it — what was missing is that admissions ignored it entirely, so every
+ * admin saw every inquiry whatever their restriction said.
+ *
+ * The rule, and the one asymmetry in it:
+ *
+ * - A **restricted** account sees inquiries for ITS schools, and never an unassigned one. An
+ *   inquiry nobody has routed yet is the global level's to route: showing it to one school would
+ *   invite two schools to work the same family, and hiding it from them is what makes "assign it"
+ *   a real handover rather than a label.
+ * - An **unrestricted** account sees everything, including the unassigned, which is what makes it
+ *   possible for anybody to do the routing at all.
+ *
+ * A school restriction NARROWS A VIEW AND NEVER WIDENS A ROLE (§9) — role is checked first by
+ * `adminProcedure`, this second.
+ */
+function scopeIds(ctx: { session?: { userId?: string | null } | null }): string[] | null {
+  const userId = ctx.session?.userId ?? null;
+  return isSchoolRestricted(userId) ? visibleSchoolIds(userId) : null;
+}
+
+/** The `where` that limits a list to what this account may see, or undefined when unrestricted. */
+function scopeWhere(ctx: { session?: { userId?: string | null } | null }) {
+  const ids = scopeIds(ctx);
+  // `inArray` with an empty list matches nothing, which is the correct answer for an account
+  // restricted to schools that have all since been deleted — and the safe direction besides.
+  return ids ? inArray(inquiries.schoolId, ids) : undefined;
+}
+
+function requireInquiry(id: string, ctx?: { session?: { userId?: string | null } | null }) {
   const row = inquiryById(id);
   if (!row) throw new TRPCError({ code: 'NOT_FOUND', message: 'That inquiry no longer exists.' });
+  if (ctx) {
+    const ids = scopeIds(ctx);
+    // NOT_FOUND rather than FORBIDDEN: telling a restricted account that an inquiry exists but
+    // belongs to another school is itself a fact about another school's roster.
+    if (ids && (row.schoolId === null || !ids.includes(row.schoolId))) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'That inquiry no longer exists.' });
+    }
+  }
   return row;
 }
 
@@ -102,9 +150,11 @@ export const admissionsRouter = router({
         })
         .default({ state: 'open', limit: 100 }),
     )
-    .query(({ input }) => {
-      const where =
+    .query(({ ctx, input }) => {
+      const byState =
         input.state === 'open' ? inArray(inquiries.state, OPEN_STATES) : eq(inquiries.state, input.state as InquiryState);
+      const scope = scopeWhere(ctx);
+      const where = scope ? and(byState, scope) : byState;
       const rows = db
         .select()
         .from(inquiries)
@@ -115,11 +165,10 @@ export const admissionsRouter = router({
         .limit(input.limit)
         .all();
 
-      const counts = db
-        .select({ state: inquiries.state, n: sql<number>`count(*)` })
-        .from(inquiries)
-        .groupBy(inquiries.state)
-        .all();
+      // The counts are scoped too. A school's own person seeing "12 waiting" when nine of them are
+      // the other program's is a number that makes them do the wrong thing.
+      const countQuery = db.select({ state: inquiries.state, n: sql<number>`count(*)` }).from(inquiries);
+      const counts = (scope ? countQuery.where(scope) : countQuery).groupBy(inquiries.state).all();
 
       return {
         rows,
@@ -133,8 +182,8 @@ export const admissionsRouter = router({
 
   /** One inquiry with its whole trail — who moved it, when, and why (the product surface §9 records
    *  this table as existing for, since nothing in this app reads `audit_log`). */
-  get: adminProcedure.input(z.object({ id: ID })).query(({ input }) => {
-    const inquiry = requireInquiry(input.id);
+  get: adminProcedure.input(z.object({ id: ID })).query(({ ctx, input }) => {
+    const inquiry = requireInquiry(input.id, ctx);
     const events = db.select().from(inquiryEvents).where(eq(inquiryEvents.inquiryId, input.id)).orderBy(desc(inquiryEvents.createdAt)).all();
     const school = inquiry.schoolId ? db.select({ id: schools.id, name: schools.name }).from(schools).where(eq(schools.id, inquiry.schoolId)).get() : null;
     const year = inquiry.schoolYearId
@@ -153,7 +202,7 @@ export const admissionsRouter = router({
   transition: adminProcedure
     .input(z.object({ id: ID, to: z.enum(OFFICE_STATES), reason: REASON.optional(), waitlistReason: REASON.optional() }))
     .mutation(({ ctx, input }) => {
-      requireInquiry(input.id);
+      requireInquiry(input.id, ctx);
       try {
         const row = transitionInquiry({
           inquiryId: input.id,
@@ -178,7 +227,7 @@ export const admissionsRouter = router({
   assign: adminProcedure
     .input(z.object({ id: ID, schoolId: ID.nullable().optional(), schoolYearId: ID.nullable().optional() }))
     .mutation(({ ctx, input }) => {
-      requireInquiry(input.id);
+      const before = requireInquiry(input.id, ctx);
       const patch: Record<string, unknown> = { updatedAt: new Date() };
       if (input.schoolId !== undefined) {
         if (input.schoolId && !db.select({ id: schools.id }).from(schools).where(eq(schools.id, input.schoolId)).get()) {
@@ -194,6 +243,23 @@ export const admissionsRouter = router({
       }
       db.update(inquiries).set(patch).where(eq(inquiries.id, input.id)).run();
       audit(auditActor(ctx), 'inquiry.assign', { entity: 'inquiry', entityId: input.id, detail: { keys: Object.keys(input).filter((k) => k !== 'id') } });
+
+      // HANDING IT OVER IS AN EVENT, so it raises one. Assigning a school is what makes an inquiry
+      // that school's to work — without a notice the handover is a silent change to a row, and the
+      // people who now own it have no reason to look. Raised only when the school actually CHANGED,
+      // or re-saving the same form would chase somebody every time.
+      if (input.schoolId && input.schoolId !== before.schoolId) {
+        const school = db.select({ name: schools.name }).from(schools).where(eq(schools.id, input.schoolId)).get();
+        void alertStaff('admissions-inquiry', {
+          title: 'An admissions inquiry was assigned',
+          // Our own email, to addresses an admin typed: a name here has always been allowed, and
+          // without it nobody knows which family to open.
+          text: `${before.childName} — this inquiry is now ${school?.name ?? 'another school'}’s to work. Open Admissions to read it.`,
+          // A third-party sink names nobody (§14) — not the child, and not which program they asked
+          // about, which for a two-program masjid is a fact about a family.
+          publicText: '1 admissions inquiry was assigned.',
+        });
+      }
       return { ok: true as const };
     }),
 
@@ -227,7 +293,7 @@ export const admissionsRouter = router({
    * at nothing, redeemable by whoever still has the URL.
    */
   remove: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
-    const row = requireInquiry(input.id);
+    const row = requireInquiry(input.id, ctx);
     if (row.state === 'admitted') {
       throw new TRPCError({
         code: 'BAD_REQUEST',
@@ -391,7 +457,7 @@ export const admissionsRouter = router({
    * replaces the proposal rather than making a second one.
    */
   admissionStart: adminProcedure.input(z.object({ id: ID, reason: REASON.optional() })).mutation(({ ctx, input }) => {
-    const row = requireInquiry(input.id);
+    const row = requireInquiry(input.id, ctx);
     const actor = { ...auditActor(ctx), name: recordingActor(ctx).name };
     if (row.state !== 'admission') {
       if (!canTransition(row.state, 'admission')) {
@@ -399,7 +465,7 @@ export const admissionsRouter = router({
       }
       transitionInquiry({ inquiryId: input.id, to: 'admission', reason: input.reason ?? null, actor });
     }
-    const link = mintAdmissionLink(input.id, ctx.user?.id ?? null);
+    const link = mintAdmissionLink(input.id, ctx.session?.userId ?? null);
     audit(auditActor(ctx), 'admission.link', { entity: 'inquiry', entityId: input.id, detail: {} });
     return { ok: true as const, token: link.token, url: link.url };
   }),
@@ -417,7 +483,12 @@ export const admissionsRouter = router({
     if (!getAdmissions().kiosk) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'Turn on tablet mode in Settings → Admissions first.' });
     }
-    const r = mintKioskToken(ctx.user?.id ?? null);
+    // The LAN address this admin reached us by — see `mintKioskToken`. `x-forwarded-proto` is only
+    // trusted the way `security/origin.ts` already trusts it, and the fallback is plain http because
+    // a masjid LAN without the platform's TLS proxy is the ordinary case.
+    const host = String(ctx.req.headers['x-forwarded-host'] ?? ctx.req.headers.host ?? '').split(',')[0]!.trim();
+    const proto = String(ctx.req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || (ctx.https ? 'https' : 'http');
+    const r = mintKioskToken(ctx.session?.userId ?? null, host ? `${proto}://${host}${config.basePath}` : '');
     audit(auditActor(ctx), 'admission.kioskStart', { entity: 'admissionLink', entityId: r.id, detail: {} });
     return { ok: true as const, token: r.token, url: r.url, id: r.id };
   }),

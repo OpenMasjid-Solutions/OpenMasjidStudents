@@ -23,6 +23,10 @@
 > **dev.14:** the embeddable widget rebuilt to render INTO the host page (it injected an iframe
 > before, which is why it never blended), the CORS allowlist that makes its cross-origin POST
 > possible, and per-field required marking on both forms.
+> **dev.16:** admissions scoped to `user_schools` (a restricted admin is a school's own person, an
+> unrestricted one is the global level that routes); the joining-fee and ask-the-families steps
+> folded into the EXISTING rollover rather than a second button; landscape; the attribution line;
+> and the tablet's link built from the LAN address it is actually reachable at.
 > **dev.15:** opening a year for re-admission moved into Structure's **Start a new year** flow,
 > where it sits after naming the year and setting what it costs to join — the order an office does
 > it in. The board in Admissions still tracks who has answered; it no longer opens.

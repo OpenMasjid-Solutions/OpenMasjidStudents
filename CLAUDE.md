@@ -578,6 +578,27 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > disagreeing with billing about what day it is would be exactly the §20 defect ("two places
 > disagreeing about the same rule"). If it is ever fixed it is fixed once, for the whole app.
 >
+> **ADMISSIONS FOLLOW THE SCHOOL FROM 0.52.0-dev.16**, which is Hasan's answer to "how are we going
+> to handle admissions to multiple schools… someone at the global level would select who manages
+> this… it would notify the person in charge of that specific school". `user_schools` already said
+> it — **no rows means all schools** (§9) — so an unrestricted admin IS the global level and a
+> restricted one is the school's own person; what was missing is that admissions ignored the
+> restriction entirely. Now: a restricted account sees only its schools' inquiries **and never an
+> unassigned one** (routing is the global level's job, and showing an unrouted family to one school
+> invites two schools to work it), the counts are scoped with the list, every per-inquiry procedure
+> re-checks, and the refusal is **NOT_FOUND rather than FORBIDDEN** because telling a school that an
+> inquiry exists elsewhere is itself a fact about another school's roster. Assigning one raises the
+> `admissions-inquiry` alert so the handover is an event rather than a silent change to a row.
+>
+> **A bug this found, in the code that shipped in dev.12 and dev.13:** the router read `ctx.user?.id`,
+> which does not exist — the context carries `ctx.session.userId`. It typechecked and was silently
+> null, so every admission and kiosk link recorded no creator. The scoping tests are what caught it.
+>
+> **The tablet's link is the LAN address, not the tunnel one** (dev.16, Hasan). Tablet mode refuses
+> the tunnel by default, so `portalBase()` would have handed an office a link guaranteed not to open
+> on the device it was for. It is built from the host the minting admin reached us by — which, for an
+> `adminProcedure`, is the LAN address by §12.4.
+>
 > **STARTING A YEAR IS ONE FLOW FROM 0.52.0-dev.15**, on Hasan's instruction ("I want the readmission
 > stuff to move to when starting a new year… there should be a prompt asking for how much the
 > admission fee is this time around"). Opening a year, setting what it costs to join, and asking

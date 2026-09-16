@@ -19,7 +19,7 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { freshApp, makeCtx } from './harness';
-import { admissionLinks, auditLog, charges, families, feePlans, guardianFamilies, guardians, inquiries, inquiryEvents, settings, studentFees, students } from '../src/db/schema';
+import { admissionLinks, auditLog, charges, families, feePlans, guardianFamilies, guardians, inquiries, inquiryEvents, settings, studentFees, students, users, userSchools } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
@@ -27,6 +27,7 @@ let form: typeof import('../src/admissions/admissionForm');
 let fields: typeof import('../src/people/fields');
 let settingsMod: typeof import('../src/settings');
 let routes: typeof import('../src/admissions/publicRoutes');
+let schoolsMod: typeof import('../src/schools');
 let http: FastifyInstance;
 
 const caller = (role: Role, origin: 'lan' | 'tunnel' = 'lan') =>
@@ -38,6 +39,7 @@ beforeAll(async () => {
   fields = await import('../src/people/fields');
   settingsMod = await import('../src/settings');
   routes = await import('../src/admissions/publicRoutes');
+  schoolsMod = await import('../src/schools');
   http = Fastify();
   routes.registerPublicInquiryRoutes(http as never);
   await http.ready();
@@ -48,7 +50,7 @@ beforeEach(() => {
   // FK order, child-first — the same list admissionsConvert.test.ts keeps, plus the links this file
   // mints. Deleting a parent row before its children is a FOREIGN KEY error in `beforeEach`, which
   // fails every test in the file for a reason that has nothing to do with any of them.
-  for (const t of [admissionLinks, inquiryEvents, inquiries, charges, studentFees, students, guardianFamilies, guardians, families, feePlans, auditLog]) {
+  for (const t of [admissionLinks, inquiryEvents, inquiries, charges, studentFees, students, guardianFamilies, guardians, families, feePlans, userSchools, auditLog]) {
     db.delete(t).run();
   }
   for (const key of ['admissions', 'student_fields']) db.delete(settings).where(eq(settings.key, key)).run();
@@ -442,5 +444,109 @@ describe('tablet mode', () => {
     // back-button away. Nothing here sets a cookie.
     expect(page.headers['set-cookie']).toBeUndefined();
     expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+  });
+});
+
+describe('two schools, and who works whose inquiries', () => {
+  /**
+   * Hasan's question: "how are we going to handle admissions to multiple schools? … someone at the
+   * global level would select who manages this… it would notify the person in charge of that
+   * specific school."
+   *
+   * `user_schools` already says it — NO ROWS MEANS ALL SCHOOLS — so an unrestricted account is the
+   * global level and a restricted one is the school's own person. What was missing is that
+   * admissions ignored it, and every admin saw every inquiry whatever their restriction said.
+   */
+  let maktab: string;
+  let hifz: string;
+  /** Schools are not deleted between tests (years and rosters point at them), so each pair is new. */
+  let schoolN = 0;
+
+  /**
+   * An admin restricted to one school — the school's own person.
+   *
+   * The `users` row is real because `user_schools` has a foreign key to it: a restriction that could
+   * be written for an account that does not exist would be a restriction nobody could ever lift.
+   */
+  const forSchool = (schoolId: string) => {
+    const userId = `usr_${schoolId}`;
+    const { db } = app.dbmod;
+    if (!db.select().from(users).where(eq(users.id, userId)).get()) {
+      db.insert(users)
+        .values({ id: userId, username: userId, passwordHash: 'x', role: 'admin', status: 'active', mustChangePassword: false, createdAt: new Date(), updatedAt: new Date() })
+        .run();
+    }
+    schoolsMod.setUserSchools(userId, [schoolId]);
+    return app.appRouter.createCaller(
+      makeCtx({ origin: 'lan', session: { role: 'admin', source: 'local', username: userId, userId } }).ctx,
+    );
+  };
+
+  beforeEach(async () => {
+    const admin = caller('admin');
+    schoolN += 1;
+    maktab = (await admin.structure.schoolCreate({ name: `Weekend maktab ${schoolN}` })).id;
+    hifz = (await admin.structure.schoolCreate({ name: `Hifz school ${schoolN}` })).id;
+  });
+
+  it('shows a school’s own person only their school’s inquiries', async () => {
+    const admin = caller('admin');
+    const a = await anInquiry({ childName: 'Maktab Child', email: 'a@example.org' });
+    const b = await anInquiry({ childName: 'Hifz Child', email: 'b@example.org' });
+    await admin.admissions.assign({ id: a, schoolId: maktab });
+    await admin.admissions.assign({ id: b, schoolId: hifz });
+
+    const seen = await forSchool(maktab).admissions.list({ state: 'open', limit: 100 });
+    expect(seen.rows.map((r) => r.childName)).toEqual(['Maktab Child']);
+    // The counts are scoped too: "2 waiting" when one of them is the other program's is a number
+    // that makes somebody do the wrong thing.
+    expect(seen.counts.new ?? 0).toBe(1);
+  });
+
+  it('hides an UNASSIGNED inquiry from a school — routing is the global level’s job', async () => {
+    const unrouted = await anInquiry({ childName: 'Not Routed Yet', email: 'c@example.org' });
+    const seen = await forSchool(maktab).admissions.list({ state: 'open', limit: 100 });
+    expect(seen.rows.map((r) => r.childName)).not.toContain('Not Routed Yet');
+    // …and the global level does see it, or nobody could ever route it.
+    const global = await caller('admin').admissions.list({ state: 'open', limit: 100 });
+    expect(global.rows.map((r) => r.id)).toContain(unrouted);
+  });
+
+  it('refuses to OPEN an unassigned inquiry too, not just hide it from the list', async () => {
+    const unrouted = await anInquiry({ childName: 'Not Routed Yet', email: 'c@example.org' });
+    // The list hides it because SQL's `IN` never matches NULL — which is correct and is NOT the
+    // guard. `requireInquiry` is, and without this test the null half of it is unproven: a school
+    // holding the id could still open a family nobody had handed them.
+    await expect(forSchool(maktab).admissions.get({ id: unrouted })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('refuses to open another school’s inquiry, and says NOT FOUND rather than forbidden', async () => {
+    const admin = caller('admin');
+    const b = await anInquiry({ childName: 'Hifz Child', email: 'b@example.org' });
+    await admin.admissions.assign({ id: b, schoolId: hifz });
+    // Telling a restricted account that an inquiry EXISTS but belongs elsewhere is itself a fact
+    // about another school's roster.
+    await expect(forSchool(maktab).admissions.get({ id: b })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('refuses to MOVE or delete another school’s inquiry', async () => {
+    const admin = caller('admin');
+    const b = await anInquiry({ childName: 'Hifz Child', email: 'b@example.org' });
+    await admin.admissions.assign({ id: b, schoolId: hifz });
+    const other = forSchool(maktab);
+    // A read wall that is not a write wall is not a wall.
+    await expect(other.admissions.transition({ id: b, to: 'declined' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(other.admissions.remove({ id: b })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(other.admissions.admissionStart({ id: b })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('an unrestricted admin still sees and works everything', async () => {
+    const admin = caller('admin');
+    const a = await anInquiry({ childName: 'Maktab Child', email: 'a@example.org' });
+    await admin.admissions.assign({ id: a, schoolId: maktab });
+    // The positive control: without it every assertion above passes against a list that is empty
+    // for everybody.
+    const got = await admin.admissions.get({ id: a });
+    expect(got.inquiry.childName).toBe('Maktab Child');
   });
 });

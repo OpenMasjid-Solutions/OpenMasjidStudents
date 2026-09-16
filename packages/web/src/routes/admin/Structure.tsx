@@ -19,13 +19,12 @@
 import { lazy, Suspense, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { ArrowRightLeft, CalendarPlus, CalendarRange, Layers, Pencil, Plus, School, UserPlus } from 'lucide-react';
+import { ArrowRightLeft, CalendarRange, Layers, Pencil, Plus, School, UserPlus } from 'lucide-react';
 import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { MONTH_NAMES, schoolYearSpan } from '../../lib/months';
 import { parseCents } from '../../lib/money';
 import { useWindows } from '../../components/Windows';
-import { StartYear } from '../../components/StartYear';
 import { SchoolTabs, useRequiredSchool } from '../../components/SchoolTabs';
 import { ClassEnrol } from '../../components/ClassEnrol';
 
@@ -79,23 +78,6 @@ export function Structure() {
 
   const yearCreate = trpc.structure.schoolYearCreate.useMutation();
 
-  function openStartYear() {
-    open({
-      title: t('startYear.open'),
-      wide: true,
-      dedupeKey: 'start-year',
-      icon: <CalendarPlus size={15} />,
-      node: (
-        <StartYear
-          schoolId={schoolId}
-          onDone={() => {
-            void refreshYears();
-            closeByKey('start-year');
-          }}
-        />
-      ),
-    });
-  }
   const yearUpdate = trpc.structure.schoolYearUpdate.useMutation();
   const yearSetCurrent = trpc.structure.schoolYearSetCurrent.useMutation();
   const yearArchive = trpc.structure.schoolYearArchive.useMutation();
@@ -552,14 +534,12 @@ export function Structure() {
           </form>
         )}
 
-        {/* STARTING A YEAR IS A FLOW, NOT A FORM (0.52.0-dev.15). Opening the year, saying what it
-            costs to join and asking the families were three procedures on three screens, and an
-            office had to know to visit all three in order. The failure was silent: the year opens,
-            nobody is asked, and the first anybody notices is September with no roster. */}
-        <button type="button" className="btn btn--primary" onClick={() => openStartYear()}>
-          <CalendarPlus size={15} /> {t('startYear.open')}
-        </button>
-        <p className="hint">{t('startYear.openHint')}</p>
+        {/* ONE BUTTON, and it is the one in the panel header (0.52.0-dev.16). dev.15 added a second
+            "Start a new year" down here beside the existing rollover — two buttons with the same
+            words, one of which did less. Hasan: "why make a whole new button that doesn't even do
+            its job properly?" The fee prompt and the ask-the-families step moved INTO the rollover,
+            which is where an office already starts a year. */}
+        <p className="hint">{t('rollover.startHint')}</p>
       </section>
 
       {/* ── Terms (optional) ───────────────────────────────────────────────── */}

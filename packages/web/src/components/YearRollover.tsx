@@ -29,7 +29,7 @@ import { monthName } from '../lib/months';
 type Plan = RouterOutputs['structure']['yearRolloverPlan'];
 type Destination = Plan['classes'][number]['suggested'];
 
-const STEPS = ['classes', 'leavers', 'fees', 'owing', 'confirm'] as const;
+const STEPS = ['classes', 'leavers', 'fees', 'joining', 'owing', 'confirm'] as const;
 type Step = (typeof STEPS)[number];
 
 /** A destination as one dropdown value, so the select needs no parallel state. */
@@ -42,6 +42,21 @@ export function YearRollover({ schoolId, onDone }: { schoolId?: string; onDone?:
   const utils = trpc.useUtils();
   const plan = trpc.structure.yearRolloverPlan.useQuery({ schoolId });
   const commit = trpc.structure.yearRolloverCommit.useMutation();
+  const yearUpdate = trpc.structure.schoolYearUpdate.useMutation();
+  const openRows = trpc.admissions.readmissionOpen.useMutation();
+  const years = trpc.structure.schoolYearList.useQuery({ schoolId });
+  const display = trpc.settings.display.useQuery();
+
+  /** The most recent year that named a joining fee — the answer to "still the same as last time?". */
+  const lastJoining = useMemo(() => {
+    const withFees = (years.data ?? []).filter((y) => y.admissionFeeCents != null || y.readmissionFeeCents != null);
+    const last = withFees[0];
+    return {
+      admission: last?.admissionFeeCents != null ? String(last.admissionFeeCents / 100) : '',
+      readmission: last?.readmissionFeeCents != null ? String(last.readmissionFeeCents / 100) : '',
+    };
+  }, [years.data]);
+
   const currency = trpc.billing.currency.useQuery().data?.currency ?? 'usd';
 
   const [step, setStep] = useState<Step>('classes');
@@ -56,6 +71,23 @@ export function YearRollover({ schoolId, onDone }: { schoolId?: string; onDone?:
   const [leaving, setLeaving] = useState<Record<string, boolean>>({});
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [withTerms, setWithTerms] = useState(true);
+  /**
+   * WHAT IT COSTS TO JOIN THE NEW YEAR, and whether to ask the families (0.52.0-dev.16).
+   *
+   * Hasan asked for both here rather than on a screen of their own: "once you go to start a new
+   * year, that button, you know, it's going to ask for the readmission stuff and whatnot… and there
+   * should be a prompt asking for how much the admission fee is this time around."
+   *
+   * Pre-filled from the most recent year that named a fee, because a madrasah's joining fee is the
+   * same most years and changes occasionally — so the useful question is "still the same?" rather
+   * than "what is it?". BLANK MEANS NO FEE, which is what most madāris charge.
+   */
+  const [joining, setJoining] = useState<{ admission: string; readmission: string } | null>(null);
+  const [askFamilies, setAskFamilies] = useState(true);
+  const [asked, setAsked] = useState<{ created: number; existing: number } | null>(null);
+
+  /** Filled in once, the first time the step is reached — after that it is the office's to edit. */
+  const joiningEff = joining ?? lastJoining;
 
   const d = plan.data;
   const yearEff = year ?? {
@@ -113,6 +145,20 @@ export function YearRollover({ schoolId, onDone }: { schoolId?: string; onDone?:
         planAmounts: Object.fromEntries(changedPlans.map((p) => [p.id, p.cents])),
         termsToCreate: withTerms ? (d?.termNames ?? []) : [],
       });
+      // THE JOINING FEES AND THE RE-ADMISSION LIST GO ON THE YEAR THE ROLLOVER JUST MADE, after the
+      // commit rather than inside it — `yearRolloverCommit` is the one writer of a rollover (§16),
+      // and teaching it about admissions would make it the writer of two unrelated things. Both are
+      // idempotent on their own, so a failure here leaves a correct rollover with a fee to set by
+      // hand rather than a half-applied year.
+      await yearUpdate.mutateAsync({
+        id: r.yearId,
+        admissionFeeCents: joiningEff.admission.trim() ? (parseCents(joiningEff.admission) ?? null) : null,
+        readmissionFeeCents: joiningEff.readmission.trim() ? (parseCents(joiningEff.readmission) ?? null) : null,
+      });
+      if (askFamilies) {
+        const o = await openRows.mutateAsync({ schoolYearId: r.yearId, target: { kind: 'all' } });
+        setAsked({ created: o.created, existing: o.existing });
+      }
       setDone(r);
       // Everything on screen is downstream of the year, the roster or the fees.
       await Promise.all([
@@ -124,6 +170,7 @@ export function YearRollover({ schoolId, onDone }: { schoolId?: string; onDone?:
         utils.billing.feePlanList.invalidate(),
         utils.billing.invoiceLabelConfig.invalidate(),
         utils.billing.billFromMonths.invalidate(),
+        utils.admissions.readmissionBoard.invalidate(),
       ]);
     } catch (e) {
       setErr((e as Error).message);
@@ -143,6 +190,7 @@ export function YearRollover({ schoolId, onDone }: { schoolId?: string; onDone?:
           <li>{t('rollover.doneWithdrawn', { count: done.withdrawn })}</li>
           <li>{t('rollover.donePlans', { count: done.plansChanged })}</li>
           <li>{t('rollover.doneTerms', { count: done.termsCreated })}</li>
+        <li>{asked ? t('rollover.doneAsked', { created: asked.created, existing: asked.existing }) : t('rollover.doneNotAsked')}</li>
         </ul>
         <p className="hint">{t('rollover.doneOwing')}</p>
         {onDone && <button type="button" className="btn btn--primary" onClick={onDone} style={{ marginBlockStart: '0.75rem' }}>{t('common.close')}</button>}
@@ -353,6 +401,46 @@ export function YearRollover({ schoolId, onDone }: { schoolId?: string; onDone?:
         </section>
       )}
 
+      {step === 'joining' && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head"><h2>{t('rollover.joiningTitle')}</h2></div>
+          <p className="hint" style={{ marginBlockEnd: '0.75rem' }}>{t('rollover.joiningHint')}</p>
+          <div className="inline-form">
+            <div className="field" style={{ flex: '1 1 12rem' }}>
+              <label className="label" htmlFor="ro-adm">{t('rollover.admissionFee')}</label>
+              <input
+                id="ro-adm"
+                className="input glass-inset"
+                inputMode="decimal"
+                placeholder={t('rollover.noFee')}
+                value={joiningEff.admission}
+                onChange={(e) => setJoining({ ...joiningEff, admission: e.target.value })}
+              />
+            </div>
+            <div className="field" style={{ flex: '1 1 12rem' }}>
+              <label className="label" htmlFor="ro-readm">{t('rollover.readmissionFee')}</label>
+              <input
+                id="ro-readm"
+                className="input glass-inset"
+                inputMode="decimal"
+                placeholder={t('rollover.noFee')}
+                value={joiningEff.readmission}
+                onChange={(e) => setJoining({ ...joiningEff, readmission: e.target.value })}
+              />
+            </div>
+          </div>
+          <p className="hint">{t('rollover.joiningBlank')}</p>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBlockStart: '0.9rem', cursor: 'pointer' }}>
+            <input type="checkbox" style={{ marginBlockStart: '0.2rem' }} checked={askFamilies} onChange={(e) => setAskFamilies(e.target.checked)} />
+            <span>
+              {t('rollover.askFamilies')}
+              <br />
+              <span className="hint">{t('rollover.askFamiliesHint')}</span>
+            </span>
+          </label>
+        </section>
+      )}
+
       {step === 'owing' && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
           <div className="section-head"><h2>{t('rollover.owingTitle')}</h2></div>
@@ -390,6 +478,15 @@ export function YearRollover({ schoolId, onDone }: { schoolId?: string; onDone?:
             <li>{t('rollover.sumGraduating', { count: graduating.length })}</li>
             <li>{t('rollover.sumWithdrawing', { count: withdrawIds.length })}</li>
             <li>{t('rollover.sumPlans', { count: changedPlans.length })}</li>
+            <li>
+              {joiningEff.admission.trim() || joiningEff.readmission.trim()
+                ? t('rollover.sumJoining', {
+                    admission: joiningEff.admission.trim() ? formatMoney(parseCents(joiningEff.admission) ?? 0, display.data?.currency ?? 'usd') : t('rollover.noFee'),
+                    readmission: joiningEff.readmission.trim() ? formatMoney(parseCents(joiningEff.readmission) ?? 0, display.data?.currency ?? 'usd') : t('rollover.noFee'),
+                  })
+                : t('rollover.sumNoJoining')}
+            </li>
+            <li>{askFamilies ? t('rollover.sumAsk') : t('rollover.sumNoAsk')}</li>
             {d.termNames.length > 0 && (
               <li>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>

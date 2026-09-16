@@ -64,9 +64,15 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   instead of starting a second one.
 
   Asking the families you **already** have now lives where you actually do it: **Structure → Start a
-  new year**. That one button opens the year, asks what it costs to join — carried over from last
-  year so you change it or leave it — and then offers to put every returning child on the list.
-  Withdrawn children are never asked, and you can skip that last step if you are only planning ahead. Each family gets a one-time link showing what you hold for them, already filled in;
+  new year**, the same button that rolls your classes forward. It gained two steps — what it costs
+  to join this year, carried over from last year so you change it or leave it, and a tick to put
+  every returning child on the list. Withdrawn children are never asked, and you can untick it if
+  you are only planning ahead.
+
+  **If you run more than one school, admissions now follow it.** An inquiry can be handed to the
+  school that will deal with it, and staff limited to that school see their own inquiries and no
+  others — including the counts. An inquiry nobody has handed over yet stays with whoever can see
+  every school, since routing it is their job, and assigning one tells the office it has arrived. Each family gets a one-time link showing what you hold for them, already filled in;
   they correct what has changed and say yes or no. You see **exactly what they changed, before and
   after**, and approve it field by field — nothing they send is written until you have looked at it.
   The screen says who has answered and who has not, which during re-enrollment fortnight is the job.
@@ -109,6 +115,13 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **The forms work on a tablet held sideways.** Everything was laid out for a phone held upright, so
+  a tablet in landscape got one narrow column down the middle with the Send button below the fold.
+  Wide screens now put the questions side by side.
+- **Every form says Jazakumullahu khairan** rather than "Thank you", and carries a small line saying
+  it is managed with OpenMasjid Students.
+- **Signing a tablet in gives the address on your own network**, not the public one — it only works
+  on your network, so the public address was a link guaranteed not to open.
 - **"Saved" now looks like an answer.** The green confirmation style used by seven screens — the
   admissions settings, admitting a child, re-admissions, a household's details, a student's record,
   a family's record and the parent portal's payment screen — had no styling behind it at all, so

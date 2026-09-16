@@ -414,8 +414,21 @@ export interface KioskDevice {
   createdByUserId: string | null;
 }
 
-/** Start tablet mode on a device: mint the token an admin then opens on it. */
-export function mintKioskToken(createdByUserId: string | null, at = new Date()): { token: string; url: string; id: string } {
+/**
+ * Start tablet mode on a device: mint the token an admin then opens on it.
+ *
+ * **THE URL IS BUILT FROM THE ADDRESS THE ADMIN IS USING, not from the public one** (0.52.0-dev.16,
+ * Hasan: "if the tablet is local-only, it should give the local-only URL, not with the CF domain").
+ * Every other link this app mints is for somebody who is somewhere else, so `portalBase()` — the
+ * Cloudflare address — is right for them. A tablet is in the building, and tablet mode refuses the
+ * tunnel by default, so handing an office the public URL would hand them a link that is guaranteed
+ * not to work on the device it is for.
+ *
+ * The admin minting it is on the LAN (this is an `adminProcedure`, §12.4), so the host they reached
+ * us by IS the LAN address — which is both the correct answer and the only one we can know, since
+ * nothing tells this container its own network address.
+ */
+export function mintKioskToken(createdByUserId: string | null, base?: string, at = new Date()): { token: string; url: string; id: string } {
   const { token, tokenHash } = mintToken();
   const id = rid('adl');
   db.insert(admissionLinks)
@@ -430,8 +443,8 @@ export function mintKioskToken(createdByUserId: string | null, at = new Date()):
       expiresAt: new Date(at.getTime() + KIOSK_TTL_MS),
     })
     .run();
-  const base = portalBase();
-  return { token, id, url: base ? `${base}/public/admission/kiosk?token=${token}` : '', };
+  const root = (base ?? '').replace(/\/+$/, '');
+  return { token, id, url: root ? `${root}/public/admission/kiosk?token=${token}` : '' };
 }
 
 /** Every tablet currently signed in, so Settings can show them and end one. */

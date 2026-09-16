@@ -61,7 +61,7 @@ export type AdmissionsTextKey = (typeof ADMISSIONS_TEXT_KEYS)[number];
 export const ADMISSIONS_TEXT_DEFAULTS: Record<AdmissionsTextKey, string> = {
   intro: 'Tell us about your child and the office at [school] will be in touch.',
   closed: '[school] is not taking admissions inquiries at the moment. Please contact the office.',
-  thanks: 'Thank you. The office at [school] will be in touch.',
+  thanks: 'Jazakumullahu khairan. The office at [school] will be in touch.',
   ackEmail:
     'Assalamu alaikum,\n\nWe have received your admissions inquiry for [school]. The office will be in touch.\n\nThere is nothing you need to do now.',
   privacy: 'This goes to the [school] office only.',

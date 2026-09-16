@@ -353,6 +353,22 @@ function inquiryBoxes(): InquiryBox[] {
  * `test/publicInquiry.test.ts` holds the rule: the dark block may declare nothing but custom
  * properties, and no rule outside the token blocks may name a color literal.
  *
+ * ── LANDSCAPE ───────────────────────────────────────────────────────────────
+ *
+ * A tablet on its side is about 1024px wide and 700 tall, and a single 34rem column down the middle
+ * of it wastes the screen and puts the button below the fold — which, on a device somebody is
+ * holding out to you, is the difference between a form that gets finished and one that gets handed
+ * back. Past 60rem the fields sit two-up.
+ *
+ * Keyed on WIDTH rather than `orientation`, deliberately: a phone in landscape is ~850px and
+ * genuinely wants one column, and `orientation: landscape` cannot tell the two apart.
+ *
+ * The grid targets a per-field WRAPPER (`.f`) rather than the label and the box as siblings — as
+ * siblings they land in two different columns, and every label ends up above somebody else's answer.
+ * A textarea carries `.wide` and keeps the full width. `.f > label:first-child` drops the label's
+ * own top margin because the wrapper supplies the spacing, so a grid row does not start with an
+ * indent the column beside it does not have.
+ *
  * A LABEL USES `--ink`, NOT `--ink-muted`. It is read at a glance while typing, and grey labels were
  * the other half of what made the first version unreadable. `--ink-muted` is for the small print
  * under the button, which is read once or never.
@@ -390,6 +406,13 @@ const PAGE_STYLE = `
     * { box-sizing: border-box; }
     body { margin: 0; padding: 1.25rem; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--page); }
     .wrap { max-width: 34rem; margin: 0 auto; }
+    @media (min-width: 60rem) {
+      .wrap { max-width: 56rem; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 1.1rem; align-items: start; }
+      .grid > .wide { grid-column: 1 / -1; }
+    }
+    .f > label:first-child { margin-block-start: 0; }
+    .f { margin-block-start: 0.85rem; }
     .logo { max-height: 56px; max-width: 60%; display: block; margin-block-end: 0.75rem; }
     h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
     p { margin: 0 0 0.75rem; }
@@ -405,12 +428,25 @@ const PAGE_STYLE = `
     .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
     button.ghost { color: var(--accent); background: transparent; border: 1px solid currentColor; }
     .pick { display: block; padding: 0.8rem 0.9rem; margin-block-end: 0.5rem; border: 1px solid var(--field-line); border-radius: 10px; color: var(--ink); text-decoration: none; font-weight: 600; }
+    .attrib { margin-block-start: 1.25rem; font-size: 0.75rem; color: var(--ink-muted); text-align: center; }
     .done { display: none; }
   `;
 
 /** The document both pages are poured into. Nothing external: no font, no stylesheet, no image that
  *  is not a data URI — partly because the CSP says so, and partly because this is the one page a
  *  masjid embeds in a site we know nothing about. It has to be impossible to blame. */
+/**
+ * THE ATTRIBUTION LINE, on every page this app serves to a family.
+ *
+ * Hasan asked for it and asked that it not say "powered": "at the end of any embed's or forms and
+ * stuff, if you could write Powered by OpenMasjidStudents or any other wording besides 'Powered'".
+ *
+ * Plain text, no link. A masjid's admissions form is not a place to send a family somewhere else,
+ * and a link would be the one outbound reference on a page whose CSP is `default-src 'none'`
+ * precisely so there are none.
+ */
+const ATTRIBUTION = 'Managed with OpenMasjid Students';
+
 function page(school: string, style: string, inner: string, script = ''): string {
   return `<!doctype html>
 <html lang="en"><head>
@@ -422,6 +458,7 @@ function page(school: string, style: string, inner: string, script = ''): string
 </head><body><div class="wrap">
 ${logoTag()}
 ${inner}
+<p class="attrib">${ATTRIBUTION}</p>
 </div>${script ? `<script>${script}</script>` : ''}</body></html>`;
 }
 
@@ -435,14 +472,14 @@ function renderPage(opts: { open: boolean; token: string }): string {
         const input = f.multiline
           ? `<textarea id="${id}" name="${f.name}" maxlength="${f.cap}"></textarea>`
           : `<input id="${id}" name="${f.name}" type="${f.type}" maxlength="${f.cap}"${f.required ? ' required' : ''}>`;
-        return `<label for="${id}">${esc(f.label)}</label>${input}`;
+        return `<div class="f${f.multiline ? ' wide' : ''}"><label for="${id}">${esc(f.label)}</label>${input}</div>`;
       }).join('\n')
     : '';
 
   const body = opts.open
     ? `${admissionsTextHtml('intro')}
       <form id="frm" novalidate>
-        ${fields}
+        <div class="grid">${fields}</div>
         <div class="hp" aria-hidden="true"><label for="f_website">Website</label><input id="f_website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
         <input type="hidden" name="t" value="${esc(opts.token)}">
         <button type="submit" id="btn">Send</button>
@@ -537,17 +574,18 @@ function admissionBoxes(fields: AdmissionField[]): string {
       const id = `a_${f.key}`;
       const req = f.required ? ' <span class="opt">(required)</span>' : '';
       const label = `<label for="${id}">${esc(f.label)}${req}</label>`;
+      const wrap = (inner: string) => `<div class="f${f.kind === 'longtext' ? ' wide' : ''}">${label}${inner}</div>`;
       if (f.kind === 'flag') {
         // A flag is a real three-state in the registry — yes, no, and "nobody has asked yet" — so it
         // is a select rather than a checkbox. An unticked checkbox and a question nobody answered are
         // the same bytes, and for a medical consent that difference is the whole point.
-        return `${label}<select id="${id}" name="${f.key}"><option value="">—</option><option value="1">Yes</option><option value="0">No</option></select>`;
+        return wrap(`<select id="${id}" name="${f.key}"><option value="">—</option><option value="1">Yes</option><option value="0">No</option></select>`);
       }
       if (f.kind === 'longtext') {
-        return `${label}<textarea id="${id}" name="${f.key}" maxlength="${ADMISSION_CAPS.longtext}">${esc(f.prefill)}</textarea>`;
+        return wrap(`<textarea id="${id}" name="${f.key}" maxlength="${ADMISSION_CAPS.longtext}">${esc(f.prefill)}</textarea>`);
       }
       const type = f.kind === 'date' ? 'date' : 'text';
-      return `${label}<input id="${id}" name="${f.key}" type="${type}" maxlength="${ADMISSION_CAPS[f.kind]}" value="${esc(f.prefill)}">`;
+      return wrap(`<input id="${id}" name="${f.key}" type="${type}" maxlength="${ADMISSION_CAPS[f.kind]}" value="${esc(f.prefill)}">`);
     })
     .join('\n');
 }
@@ -574,8 +612,8 @@ function renderAdmissionPage(found: AdmissionLookup, token: string): string {
     const says: Record<string, string> = {
       unknown: 'We could not find that link. Please ask the office for a new one.',
       expired: 'That link has expired. Please ask the office for a new one.',
-      used: 'That form has already been sent — thank you.',
-      closed: 'The office has already dealt with this one. Thank you.',
+      used: 'That form has already been sent — jazakumullahu khairan.',
+      closed: 'The office has already dealt with this one. Jazakumullahu khairan.',
     };
     return page(school, style, `<h1>${school}</h1><div class="box"><p>${esc(says[found.reason] ?? says.unknown)}</p></div>`);
   }
@@ -584,13 +622,13 @@ function renderAdmissionPage(found: AdmissionLookup, token: string): string {
 
   const body = `<p>Please complete this form for <b>${esc(found.inquiry.childName)}</b>.</p>
       <form id="frm" novalidate>
-        ${boxes}
+        <div class="grid">${boxes}</div>
         <input type="hidden" name="token" value="${esc(token)}">
         <button type="submit" id="btn">Send to the office</button>
       </form>
       <p class="hint">The office checks this before anything is added to their records.</p>`;
 
-  const done = `<div class="done" id="done"><p>Thank you — we have your form. The office will be in touch.</p></div>`;
+  const done = `<div class="done" id="done"><p>Jazakumullahu khairan — we have your form. The office will be in touch.</p></div>`;
 
   const script = `
     (function () {
@@ -654,14 +692,14 @@ function renderKioskForm(chosen: { inquiry: { id: string; childName: string }; f
   const boxes = admissionBoxes(chosen.fields);
   const body = `<p>Please complete this form for <b>${esc(chosen.inquiry.childName)}</b>.</p>
       <form id="frm" novalidate>
-        ${boxes}
+        <div class="grid">${boxes}</div>
         <input type="hidden" name="token" value="${esc(token)}">
         <input type="hidden" name="inquiry" value="${esc(chosen.inquiry.id)}">
         <button type="submit" id="btn">Send to the office</button>
       </form>
       <p class="hint">The office checks this before anything is added to their records.</p>`;
   // Returns to the picker so the tablet is ready for the next family without anybody touching it.
-  const done = `<div class="done" id="done"><p>Thank you. Please hand the tablet back to the office.</p>
+  const done = `<div class="done" id="done"><p>Jazakumullahu khairan. Please hand the tablet back to the office.</p>
       <p><a class="pick" href="${esc(KIOSK_PATH)}?token=${esc(token)}">Start again</a></p></div>`;
   const script = `
     (function () {
@@ -692,8 +730,8 @@ function renderReadmissionPage(found: ReturnType<typeof readmissionByToken>, tok
     const says: Record<string, string> = {
       unknown: 'We could not find that link. Please ask the office for a new one.',
       expired: 'That link has expired. Please ask the office for a new one.',
-      used: 'That form has already been sent — thank you. There is nothing more to do.',
-      closed: 'The office has already dealt with this one. Thank you.',
+      used: 'That form has already been sent — jazakumullahu khairan. There is nothing more to do.',
+      closed: 'The office has already dealt with this one. Jazakumullahu khairan.',
     };
     return page(school, style, `<h1>${school}</h1><div class="box"><p>${esc(says[found.reason] ?? says.unknown)}</p></div>`);
   }
@@ -701,19 +739,19 @@ function renderReadmissionPage(found: ReturnType<typeof readmissionByToken>, tok
   const c = found.current;
   const boxes = READMISSION_BOXES.map((b) => {
     const id = `r_${b.name}`;
-    return `<label for="${id}">${esc(b.label)}</label><input id="${id}" name="${b.name}" type="text" maxlength="${READMISSION_CAPS[b.name]}" value="${esc(c[b.name])}">`;
+    return `<div class="f"><label for="${id}">${esc(b.label)}</label><input id="${id}" name="${b.name}" type="text" maxlength="${READMISSION_CAPS[b.name]}" value="${esc(c[b.name])}"></div>`;
   }).join('\n');
 
   const body = `<p>Assalamu alaikum. Please check that what we hold for <b>${esc(c.fullName)}</b> is still right, change anything that is not, and tell us whether they are coming back.</p>
       <form id="frm" novalidate>
-        ${boxes}
+        <div class="grid">${boxes}</div>
         <input type="hidden" name="token" value="${esc(token)}">
         <button type="submit" id="btn" data-returning="1">Yes — we are coming back</button>
         <button type="button" id="no" class="ghost">No — not returning this year</button>
       </form>
       <p class="hint">This goes to the madrasah office, who will check it before anything is changed.</p>`;
 
-  const done = `<div class="done" id="done"><p>Jazak Allah khayran — we have your answer. There is nothing more to do.</p></div>`;
+  const done = `<div class="done" id="done"><p>Jazakumullahu khairan — we have your answer. There is nothing more to do.</p></div>`;
 
   const script = `
     (function () {
