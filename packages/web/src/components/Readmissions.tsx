@@ -82,19 +82,10 @@ export function Readmissions() {
         </div>
         <p className="hint">{t('readmission.hint')}</p>
         <div className="inline-form" style={{ alignItems: 'center' }}>
-          <button
-            type="button"
-            className="btn btn--primary btn--sm"
-            disabled={openRows.isPending}
-            onClick={() =>
-              void run(async () => {
-                const r = await openRows.mutateAsync({ schoolYearId: effectiveYear, target: { kind: 'all' } });
-                setMsg(t('readmission.opened', { created: r.created, existing: r.existing }));
-              })
-            }
-          >
-            <Send size={14} /> {t('readmission.openAll')}
-          </button>
+          {/* OPENING a year moved into Structure's "Start a new year" flow (0.52.0-dev.15), where it
+              sits between naming the year and setting what it costs to join — which is the order an
+              office does it in. This board is where they live for the fortnight afterwards. */}
+          <span className="hint">{t('readmission.openedElsewhere')}</span>
           {msg && <span className="notice notice--ok" style={{ margin: 0 }}>{msg}</span>}
         </div>
         {err && <p className="form-error">{err}</p>}

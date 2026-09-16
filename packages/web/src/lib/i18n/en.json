@@ -248,7 +248,8 @@
     "field_guardianPhone": "Phone",
     "field_guardianEmail": "Email",
     "feeNote": "Approving raises this year’s re-enrollment fee: {{amount}}.",
-    "noFee": "none"
+    "noFee": "none",
+    "openedElsewhere": "Open a year for re-admission from Structure → Start a new year."
   },
   "students": {
     "title": "Students",
@@ -1679,5 +1680,30 @@
     "paidAhead": "paid ahead",
     "cardsPaused": "Card refunds aren’t available at the moment — the connection to your payments account is down. Cash and bank payments can still be reversed here, and card refunds will work again shortly.",
     "carryInHint": "A balance carried forward from before you used this app is not listed here — there is no money to send back. Correct it by re-running the go-live step."
+  },
+  "startYear": {
+    "open": "Start a new year",
+    "openHint": "Opens the year, asks what it costs to join, and offers to ask every family whether they are coming back.",
+    "step_year": "The year",
+    "step_fees": "What it costs",
+    "step_families": "The families",
+    "next": "Next",
+    "yearTitle": "Name the year",
+    "yearHint": "It becomes the current year, and next year’s invoices are filed under it.",
+    "feesTitle": "What it costs to join",
+    "feesHint": "Carried over from your last year so you can change it or leave it. This is charged once, when a child is admitted or when a returning family is approved.",
+    "admissionFee": "Admission fee (new children)",
+    "readmissionFee": "Re-admission fee (returning children)",
+    "noFee": "No fee",
+    "feesBlank": "Leave a box empty for no fee — which is what most madāris charge.",
+    "familiesTitle": "Ask the families",
+    "familiesHint": "Puts every child who is still with you on a list for this year. Nothing reaches a family until you send their link from the Admissions screen — withdrawn children are never asked.",
+    "familiesFee": "Approving a returning family will charge {{amount}}.",
+    "askAll": "Ask everyone",
+    "skip": "Not yet",
+    "doneTitle": "The year is open",
+    "doneAsked": "{{created}} added to the list, {{existing}} were already on it.",
+    "doneQuiet": "Nobody has been asked yet. You can do that any time from this screen.",
+    "doneNext": "Next: set your terms and classes below, then send the families their links from Admissions."
   }
 }

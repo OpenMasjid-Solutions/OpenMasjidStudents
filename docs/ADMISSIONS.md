@@ -23,6 +23,9 @@
 > **dev.14:** the embeddable widget rebuilt to render INTO the host page (it injected an iframe
 > before, which is why it never blended), the CORS allowlist that makes its cross-origin POST
 > possible, and per-field required marking on both forms.
+> **dev.15:** opening a year for re-admission moved into Structure's **Start a new year** flow,
+> where it sits after naming the year and setting what it costs to join — the order an office does
+> it in. The board in Admissions still tracks who has answered; it no longer opens.
 >
 > Two things this phase changed OUTSIDE admissions, both of which removed a copy rather than adding a
 > place: `createStudentRow` moved to **`people/create.ts`** (the one implementation of "create a

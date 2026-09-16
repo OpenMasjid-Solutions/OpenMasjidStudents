@@ -578,6 +578,19 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > disagreeing with billing about what day it is would be exactly the §20 defect ("two places
 > disagreeing about the same rule"). If it is ever fixed it is fixed once, for the whole app.
 >
+> **STARTING A YEAR IS ONE FLOW FROM 0.52.0-dev.15**, on Hasan's instruction ("I want the readmission
+> stuff to move to when starting a new year… there should be a prompt asking for how much the
+> admission fee is this time around"). Opening a year, setting what it costs to join, and asking
+> three hundred families whether they are returning were three procedures on three screens in two
+> sections, none of which mentioned the others — and the failure was SILENT: the year opens, nobody
+> is asked, and the first anybody notices is September with no roster. `StartYear.tsx` walks the
+> three in order and calls the same procedures it always did, because a wizard with its own write
+> path would be a second answer to what a school year is (§16). The fees are **pre-filled from the
+> most recent year that named one**, so the question is "still the same?" rather than "what is it?",
+> and **blank means no fee**, which is what most madāris charge. Asking the families is its own
+> press and is skippable — an office opening next year's calendar in March to plan terms must not
+> discover they have just started re-enrollment.
+>
 > **THE EMBEDDABLE WIDGET RENDERS INTO THE HOST PAGE FROM 0.52.0-dev.14**, on Hasan's brief ("make
 > it like the quickschools form where it blends in with the website perfectly"). It injected an
 > IFRAME before, which is why it never blended — a separate document with its own stylesheet is a

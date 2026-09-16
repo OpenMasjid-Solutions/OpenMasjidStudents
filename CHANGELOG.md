@@ -63,9 +63,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
   says so before you press it, so a younger brother or sister joins the household they belong to
   instead of starting a second one.
 
-  The same screen asks the families you **already** have whether they are coming back. Open
-  re-admission for a school year and every active student goes on a list — withdrawn children are
-  never asked. Each family gets a one-time link showing what you hold for them, already filled in;
+  Asking the families you **already** have now lives where you actually do it: **Structure → Start a
+  new year**. That one button opens the year, asks what it costs to join — carried over from last
+  year so you change it or leave it — and then offers to put every returning child on the list.
+  Withdrawn children are never asked, and you can skip that last step if you are only planning ahead. Each family gets a one-time link showing what you hold for them, already filled in;
   they correct what has changed and say yes or no. You see **exactly what they changed, before and
   after**, and approve it field by field — nothing they send is written until you have looked at it.
   The screen says who has answered and who has not, which during re-enrollment fortnight is the job.

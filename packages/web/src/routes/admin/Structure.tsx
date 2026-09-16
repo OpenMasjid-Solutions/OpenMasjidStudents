@@ -19,12 +19,13 @@
 import { lazy, Suspense, useState, type FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
-import { ArrowRightLeft, CalendarRange, Layers, Pencil, Plus, School, UserPlus } from 'lucide-react';
+import { ArrowRightLeft, CalendarPlus, CalendarRange, Layers, Pencil, Plus, School, UserPlus } from 'lucide-react';
 import { fadeRise, staggerContainer, staggerItem } from '../../lib/motion';
 import { trpc } from '../../lib/trpc';
 import { MONTH_NAMES, schoolYearSpan } from '../../lib/months';
 import { parseCents } from '../../lib/money';
 import { useWindows } from '../../components/Windows';
+import { StartYear } from '../../components/StartYear';
 import { SchoolTabs, useRequiredSchool } from '../../components/SchoolTabs';
 import { ClassEnrol } from '../../components/ClassEnrol';
 
@@ -48,7 +49,7 @@ interface YearEdit {
 export function Structure() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
-  const { open } = useWindows();
+  const { open, closeByKey } = useWindows();
 
   /** Starting a new year, in a window of its own — it is a five-step review, not a button. */
   const openRollover = () =>
@@ -77,6 +78,24 @@ export function Structure() {
   const tree = trpc.structure.courseTree.useQuery({ schoolId });
 
   const yearCreate = trpc.structure.schoolYearCreate.useMutation();
+
+  function openStartYear() {
+    open({
+      title: t('startYear.open'),
+      wide: true,
+      dedupeKey: 'start-year',
+      icon: <CalendarPlus size={15} />,
+      node: (
+        <StartYear
+          schoolId={schoolId}
+          onDone={() => {
+            void refreshYears();
+            closeByKey('start-year');
+          }}
+        />
+      ),
+    });
+  }
   const yearUpdate = trpc.structure.schoolYearUpdate.useMutation();
   const yearSetCurrent = trpc.structure.schoolYearSetCurrent.useMutation();
   const yearArchive = trpc.structure.schoolYearArchive.useMutation();
@@ -533,32 +552,14 @@ export function Structure() {
           </form>
         )}
 
-        <form className="inline-form glass-inset" onSubmit={addYear}>
-          <div className="field" style={{ minWidth: '12rem' }}>
-            <label className="label">{t('structure.yearName')}</label>
-            <input className="input glass-inset" value={newYear.label} onChange={(e) => setNewYear({ ...newYear, label: e.target.value })} placeholder={t('structure.yearPlaceholder')} />
-          </div>
-          <div className="field">
-            <label className="label">{t('structure.startsIn')}</label>
-            <input className="input glass-inset" type="number" min={2000} max={2200} style={{ width: '7rem' }} value={newYear.startYear} onChange={(e) => setNewYear({ ...newYear, startYear: e.target.value })} />
-          </div>
-          <div className="field">
-            <label className="label">{t('structure.from')}</label>
-            <select className="input glass-inset" value={newYear.startMonth} onChange={(e) => setNewYear({ ...newYear, startMonth: e.target.value })} required>
-              <option value="">{t('common.select')}</option>
-              {MONTH_NAMES.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label className="label">{t('structure.to')}</label>
-            <select className="input glass-inset" value={newYear.endMonth} onChange={(e) => setNewYear({ ...newYear, endMonth: e.target.value })} required>
-              <option value="">{t('common.select')}</option>
-              {MONTH_NAMES.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
-            </select>
-          </div>
-          <button type="submit" className="btn btn--primary" disabled={yearCreate.isPending || !newYear.label.trim() || !newYear.startMonth || !newYear.endMonth}>{t('structure.addYear')}</button>
-          <p className="hint">{t('structure.wrapHint')}</p>
-        </form>
+        {/* STARTING A YEAR IS A FLOW, NOT A FORM (0.52.0-dev.15). Opening the year, saying what it
+            costs to join and asking the families were three procedures on three screens, and an
+            office had to know to visit all three in order. The failure was silent: the year opens,
+            nobody is asked, and the first anybody notices is September with no roster. */}
+        <button type="button" className="btn btn--primary" onClick={() => openStartYear()}>
+          <CalendarPlus size={15} /> {t('startYear.open')}
+        </button>
+        <p className="hint">{t('startYear.openHint')}</p>
       </section>
 
       {/* ── Terms (optional) ───────────────────────────────────────────────── */}
