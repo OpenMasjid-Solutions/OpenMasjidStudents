@@ -34,6 +34,7 @@ import { rid } from '../db/ids';
 import { inquiries, type Inquiry } from '../db/schema';
 import { isIsoDay } from '../settings/dates';
 import { getAdmissions } from '../settings';
+import { listSchools } from '../schools';
 import { type AuditActor } from '../audit';
 import { recordArrival } from './transition';
 
@@ -74,6 +75,18 @@ export interface InquiryInput {
   email?: string | null;
   phone?: string | null;
   message?: string | null;
+}
+
+/**
+ * The one school this install has, or null when it has a choice to make.
+ *
+ * Deliberately returns null for TWO schools rather than picking the default one: with more than one
+ * program, which one a family is asking about is a real question with a wrong answer, and guessing
+ * it would route the inquiry to a school that then works a family who never asked for them.
+ */
+function soleSchoolId(): string | null {
+  const all = listSchools();
+  return all.length === 1 ? all[0]!.id : null;
 }
 
 const clean = (v: string | null | undefined, cap: number): string => (v ?? '').replace(/\s+/g, ' ').trim().slice(0, cap);
@@ -142,16 +155,27 @@ export type InquiryFieldKey = (typeof INQUIRY_FIELDS)[number]['key'];
 /**
  * The minimum that makes a row worth an office's attention.
  *
- * Two floors, and they are different things. The FIRST is structural and cannot be configured: a
- * child's name, somebody's name, and a way to reply. The SECOND is whatever else the office marked
- * required in Settings (0.52.0-dev.14).
+ * Two floors, and they are different things.
  *
- * **A submission below either is discarded with the SAME acknowledgement as one that was stored**
- * (§14). That is uncomfortable — a family who missed a box is never told — which is exactly why the
- * form marks required fields and checks them in the browser before it posts. The silence is the
- * no-enumeration rule; the marking is what stops it costing a real family a place.
+ * The FIRST is structural and cannot be configured: a child's name, somebody's name, and a way to
+ * reply. It applies to every door.
+ *
+ * The SECOND is whatever else the office marked required in Settings — **and it applies to the
+ * PUBLIC FORM ONLY** (corrected in 0.52.0-dev.17). Making it apply to the office's own manual entry
+ * was a real bug that broke a working install: those settings describe what a STRANGER must give a
+ * madrasah before it will look at them, and the office typing up a phone call is not a stranger.
+ * They may genuinely not have a date of birth yet, and the office's own form does not even render
+ * the boxes the public one does — so a madrasah that ticked "date of birth" on the website form
+ * found it could no longer add an inquiry by hand AT ALL, and was told its reason was a missing
+ * name it had in fact supplied.
+ *
+ * **A PUBLIC submission below either floor is discarded with the SAME acknowledgement as one that
+ * was stored** (§14). That is uncomfortable — a family who missed a box is never told — which is
+ * exactly why the form marks required fields and checks them in the browser before it posts, on
+ * BOTH the hosted page and the widget. The silence is the no-enumeration rule; the marking is what
+ * stops it costing a real family a place.
  */
-export function isSubmittable(n: NormalizedInquiry, required: readonly string[] = getAdmissions().requiredInquiryFields): boolean {
+export function isSubmittable(n: NormalizedInquiry, required: readonly string[] = []): boolean {
   if (!(n.childName.length > 0 && n.parentName.length > 0 && (n.email !== null || n.phone !== null))) return false;
   for (const key of required) {
     const v = (n as unknown as Record<string, unknown>)[key];
@@ -203,7 +227,9 @@ export function storeInquiry(
 ): StoreResult {
   const at = opts.at ?? new Date();
   const n = normalizeInquiry(input);
-  if (!isSubmittable(n)) return { outcome: 'incomplete' };
+  // The office's required list is the PUBLIC form's, not a rule about inquiries — see `isSubmittable`.
+  const required = opts.source === 'public' ? getAdmissions().requiredInquiryFields : [];
+  if (!isSubmittable(n, required)) return { outcome: 'incomplete' };
 
   const digest = dedupeDigest(n);
   const already = recentDuplicate(digest, at);
@@ -212,8 +238,13 @@ export function storeInquiry(
   const row = {
     id: rid('inq'),
     // NOT set from a public submission: a stranger choosing a school by id is the probe `asked_about`
-    // exists to prevent. The office assigns it while reviewing.
-    schoolId: opts.schoolId ?? null,
+    // exists to prevent. The office assigns it while reviewing — EXCEPT on a single-school install,
+    // where `defaultSchoolId()` answers it and there is nothing to choose (0.52.0-dev.17).
+    //
+    // That default is what keeps the school wall from biting a masjid that has no second school: an
+    // unassigned inquiry is visible only to an unrestricted admin (§5), so on a one-school install
+    // with a restricted admin every new inquiry was landing where nobody could see it.
+    schoolId: opts.schoolId ?? soleSchoolId(),
     schoolYearId: opts.schoolYearId ?? null,
     ...n,
     state: 'new' as const,

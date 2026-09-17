@@ -115,6 +115,19 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **Fixed: inquiries could not be added at all on some installs.** Two faults from the previous dev
+  build, which together stopped both the website form and adding one by hand. Marking a question
+  required on the **website** form was also being applied to the office typing an inquiry in — and
+  the office's own form does not have all those boxes, so it refused every attempt and blamed a
+  missing name that had been filled in. Separately, a staff account limited to one school added an
+  inquiry and watched it vanish: it saved correctly with no school attached, and an account limited
+  to a school does not see unattached ones. An inquiry now takes the school of whoever added it, and
+  a masjid with only one school attaches it automatically — so nothing lands where nobody can see it.
+- **The website form now tells a family which box they missed**, instead of thanking them and
+  quietly dropping it. That silence is deliberate on everything else the form refuses — it is what
+  stops the form being used to test whether a child is already known — but a family who left out a
+  question you marked required should simply be told.
+
 - **The forms work on a tablet held sideways.** Everything was laid out for a phone held upright, so
   a tablet in landscape got one narrow column down the middle with the Send button below the fold.
   Wide screens now put the questions side by side.

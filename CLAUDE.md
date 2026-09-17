@@ -590,6 +590,29 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > inquiry exists elsewhere is itself a fact about another school's roster. Assigning one raises the
 > `admissions-inquiry` alert so the handover is an event rather than a silent change to a row.
 >
+> **AND IT BROKE A WORKING INSTALL, WHICH IS RECORDED HERE RATHER THAN QUIETLY FIXED** (0.52.0-dev.17).
+> Two faults from dev.16 met and stopped admissions entirely — Hasan: "I can't submit an inquiry
+> anymore neither can I add one manually."
+>
+> 1. **The PUBLIC form's required-field list was applied to the OFFICE's own manual entry.** Those
+>    settings describe what a stranger must give a madrasah before it will look at them; the office
+>    typing up a phone call is not a stranger, may genuinely not have a date of birth, and its form
+>    does not even render the boxes the public one does. A madrasah that ticked one could no longer
+>    add an inquiry at all, and was told the reason was a missing name it had supplied.
+>    `storeInquiry` now passes the required list only when `source === 'public'`.
+> 2. **An inquiry was born INVISIBLE to the person who typed it.** A restricted admin sees only their
+>    schools' inquiries and never an unassigned one — and `officeAdd` stored one with no school, so
+>    it vanished the instant they saved it. That is the worst shape a bug can take: a success
+>    message and no row. Two fixes, because there are two doors: a restricted adder's own school
+>    fills in when they named none (with one school they can mean nothing else), and a
+>    **single-school install assigns its only school automatically**, so the wall cannot bite the
+>    masajid who have nothing to route between. With two schools it still declines to guess — routing
+>    a family to the wrong program is worse than leaving it for the global level.
+>
+> The lesson worth carrying: a WALL added to a read path has to be walked with the WRITE paths that
+> feed it. Both faults were "the new rule is right and the thing that creates rows never heard about
+> it."
+>
 > **A bug this found, in the code that shipped in dev.12 and dev.13:** the router read `ctx.user?.id`,
 > which does not exist — the context carries `ctx.session.userId`. It typechecked and was silently
 > null, so every admission and kiosk link recorded no creator. The scoping tests are what caught it.

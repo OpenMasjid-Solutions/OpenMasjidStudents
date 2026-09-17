@@ -346,10 +346,30 @@ export const admissionsRouter = router({
       }),
     )
     .mutation(({ ctx, input }) => {
+      // A restricted account cannot file one into a school it may not see — that would be writing
+      // into another program's board through a door the read wall closes.
+      if (input.schoolId) {
+        const ids = scopeIds(ctx);
+        if (ids && !ids.includes(input.schoolId)) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'That school no longer exists.' });
+        }
+      }
+      // AN INQUIRY IS NEVER BORN INVISIBLE TO THE PERSON WHO TYPED IT (0.52.0-dev.17).
+      //
+      // A restricted admin sees only their own schools' inquiries and never an unassigned one (§5) —
+      // so an office member limited to one school who added a walk-in by hand watched it vanish the
+      // instant they saved it. It was stored, correctly, with no school; they simply could not see
+      // what they had just created. That is the worst shape a bug can take.
+      //
+      // So a restricted adder's own school fills in when they did not name one. With exactly one
+      // school they cannot mean anything else; with several the screen asks, and this leaves it
+      // unassigned rather than guessing which of their programs a family meant.
+      const mine = scopeIds(ctx);
+      const fallback = mine && mine.length === 1 ? mine[0]! : null;
       const res = storeInquiry(input, {
         source: 'office',
         actor: { ...auditActor(ctx), name: recordingActor(ctx).name },
-        schoolId: input.schoolId ?? null,
+        schoolId: input.schoolId ?? fallback,
         schoolYearId: input.schoolYearId ?? null,
       });
       if (res.outcome === 'incomplete') {

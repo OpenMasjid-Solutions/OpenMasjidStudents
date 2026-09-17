@@ -19,7 +19,7 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { freshApp, makeCtx } from './harness';
-import { admissionLinks, auditLog, charges, families, feePlans, guardianFamilies, guardians, inquiries, inquiryEvents, settings, studentFees, students, users, userSchools } from '../src/db/schema';
+import { admissionLinks, auditLog, charges, families, feePlans, guardianFamilies, guardians, inquiries, inquiryEvents, schools, settings, studentFees, students, users, userSchools } from '../src/db/schema';
 import type { Role } from '../src/db/schema';
 
 let app: Awaited<ReturnType<typeof freshApp>>;
@@ -83,6 +83,9 @@ async function issueLink(id: string) {
   const r = await caller('admin').admissions.admissionStart({ id });
   return r.token;
 }
+
+/** Schools are not deleted between tests (years and rosters point at them), so each set is new. */
+let schoolN = 0;
 
 const keysOf = (id: string | null) => form.admissionFormFields(id ? app.dbmod.db.select().from(inquiries).where(eq(inquiries.id, id)).get()! : null).map((f) => f.key);
 
@@ -459,8 +462,6 @@ describe('two schools, and who works whose inquiries', () => {
    */
   let maktab: string;
   let hifz: string;
-  /** Schools are not deleted between tests (years and rosters point at them), so each pair is new. */
-  let schoolN = 0;
 
   /**
    * An admin restricted to one school — the school's own person.
@@ -548,5 +549,102 @@ describe('two schools, and who works whose inquiries', () => {
     // for everybody.
     const got = await admin.admissions.get({ id: a });
     expect(got.inquiry.childName).toBe('Maktab Child');
+  });
+});
+
+describe('the two ways 0.52.0-dev.16 broke a working install', () => {
+  /**
+   * Both were reported by Hasan as one symptom — "I can't submit an inquiry anymore neither can I
+   * add one manually" — and both were mine. They are kept as two tests because they are two
+   * different mistakes that happened to meet.
+   */
+  it('a required field on the WEBSITE form does not block the office typing one in', async () => {
+    // The office's own form has no date-of-birth box at all, so this made manual entry impossible —
+    // and refused it with a message naming a missing name the office had in fact supplied.
+    settingsMod.setAdmissions({ requiredInquiryFields: ['childDob'] });
+    const r = await caller('admin').admissions.officeAdd({
+      childName: 'Yusuf Ismail',
+      parentName: 'Ibrahim Ismail',
+      email: 'ibrahim@example.org',
+    });
+    expect(r.outcome).toBe('stored');
+
+    // …and it DOES still gate the public door, which is what the setting is for.
+    const inq = await import('../src/admissions/inquiry');
+    const n = inq.normalizeInquiry({ childName: 'A Child', parentName: 'A Parent', email: 'a@example.org' });
+    expect(inq.isSubmittable(n, ['childDob'])).toBe(false);
+    expect(inq.isSubmittable(n, [])).toBe(true);
+  });
+
+  it('AN INQUIRY IS NEVER BORN INVISIBLE TO THE PERSON WHO TYPED IT', async () => {
+    const { db } = app.dbmod;
+    schoolN += 1;
+    const only = await caller('admin').structure.schoolCreate({ name: `Only school ${schoolN}` });
+    const userId = `usr_solo_${schoolN}`;
+    db.insert(users)
+      .values({ id: userId, username: userId, passwordHash: 'x', role: 'admin', status: 'active', mustChangePassword: false, createdAt: new Date(), updatedAt: new Date() })
+      .run();
+    schoolsMod.setUserSchools(userId, [only.id]);
+    const restricted = app.appRouter.createCaller(
+      makeCtx({ origin: 'lan', session: { role: 'admin', source: 'local', username: userId, userId } }).ctx,
+    );
+
+    const added = await restricted.admissions.officeAdd({ childName: 'Maryam Khan', parentName: 'A Parent', email: 'm@example.org' });
+    // It was stored correctly with no school and then hidden by the very wall that protects it — the
+    // worst shape a bug can take, because the office sees a success and no row.
+    const seen = await restricted.admissions.list({ state: 'open', limit: 50 });
+    expect(seen.rows.map((r) => r.id)).toContain(added.id);
+    await expect(restricted.admissions.get({ id: added.id! })).resolves.toBeTruthy();
+  });
+
+  it('a ONE-SCHOOL masjid never produces an unassigned inquiry, so the wall cannot bite it', async () => {
+    const { db } = app.dbmod;
+    schoolN += 1;
+    // ONE school, really one: earlier tests in this file leave theirs behind (years and rosters point
+    // at a school, so `beforeEach` cannot clear them), and `soleSchoolId` is right to decline to guess
+    // when there are two. Nothing references these by the time this runs — inquiries are cleared above.
+    db.delete(schools).run();
+    const only = await caller('admin').structure.schoolCreate({ name: `Sole ${schoolN}` });
+    const userId = `usr_sole_${schoolN}`;
+    db.insert(users)
+      .values({ id: userId, username: userId, passwordHash: 'x', role: 'admin', status: 'active', mustChangePassword: false, createdAt: new Date(), updatedAt: new Date() })
+      .run();
+    schoolsMod.setUserSchools(userId, [only.id]);
+
+    // The PUBLIC door — nobody is signed in, so there is no adder's school to fall back on. This is
+    // the realistic shape of the outage: one school, a restricted office account, and every website
+    // inquiry landing where that account cannot see it.
+    const res = await http.inject({
+      method: 'POST',
+      url: '/public/inquiry',
+      remoteAddress: freshPeer(),
+      payload: { childName: 'Website Child', parentName: 'A Parent', email: 'w@example.org', t: routes.mintFormToken(Date.now() - 30_000) },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const restricted = app.appRouter.createCaller(
+      makeCtx({ origin: 'lan', session: { role: 'admin', source: 'local', username: userId, userId } }).ctx,
+    );
+    const seen = await restricted.admissions.list({ state: 'open', limit: 50 });
+    expect(seen.rows.map((r) => r.childName)).toContain('Website Child');
+  });
+
+  it('refuses to file an inquiry into a school the adder cannot see', async () => {
+    const { db } = app.dbmod;
+    schoolN += 1;
+    const mine = await caller('admin').structure.schoolCreate({ name: `Mine ${schoolN}` });
+    const theirs = await caller('admin').structure.schoolCreate({ name: `Theirs ${schoolN}` });
+    const userId = `usr_walled_${schoolN}`;
+    db.insert(users)
+      .values({ id: userId, username: userId, passwordHash: 'x', role: 'admin', status: 'active', mustChangePassword: false, createdAt: new Date(), updatedAt: new Date() })
+      .run();
+    schoolsMod.setUserSchools(userId, [mine.id]);
+    const restricted = app.appRouter.createCaller(
+      makeCtx({ origin: 'lan', session: { role: 'admin', source: 'local', username: userId, userId } }).ctx,
+    );
+    // A read wall that lets you WRITE into the other side is not a wall.
+    await expect(
+      restricted.admissions.officeAdd({ childName: 'X', parentName: 'Y', email: 'x@example.org', schoolId: theirs.id }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

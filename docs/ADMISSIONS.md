@@ -3,7 +3,7 @@
 
 # ADMISSIONS — inquiry → waitlist → offer → admission → re-admission
 
-> **Status: BUILT (0.52.0-dev.7 → -dev.13).** This is Phase 2 of the academic layer (CLAUDE.md §4a). It
+> **Status: BUILT (0.52.0-dev.7 → -dev.17).** This is Phase 2 of the academic layer (CLAUDE.md §4a). It
 > was written before the code deliberately — the same discipline `docs/PAYMENTS.md` and
 > `docs/WHATSAPP.md` follow — so the schema and the wire rules were argued once, in one place, rather
 > than discovered per screen. It now describes what exists.
@@ -23,6 +23,10 @@
 > **dev.14:** the embeddable widget rebuilt to render INTO the host page (it injected an iframe
 > before, which is why it never blended), the CORS allowlist that makes its cross-origin POST
 > possible, and per-field required marking on both forms.
+> **dev.17:** the two dev.16 regressions — the public form's required list no longer gates the
+> office's manual entry, and an inquiry is never born invisible to the person who typed it (the
+> adder's own school fills in; a single-school install assigns its only one). The hosted page also
+> tells a family which required box they missed, which the widget already did.
 > **dev.16:** admissions scoped to `user_schools` (a restricted admin is a school's own person, an
 > unrestricted one is the global level that routes); the joining-fee and ask-the-families steps
 > folded into the EXISTING rollover rather than a second button; landscape; the attribution line;

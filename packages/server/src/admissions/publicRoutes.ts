@@ -484,6 +484,7 @@ function renderPage(opts: { open: boolean; token: string }): string {
         <input type="hidden" name="t" value="${esc(opts.token)}">
         <button type="submit" id="btn">Send</button>
       </form>
+      <p class="hint" id="note"></p>
       <p class="hint" id="privacy">${esc(admissionsTextPlain('privacy'))}</p>
       <noscript><p class="hint">This form needs JavaScript. Please contact the office instead.</p></noscript>`
     : admissionsTextHtml('closed');
@@ -495,9 +496,24 @@ function renderPage(opts: { open: boolean; token: string }): string {
   const script = opts.open
     ? `
     (function () {
-      var f = document.getElementById('frm'), b = document.getElementById('btn'), d = document.getElementById('done');
+      var f = document.getElementById('frm'), b = document.getElementById('btn'), d = document.getElementById('done'), note = document.getElementById('note');
       f.addEventListener('submit', function (e) {
         e.preventDefault();
+        // CHECKED HERE BECAUSE THE SERVER CANNOT TELL THEM. Every submission gets the same
+        // acknowledgement whatever happened (§14's no-enumeration rule), so a family who left a
+        // required box empty would otherwise be thanked and never heard from again. The widget has
+        // done this since 0.52.0-dev.14; the hosted page had not, which made a required field an
+        // invisible way to lose a real family.
+        var missing = [];
+        for (var i = 0; i < f.elements.length; i++) {
+          var el = f.elements[i];
+          if (el.hasAttribute && el.hasAttribute('required') && !String(el.value || '').trim()) {
+            var lab = f.querySelector('label[for="' + el.id + '"]');
+            missing.push(lab ? lab.textContent : el.name);
+          }
+        }
+        if (missing.length) { note.textContent = 'Please fill in: ' + missing.join(', '); return; }
+        note.textContent = '';
         b.disabled = true;
         var data = {};
         new FormData(f).forEach(function (v, k) { data[k] = String(v); });
