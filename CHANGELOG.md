@@ -115,6 +115,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **Buttons are readable whichever colour your dashboard is set to.** If your OpenMasjidOS accent is
+  anything but the default, and you use the light theme, the writing on every blue button in this app
+  was white on a bright colour — pale enough to be hard to read, and well under the accessibility
+  standard the rest of the platform meets. The colour of the writing now changes with the button.
+- **The same was true of every delete button, in dark mode.** White on the warning red is too faint to
+  read comfortably; it is now dark text on that red. This affected erasing a student, deleting an
+  inquiry and refunding a payment — the three places you most want to be sure what you are pressing.
+
 - **Fixed: inquiries could not be added at all on some installs.** Two faults from the previous dev
   build, which together stopped both the website form and adding one by hand. Marking a question
   required on the **website** form was also being applied to the office typing an inquiry in — and

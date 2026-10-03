@@ -43,12 +43,25 @@ const DEFAULTS: Prefs = {
   timezone: '',
 };
 
-export const ACCENTS: Record<string, { label: string; primary: string; hover: string; subtle: string }> = {
-  cyan: { label: 'Cyan', primary: '#22D3EE', hover: '#67E8F9', subtle: 'rgba(34,211,238,0.12)' },
-  teal: { label: 'Teal', primary: '#2DD4BF', hover: '#5EEAD4', subtle: 'rgba(45,212,191,0.12)' },
-  sky: { label: 'Sky', primary: '#38BDF8', hover: '#7DD3FC', subtle: 'rgba(56,189,248,0.12)' },
-  violet: { label: 'Violet', primary: '#A78BFA', hover: '#C4B5FD', subtle: 'rgba(167,139,250,0.14)' },
-  gold: { label: 'Gold', primary: '#FBBF24', hover: '#FCD34D', subtle: 'rgba(251,191,36,0.14)' },
+/**
+ * THE FIVE ACCENTS, AND EACH ONE CARRIES ITS OWN INK.
+ *
+ * `onPrimary` is not decoration and it is not optional (OpenMasjid app UI/UX spec §3: "Set the ink in
+ * the same breath as the fill, or don't set either"). It was MISSING here until 0.52.0-dev.18, and the
+ * consequence was measured rather than guessed: in the LIGHT theme the stylesheet's ink is `#FFFFFF`,
+ * because light's own primary is a deep blue. Swapping in a bright accent while leaving that ink put
+ * white on gold at **1.67:1** — and teal 1.86, sky 2.14, violet 2.72. Four of the five accents, on
+ * every filled button in the app, under AA's 4.5 and under even the 3.0 for large text.
+ *
+ * Dark was unharmed because its ink is already near-black; that is exactly why the bug was invisible
+ * to anybody developing in the default theme.
+ */
+export const ACCENTS: Record<string, { label: string; primary: string; hover: string; subtle: string; onPrimary: string }> = {
+  cyan: { label: 'Cyan', primary: '#22D3EE', hover: '#67E8F9', subtle: 'rgba(34,211,238,0.12)', onPrimary: '#00131C' },
+  teal: { label: 'Teal', primary: '#2DD4BF', hover: '#5EEAD4', subtle: 'rgba(45,212,191,0.12)', onPrimary: '#00201B' },
+  sky: { label: 'Sky', primary: '#38BDF8', hover: '#7DD3FC', subtle: 'rgba(56,189,248,0.12)', onPrimary: '#001B2E' },
+  violet: { label: 'Violet', primary: '#A78BFA', hover: '#C4B5FD', subtle: 'rgba(167,139,250,0.14)', onPrimary: '#190B3D' },
+  gold: { label: 'Gold', primary: '#FBBF24', hover: '#FCD34D', subtle: 'rgba(251,191,36,0.14)', onPrimary: '#2B1B00' },
 };
 
 export const WALLPAPERS: Record<string, { label: string; preview: string }> = {
@@ -70,11 +83,14 @@ export function applyAccent(id: string): void {
   const el = document.documentElement;
   const a = ACCENTS[id];
   if (!a || id === 'cyan') {
+    // Back to whatever the stylesheet says for this theme — fill AND ink together, or the next line
+    // leaves one of the pair overridden and the other not.
     el.style.removeProperty('--color-primary');
     el.style.removeProperty('--color-primary-hover');
     el.style.removeProperty('--color-primary-subtle');
     el.style.removeProperty('--color-btn');
     el.style.removeProperty('--color-btn-hover');
+    el.style.removeProperty('--color-on-primary');
     return;
   }
   el.style.setProperty('--color-primary', a.primary);
@@ -82,6 +98,8 @@ export function applyAccent(id: string): void {
   el.style.setProperty('--color-primary-subtle', a.subtle);
   el.style.setProperty('--color-btn', a.primary);
   el.style.setProperty('--color-btn-hover', a.hover);
+  // THE INK, in the same breath as the fill. See the ACCENTS table for what leaving it out measured.
+  el.style.setProperty('--color-on-primary', a.onPrimary);
 }
 
 export function applyWallpaper(id: string): void {

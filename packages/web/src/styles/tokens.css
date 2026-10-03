@@ -37,6 +37,10 @@
   --color-success: #34D399;
   --color-warning: #FBBF24;
   --color-danger: #F87171;
+  /* Ink chosen FOR the danger fill, not a fixed white — the platform's token, which this port was
+     missing. Dark's danger is a light red: white on it measures 2.77:1, under AA, on the DELETE
+     button of all things. This dark ink measures 6.84:1. (OpenMasjid app UI/UX spec §2.) */
+  --color-on-danger: #00131C;
 
   --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.5);
   --shadow-modal: 0 8px 40px rgba(0, 0, 0, 0.7);
@@ -116,6 +120,9 @@
   --color-success: #16A34A;
   --color-warning: #D97706;
   --color-danger: #DC2626;
+  /* White passes here (4.83:1) — light's danger is a deep red. The token exists in both themes so a
+     component never has to know which theme it is in. */
+  --color-on-danger: #FFFFFF;
 
   --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.08);
   --shadow-modal: 0 8px 40px rgba(0, 0, 0, 0.15);

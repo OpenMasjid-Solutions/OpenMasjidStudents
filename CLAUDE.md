@@ -1873,9 +1873,33 @@ invariant here is load-bearing:
 
 ## 15. Design & voice
 
-Inherit the org design system (OpenMasjidOS `CLAUDE.md §14`): calm, dignified, masjid-themed; emerald primary,
-gold accents; dark default; Motion springs; WCAG AA; geometric motifs only — **never sacred text as
-decoration**. Apply the Fabric appearance payload; the same-origin `/api/public/appearance` relay keeps the
+Inherit the org design system (OpenMasjidOS `CLAUDE.md §14`, and the org's **app UI/UX spec**): calm,
+dignified, masjid-themed; **cyan primary by default and FIVE admin-chosen accents** (cyan, teal, sky,
+violet, gold); dark default; Motion springs; WCAG AA; geometric motifs only — **never sacred text as
+decoration**.
+
+> This line said "emerald primary, gold accents" until 0.52.0-dev.18 and had never been true of this
+> repo: `tokens.css` is the platform's port and has always been cyan `#22D3EE`. Corrected rather than
+> annotated, because a design rule nobody can check against the code is how the next person picks the
+> wrong colour on purpose.
+
+**AN ACCENT CARRIES ITS OWN INK, AND THE PAIR IS SET TOGETHER OR NEITHER IS** (0.52.0-dev.18). The
+admin picks one of five at the platform level and this app follows it live (`lib/appearance.ts` reads
+the `#omos=` launch fragment before first paint and polls the same-origin relay after). `applyAccent`
+set `--color-primary` and `--color-btn` and NOT `--color-on-primary` — so in the LIGHT theme, where
+the stylesheet's ink is white because light's own primary is a deep blue, switching to any other
+accent put white on a bright fill: **gold 1.67:1, teal 1.86, sky 2.14, violet 2.72**, on every filled
+button in the app. Dark was unharmed because its ink is already near-black, which is exactly why the
+bug was invisible to anybody developing in the default theme.
+
+**AND INK ON A FILLED ELEMENT IS WHERE CONTRAST ACTUALLY FAILS.** `--color-on-danger` was missing from
+our port entirely and `.btn--danger` hardcoded `#fff` — **2.77:1** in dark, on erase-a-student,
+delete-an-inquiry and refund-a-payment. The token now exists in both themes; the override lives in
+`shell.css` because `app.css` is a verbatim port and a fix written there is lost to the next re-sync,
+silently. `styles/inkContrast.test.ts` COMPUTES the ratios rather than asserting the hex values
+somebody typed — a palette can be internally consistent and unreadable — and it guards `applyAccent`'s
+source shape too, because the table was never the problem: the values were right and the function set
+five custom properties instead of six. Apply the Fabric appearance payload; the same-origin `/api/public/appearance` relay keeps the
 look in step at runtime.
 
 **Platform-family UI parity is a requirement, not a vibe.** A masjid admin opening this app from the
