@@ -162,6 +162,30 @@ describe('the medical fields — the §14 amendment', () => {
     }
   });
 
+  it('LEAVING CONSENT BLANK IS NOT SAYING NO', async () => {
+    fields.setEnabledFieldKeys([...fields.MEDICAL_FIELD_KEYS]);
+    const id = await anInquiry();
+    const token = await issueLink(id);
+    // The form's first option is "—" with an empty value. `normalizeAnswer` mapped it to an explicit
+    // `no`, so a family that skipped the question was recorded as having REFUSED consent — the one
+    // distinction a three-state flag exists to keep, and the reason the page renders a select rather
+    // than a checkbox in the first place.
+    await http.inject({
+      method: 'POST',
+      url: '/public/admission',
+      remoteAddress: freshPeer(),
+      payload: { token, childName: 'Yusuf Ismail', medicalConsent: '' },
+    });
+    const payload = (app.dbmod.db.select().from(inquiries).where(eq(inquiries.id, id)).get()!.submittedPayload ?? {}) as Record<string, string>;
+    expect(payload).not.toHaveProperty('medicalConsent');
+
+    // …and the positive control: an answer that WAS given is still recorded, both ways.
+    const consent = form.admissionFormFields(null).find((f) => f.key === 'medicalConsent')!;
+    expect(form.normalizeAnswer(consent, '1')).toBe('yes');
+    expect(form.normalizeAnswer(consent, '0')).toBe('no');
+    expect(form.normalizeAnswer(consent, '')).toBeNull();
+  });
+
   it('is rendered on the served page only when enabled, and the page carries no stored value', async () => {
     fields.setEnabledFieldKeys([...fields.MEDICAL_FIELD_KEYS]);
     const id = await anInquiry();

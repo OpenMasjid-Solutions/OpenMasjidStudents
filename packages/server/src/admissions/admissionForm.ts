@@ -72,7 +72,7 @@ export type AdmissionFieldScope = 'child' | 'household' | 'guardian';
  * child's name is not an admission form, it is a blank page, and there would be nothing to show the
  * office on the other side.
  */
-export const CORE_ADMISSION_FIELDS = [
+const CORE_ADMISSION_FIELDS = [
   { key: 'childName', kind: 'text' as StudentFieldKind, scope: 'child' as const, label: "Child's full name", alwaysRequired: true },
   { key: 'childDob', kind: 'date' as StudentFieldKind, scope: 'child' as const, label: 'Date of birth', alwaysRequired: false },
   { key: 'guardianName', kind: 'text' as StudentFieldKind, scope: 'guardian' as const, label: "Parent or guardian's name", alwaysRequired: false },
@@ -168,7 +168,13 @@ function prefillFor(key: string, inquiry: Inquiry | null): string {
 export function normalizeAnswer(field: AdmissionField, raw: unknown): string | null {
   if (field.kind === 'flag') {
     if (raw === true || raw === 'true' || raw === '1' || raw === 'on') return 'yes';
-    if (raw === false || raw === 'false' || raw === '0' || raw === '') return 'no';
+    if (raw === false || raw === 'false' || raw === '0') return 'no';
+    // EMPTY IS "NOBODY ANSWERED", NOT "NO" (fixed 0.52.0-dev.19). The form's first option is "—" with
+    // an empty value, and this function mapped it to an explicit `no` — so a family that skipped the
+    // question was recorded as having REFUSED it. For `medicalConsent` that is the difference between
+    // "we have not asked yet" and "they said no", which is the whole reason a flag is three-state in
+    // the registry and a select rather than a checkbox on the page. Returning null means the answer is
+    // not stored and the column is left alone.
     return null;
   }
   if (typeof raw !== 'string') return null;
@@ -405,7 +411,7 @@ export function admissionPatch(answers: Record<string, string>): {
 // thing to reason about and not what the clipboard is for.
 
 /** How long a tablet stays signed in before an admin has to start it again. A working day. */
-export const KIOSK_TTL_MS = 14 * 60 * 60 * 1000;
+const KIOSK_TTL_MS = 14 * 60 * 60 * 1000;
 
 export interface KioskDevice {
   id: string;

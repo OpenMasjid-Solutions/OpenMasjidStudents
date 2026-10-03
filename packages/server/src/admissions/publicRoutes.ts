@@ -154,7 +154,6 @@ export function formTokenOk(token: string, minSeconds: number, now = Date.now())
  * more segment than the route it has to reach.
  */
 const POST_PATH = `${config.basePath}/public/inquiry`;
-const EMBED_PATH = `${config.basePath}/public/inquiry/embed`;
 const READMISSION_POST_PATH = `${config.basePath}/public/readmission`;
 
 /**

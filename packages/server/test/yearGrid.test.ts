@@ -152,9 +152,14 @@ describe('yearGrid', () => {
   });
 
   it('a voided invoice reads as void, not paid', async () => {
-    const { admin, ismailId } = await seed();
+    const { admin, ismailId, yusufId } = await seed();
     await admin.billing.generateFamily({ familyId: ismailId, periodKey: '2026-04', label: 'Apr' });
-    const invId = (await admin.billing.familyBilling({ familyId: ismailId })).invoices[0].id;
+    // YUSUF'S invoice, by name. This household has two children, so `generateFamily` writes two rows
+    // in one call with the same `created_at`; `invoiceRowsFor` orders by that descending, so
+    // `invoices[0]` is whichever of the siblings SQLite happened to return first. Taking it voided
+    // Sara's about half the time and then asserted Yusuf's cell, which is the intermittent
+    // "expected 'open' to be 'void'" this test produced for one run in three.
+    const invId = (await admin.billing.familyBilling({ familyId: ismailId })).invoices.find((i) => i.studentId === yusufId)!.id;
     await admin.billing.voidInvoice({ id: invId });
     const g = await admin.billing.yearGrid();
     expect(g.rows.find((r) => r.fullName === 'Yusuf Ismail')!.cells.find((c) => c.periodKey === '2026-04')!.status).toBe('void');

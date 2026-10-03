@@ -115,6 +115,18 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **Leaving a medical consent question blank no longer records a "no".** The admission form offers
+  "—", Yes and No, and leaving it on "—" was being stored as though the family had refused. It is now
+  left unanswered, which is what it meant.
+- **"2 per-term fees" said "2 per-term fee".** The plural wording existed but was written in a form
+  the app's translation library stopped using, so it was never picked.
+- **Dead wording removed, and a check so it stops accumulating.** Four strings whose screens no longer
+  exist were still in the app's wording file — still being read as evidence a feature existed, still
+  waiting to be translated into Arabic and Urdu for buttons nobody can press. The build now fails if a
+  string becomes unreachable.
+- **A test that was wrong about once in three.** The year-view check voided one sibling's invoice and
+  then asserted the other's, so it depended on which row the database happened to return first.
+
 - **Buttons are readable whichever colour your dashboard is set to.** If your OpenMasjidOS accent is
   anything but the default, and you use the light theme, the writing on every blue button in this app
   was white on a bright colour — pale enough to be hard to read, and well under the accessibility
