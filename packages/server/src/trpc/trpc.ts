@@ -11,7 +11,9 @@ import { initTRPC, TRPCError } from '@trpc/server';
 import type { CreateFastifyContextOptions } from '@trpc/server/adapters/fastify';
 import { eq } from 'drizzle-orm';
 import { classifyOrigin, isHttpsRequest, roleAllowedFromOrigin, type Origin } from '../security/origin';
-import { getSession, touchSession, COOKIE } from '../auth/sessions';
+import { getSession, touchSession, COOKIE, cookiePathFor } from '../auth/sessions';
+import { mountFor } from '../http/basePath';
+import { config } from '../config';
 import { db } from '../db';
 import { users, type Role, type Session } from '../db/schema';
 import { makeLog } from '../logger';
@@ -20,7 +22,9 @@ export function createContext({ req, res }: CreateFastifyContextOptions) {
   const origin: Origin = classifyOrigin(req);
   const token = req.cookies?.[COOKIE];
   const session = getSession(token);
-  return { req, res, origin, https: isHttpsRequest(req), token, session };
+  // `base` is the prefix this request arrived under — for anything that builds a URL back to us.
+  const base = mountFor(req.raw, config.basePath);
+  return { req, res, origin, https: isHttpsRequest(req), token, session, base, cookiePath: cookiePathFor(req.raw) };
 }
 export type Context = Awaited<ReturnType<typeof createContext>>;
 

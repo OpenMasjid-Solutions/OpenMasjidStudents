@@ -79,6 +79,8 @@ export function makeCtx(o: CtxOpts = {}) {
     https: o.https ?? false,
     token: o.token,
     session: o.session ?? null,
+    base: '',
+    cookiePath: '/',
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- cast the stand-in to the real Context in tests
   return { ctx: ctx as any, cookies };

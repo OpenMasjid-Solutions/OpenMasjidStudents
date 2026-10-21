@@ -13,6 +13,7 @@ import { db } from '../db';
 import { config } from '../config';
 import { sessions, users, type Role, type Session } from '../db/schema';
 import { rid } from '../db/ids';
+import { mountFor } from '../http/basePath';
 
 export const COOKIE = 'students_session';
 
@@ -89,20 +90,23 @@ export function purgeExpiredSessions(): void {
   db.delete(sessions).where(lt(sessions.expiresAt, new Date())).run();
 }
 
-/** The session cookie's Path — scoped to the app's tunnel mount prefix (e.g. "/students") so the
- *  token is NEVER sent to sibling apps sharing the OS Cloudflare-tunnel domain (/donations, /kiosk…);
- *  "/" when served at the root (standalone / LAN own-port). Every authenticated request rides the
- *  server-injected `<base href>`, so it always lands under this prefix in all three modes. Set + clear
- *  MUST use the same value (RFC 6265 path-match), hence one shared constant (§14 defense-in-depth). */
-export const COOKIE_PATH = config.basePath || '/';
+/** The session cookie's Path — scoped to the mount prefix the request arrived under (e.g. "/students")
+ *  so the token is NEVER sent to sibling apps sharing the OS Cloudflare-tunnel domain (/donations,
+ *  /kiosk…); "/" when served at the root (standalone / LAN own-port). Every authenticated request rides
+ *  the server-injected `<base href>`, which is built from the SAME per-request mount (index.ts), so it
+ *  always lands under this prefix. Set + clear MUST use the same value (RFC 6265 path-match), hence one
+ *  function (§14 defense-in-depth). Pass `req.raw`. */
+export function cookiePathFor(raw: object | undefined): string {
+  return mountFor(raw, config.basePath) || '/';
+}
 
-/** Cookie options. `secure` reflects whether the browser hop is HTTPS (§ origin.ts). */
-export function cookieOptions(secure: boolean, ttlMs = SESSION_TTL_MS): CookieSerializeOptions {
+/** Cookie options. `https` reflects whether the browser hop is HTTPS (§ origin.ts); `cookiePath` is `cookiePathFor`. */
+export function cookieOptions(at: { https: boolean; cookiePath: string }, ttlMs = SESSION_TTL_MS): CookieSerializeOptions {
   return {
     httpOnly: true,
     sameSite: 'lax',
-    secure,
-    path: COOKIE_PATH,
+    secure: at.https,
+    path: at.cookiePath,
     maxAge: Math.floor(ttlMs / 1000),
   };
 }

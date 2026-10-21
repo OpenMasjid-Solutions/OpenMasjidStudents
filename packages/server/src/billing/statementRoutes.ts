@@ -18,6 +18,7 @@
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getSession, COOKIE } from '../auth/sessions';
+import { mountFor } from '../http/basePath';
 import { portalBase } from '../auth/invites';
 import { classifyOrigin } from '../security/origin';
 import { config } from '../config';
@@ -73,7 +74,9 @@ function baseUrlFor(req: FastifyRequest): string {
   const xfp = req.headers['x-forwarded-proto'];
   const proto = (Array.isArray(xfp) ? xfp[0] : xfp)?.split(',')[0].trim() || req.protocol || 'http';
   const host = req.headers.host || `localhost:${config.port}`;
-  return `${proto}://${host}`;
+  // Under the mount it was asked for: printed from outside, an app not shared online has no public URL,
+  // and a QR at the bare hostname would open the platform's dashboard rather than this app.
+  return `${proto}://${host}${mountFor(req.raw, config.basePath)}`;
 }
 
 export function registerStatementRoutes(app: FastifyInstance): void {

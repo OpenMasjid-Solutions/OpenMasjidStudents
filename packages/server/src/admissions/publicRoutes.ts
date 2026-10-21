@@ -59,6 +59,7 @@ import { sendInquiryAck } from '../mail/notify';
 import { DailyCeiling, SubmitLimiter } from '../security/rateLimit';
 import { classifyOrigin, rateLimitKey } from '../security/origin';
 import { config } from '../config';
+import { mountFor } from '../http/basePath';
 import { getAccentColor, getAdmissions, getSchoolLogo, getSchoolName, getSetting, isEmbedOrigin, parseLogoDataUri, setSetting } from '../settings';
 import { INQUIRY_CAPS, storeInquiry } from './inquiry';
 import { admissionsTextHtml, admissionsTextPlain } from './text';
@@ -152,9 +153,13 @@ export function formTokenOk(token: string, minSeconds: number, now = Date.now())
  * prefix before routing (index.ts) — so every route in this app is written at the root while the
  * browser's address bar is not. A relative URL would be wrong on the embed page, whose path has one
  * more segment than the route it has to reach.
+ *
+ * The prefix is the one THIS request arrived under (`baseOf`), not the env's: through the tunnel they
+ * differ for an app that is not shared online, or one whose path was renamed (http/basePath.ts `mountOf`).
  */
-const POST_PATH = `${config.basePath}/public/inquiry`;
-const READMISSION_POST_PATH = `${config.basePath}/public/readmission`;
+const baseOf = (req: FastifyRequest): string => mountFor(req.raw, config.basePath);
+const postPath = (base: string) => `${base}/public/inquiry`;
+const readmissionPostPath = (base: string) => `${base}/public/readmission`;
 
 /**
  * A JSON literal safe to put INSIDE a `<script>` block.
@@ -461,7 +466,7 @@ ${inner}
 </div>${script ? `<script>${script}</script>` : ''}</body></html>`;
 }
 
-function renderPage(opts: { open: boolean; token: string }): string {
+function renderPage(opts: { open: boolean; token: string; base: string }): string {
   const school = esc(getSchoolName());
   const style = PAGE_STYLE.replace('__ACCENT__', esc(getAccentColor()));
 
@@ -516,7 +521,7 @@ function renderPage(opts: { open: boolean; token: string }): string {
         b.disabled = true;
         var data = {};
         new FormData(f).forEach(function (v, k) { data[k] = String(v); });
-        fetch(${jsonInScript(POST_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+        fetch(${jsonInScript(postPath(opts.base))}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
           .then(function () { f.style.display = 'none'; var p = document.getElementById('privacy'); if (p) p.style.display = 'none'; d.style.display = 'block'; })
           .catch(function () { b.disabled = false; });
       });
@@ -574,7 +579,7 @@ const READMISSION_BODY = z.object({
  * what was already there, and `diffSubmission` writes only what actually moved. Every value is
  * escaped on the way into the attribute, like every other document this app assembles.
  */
-const ADMISSION_POST_PATH = `${config.basePath}/public/admission`;
+const admissionPostPath = (base: string) => `${base}/public/admission`;
 
 /**
  * The form's boxes, from the field list.
@@ -616,7 +621,7 @@ function admissionBoxes(fields: AdmissionField[]): string {
  * The field set comes from `admissions/admissionForm.ts`, which asks the student-field registry, so
  * this function renders whatever the office switched on and never carries a list of its own.
  */
-function renderAdmissionPage(found: AdmissionLookup, token: string): string {
+function renderAdmissionPage(found: AdmissionLookup, token: string, base: string): string {
   const school = esc(getSchoolName());
   const accent = esc(getAccentColor());
   const style = PAGE_STYLE.replace('__ACCENT__', accent);
@@ -653,7 +658,7 @@ function renderAdmissionPage(found: AdmissionLookup, token: string): string {
         b.disabled = true;
         var data = {};
         new FormData(f).forEach(function (v, k) { data[k] = String(v); });
-        fetch(${jsonInScript(ADMISSION_POST_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+        fetch(${jsonInScript(admissionPostPath(base))}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
           .then(function (r) { return r.json(); })
           .then(function (r) {
             if (r && r.ok) { f.style.display = 'none'; d.style.display = 'block'; }
@@ -666,7 +671,7 @@ function renderAdmissionPage(found: AdmissionLookup, token: string): string {
   return page(school, style, `<h1>${school}</h1><div class="box">${body}${done}</div>`, script);
 }
 
-const KIOSK_PATH = `${config.basePath}/public/admission/kiosk`;
+const kioskPath = (base: string) => `${base}/public/admission/kiosk`;
 
 /** Shared chrome for the three tablet screens. */
 function kioskShell(inner: string, script = ''): string {
@@ -688,13 +693,13 @@ function renderKioskGone(): string {
  * not hand this page an email, a phone number or anything a family wrote, because whoever is holding
  * the tablet is not necessarily the family whose turn it is.
  */
-function renderKioskPicker(token: string): string {
+function renderKioskPicker(token: string, base: string): string {
   const rows = kioskInquiries();
   const list = rows.length
     ? rows
         .map(
           (r) =>
-            `<p><a class="pick" href="${esc(KIOSK_PATH)}?token=${encodeURIComponent(token)}&amp;inquiry=${encodeURIComponent(r.id)}">${esc(r.childName)}</a></p>`,
+            `<p><a class="pick" href="${esc(kioskPath(base))}?token=${encodeURIComponent(token)}&amp;inquiry=${encodeURIComponent(r.id)}">${esc(r.childName)}</a></p>`,
         )
         .join('\n')
     : '<p class="hint">There is nobody waiting on an admission form. The office adds a family first.</p>';
@@ -703,7 +708,7 @@ function renderKioskPicker(token: string): string {
 
 /** The form itself, once a family has been chosen. Same fields, same rules, same renderer shape as
  *  the family's own link — only the door differed. */
-function renderKioskForm(chosen: { inquiry: { id: string; childName: string }; fields: AdmissionField[] }, token: string): string {
+function renderKioskForm(chosen: { inquiry: { id: string; childName: string }; fields: AdmissionField[] }, token: string, base: string): string {
   const boxes = admissionBoxes(chosen.fields);
   const body = `<p>Please complete this form for <b>${esc(chosen.inquiry.childName)}</b>.</p>
       <form id="frm" novalidate>
@@ -715,7 +720,7 @@ function renderKioskForm(chosen: { inquiry: { id: string; childName: string }; f
       <p class="hint">The office checks this before anything is added to their records.</p>`;
   // Returns to the picker so the tablet is ready for the next family without anybody touching it.
   const done = `<div class="done" id="done"><p>Jazakumullahu khairan. Please hand the tablet back to the office.</p>
-      <p><a class="pick" href="${esc(KIOSK_PATH)}?token=${esc(token)}">Start again</a></p></div>`;
+      <p><a class="pick" href="${esc(kioskPath(base))}?token=${esc(token)}">Start again</a></p></div>`;
   const script = `
     (function () {
       var f = document.getElementById('frm'), b = document.getElementById('btn'), d = document.getElementById('done');
@@ -724,7 +729,7 @@ function renderKioskForm(chosen: { inquiry: { id: string; childName: string }; f
         b.disabled = true;
         var data = {};
         new FormData(f).forEach(function (v, k) { data[k] = String(v); });
-        fetch(${jsonInScript(KIOSK_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+        fetch(${jsonInScript(kioskPath(base))}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
           .then(function (r) { return r.json(); })
           .then(function (r) {
             if (r && r.ok) { f.style.display = 'none'; d.style.display = 'block'; }
@@ -736,7 +741,7 @@ function renderKioskForm(chosen: { inquiry: { id: string; childName: string }; f
   return kioskShell(`${body}${done}`, script);
 }
 
-function renderReadmissionPage(found: ReturnType<typeof readmissionByToken>, token: string): string {
+function renderReadmissionPage(found: ReturnType<typeof readmissionByToken>, token: string, base: string): string {
   const school = esc(getSchoolName());
   const accent = esc(getAccentColor());
   const style = PAGE_STYLE.replace('__ACCENT__', accent);
@@ -775,7 +780,7 @@ function renderReadmissionPage(found: ReturnType<typeof readmissionByToken>, tok
         b.disabled = true; n.disabled = true;
         var data = { returning: returning };
         new FormData(f).forEach(function (v, k) { data[k] = String(v); });
-        fetch(${jsonInScript(READMISSION_POST_PATH)}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
+        fetch(${jsonInScript(readmissionPostPath(base))}, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) })
           .then(function (r) { return r.json(); })
           .then(function (r) { if (r && r.ok) { f.style.display = 'none'; d.style.display = 'block'; } else { b.disabled = false; n.disabled = false; } })
           .catch(function () { b.disabled = false; n.disabled = false; });
@@ -803,19 +808,19 @@ export function registerPublicInquiryRoutes(app: FastifyInstance): void {
    *  which for an install that never turns it on is exactly true. */
   const off = (reply: FastifyReply) => reply.code(404).send({ error: 'Not found.' });
 
-  app.get('/public/inquiry', async (_req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/public/inquiry', async (req: FastifyRequest, reply: FastifyReply) => {
     const cfg = getAdmissions();
     if (!cfg.publicForm) return off(reply);
     // The hosted page — a link a masjid puts in a newsletter. Nobody frames this one.
-    return sendPage(reply, renderPage({ open: cfg.open, token: mintFormToken() }), "'none'");
+    return sendPage(reply, renderPage({ open: cfg.open, token: mintFormToken(), base: baseOf(req) }), "'none'");
   });
 
-  app.get('/public/inquiry/embed', async (_req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/public/inquiry/embed', async (req: FastifyRequest, reply: FastifyReply) => {
     const cfg = getAdmissions();
     if (!cfg.publicForm) return off(reply);
     // The same page, differing ONLY in who may frame it. An empty allowlist means nobody can, which
     // is how "embedding is off" is expressed — there is no separate switch to fall out of step with.
-    return sendPage(reply, renderPage({ open: cfg.open, token: mintFormToken() }), frameAncestorsFor(cfg.embedOrigins));
+    return sendPage(reply, renderPage({ open: cfg.open, token: mintFormToken(), base: baseOf(req) }), frameAncestorsFor(cfg.embedOrigins));
   });
 
   /** The one-line embed: a script tag on the masjid's own site that writes an iframe pointing here. */
@@ -850,7 +855,7 @@ export function registerPublicInquiryRoutes(app: FastifyInstance): void {
     if (!cfg.publicForm) return off(reply);
     const divId = String((req.query as { divId?: string } | undefined)?.divId ?? '').slice(0, 80);
     const payload = {
-      action: `${baseUrlOf(req)}${config.basePath}/public/inquiry`,
+      action: `${baseUrlOf(req)}${postPath(baseOf(req))}`,
       divId,
       open: cfg.open,
       token: mintFormToken(),
@@ -949,7 +954,7 @@ export function registerPublicInquiryRoutes(app: FastifyInstance): void {
     if (!getAdmissions().publicForm) return off(reply);
     const token = String((req.query as { token?: string } | undefined)?.token ?? '');
     const found = token ? readmissionByToken(token) : { ok: false as const, reason: 'unknown' as const };
-    return sendPage(reply, renderReadmissionPage(found, token), "'none'");
+    return sendPage(reply, renderReadmissionPage(found, token, baseOf(req)), "'none'");
   });
 
   app.post('/public/readmission', { bodyLimit: BODY_LIMIT }, async (req: FastifyRequest, reply: FastifyReply) => {
@@ -973,7 +978,7 @@ export function registerPublicInquiryRoutes(app: FastifyInstance): void {
     const found = token ? admissionByToken(token) : ({ ok: false, reason: 'unknown' } as const);
     // `'none'` — this page is never embedded. The inquiry form is the one an office puts on their
     // website; an admission form carries a child's details and belongs in nobody's iframe.
-    return sendPage(reply, renderAdmissionPage(found, token), "'none'");
+    return sendPage(reply, renderAdmissionPage(found, token, baseOf(req)), "'none'");
   });
 
   app.post('/public/admission', { bodyLimit: BODY_LIMIT }, async (req: FastifyRequest, reply: FastifyReply) => {
@@ -1016,7 +1021,7 @@ export function registerPublicInquiryRoutes(app: FastifyInstance): void {
     const token = String(q.token ?? '');
     if (!kioskByToken(token).ok) return sendPage(reply, renderKioskGone(), "'none'");
     const chosen = q.inquiry ? kioskForm(String(q.inquiry)) : null;
-    return sendPage(reply, chosen ? renderKioskForm(chosen, token) : renderKioskPicker(token), "'none'");
+    return sendPage(reply, chosen ? renderKioskForm(chosen, token, baseOf(req)) : renderKioskPicker(token, baseOf(req)), "'none'");
   });
 
   app.post('/public/admission/kiosk', { bodyLimit: BODY_LIMIT }, async (req: FastifyRequest, reply: FastifyReply) => {

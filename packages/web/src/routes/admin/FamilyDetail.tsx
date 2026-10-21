@@ -298,7 +298,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     try {
       const r = await invite.mutateAsync({ guardianId });
       // Always show the link: it works whether or not the email went out (CLAUDE.md §12).
-      const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${r.url}`;
+      const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${withBase(r.url)}`;
       setInviteLinks((m) => ({ ...m, [guardianId]: full }));
       setMailNote((m) => ({ ...m, [guardianId]: explainSkip(r.mailSkipped, r.emailed) }));
     } catch (err) {
@@ -429,7 +429,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     setInviteErr((e) => ({ ...e, [guardianId]: '' }));
     try {
       const r = await guardianReset.mutateAsync({ guardianId });
-      const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${r.url}`;
+      const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${withBase(r.url)}`;
       setInviteLinks((m) => ({ ...m, [guardianId]: full }));
       setMailNote((m) => ({ ...m, [guardianId]: explainSkip(r.mailSkipped, r.emailed) }));
     } catch (err) {

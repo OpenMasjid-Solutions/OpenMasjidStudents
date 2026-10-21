@@ -30,7 +30,7 @@ import { ensureDefaultSchool } from './schools';
 import { getSchoolLogo, getSchoolName, parseLogoDataUri } from './settings';
 import { loadStripeKeys } from './payments/stripe';
 import { startSchedulers } from './payments/scheduler';
-import { stripBasePath } from './http/basePath';
+import { mountFor, mountRewriter } from './http/basePath';
 import { buildManifest } from './http/manifest';
 
 const log = makeLog('main');
@@ -93,7 +93,12 @@ async function main(): Promise<void> {
     // below stays written at the root and works identically on the LAN (no prefix) and
     // behind the tunnel. Empty prefix = nothing to strip (standalone). (Mirrors the family
     // pattern in OpenMasjidDonations.)
-    rewriteUrl: (req) => stripBasePath(req.url ?? '/', BASE),
+    //
+    // Through the tunnel the prefix is read off the request itself (`mountOf` says why: the env mirror
+    // is empty for an app that is not shared, so opening it from the remote dashboard was a white
+    // screen). Each request's prefix is remembered, so the shell, the cookie Path and every URL built
+    // for that request use the one it actually arrived under.
+    rewriteUrl: mountRewriter(BASE),
   });
 
   await app.register(fastifyCookie);
@@ -194,15 +199,15 @@ async function main(): Promise<void> {
    * shipped a shell-caching bug once (0.48.0-dev.24). Browsers revalidate it themselves, but saying so
    * costs a line and removes the question.
    */
-  app.get('/sw.js', async (_req, reply) => {
+  app.get('/sw.js', async (req, reply) => {
     const file = path.join(config.publicDir || '', 'sw.js');
     if (!config.publicDir || !fs.existsSync(file)) return reply.code(404).send({ error: 'no_sw' });
     return reply
       .header('content-type', 'text/javascript; charset=utf-8')
       .header('cache-control', 'no-store, must-revalidate')
-      // Belt and braces: a worker served from here may only ever control this app's own paths. `${BASE}/`
-      // is "/" at the root and "/students/" behind the tunnel, which is the scope registerSW.ts asks for.
-      .header('service-worker-allowed', `${BASE}/`)
+      // Belt and braces: a worker served from here may only ever control this app's own paths. The mount
+      // + "/" is "/" at the root and "/students/" behind the tunnel, which is the scope registerSW.ts asks for.
+      .header('service-worker-allowed', `${mountFor(req.raw, BASE)}/`)
       .send(fs.readFileSync(file, 'utf8'));
   });
 
@@ -269,11 +274,13 @@ async function main(): Promise<void> {
   if (config.publicDir && fs.existsSync(path.join(config.publicDir, 'index.html'))) {
     await app.register(fastifyStatic, { root: config.publicDir, index: false });
     // Inject the base path so the relative-built Vite assets (base: './') resolve under the tunnel
-    // prefix, and the client can build prefix-aware API/nav URLs (window.__OMOS_BASE__). Fixed per
-    // deployment (BASE is constant), so we inject once. `<base href="/">` when served at the root.
-    const rawIndex = fs
-      .readFileSync(path.join(config.publicDir, 'index.html'), 'utf8')
-      .replace('<head>', `<head>\n    <base href="${BASE}/">\n    <script>window.__OMOS_BASE__=${JSON.stringify(BASE)}</script>`);
+    // prefix, and the client can build prefix-aware API/nav URLs (window.__OMOS_BASE__). PER REQUEST:
+    // the prefix this request arrived under (`mountFor`), which through the tunnel need not be the env's.
+    // `<base href="/">` when served at the root. Safe to interpolate: a tunnel prefix passed `mountOf`'s
+    // shape check, and the env one is a URL pathname, in which `<` and `"` are percent-encoded.
+    const rawIndex = fs.readFileSync(path.join(config.publicDir, 'index.html'), 'utf8');
+    const indexFor = (base: string) =>
+      rawIndex.replace('<head>', `<head>\n    <base href="${base}/">\n    <script>window.__OMOS_BASE__=${JSON.stringify(base)}</script>`);
     /**
      * The SPA shell, and it MUST NOT be cached (0.48.0).
      *
@@ -305,13 +312,13 @@ async function main(): Promise<void> {
      * its dashboard is the platform's business, and guessing wrong would break the whole UI rather than
      * one page. The printed documents, which are ours alone, do set `frame-ancestors 'none'`.
      */
-    const sendIndex = (_req: unknown, reply: import('fastify').FastifyReply) =>
+    const sendIndex = (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) =>
       reply
         .type('text/html')
         .header('cache-control', 'no-store, must-revalidate')
         .header('x-content-type-options', 'nosniff')
         .header('referrer-policy', 'no-referrer')
-        .send(rawIndex);
+        .send(indexFor(mountFor(req.raw, BASE)));
     // Serve the SPA index at the root explicitly — @fastify/static with index:false
     // returns 403 for a bare directory request, so it never reaches the fallback below.
     app.get('/', sendIndex);

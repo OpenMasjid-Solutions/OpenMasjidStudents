@@ -16,7 +16,7 @@ import { db } from '../db';
 import { users, guardians, guardianUsers, guardianFamilies, students, invites, passwordResets, sessions, type Role } from '../db/schema';
 import { rid } from '../db/ids';
 import { hashPassword, verifyPassword, dummyHash, MIN_PASSWORD_LENGTH } from '../auth/passwords';
-import { createSession, destroySession, cookieOptions, COOKIE, COOKIE_PATH, SSO_SESSION_TTL_MS, hashToken } from '../auth/sessions';
+import { createSession, destroySession, cookieOptions, COOKIE, SSO_SESSION_TTL_MS, hashToken } from '../auth/sessions';
 import { mintToken } from '../auth/tokens';
 import { probePlatformSession } from '../fabric/platform';
 import { alertStaff } from '../alerts';
@@ -66,7 +66,7 @@ export const authRouter = router({
       const probe = await probePlatformSession(ctx.req.headers.cookie);
       if (probe.username) {
         const { token } = createSession({ role: 'admin', source: 'sso', username: probe.username, ttlMs: SSO_SESSION_TTL_MS });
-        ctx.res.setCookie(COOKIE, token, cookieOptions(ctx.https, SSO_SESSION_TTL_MS));
+        ctx.res.setCookie(COOKIE, token, cookieOptions(ctx, SSO_SESSION_TTL_MS));
         return {
           authenticated: true as const,
           origin: ctx.origin,
@@ -121,7 +121,7 @@ export const authRouter = router({
       });
       if (!created) throw new TRPCError({ code: 'CONFLICT', message: 'This app is already set up.' });
       const { token } = createSession({ userId: id, role: 'admin', source: 'local', username: input.username });
-      ctx.res.setCookie(COOKIE, token, cookieOptions(ctx.https));
+      ctx.res.setCookie(COOKIE, token, cookieOptions(ctx));
       return { ok: true as const };
     }),
 
@@ -197,13 +197,16 @@ export const authRouter = router({
       loginLimiter.succeed(key);
       loginAccountLimiter.succeed(account);
       const { token } = createSession({ userId: user!.id, role: user!.role, source: 'local', username: user!.username });
-      ctx.res.setCookie(COOKIE, token, cookieOptions(ctx.https));
+      ctx.res.setCookie(COOKIE, token, cookieOptions(ctx));
       return { ok: true as const, role: user!.role, mustChangePassword: user!.mustChangePassword };
     }),
 
   logout: publicProcedure.mutation(({ ctx }) => {
     destroySession(ctx.token);
-    ctx.res.clearCookie(COOKIE, { path: COOKIE_PATH }); // must match the Path the cookie was set with (RFC 6265)
+    ctx.res.clearCookie(COOKIE, { path: ctx.cookiePath }); // must match the Path the cookie was set with (RFC 6265)
+    // And at "/": a cookie set before the Path followed the request's own mount may sit there, where
+    // on the shared tunnel hostname every other app's server would receive it.
+    if (ctx.cookiePath !== '/') ctx.res.clearCookie(COOKIE, { path: '/' });
     return { ok: true as const };
   }),
 
@@ -360,7 +363,7 @@ export const authRouter = router({
       inviteAcceptLimiter.succeed(key);
       audit({ userId, role: 'parent', name: g!.name }, 'invite.accept', { entity: 'guardian', entityId: g!.id });
       const { token } = createSession({ userId, role: 'parent', source: 'local', username: email });
-      ctx.res.setCookie(COOKIE, token, cookieOptions(ctx.https));
+      ctx.res.setCookie(COOKIE, token, cookieOptions(ctx));
       return { ok: true as const, role: 'parent' as Role };
     }),
 

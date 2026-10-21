@@ -508,7 +508,7 @@ export const admissionsRouter = router({
     // a masjid LAN without the platform's TLS proxy is the ordinary case.
     const host = String(ctx.req.headers['x-forwarded-host'] ?? ctx.req.headers.host ?? '').split(',')[0]!.trim();
     const proto = String(ctx.req.headers['x-forwarded-proto'] ?? '').split(',')[0]!.trim() || (ctx.https ? 'https' : 'http');
-    const r = mintKioskToken(ctx.session?.userId ?? null, host ? `${proto}://${host}${config.basePath}` : '');
+    const r = mintKioskToken(ctx.session?.userId ?? null, host ? `${proto}://${host}${ctx.base}` : '');
     audit(auditActor(ctx), 'admission.kioskStart', { entity: 'admissionLink', entityId: r.id, detail: {} });
     return { ok: true as const, token: r.token, url: r.url, id: r.id };
   }),
