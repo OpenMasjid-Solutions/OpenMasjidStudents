@@ -115,6 +115,19 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **Admins can work in Students from anywhere — by opening it from the OpenMasjidOS dashboard.** Away
+  from the masjid, press **Open** on Students in your OpenMasjidOS dashboard and you are signed in as an
+  admin, with every screen working. It rides on the dashboard's own two-step sign-in, and it ends the moment
+  you sign out of the dashboard there. An admin **password** still only works on the masjid network, and an
+  admin password can no longer be reset by emailed link — open the app from the dashboard, or ask another
+  admin to reset it under Staff. Finance and parents sign in from anywhere exactly as before.
+- **Opening Students from outside no longer shows a blank page.** If Students was not shared online, opening
+  it from the dashboard away from the masjid loaded a white screen: the page looked for its own files at
+  the dashboard's address. It now finds them under its own, whatever address OpenMasjidOS gives it — and so
+  do the forms, the printed sheets' QR codes and the links you copy for a parent.
+- **Signing in from outside keeps your session to Students.** The sign-in is only ever sent back to this
+  app's own address on the shared internet address, never to the other apps beside it, and signing out
+  clears any older one as well.
 - **Leaving a medical consent question blank no longer records a "no".** The admission form offers
   "—", Yes and No, and leaving it on "—" was being stored as though the family had refused. It is now
   left unanswered, which is what it meant.
