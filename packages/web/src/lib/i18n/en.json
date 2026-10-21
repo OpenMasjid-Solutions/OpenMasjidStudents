@@ -1203,7 +1203,7 @@
     "confirmReverse": "Reverse this payment? A reversal entry will be added.",
     "feePlans": "Fee plans",
     "noPlans": "No fee plans yet.",
-    "noPlansFinance": "No fee plans yet — an admin sets these up on the masjid network.",
+    "noPlansFinance": "No fee plans yet — an admin sets these up.",
     "confirmPlanDelete": "Delete “{{name}}” for good? It has never been billed, so nothing in your history changes. {{count}} student(s) on it stop being billed for it. This can’t be undone.",
     "confirmPlanArchive": "“{{name}}” appears on {{count}} invoice line(s), so it can’t be deleted — your invoice history has to keep meaning what it said. Archive it instead? It disappears from this list and every student on it stops being billed for it; past invoices and payments are untouched.",
     "planName": "Name",

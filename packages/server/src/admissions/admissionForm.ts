@@ -430,9 +430,11 @@ export interface KioskDevice {
  * tunnel by default, so handing an office the public URL would hand them a link that is guaranteed
  * not to work on the device it is for.
  *
- * The admin minting it is on the LAN (this is an `adminProcedure`, §12.4), so the host they reached
- * us by IS the LAN address — which is both the correct answer and the only one we can know, since
- * nothing tells this container its own network address.
+ * An admin minting it at the masjid reached us by the LAN address, so that host IS the LAN address —
+ * both the correct answer and the only one we can know, since nothing tells this container its own
+ * network address. An admin minting it from OUTSIDE (the platform's SSO, §12.4, from 0.52.0-dev.20)
+ * reached us by the public address, so that is what the link carries — and a tablet opens it only
+ * where the office has opted into tablet mode over the tunnel (`kioskRemote`).
  */
 export function mintKioskToken(createdByUserId: string | null, base?: string, at = new Date()): { token: string; url: string; id: string } {
   const { token, tokenHash } = mintToken();

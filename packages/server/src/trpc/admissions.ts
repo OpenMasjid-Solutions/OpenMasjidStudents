@@ -503,7 +503,8 @@ export const admissionsRouter = router({
     if (!getAdmissions().kiosk) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'Turn on tablet mode in Settings → Admissions first.' });
     }
-    // The LAN address this admin reached us by — see `mintKioskToken`. `x-forwarded-proto` is only
+    // The address this admin reached us by (LAN at the masjid, public from outside) — see
+    // `mintKioskToken`. `x-forwarded-proto` is only
     // trusted the way `security/origin.ts` already trusts it, and the fallback is plain http because
     // a masjid LAN without the platform's TLS proxy is the ordinary case.
     const host = String(ctx.req.headers['x-forwarded-host'] ?? ctx.req.headers.host ?? '').split(',')[0]!.trim();
