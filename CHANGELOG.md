@@ -115,6 +115,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **Security updates to the parts Students is built on.** The web server underneath the app, the piece
+  that serves its pages, the one that talks to its database and a small part of the card-payments
+  library are updated past published security problems — among them a way a carefully malformed web
+  address could get past a check. Nothing changes on screen and there is nothing to do.
+- **Finance's empty fee-plan note no longer says plans are set up "on the masjid network"** — an admin
+  sets them up, wherever they are working from.
+- **The tools used to build and test Students are updated too**, for the same reason. They never run on
+  your server; the test runner is the one left behind, because its fix needs a larger upgrade of its own.
 - **Admins can work in Students from anywhere — by opening it from the OpenMasjidOS dashboard.** Away
   from the masjid, press **Open** on Students in your OpenMasjidOS dashboard and you are signed in as an
   admin, with every screen working. It rides on the dashboard's own two-step sign-in, and it ends the moment
