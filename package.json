@@ -21,7 +21,7 @@
     "image": "docker build -t ghcr.io/openmasjid-solutions/openmasjidstudents:local ."
   },
   "devDependencies": {
-    "concurrently": "^9.1.0",
+    "concurrently": "^9.2.5",
     "typescript": "^5.6.3"
   }
 }
