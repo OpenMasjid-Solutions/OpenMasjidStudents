@@ -67,8 +67,9 @@ services:
       # host:container. OpenMasjidOS offers "Open" on the lowest published host port
       # and picks a different free host port automatically if 8360 is already taken.
       # Defence in depth: on an internet-exposed host (e.g. a VPS), firewall this port so
-      # it's reachable only on the masjid LAN. The app already denies admin to any non-local
-      # client (origin policy, §12.4), but keeping the port off the public internet is wise.
+      # it's reachable only on the masjid LAN. The app already refuses an admin password from any
+      # non-local client and admits an admin from outside only on an OpenMasjidOS access token
+      # (origin policy, §12.4), but keeping the port off the public internet is wise.
       - "8360:8080"
     volumes:
       - data:/data

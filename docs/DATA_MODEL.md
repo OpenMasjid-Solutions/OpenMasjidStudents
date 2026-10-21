@@ -314,7 +314,8 @@ and `updated_at` wherever a row is ever updated.
 
 `CLAUDE.md` §12.4 says classify a request as `tunnel` if **`cf-ray` is present OR
 `x-forwarded-proto: https`**. We implement a **fail-closed, IP-based** rule that preserves
-the *intent* (admin = LAN-only) and hardens it. Reason (confirmed against OpenMasjidOS
+the *intent* (admin = LAN-only, by password — see the 0.52.0-dev.20 amendment below for the
+platform's SSO) and hardens it. Reason (confirmed against OpenMasjidOS
 v0.40.0 source, and an adversarial review that found the naive rule exploitable):
 
 1. This app is `https: true`. On the **LAN**, OpenMasjidOS runs a per-app TLS proxy
@@ -336,8 +337,9 @@ v0.40.0 source, and an adversarial review that found the naive rule exploitable)
   cookie `Secure` flag, never for the policy.
 - **Fail-closed + safe both directions:** a public client can never be `lan` (spoofing
   `cf-ray` or a private XFF only *downgrades* to `tunnel`); a tunnel client can't strip
-  `cf-ray` and can't forge a private peer. On a VPS, admin therefore requires a genuinely
-  local path (e.g. SSH-tunnel to loopback) — exactly §12.4's "admin never over the internet."
+  `cf-ray` and can't forge a private peer. On a VPS, an admin PASSWORD therefore requires a
+  genuinely local path (e.g. SSH-tunnel to loopback) — exactly §12.4's "admin password never over
+  the internet"; the one other way in is the platform's access token (amendment below).
 
 Covered by `security/origin.test.ts` (incl. the VPS/public-client cases) + the
 `test/auth.test.ts` matrix. **If the OS changes how its proxies set peer/forwarding

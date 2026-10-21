@@ -193,7 +193,9 @@ Three things done now that cost nothing and are expensive later (decision 12):
    the account.
 
 **The minimum teacher-facing register, when it comes** (not now, and not designed now beyond this
-paragraph): LAN-only like every other staff surface — the origin policy does not bend for convenience —
+paragraph): LAN-only — a teacher's own password would get no further over the tunnel than an admin's
+does, and a teacher has no OpenMasjidOS sign-in to vouch for them; the origin policy does not bend for
+convenience —
 scoped to their assigned classes through the Phase 4 teaching-assignment table, and exactly two
 procedures: read today's roster for my class, write marks for my class. Nothing else. That is small
 *provided* teaching assignments exist, which is why it lands naturally after Phase 4.
@@ -266,8 +268,10 @@ an argument at the door.
 ## 7. Roles
 
 Admin-only, server-side (§5). **Finance does not reach attendance records** — they are not money.
-Parents reach nothing until Phase 5's report card. The whole register is therefore **LAN-only**, because
-admin is (§12.4), and that is not being weakened to make mark entry more convenient.
+Parents reach nothing until Phase 5's report card. The whole register therefore follows admin's origin
+rule (§12.4): the masjid network, or from outside only by opening the app from the OpenMasjidOS
+dashboard behind its two-step sign-in — never an admin password over the tunnel — and that is not being
+weakened further to make mark entry more convenient.
 
 ---
 

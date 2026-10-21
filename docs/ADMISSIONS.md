@@ -180,8 +180,9 @@ It is **not** a Fabric capability and must never appear under `/fabric/*` — th
 secret-gated, LAN-only and 404s over the tunnel (§11.1), which is the opposite of what this needs.
 
 **The origin table gains a row** (§12.4): the public inquiry routes are reachable on **LAN and tunnel**,
-unauthenticated, and that is the point of them. Nothing else moves. Admin stays LAN-only at login and at
-session use; reading an inquiry inside the app is `adminProcedure`.
+unauthenticated, and that is the point of them. Nothing else moves. The admin password stays LAN-only at
+login and at session use, and from outside an admin is only the platform's two-step SSO (0.52.0-dev.20);
+reading an inquiry inside the app is `adminProcedure`.
 
 **Non-disclosure.** The response is byte-identical every time: same acknowledgement, same status, same
 shape, whether the submission was stored, deduplicated, rejected by the honeypot, or dropped by the rate
@@ -458,13 +459,13 @@ Everything staff-facing here is **admin-only** and gated server-side (§5). **Fi
 admissions records at all** — they are not money, and finance's wall is the one this app already holds.
 Parents reach nothing here except by their one-time token link.
 
-**The origin consequence, stated rather than worked around:** admin cannot authenticate over the
-Cloudflare uplink, so the whole admissions desk is usable **only on the masjid network**. That is
-correct and is not being weakened. What *is* worth building is the thing that turns a confusing 403 into
-a sentence: when an admin sign-in is refused over the tunnel, name the LAN address to open instead.
-`cf-ray` short-circuits before the IP is examined, so a phone on masjid Wi-Fi is still `tunnel` if it
-reached the app by the bookmarked public URL — same device, same network, different door. Nothing in the
-app tells anyone that today.
+**The origin consequence, stated rather than worked around:** an admin password is never accepted over
+the Cloudflare uplink, so away from the masjid network the admissions desk is reached **only by opening
+the app from the OpenMasjidOS dashboard**, behind the platform's two-step sign-in (0.52.0-dev.20). That
+is correct and is not being weakened further. `cf-ray` short-circuits before the IP is examined, so a
+phone on masjid Wi-Fi is still `tunnel` if it reached the app by the bookmarked public URL — same device,
+same network, different door — and the login page there says to open the app from the dashboard instead
+(`auth.adminTunnelNote`), which is the sentence that replaces a confusing refusal.
 
 ---
 
@@ -485,7 +486,7 @@ app tells anyone that today.
   `updated_at`.
 - Preview and commit **agree**, over the same input.
 - **Admin gate on every new procedure**, and the role × origin matrix for each (§18): a finance session
-  gets `FORBIDDEN`, an admin session over simulated tunnel gets 403.
+  gets `FORBIDDEN`, a password- or LAN-made admin session over simulated tunnel gets 403.
 - `publicText` for `admissions-inquiry` **names nobody** — and watch for the vacuous version of this
   assertion (`test/pastDue.test.ts` has the scar: a helper that named the child after the household made
   "the household name is gone" pass on a substring).

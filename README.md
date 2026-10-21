@@ -295,8 +295,9 @@ The complete feature set, by area.
     alone can only *pay*, so minting an account from one would be an escalation. Admin-toggleable.
 - **Password reset** by emailed link, or an office re-invite when there is no mail. Staff can send
   a guardian a reset directly.
-- **Single sign-on** from the OpenMasjidOS dashboard on the masjid network, treated strictly as an
-  identity signal.
+- **Single sign-on** from the OpenMasjidOS dashboard, treated strictly as an identity signal — on
+  the masjid network, and from anywhere else through the dashboard's own two-step sign-in, which is
+  the only way an admin gets in from outside.
 - Sessions are server-side with signed, HTTP-only cookies; login is rate-limited with generic
   errors; **changing a password signs out every other device but the one you changed it on**.
 
@@ -456,9 +457,10 @@ student per term, and a **draft → finalized** lifecycle where finalizing freez
 showed. A mark corrected in March does not rewrite the card issued in January. Printable in the same
 way statements are, and visible to parents in the portal — **finalized cards only**.
 
-**Two things about it worth knowing up front.** All of it is **admin-only**, and admin works only on
-the masjid network — so the register is taken on masjid Wi-Fi, by its LAN address, not through the
-public link. And **class history starts the day it ships**: the app has never recorded which class a
+**Two things about it worth knowing up front.** All of it is **admin-only**, and an admin's
+password works only on the masjid network — away from it, the register is reached by opening the app
+from the OpenMasjidOS dashboard, never by signing in at the public link. And **class history starts
+the day it ships**: the app has never recorded which class a
 child was in *last* term, and that cannot be reconstructed, so a term that predates the feature says
 "no roster history" instead of showing you a number that looks right.
 
@@ -470,17 +472,21 @@ Three roles. Checks are enforced server-side on every procedure, not in the UI.
 
 | | On the masjid network | Over the internet uplink |
 | --- | :-: | :-: |
-| **admin** — students, households, fee plans, structure, staff, settings | ✅ | ❌ **blocked** |
+| **admin** — students, households, fee plans, structure, staff, settings | ✅ | ✅ **only opened from the OpenMasjidOS dashboard** — ❌ password sign-in |
 | **finance** — billing, the ledger, payments, statements | ✅ | ✅ |
 | **parent** — own household only | ✅ | ✅ |
 
-**Admin is network-only by design, at both login *and* session use** — a cookie minted on the
-LAN is refused if it is later presented from the internet. Clean walls elsewhere: finance never
-sees settings or staff management; parents can only ever reach their own household.
+**An admin's password works only on the masjid network, at both login *and* session use** — a
+cookie minted on the LAN is refused if it is later presented from the internet, and an admin
+password is never reset by emailed link. From outside, an admin gets in one way: pressing **Open**
+on Students in the OpenMasjidOS remote dashboard, which sits behind its own password and two-step
+sign-in. The platform vouches for that sign-in on every request, so signing out of the dashboard
+ends it. Clean walls elsewhere: finance never sees settings or staff management; parents can only
+ever reach their own household.
 
-The academic layer keeps those walls and adds one. All of it is **admin-only** — and therefore
-network-only — so admissions, the register and the gradebook are worked on masjid Wi-Fi, by the
-LAN address. **Finance never sees a medical field, an admissions record or a mark**; parents see
+The academic layer keeps those walls and adds one. All of it is **admin-only** — so admissions, the
+register and the gradebook are worked on the masjid network, or from the OpenMasjidOS dashboard
+away from it. **Finance never sees a medical field, an admissions record or a mark**; parents see
 **finalized report cards for their own children**, and nothing else of it.
 
 ---
@@ -529,7 +535,9 @@ host coming off the dev channel stays put until the next patch.
 The most sensitive app in the org: records about children, reachable from the internet, moving
 money. The invariants that hold it together —
 
-- **Admin cannot authenticate over the internet uplink**, by policy, at login and at session use.
+- **An admin password is never accepted over the internet uplink**, by policy, at login and at
+  session use. From outside, the only admin is one the OpenMasjidOS dashboard's two-step sign-in
+  vouches for on that very request.
 - **Card data never reaches our server**; Stripe secret keys live in memory only, never on disk.
 - **A Student ID is a payment credential, and it is guessable** — so the limiter is the control,
   not secrecy: six failed lookups in an hour lock that ID and alert the office, and `identify`,

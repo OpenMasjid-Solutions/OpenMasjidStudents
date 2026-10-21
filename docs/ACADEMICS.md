@@ -228,8 +228,9 @@ Admin-only, server-side (§5). **Finance reaches no academic record** — marks,
 money, and finance's wall is one this app already holds cleanly. Parents reach **finalized report cards
 for their own children only**, scoped in the query through `familyAccess.ts` and never by a UI filter.
 
-Admin being LAN-only (§12.4) means mark entry and finalization happen on the masjid network. That is
-accepted, not worked around.
+Admin's origin rule (§12.4) means mark entry and finalization happen on the masjid network, or from
+outside only by opening the app from the OpenMasjidOS dashboard behind its two-step sign-in — never
+with an admin password over the tunnel. That is accepted, not worked around.
 
 ---
 

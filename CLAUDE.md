@@ -366,7 +366,8 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
 - Receipts by email; change your own password.
 
 **Platform integration**
-- Fabric **appearance inherit**, **SSO** (`sso: true`, LAN admin only), **notifications**, **email**
+- Fabric **appearance inherit**, **SSO** (`sso: true`, admin — on the LAN, and from outside only from the
+  remote dashboard's two-step sign-in, §12), **notifications**, **email**
   (`email: true` — the platform owns the provider and the From address), **alerts** (`alerts:` — declared ids
   the admin can route), **domain** (`domain: true` — we learn our own public URL), and the **provider** side
   of `students/billing` (§11).
@@ -395,8 +396,10 @@ parent's sheet in Settings, and — per the org rule — sacred text never appea
   signed-in surface.
 - **Audit log** on every sensitive write: fee assignment, invoices, payments, reversals, refunds, autopay
   changes, role/user changes — who, when, what.
-- **Access-origin policy**: `admin` sessions work **only on the masjid LAN**; `finance` and `parent` work on
-  LAN **and** over the Cloudflare uplink (§12.4 — hard constraint).
+- **Access-origin policy**: `admin` works on the masjid LAN, and from outside **only through OpenMasjidOS
+  single sign-on** — opened from the platform's remote dashboard, behind its two-step sign-in — never by
+  the admin's password; `finance` and `parent` work on LAN **and** over the Cloudflare uplink (§12.4 —
+  hard constraint).
 - **A snapshot of the database every 30 minutes** (`db/snapshot.ts`), because the platform tars a live volume.
 - i18n (i18next) + RTL-safe layouts; light/dark via Fabric appearance; `prefers-reduced-motion`.
 
@@ -525,8 +528,8 @@ ordinary charge** through the existing charge procedures — admissions opens no
 > `/public/inquiry`, its embed page and its one-line snippet, in `admissions/publicRoutes.ts`, with
 > every §14 control written into the handler because there are no Fastify hooks in this repo; the
 > **pipeline** (`admissions/transition.ts`, the ONE writer of a state, of `inquiry_events` and of the
-> audit row); the **desk** (`trpc/admissions.ts`, admin-only and therefore LAN-only, plus the
-> Admissions screen and the Settings tab); the `admissions-inquiry` alert; the limiter hardening the
+> audit row); the **desk** (`trpc/admissions.ts`, admin-only — the LAN, or the platform's two-step SSO
+> from outside, §12.4 — plus the Admissions screen and the Settings tab); the `admissions-inquiry` alert; the limiter hardening the
 > phase depended on, which shipped a build earlier as the security fix it also was (dev.6); and — from
 > **0.52.0-dev.8** — **conversion** (`admissions/convert.ts`, `admissions/fees.ts`), which is what
 > makes the funnel produce a child.
@@ -621,8 +624,10 @@ ordinary charge** through the existing charge procedures — admissions opens no
 >
 > **The tablet's link is the LAN address, not the tunnel one** (dev.16, Hasan). Tablet mode refuses
 > the tunnel by default, so `portalBase()` would have handed an office a link guaranteed not to open
-> on the device it was for. It is built from the host the minting admin reached us by — which, for an
-> `adminProcedure`, is the LAN address by §12.4.
+> on the device it was for. It is built from the host the minting admin reached us by — the LAN address
+> when they are at the masjid. **An admin who starts tablet mode from outside** (the platform's SSO,
+> §12.4, from 0.52.0-dev.20) **gets the public address instead**, which a tablet opens only where the
+> office has opted into tablet mode over the tunnel.
 >
 > **STARTING A YEAR IS ONE FLOW FROM 0.52.0-dev.15**, on Hasan's instruction ("I want the readmission
 > stuff to move to when starting a new year… there should be a prompt asking for how much the
@@ -693,8 +698,9 @@ class Student ID sheet too, which is the whole install rather than one household
 
 **Invariants that bind the whole layer** (each is enforced where its rule lives, not here):
 derived-never-stored for rates, averages and grades exactly as for balances (§9); append-only audit with
-**before → after** on every sensitive write (§14); **admin stays network-only** at login and at session
-use, so all of this is LAN-only and the origin policy does not bend for convenience (§12.4); role checks
+**before → after** on every sensitive write (§14); **the admin PASSWORD stays network-only** at login and
+at session use, so from outside all of this is reached only through the platform's two-step SSO, and the
+origin policy does not bend further for convenience (§12.4); role checks
 server-side on every procedure, with **finance reaching no academic, admissions or medical record** and a
 parent reaching only their own children (§5); **no PII in logs**, and nothing submitted through the public
 form in a log line either (§14); every string through i18next, RTL-aware, light and dark, §15 parity; and
@@ -804,9 +810,10 @@ entry more convenient (§4a). That includes the medical fields: an admin opened 
 reads them as on the LAN. One consequence is worth
 building for rather than explaining repeatedly: `cf-ray` short-circuits **before** the client IP is
 examined, so a phone on the masjid Wi-Fi is still `tunnel` if it reached the app by the bookmarked public
-URL — same device, same network, different door. **When an admin sign-in is refused over the tunnel, name
-the LAN address to open instead**; nothing in the app tells anyone that today, and a teacher discovering
-it at 8am with a class in front of them is the avoidable version.
+URL — same device, same network, different door — and an admin password typed there is refused. **The
+login page over the tunnel says what to do instead** (`auth.adminTunnelNote`, 0.52.0-dev.20): open the
+app from the OpenMasjidOS dashboard, which signs the admin in from anywhere — so a teacher discovering it
+at 8am with a class in front of them has a sentence to follow rather than a dead end.
 
 **Permission matrix:**
 
@@ -905,9 +912,10 @@ of "card-ish channels" cannot disagree with it.
 ```
         LAN (masjid Wi-Fi)                        Internet (Cloudflare tunnel via the OS)
   ┌──────────────────────────────┐        ┌───────────────────────────────────────────┐
-  │ ADMIN (only here)            │        │ Parents (portal, pay, autopay)             │
+  │ ADMIN (password: only here)  │        │ Parents (portal, pay, autopay)             │
   │ + finance/parents on         │        │ Finance (billing, statements)              │
-  │   masjid Wi-Fi               │        │ (Stripe is called OUTBOUND — no webhook)   │
+  │   masjid Wi-Fi               │        │ Admin ONLY via OpenMasjidOS SSO (2-step)   │
+  │                              │        │ (Stripe is called OUTBOUND — no webhook)   │
   └──────────────┬───────────────┘        └───────────────────┬───────────────────────┘
                  │ HTTPS (platform-served,                    │ HTTPS (public URL, full path prefix)
                  │ https:true port)                           │
@@ -918,8 +926,8 @@ of "card-ish channels" cannot disagree with it.
    │  Students · households · schools/years/courses/classes · fee plans        │
    │  Invoices · charges · derived ledger · refunds · past due · year view     │
    │  Printable statements / sheets / invoices / ID sheets (print-CSS HTML)    │
-   │  §4a (0.52.0→, admin+LAN only): student record · admissions · register ·  │
-   │        marks · hifz · report cards — none of it touching the ledger       │
+   │  §4a (0.52.0→, admin — LAN or SSO): student record · admissions ·         │
+   │        register · marks · hifz · report cards — none touching the ledger  │
    │  SQLite (WAL) via Drizzle  •  /data volume (db + 30-min snapshot)         │
    │  Auth (argon2id) + roles + ORIGIN POLICY (admin = LAN, or platform SSO)    │
    │  Stripe: Elements PIs, SetupIntents, off-session autopay, refunds          │
@@ -1399,7 +1407,7 @@ version: 0.51.0-dev.N        # X.Y.Z on main — §19
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
 icon: icon.svg
-sso: true                # platform admin opens it signed-in on the LAN
+sso: true                # platform admin opens it signed-in (LAN, or the remote dashboard — §12)
 notifications: true      # routine payment notices to the masjid webhook
 stripe: true             # keys via GET /api/fabric/stripe — real charges (§13)
 https: true              # REQUIRED: the parent portal embeds Stripe Elements (secure context)
@@ -1667,11 +1675,13 @@ skipped. The push paths are optimizations; **money is never lost**, only delayed
     control on them is stated explicitly in §14 rather than inherited. They are **not** a Fabric
     capability and must never live under `/fabric/*`, whose whole shape — secret-gated, LAN-only, 404 over
     the tunnel — is the opposite of what a public embeddable form needs. Reading an inquiry *inside* the
-    app is `adminProcedure` like everything else in §4a, and therefore LAN-only.
+    app is `adminProcedure` like everything else in §4a, and therefore the LAN, or the platform's
+    two-step SSO from outside (above).
   - **`cf-ray` short-circuits before the IP is examined**, so `lan` depends on the ADDRESS a client
     reached the app by, never on the network it is sitting on: a phone on masjid Wi-Fi that opens the
-    bookmarked public URL is `tunnel`. That is correct and stays. **Say so at the door**: when an admin
-    sign-in is refused over the tunnel, name the LAN address to open instead.
+    bookmarked public URL is `tunnel`. That is correct and stays. **Say so at the door**: the login page
+    over the tunnel tells an admin to open the app from the OpenMasjidOS dashboard instead
+    (`auth.adminTunnelNote`) — without saying whether any account is an admin's.
   - The policy lives in one middleware consulted by every tRPC procedure; per-procedure overrides are
     forbidden without a CLAUDE.md change.
 - **Tunnel niceties**: absolute links/QRs/invite emails use the public URL the platform reports (`domain:
@@ -1793,7 +1803,8 @@ invariant here is load-bearing:
     - what comes back is **inert like the rest of the submission** and is written only when an admin
       approves it, so nothing a stranger with a link types lands on a record unreviewed;
     - and it changes **nothing** about who may read one afterwards: admin only, through the same
-      role-keyed allow-list, on the LAN.
+      role-keyed allow-list — on the LAN, or from outside only through the platform's two-step SSO
+      (§12.4).
   - **The DB file is already a secret** (§9) and these fields do not change that; what they change is the
     cost of getting the allow-list wrong, which is why it has its own tests and its own mutation check.
 - **ATTACHMENT RULES — written so that §4's citation resolves to something.** §4 said for several releases
@@ -2074,8 +2085,9 @@ payment paths (there is no webhook to forward — see §13.4); a small mock of `
 ## 18. Definition of done (any feature)
 
 Builds via `npm run build`; `npm run lint` (`tsc --noEmit`) clean; the ledger / Fabric-contract / origin-policy tests pass;
-**role × origin matrix verified for touched routes** (an admin session over simulated tunnel gets 403; a
-parent token literally cannot fetch another household — tested, not assumed); works light+dark, LTR+RTL,
+**role × origin matrix verified for touched routes** (a password- or LAN-made admin session over simulated
+tunnel gets 403 while a platform-vouched one passes; a parent token literally cannot fetch another
+household — tested, not assumed); works light+dark, LTR+RTL,
 reduced-motion honored; new/changed screens reviewed side-by-side with the OpenMasjidOS dashboard for
 token/motion/typography parity (§15) **and checked on a phone-width viewport**; works with Fabric/mail/tunnel
 absent (standalone) and present; payment features tested against Stripe test mode including a declined card;

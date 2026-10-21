@@ -50,8 +50,8 @@ and leaves the two thrashing each other.
    messages (`feat:`, `fix:`, `docs:`, `chore:` …). **No AI co-author trailers.**
 3. Before pushing: `npm run build` and `npm run test` must pass, `tsc` must be clean, and the change
    must work in **both** light/dark themes and **both** LTR/RTL, honor `prefers-reduced-motion`, look
-   right at phone width, and keep the role × origin matrix intact (an admin session over the tunnel must
-   still get 403; a parent must not be able to fetch another household). New user-facing strings go
+   right at phone width, and keep the role × origin matrix intact (a password- or LAN-made admin session
+   over the tunnel must still get 403 — only OpenMasjidOS single sign-on admits an admin from outside; a parent must not be able to fetch another household). New user-facing strings go
    through i18next. See `CLAUDE.md` §18 for the full Definition of Done.
 4. Open a pull request. Every source file carries an SPDX header
    (`// SPDX-License-Identifier: AGPL-3.0-only`) — keep it on new files, never
@@ -87,7 +87,7 @@ authority; this is the short list.
 
 | Area | Start here |
 | --- | --- |
-| Roles, sessions, the LAN-only admin rule | `packages/server/src/trpc/trpc.ts`, `security/origin.ts` |
+| Roles, sessions, the admin origin rule (LAN, or platform SSO from outside) | `packages/server/src/trpc/trpc.ts`, `security/origin.ts` |
 | Money: invoices, allocation, balances | `packages/server/src/billing/` |
 | Stripe: pay-now, autopay, refunds, reconciliation | `packages/server/src/payments/` |
 | The Fabric capability other apps consume | `packages/server/src/fabric/provider.ts` + `docs/FABRIC_BILLING_CONTRACT.md` |
