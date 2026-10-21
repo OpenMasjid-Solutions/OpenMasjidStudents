@@ -56,6 +56,8 @@ export interface CtxOpts {
   peer?: string;
   cookieHeader?: string;
   https?: boolean;
+  /** The session came from the platform's access token on a tunnel request (auth/sessions.ts `sessionFromRequest`). */
+  platformVouched?: boolean;
 }
 
 /** A minimal Context stand-in + a record of any cookies the procedure set. */
@@ -66,6 +68,10 @@ export function makeCtx(o: CtxOpts = {}) {
       ...(o.cookieHeader ? { cookie: o.cookieHeader } : {}),
       ...(o.origin === 'tunnel' ? { 'cf-ray': 'test-ray' } : {}),
     },
+    // What @fastify/cookie would parse from that header.
+    cookies: Object.fromEntries(
+      (o.cookieHeader ?? '').split(';').map((p) => p.trim()).filter(Boolean).map((p) => [p.slice(0, p.indexOf('=')), p.slice(p.indexOf('=') + 1)]),
+    ),
     socket: { remoteAddress: o.peer ?? '127.0.0.1' },
   };
   const res = {
@@ -79,6 +85,7 @@ export function makeCtx(o: CtxOpts = {}) {
     https: o.https ?? false,
     token: o.token,
     session: o.session ?? null,
+    platformVouched: o.platformVouched ?? false,
     base: '',
     cookiePath: '/',
   };

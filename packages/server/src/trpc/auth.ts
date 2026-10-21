@@ -5,7 +5,7 @@
  * login, logout, and the OpenMasjidOS SSO fast-path. Origin policy is enforced HERE
  * for the public login/setup mutations and in trpc.ts middleware for every protected
  * call. Errors are friendly + generic: over the tunnel there is no username, role, or
- * password oracle — an unknown user, an inactive user, and an admin (LAN-only) all
+ * password oracle — an unknown user, an inactive user, and an admin (password sign-in is LAN-only) all
  * produce the SAME response, timed constant by verifying against a decoy hash.
  */
 import { z } from 'zod';
@@ -16,12 +16,12 @@ import { db } from '../db';
 import { users, guardians, guardianUsers, guardianFamilies, students, invites, passwordResets, sessions, type Role } from '../db/schema';
 import { rid } from '../db/ids';
 import { hashPassword, verifyPassword, dummyHash, MIN_PASSWORD_LENGTH } from '../auth/passwords';
-import { createSession, destroySession, cookieOptions, COOKIE, SSO_SESSION_TTL_MS, hashToken } from '../auth/sessions';
+import { createSession, destroySession, cookieOptions, COOKIE, SSO_SESSION_TTL_MS, hashToken, platformAccessToken, PLATFORM_COOKIE } from '../auth/sessions';
 import { mintToken } from '../auth/tokens';
 import { probePlatformSession } from '../fabric/platform';
 import { alertStaff } from '../alerts';
 import { fabricConfigured, config } from '../config';
-import { rateLimitKey } from '../security/origin';
+import { rateLimitKey, roleAllowedFromOrigin } from '../security/origin';
 import { loginLimiter, loginAccountLimiter, inviteAcceptLimiter, resetRequestLimiter, resetConfirmLimiter, registerLimiter, codeLookupLimiter } from '../security/rateLimit';
 import { findUserByUsername, normalizeUsername, usernameTaken } from '../auth/usernames';
 import { hasAnyUser } from '../auth/firstRun';
@@ -40,13 +40,11 @@ const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour (§12) — matches the reset emai
 // Moved to auth/firstRun.ts — the WhatsApp `stats` command asks the same question (see there).
 
 export const authRouter = router({
-  /** Who am I? Also performs the LAN-only SSO upgrade when embedded in OpenMasjidOS. */
+  /** Who am I? Also performs the SSO upgrade when embedded in OpenMasjidOS — on the LAN, and from outside. */
   session: publicProcedure.query(async ({ ctx }) => {
-    if (ctx.session) {
-      // A LAN-minted admin cookie presented over the tunnel is inert (§12.4).
-      if (ctx.session.role === 'admin' && ctx.origin === 'tunnel') {
-        return { authenticated: false as const, setupRequired: false, origin: ctx.origin, adminBlocked: true };
-      }
+    // A LAN-minted admin cookie presented over the tunnel is inert (§12.4) — but the request may still
+    // carry the platform's word for it, so that falls through to SSO below rather than ending here.
+    if (ctx.session && roleAllowedFromOrigin(ctx.session.role, ctx.origin, ctx.platformVouched)) {
       // Surface the forced-password-change flag so the UI can gate (staff temp passwords).
       let mustChangePassword = false;
       if (ctx.session.userId) {
@@ -61,12 +59,18 @@ export const authRouter = router({
       };
     }
 
-    // SSO fast-path — LAN only, only when the platform has wired us in.
-    if (fabricConfigured() && ctx.origin === 'lan') {
-      const probe = await probePlatformSession(ctx.req.headers.cookie);
+    // SSO fast-path, only when the platform has wired us in. On the LAN, the dashboard cookie as before.
+    // From outside, ONLY the per-app access token the remote dashboard's Open gave this browser — and
+    // only it is forwarded, so the platform's answer can never rest on a password-only LAN session
+    // (`platformAccessToken` says why that matters). It mints no cookie of ours: the row is keyed on the
+    // token, and lives only while the ingress keeps forwarding it (`sessionFromRequest`).
+    const access = ctx.origin === 'tunnel' ? platformAccessToken(ctx.req.cookies) : null;
+    if (fabricConfigured() && (ctx.origin === 'lan' || access)) {
+      const probe = await probePlatformSession(access ? `${PLATFORM_COOKIE}=${access}` : ctx.req.headers.cookie);
       if (probe.username) {
-        const { token } = createSession({ role: 'admin', source: 'sso', username: probe.username, ttlMs: SSO_SESSION_TTL_MS });
-        ctx.res.setCookie(COOKIE, token, cookieOptions(ctx, SSO_SESSION_TTL_MS));
+        const ttlMs = SSO_SESSION_TTL_MS;
+        if (access) createSession({ role: 'admin', source: 'sso', username: probe.username, ttlMs, token: access });
+        else ctx.res.setCookie(COOKIE, createSession({ role: 'admin', source: 'sso', username: probe.username, ttlMs }).token, cookieOptions(ctx, ttlMs));
         return {
           authenticated: true as const,
           origin: ctx.origin,
@@ -74,6 +78,10 @@ export const authRouter = router({
           user: { role: 'admin' as Role, username: probe.username, source: 'sso' as const, mustChangePassword: false },
         };
       }
+    }
+
+    if (ctx.session?.role === 'admin') {
+      return { authenticated: false as const, setupRequired: false, origin: ctx.origin, adminBlocked: true };
     }
 
     // `setupRequired` IS answered over the tunnel, deliberately, and it is the one place this app
@@ -370,7 +378,7 @@ export const authRouter = router({
   /** Request a password reset (§12). ALWAYS returns { ok: true } — no account-enumeration oracle (§14):
    *  whether or not the email matches, the response + timing are the same. A link is only actually sent
    *  when it matches an ACTIVE account AND email is set up with an absolute base URL. Rate-limited per
-   *  IP against inbox bombing. Works for any role, but only ever emails the account's own address; the
+   *  IP against inbox bombing. Works for any role but admin (see below), only ever emails the account’s own address; the
    *  reset itself never mints an admin session (admin still logs in LAN-only). */
   resetRequest: publicProcedure.input(z.object({ email: USERNAME })).mutation(async ({ ctx, input }) => {
     if (!resetRequestLimiter.allow(rateLimitKey(ctx.req))) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Too many requests. Please try again in a little while.' });
@@ -397,7 +405,13 @@ export const authRouter = router({
     // Only mint a token when we can actually deliver it (some mail transport + an absolute link) —
     // otherwise the office handles the reset and no un-deliverable token is left stranded. Response
     // stays generic either way.
-    if (user && mailAvailable() && portalBase()) {
+    //
+    // NEVER FOR AN ADMIN. The only link base is the PUBLIC address, so the link always opens through
+    // the internet, and from there an admin is the platform's two-step sign-in or nobody — an emailed
+    // link is a way to set the admin password from outside on the strength of a mailbox alone
+    // (`resetConfirm` refuses one over the tunnel too). An admin who has lost it opens the app from the
+    // OpenMasjidOS dashboard, or another admin resets it under Staff. Silently, like every other miss.
+    if (user && user.role !== 'admin' && mailAvailable() && portalBase()) {
       const { token, tokenHash } = mintToken(); // auth/tokens.ts — the one place a link token is made
       const ts = new Date();
       db.insert(passwordResets).values({ id: rid('pwr'), tokenHash, userId: user.id, createdAt: ts, expiresAt: new Date(ts.getTime() + RESET_TTL_MS) }).run();
@@ -435,6 +449,14 @@ export const authRouter = router({
       if (!r || r.expiresAt.getTime() <= Date.now()) {
         resetConfirmLimiter.fail(key);
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'This reset link is invalid or has expired. Please request a new one.' });
+      }
+      // From outside, an admin is the platform's two-step sign-in or nobody (`resetRequest` mints no
+      // admin link; this catches one minted before it stopped). The link is left unspent.
+      if (ctx.origin === 'tunnel' && db.select({ role: users.role }).from(users).where(eq(users.id, r.userId)).get()?.role === 'admin') {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'An admin password can’t be reset over the internet. Open OpenMasjid Students from your OpenMasjidOS dashboard, or ask another admin to reset it under Staff.',
+        });
       }
       const passwordHash = await hashPassword(input.password); // hash BEFORE the txn (no await inside)
       const ts = new Date();

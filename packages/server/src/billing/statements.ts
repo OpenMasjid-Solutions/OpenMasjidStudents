@@ -23,10 +23,10 @@ import { familyBalance, studentBalance, invoiceTotal, invoicePaid } from './ledg
 import { accentWash, donationUrl, getAccentColor, getSchoolContact, getSchoolName, getCurrency, getSchoolLogo } from '../settings';
 import { formatDate } from '../settings/dates';
 
-/** Only admin (LAN) and finance (LAN + tunnel) may print statements (§5 permission matrix). */
-export function canServeStatement(role: Role, origin: Origin): boolean {
+/** Only admin (LAN, or platform-vouched over the tunnel) and finance (LAN + tunnel) may print statements (§5 permission matrix). */
+export function canServeStatement(role: Role, origin: Origin, platformVouched = false): boolean {
   if (role !== 'admin' && role !== 'finance') return false;
-  return roleAllowedFromOrigin(role, origin);
+  return roleAllowedFromOrigin(role, origin, platformVouched);
 }
 
 /**

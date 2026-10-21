@@ -8,7 +8,8 @@
  *   GET /sheets/ids/:id         — every active child's Student ID by class; `:id` is a school or `all` (0.48.0)
  *
  * All are registered before the SPA fallback and excluded from the tRPC/session middleware, so each
- * gates itself: session from the cookie, role must be admin (LAN only) or finance (LAN + tunnel),
+ * gates itself: session from the cookie (or, over the tunnel, the platform access token — auth/sessions.ts
+ * `sessionFromRequest`), role must be admin (LAN, or platform SSO) or finance (LAN + tunnel),
  * re-checked on every request. They carry Student IDs, guardian contact details, a child's date of
  * birth and payment history, so they are NEVER on a public static mount.
  *
@@ -17,7 +18,7 @@
  * one copy quietly loses a header.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { getSession, COOKIE } from '../auth/sessions';
+import { sessionFromRequest } from '../auth/sessions';
 import { mountFor } from '../http/basePath';
 import { portalBase } from '../auth/invites';
 import { classifyOrigin } from '../security/origin';
@@ -86,9 +87,9 @@ export function registerStatementRoutes(app: FastifyInstance): void {
     reply: FastifyReply,
     build: (id: string, baseUrl: string, session: Session) => Promise<string | null>,
   ) {
-    const token = (req as unknown as { cookies?: Record<string, string> }).cookies?.[COOKIE];
-    const session = getSession(token);
-    if (!session || !canServeStatement(session.role, classifyOrigin(req))) {
+    const origin = classifyOrigin(req);
+    const { session, platformVouched } = sessionFromRequest(req as unknown as { cookies?: Record<string, string> }, origin);
+    if (!session || !canServeStatement(session.role, origin, platformVouched)) {
       return reply.code(403).type('text/plain').send('You don’t have access to that.');
     }
     const html = await build(req.params.id, baseUrlFor(req), session);

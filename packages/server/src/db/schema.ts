@@ -22,7 +22,7 @@
  */
 import { sqliteTable, text, integer, primaryKey, index, unique } from 'drizzle-orm/sqlite-core';
 
-/** The roles (CLAUDE.md §5). Admin (LAN-only) manages everything; finance runs billing;
+/** The roles (CLAUDE.md §5). Admin (LAN, or OpenMasjidOS SSO from outside) manages everything; finance runs billing;
  *  parents get the portal. (Teacher/student roles were removed with the SIS.) */
 export type Role = 'admin' | 'finance' | 'parent';
 

@@ -344,6 +344,19 @@ Covered by `security/origin.test.ts` (incl. the VPS/public-client cases) + the
 headers, revisit this.** Operators should still firewall the published port on
 internet-exposed hosts (defense in depth) — see `docker-compose.yml`.
 
+**Amended 0.52.0-dev.20 — the admin from outside, through OpenMasjidOS.** Classification is unchanged;
+what a `tunnel` admin may be is not. OpenMasjidOS's remote dashboard (password + second factor) hands this
+app a per-app access token (`a1.<handle>.<mac>`), and its ingress forwards it in `omos_session` only while
+that remote session is valid. A `tunnel` request carrying one is SSO'd as admin (`auth.session` puts only
+that token to `/api/auth/session`), and the session row is keyed on the token, so it is honoured only on a
+request that still carries it (`auth/sessions.ts` `sessionFromRequest` → `platformVouched`). Everything
+else keeps the old rule: admin password login and first-run setup refused over the tunnel, a LAN-made
+admin session 403, no emailed admin reset. Why only the token's SHAPE is put to the platform: off the
+tunnel nothing strips cookies, and the platform's check also accepts a password-only LAN dashboard
+session — the shape (dashboard tokens have no dots) is what keeps such a cookie, typed at a port reachable
+from the internet, from becoming a remote admin. Covered by `test/remoteAdmin.test.ts` and
+`test/adminReset.test.ts`.
+
 ## Assumptions log (§20 open questions)
 
 Working assumptions in force unless/until Hasan says otherwise. **Ask before the step that depends on it.**

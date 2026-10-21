@@ -3,7 +3,8 @@
 /**
  * tRPC init, request context, and the role + origin middleware (CLAUDE.md §5, §12.4).
  * EVERY authenticated procedure is built from `requireAuth`, which enforces BOTH the
- * required role AND the access-origin policy (admin = LAN only) — server-side, never
+ * required role AND the access-origin policy (admin = LAN, or OpenMasjidOS SSO over the
+ * tunnel — `roleAllowedFromOrigin`) — server-side, never
  * only in the UI. Per-procedure origin overrides are forbidden (add a role-scoped
  * procedure below instead of hand-rolling checks).
  */
@@ -11,7 +12,7 @@ import { initTRPC, TRPCError } from '@trpc/server';
 import type { CreateFastifyContextOptions } from '@trpc/server/adapters/fastify';
 import { eq } from 'drizzle-orm';
 import { classifyOrigin, isHttpsRequest, roleAllowedFromOrigin, type Origin } from '../security/origin';
-import { getSession, touchSession, COOKIE, cookiePathFor } from '../auth/sessions';
+import { touchSession, sessionFromRequest, cookiePathFor } from '../auth/sessions';
 import { mountFor } from '../http/basePath';
 import { config } from '../config';
 import { db } from '../db';
@@ -20,11 +21,10 @@ import { makeLog } from '../logger';
 
 export function createContext({ req, res }: CreateFastifyContextOptions) {
   const origin: Origin = classifyOrigin(req);
-  const token = req.cookies?.[COOKIE];
-  const session = getSession(token);
+  const { token, session, platformVouched } = sessionFromRequest(req, origin);
   // `base` is the prefix this request arrived under — for anything that builds a URL back to us.
   const base = mountFor(req.raw, config.basePath);
-  return { req, res, origin, https: isHttpsRequest(req), token, session, base, cookiePath: cookiePathFor(req.raw) };
+  return { req, res, origin, https: isHttpsRequest(req), token, session, platformVouched, base, cookiePath: cookiePathFor(req.raw) };
 }
 export type Context = Awaited<ReturnType<typeof createContext>>;
 
@@ -73,8 +73,8 @@ function requireAuth(allowed: readonly Role[] | 'any') {
     if (!session) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Please sign in.' });
 
     // Origin policy at session-USE time (not just at login): a LAN-minted admin cookie
-    // presented over the tunnel is refused (§12.4).
-    if (!roleAllowedFromOrigin(session.role, ctx.origin)) {
+    // presented over the tunnel is refused (§12.4) — only a session the platform vouches for passes.
+    if (!roleAllowedFromOrigin(session.role, ctx.origin, ctx.platformVouched)) {
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: 'Admin access only works on the masjid network.',

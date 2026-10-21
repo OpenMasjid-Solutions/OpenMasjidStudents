@@ -130,7 +130,8 @@ to. Distinct versions and immutable per-build tags are the fix. Two consequences
 **OpenMasjidStudents** is a self-hosted **tuition & fee management** app **built for madāris** that runs as an
 **OpenMasjidOS app**: one Docker container, installed from the App Store, all data on the masjid's own
 hardware. It is a **three-role app**: **admins** manage students, households, fee plans and settings
-(LAN-only, by design); a **finance manager** runs billing (invoices, charges, the ledger, manual payments,
+(on the masjid LAN — or from anywhere, opened from the OpenMasjidOS dashboard behind its two-step sign-in,
+§12.4); a **finance manager** runs billing (invoices, charges, the ledger, manual payments,
 refunds); and **parents** get their own phone-first portal with the family balance and one unified payment
 history — **payable by card right in the app (Stripe)**, with **autopay** and saved cards, ordered by the
 household. Every student gets an auto-generated **Student ID** (`YUS1234` — first three letters of the first
@@ -138,7 +139,8 @@ name + 4 digits); fees are assigned **per student** as **fee plans** (monthly / 
 billed as **one invoice per student** each period (the parent still sees one combined balance and pays once).
 Finance records cash/Zelle/check by hand, and prints **statements**, **household information sheets** and
 **per-child invoices** carrying each child's Student ID and a portal-signup QR. Finance and parents work over
-the **Cloudflare uplink the OS provides**; the admin surface stays on the masjid LAN. Tuition paid with a
+the **Cloudflare uplink the OS provides**; the admin surface reaches it only through the OpenMasjidOS
+dashboard's single sign-on, never by password. Tuition paid with a
 **child's Student ID** through **OpenMasjidDonations** and **OpenMasjidKiosk** flows automatically into the
 same ledger over the **OpenMasjidOS Fabric** — this app is the **provider** of the `students/billing`
 capability those apps consume. A masjid running more than one program on different calendars (a weekend
@@ -152,7 +154,7 @@ a family arrives through a real **admissions** funnel (a public inquiry form, a 
 one-time form link) rather than being typed in from a phone call. A **daily register** against a calendar
 that knows which days this madrasah actually teaches, a **gradebook** of subjects and assessments, a
 running **hifz** record, and a **report card per term** that freezes what it showed. All of it is
-admin-only and therefore LAN-only, all of it is derived rather than stored, and **none of it touches the
+admin-only (so LAN, or the platform's two-step SSO from outside — §12.4), all of it is derived rather than stored, and **none of it touches the
 ledger, invoicing or the Fabric contract** — the one place money and academics meet is the enrollment fee,
 which is raised as an ordinary charge through the charge machinery that already exists. §4a is the scope;
 `docs/ADMISSIONS.md`, `docs/ATTENDANCE.md` and `docs/ACADEMICS.md` are the specs.
@@ -756,7 +758,7 @@ account may additionally be restricted to certain **schools**, which narrows a v
 
 | Role | LAN | Cloudflare tunnel |
 | --- | :-: | :-: |
-| `admin` | ✅ | ❌ **blocked — login and existing sessions both** |
+| `admin` | ✅ | ✅ **only through OpenMasjidOS SSO** (opened from the remote dashboard) — ❌ password login, password reset and any password- or LAN-made session |
 | `finance` | ✅ | ✅ |
 | `parent` | ✅ | ✅ |
 | *(login / invite / reset / register pages)* | ✅ | ✅ *(§14 rate limits)* |
@@ -785,8 +787,21 @@ back into the app. Handing a parent a tablet that holds an admin session would b
 implementation and the wrong one — they can navigate, and the whole directory is behind the back
 button.
 
-**The whole academic layer is admin-only and therefore LAN-only**, at login and at session use, and that
-is not being weakened to make admissions or mark entry more convenient (§4a). One consequence is worth
+**THE ADMIN FROM OUTSIDE IS THE PLATFORM'S TWO-STEP SIGN-IN OR NOBODY** (0.52.0-dev.20, Hasan: "remote
+access should allow actual full remote access"). OpenMasjidOS now manages a masjid from outside — its remote
+dashboard sits behind the admin's password AND a second factor, and its Open button gives this app a per-app
+access token that the platform's ingress forwards to us only while that remote session is valid. A request
+carrying it is the platform vouching for the admin on that very request, so it admits an admin over the
+tunnel (`auth/sessions.ts` `sessionFromRequest`, `security/origin.ts` `roleAllowedFromOrigin`); nothing
+else does. The admin PASSWORD is still never checked from outside (a decoy verify, no oracle), first-run
+setup is still LAN-only, an admin's password is never reset by emailed link (it could only open through the
+internet), and an admin cookie made on the LAN is still inert over the tunnel. Full detail in §12.4;
+`test/remoteAdmin.test.ts` and `test/adminReset.test.ts` pin it.
+
+**The whole academic layer is admin-only**, at login and at session use — the LAN, or the platform's
+two-step SSO from outside, as above — and that is not being weakened further to make admissions or mark
+entry more convenient (§4a). That includes the medical fields: an admin opened from the remote dashboard
+reads them as on the LAN. One consequence is worth
 building for rather than explaining repeatedly: `cf-ray` short-circuits **before** the client IP is
 examined, so a phone on the masjid Wi-Fi is still `tunnel` if it reached the app by the bookmarked public
 URL — same device, same network, different door. **When an admin sign-in is refused over the tunnel, name
@@ -906,7 +921,7 @@ of "card-ish channels" cannot disagree with it.
    │  §4a (0.52.0→, admin+LAN only): student record · admissions · register ·  │
    │        marks · hifz · report cards — none of it touching the ledger       │
    │  SQLite (WAL) via Drizzle  •  /data volume (db + 30-min snapshot)         │
-   │  Auth (argon2id) + roles + ORIGIN POLICY (admin = LAN-only)                │
+   │  Auth (argon2id) + roles + ORIGIN POLICY (admin = LAN, or platform SSO)    │
    │  Stripe: Elements PIs, SetupIntents, off-session autopay, refunds          │
    │  Scheduler: standing · autopay · reconcile · auto-invoice · past due · snap │
    │  /fabric/billing/*  ← secret-gated provider endpoints (LAN-only)           │
@@ -1615,11 +1630,17 @@ skipped. The push paths are optimizations; **money is never lost**, only delayed
   access to anything but the login/first-run/invite/register/reset pages, the open-by-design branding routes
   (`/api/logo`, `/manifest.webmanifest`, `/apple-touch-icon.png`, `/sw.js`, `/api/public/appearance`), and the
   secret-gated `/fabric/*`.
-- **SSO fast-path (LAN only)**: per the platform spec — the backend forwards the incoming `omos_session`
+- **SSO fast-path**: per the platform spec — the backend forwards the incoming `omos_session`
   cookie to `GET ${OPENMASJID_BASE_URL}/api/auth/session` with `X-OpenMasjid-App-Secret`; on
   `{authenticated:true}` mint an app session as `admin`, capped at 1 h. Treat `username` as untrusted display
-  text. Identity signal only. (SSO mapping to `admin` is consistent with the origin policy: the platform
-  cookie never rides the tunnel.)
+  text. Identity signal only. **On the LAN** that is the dashboard cookie, and the session is our own
+  `students_session` cookie. **Over the tunnel** (0.52.0-dev.20) it is ONLY the per-app access token the
+  remote dashboard's Open gives the browser (`a1.<handle>.<mac>` — `platformAccessToken`); nothing else the
+  browser sent is forwarded, because the platform's check also accepts a password-only LAN dashboard
+  session and only the access token proves the second factor. No cookie of ours is minted: the session row
+  is keyed on the token itself and is honoured only on a request that still carries it — and the ingress
+  forwards it only while the remote session is valid, so signing out of the dashboard, switching managing
+  from outside off or changing the second factor ends the app session on the very next request.
 - **12.4 Origin policy enforcement (DO NOT REGRESS):**
   - Every request is classified once in `security/origin.ts`. §12.4 originally said "`cf-ray` or
     `x-forwarded-proto: https` means tunnel", and that is unusable for an `https: true` app — the OS's own LAN
@@ -1629,9 +1650,16 @@ skipped. The push paths are optimizations; **money is never lost**, only delayed
     `tunnel`. Forwarded headers are trusted only when the TCP peer is itself local. The full reconciliation is
     in `docs/DATA_MODEL.md`. Note the safe failure direction: spoofing toward `tunnel` only ever **removes**
     privileges.
-  - `admin` **login attempts from tunnel are refused** with a friendly message ("Admin sign-in only works on
-    the masjid network") and **existing `admin` sessions presented from tunnel get 403** — both, so a
-    LAN-minted admin cookie is useless remotely.
+  - `admin` **password login attempts from tunnel are refused** (the same generic error as a wrong password,
+    verified against a decoy hash — so the admin password is never tested from the internet) and
+    **existing `admin` sessions presented from tunnel get 403** — both, so a LAN-minted admin cookie is
+    useless remotely. **The one admin a tunnel request may be is the one OpenMasjidOS vouches for on that
+    request** (SSO above; `roleAllowedFromOrigin(role, origin, platformVouched)`), every procedure and every
+    printable document alike. An admin's password is never reset by emailed link (`resetRequest` sends
+    none; `resetConfirm` refuses an admin's token over the tunnel). The login page over the tunnel keeps
+    its password box, because finance and parents sign in there with their own passwords by design; the
+    note above it tells an admin to open the app from the OpenMasjidOS dashboard instead. Saying "that is
+    an admin account" on a failed sign-in would be the role oracle §14 forbids.
   - `finance | parent` allowed from both origins. `/fabric/*` refuses tunnel-origin outright (§11.1).
   - **The public inquiry routes (`/public/inquiry*`) are reachable from BOTH origins with no session at
     all, and that is the point of them** (§4a Phase 2). They are plain Fastify routes registered before
@@ -1648,8 +1676,16 @@ skipped. The push paths are optimizations; **money is never lost**, only delayed
     forbidden without a CLAUDE.md change.
 - **Tunnel niceties**: absolute links/QRs/invite emails use the public URL the platform reports (`domain:
   true`), falling back to the `OPENMASJID_PUBLIC_URL` mirror; the session cookie's `Path` is scoped to the
-  app's mount prefix so it is never sent to a sibling app on the same tunnel domain; the SSO cookie simply
-  won't be present over the tunnel — fall back to app login silently.
+  mount prefix so it is never sent to a sibling app on the same tunnel domain (sign-out clears it at "/" as
+  well); with no access token on the request there is no SSO — fall back to app login silently.
+- **The mount prefix is read PER REQUEST** (`http/basePath.ts` `mountOf`, 0.52.0-dev.20). Through the
+  tunnel it is the request's first path segment (shape-checked, as the platform's ingress routes only an
+  app's own `/<path>`); on the LAN it is the env mirror's, exactly as before. The env mirror alone was wrong
+  for an app not shared online (it is empty, yet the remote dashboard still opens the app at `/<path>/`),
+  after a rename, and while the Fabric site lookup is cold — the shell then went out with `<base href="/">`
+  and loaded its script from the platform's dashboard: a white screen. The shell's `<base href>`, the cookie
+  Path, the service worker's scope and every URL a page or a tRPC call builds back to us use the request's
+  own mount (`mountFor`, `ctx.base`).
 
 ---
 
@@ -1818,8 +1854,9 @@ invariant here is load-bearing:
   serving **finalized cards only**, carrying the same headers every printable document carries. The test
   that proves it asserts, in the same file, that the ID-sheet route is still unreachable for a parent —
   so the two cannot drift apart.
-- **Origin policy (§12.4)** is a security invariant, not a preference: admin auth is impossible via tunnel,
-  both at login and at session-use time.
+- **Origin policy (§12.4)** is a security invariant, not a preference: admin PASSWORD auth is impossible via
+  tunnel, both at login and at session-use time; from outside an admin is only ever the platform's two-step
+  SSO, re-proved by the access token on every request (§12).
 - **A Student ID is the whole credential on the payment path, and it is GUESSABLE — the limiter is the
   control, not a secret**: `ABC1234` is ~10k guesses per name prefix, so lookups are throttled per-IP by the
   consumers, per-caller by the broker, **and per-ID here** — 6 failed probes/hour locks that ID for an hour

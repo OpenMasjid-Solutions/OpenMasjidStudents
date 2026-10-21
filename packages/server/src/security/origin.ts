@@ -3,7 +3,9 @@
 /**
  * Access-origin policy (CLAUDE.md §5, §12.4 — a security invariant, DO NOT REGRESS).
  *
- *   admin    → LAN only (login refused AND existing sessions 403'd over the tunnel)
+ *   admin    → LAN; over the tunnel ONLY through OpenMasjidOS single sign-on (opened from the remote
+ *              dashboard — `roleAllowedFromOrigin`). Password login refused AND password- or LAN-made
+ *              sessions 403'd over the tunnel, as before.
  *   finance / parent → LAN + tunnel
  *
  * Classification — FAIL-CLOSED, and a documented, hardened evolution of §12.4 (see
@@ -147,8 +149,13 @@ export function isHttpsRequest(req: FastifyRequest): boolean {
   return !!proto && proto.split(',')[0].trim().toLowerCase() === 'https';
 }
 
-/** May this role act from this origin? Admin is LAN-only; everyone else is both. */
-export function roleAllowedFromOrigin(role: Role, origin: Origin): boolean {
-  if (role === 'admin') return origin === 'lan';
+/**
+ * May this role act from this origin? Everyone else is both. An admin is the LAN — or, over the tunnel,
+ * a session OpenMasjidOS is vouching for on this very request (`platformVouched`, auth/sessions.ts
+ * `sessionFromRequest`): the admin opened us from the remote dashboard, behind its password AND second
+ * factor. A password-made or LAN-made admin session stays refused over the tunnel (§12.4).
+ */
+export function roleAllowedFromOrigin(role: Role, origin: Origin, platformVouched = false): boolean {
+  if (role === 'admin') return origin === 'lan' || platformVouched;
   return true;
 }

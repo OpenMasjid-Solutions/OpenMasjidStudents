@@ -122,7 +122,7 @@ async function main(): Promise<void> {
     trpcOptions: { router: appRouter, createContext } as FastifyTRPCPluginOptions<AppRouter>['trpcOptions'],
   });
 
-  // Authed printable family statements (admin LAN-only / finance LAN+tunnel; §5, §14).
+  // Authed printable family statements (admin LAN or platform SSO / finance LAN+tunnel; §5, §14).
   registerStatementRoutes(app);
 
   // Fabric provider /fabric/billing/* (§11): secret-gated, tunnel-blocked; the students/billing capability.
