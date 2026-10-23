@@ -142,6 +142,22 @@ describe('what still does NOT make an admin from outside', () => {
     expect((await get('/students/trpc/settings.get', `${COOKIE}=${ACCESS}`)).statusCode).toBe(403);
   });
 
+  /**
+   * `sessionFromRequest` requires BOTH an access-token-shaped cookie and `source === 'sso'`, and the
+   * second half has no counter-example reachable through the app: our own tokens are
+   * `randomBytes().toString('base64url')`, which has no dots, so one can never match `a1.<22>.<43>`
+   * and `getSession(access)` can never find a local session. That is exactly why this test builds the
+   * row by hand — a defense-in-depth check nothing can reach is a check nothing would catch the
+   * removal of, and a mutation run proved that: deleting `s.source === 'sso'` left the suite green.
+   * It becomes load-bearing the moment session tokens change shape, which is a one-line change
+   * somebody will make without reading this file.
+   */
+  it('a LOCAL session stored under an access-token-shaped token still does not vouch', async () => {
+    const { createSession } = app.sessionsMod;
+    createSession({ role: 'admin', source: 'local', username: 'boss', token: ACCESS });
+    expect((await get('/students/trpc/settings.get', `omos_session=${ACCESS}`)).statusCode).toBe(401);
+  });
+
   it('password sign-in for an admin is still refused from outside', async () => {
     const { hashPassword } = await import('../src/auth/passwords');
     const ts = new Date();
