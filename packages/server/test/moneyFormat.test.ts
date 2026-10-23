@@ -30,6 +30,36 @@ describe('formatMoney', () => {
     expect(formatMoney(1000, 'zzz')).toContain('10.00');
   });
 
+  /**
+   * `fromCents` divides by 100 UNCONDITIONALLY, and that is only right while every currency an
+   * install can be set to has two decimal places. It is true today — `settings.save` is
+   * `z.enum(['usd','cad','gbp','eur'])` — so this is a trap rather than a bug, and the trap is that
+   * springing it is invisible: adding `jpy` is a one-word change that makes every amount in the app
+   * read 100× too small (¥100 prints as ¥1), and adding `kwd` makes it 10× too large. Nothing would
+   * fail, no test would go red, and the ledger itself would still be right — only every screen,
+   * statement, invoice and Fabric response would lie.
+   *
+   * So the guard is here, where the divisor lives (§20 — a fix goes where the rule lives). Adding a
+   * currency now fails the build until somebody decides what `fromCents` means for it.
+   */
+  it('every currency an install may choose has the two decimal places fromCents assumes', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync(new URL('../src/trpc/settings.ts', import.meta.url), 'utf8'),
+    );
+    const m = src.match(/currency:\s*z\.enum\(\[([^\]]+)\]\)/);
+    expect(m, 'the currency enum moved — this guard must follow it').toBeTruthy();
+    const codes = [...m![1]!.matchAll(/'([a-z]{3})'/g)].map((x) => x[1]!);
+    expect(codes.length).toBeGreaterThan(0);
+
+    for (const code of codes) {
+      const digits = new Intl.NumberFormat('en', { style: 'currency', currency: code.toUpperCase() })
+        .resolvedOptions().maximumFractionDigits;
+      expect(digits, `${code.toUpperCase()} does not have 2 decimals — fromCents() divides by 100`).toBe(2);
+    }
+    // The control: the check can actually fail, so it is not passing on an empty list or a typo.
+    expect(new Intl.NumberFormat('en', { style: 'currency', currency: 'JPY' }).resolvedOptions().maximumFractionDigits).toBe(0);
+  });
+
   it('converts cents to major units', () => {
     expect(fromCents(35000)).toBe(350);
   });

@@ -43,7 +43,7 @@ import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { rid } from '../db/ids';
-import { families, guardianFamilies, guardians, inquiries, students, type Inquiry } from '../db/schema';
+import { families, guardianFamilies, guardians, students, type Inquiry } from '../db/schema';
 import { createStudentRow } from '../people/create';
 import { identityKeys } from '../people/household';
 import { audit, type AuditActor } from '../audit';
@@ -267,9 +267,4 @@ export function conversionPreview(inquiryId: string): { inquiry: Inquiry; hints:
   const inquiry = inquiryById(inquiryId);
   if (!inquiry) throw new TRPCError({ code: 'NOT_FOUND', message: 'That inquiry no longer exists.' });
   return { inquiry, hints: siblingHints(inquiry), alreadyAdmitted: inquiry.state === 'admitted' };
-}
-
-/** The inquiry a student came from, when they came from one — read by the student's own record. */
-export function inquiryForStudent(studentId: string): Inquiry | undefined {
-  return db.select().from(inquiries).where(eq(inquiries.studentId, studentId)).get();
 }

@@ -12,11 +12,23 @@ please read the licensing section before opening a pull request.
 Tuition and fee management for a madrasa, running as a self-hosted
 [OpenMasjidOS](https://github.com/OpenMasjid-Solutions/OpenMasjidOS) app: students and households, fee
 plans per child, one invoice per child, a derived ledger, and payments by cash or card (parent portal,
-autopay, the masjid's donation site and kiosk). **Not** a school-information system — attendance,
-gradebooks, report cards, transcripts, timetables and the admissions pipeline were deliberately removed
-in v0.35.0 and stay out (`CLAUDE.md` §4). Courses and classes exist only as labels for grouping children.
-A pull request that adds academics will be declined however good it is; please open an issue first if you
-think that should change.
+autopay, the masjid's donation site and kiosk).
+
+**It is also becoming the madrasah's student record.** This paragraph said the opposite until v0.52.0 —
+that academics had been removed in v0.35.0 and that a pull request adding them "will be declined however
+good it is". That decision is reversed, and the first two phases have shipped: a **real student record**
+(admission and withdrawal dates, prior schooling, languages, medical fields behind an admin-only wall)
+and a full **admissions funnel** (a public inquiry form, a waitlist, admission and re-admission forms on
+one-time links). The **daily register**, the **gradebook** and **report cards** are specified and not yet
+built. `CLAUDE.md` §4a carries the per-phase status and is the authority; `docs/ADMISSIONS.md`,
+`docs/ATTENDANCE.md` and `docs/ACADEMICS.md` are the specifications, and each says at the top which of it
+exists.
+
+**What is still out, and a PR adding one will be declined:** a **timetable** (attendance is a daily
+register against named sessions, which is what keeps it from becoming a scheduling product), a
+**teacher or student login** or role, **user-defined custom student fields** (the field set is fixed in
+code and toggleable in Settings), and **file uploads of any kind**. Please open an issue first if you
+think one of those should change.
 
 ## Getting it running
 
@@ -25,7 +37,7 @@ npm install     # all workspaces
 npm run dev     # server on :8080, Vite on :5173 proxying /trpc, /api, /fabric,
                 #   /statements, /sheets, /invoices
 npm run lint    # tsc --noEmit across both workspaces — there is no eslint here
-npm run test    # vitest, both workspaces (~1,290 tests)
+npm run test    # vitest, both workspaces (~1,560 tests)
 npm run build   # build web (vite — no typecheck) then server (tsc). Types: npm run lint.
 ```
 
@@ -92,6 +104,8 @@ authority; this is the short list.
 | Stripe: pay-now, autopay, refunds, reconciliation | `packages/server/src/payments/` |
 | The Fabric capability other apps consume | `packages/server/src/fabric/provider.ts` + `docs/FABRIC_BILLING_CONTRACT.md` |
 | Students, households, guardians, import | `packages/server/src/people/` |
+| Which student fields exist, who may see one, what an office switched off | `packages/server/src/people/fields.ts` |
+| Admissions: inquiries, the pipeline, conversion, re-admission | `packages/server/src/admissions/` + `docs/ADMISSIONS.md` |
 | Schools, years, terms, courses, classes | `packages/server/src/structure/`, `schools/` |
 | Printed statements, sheets, invoices | `packages/server/src/billing/statements.ts`, `people/onboardingSheet.ts` |
 | The three UIs | `packages/web/src/routes/{admin,finance,family}/` |

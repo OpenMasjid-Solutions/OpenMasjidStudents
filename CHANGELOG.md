@@ -27,6 +27,99 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
      manifest reads `X.Y.Z-dev.N`, and the version test checks the CHANGELOG for the base `X.Y.Z`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
 
+## [0.53.0]
+
+<!-- The line opened when 0.52.0 shipped. Headlines first, then `### Also in this release` and
+     everything else below it (see the two-audiences note at the top of this file). -->
+
+- **Nothing changes on screen in this update, and there is nothing for you to do.** It is a
+  housekeeping release: a security audit, a check of the whole codebase, and a rewrite of the
+  documentation so it describes the app you actually have.
+- **A full security review found nothing wrong with what runs on your hardware.** Every dependency
+  that ships inside the container is clear of known advisories. The handful of advisories that do
+  exist are in developer tools that are never built into the image, so they cannot reach a masjid.
+- **The guide that comes with the app was a release out of date and is now correct.** It still said
+  the student record and admissions did not exist — the two biggest things in v0.52.0. Anyone reading
+  it to decide whether Students can run their madrasah was being told no.
+
+### Also in this release
+
+**The v0.52.0 release was verified end to end.** The tag, the published release, the digest the
+compose file pins and the entry the App Store serves were all checked against each other and agree:
+`v0.52.0` resolves to the exact image digest `docker-compose.yml` names, the GitHub release is
+published, and the catalog's stable column serves `0.52.0`. The merge itself was a fast-forward
+rather than the `--no-ff` §19 asks for, which left the release and pin commits on `dev` as well as
+`main`. The content is identical either way and nothing is broken by it; it is recorded here rather
+than quietly corrected.
+
+**Documentation, measured against the code rather than reread.**
+
+- `CONTRIBUTING.md` told contributors that attendance, gradebooks, report cards and "the admissions
+  pipeline" were removed in v0.35.0 and that "a pull request that adds academics will be declined
+  however good it is". That was reversed in v0.52.0 and two phases have shipped. It now says what is
+  built, what is specified, and — separately — the four things that genuinely stay out: a timetable,
+  a teacher or student login, user-defined fields, and file uploads.
+- `README.md` said in three places that the academic layer was "specified and not yet shipped" and
+  that "none of it has shipped yet". The student record and admissions are now in the feature list
+  where a masjid will actually find them, each phase is marked ✅ built or 🚧 specified, and the
+  "what's coming" section no longer describes shipped features in the future tense.
+- `CLAUDE.md`: the repository tree had no `admissions/` directory in it and the note beneath it still
+  said `admissions/` and `people/fields.ts` "do not exist yet"; the manifest example carried a stale
+  `0.51.0-dev.N`; the test count said "1,100+". All corrected, and `trpc/admissions.ts`,
+  `people/create.ts`, `people/fields.ts`, `auth/tokens.ts` and `structure/blockers.ts` are now in the
+  tree where someone looking for them would look.
+- **§9's table list was missing `student_notes`** — shipped with Phase 1, never added, so the document
+  that calls itself the canonical schema spec was a table short for a whole release.
+- The container's own description label still advertised "SIS, grades, report cards, transcripts".
+  Transcripts are permanently out of scope and the other two are not built; it now matches the
+  manifest.
+- Every documented command, every internal link and every file path referenced across all 19 markdown
+  files was resolved. No broken links.
+
+**Three new guards, each proven by deleting the thing it guards and watching it go red (§20).**
+
+- **A table added to the schema and not to the docs now fails the build.** The `student_notes` drift
+  above is the kind that only gets found by someone reading two documents side by side. The guard is
+  one-directional on purpose: tables must appear in the docs, but the docs may name tables that do
+  not exist yet, because §9's forward-looking list of Phase 3–5 tables is the point of it.
+- **Adding a currency without two decimal places now fails the build.** `fromCents` divides by 100
+  unconditionally, which is right for every currency an install can choose today (`usd`, `cad`,
+  `gbp`, `eur`) and silently wrong for the ones it cannot: adding `jpy` is a one-word change that
+  would make every amount in the app read 100× too small, with no test failing and the ledger itself
+  still correct. The guard sits where the divisor lives.
+- **A local session stored under a platform-shaped token is now proven not to vouch for an admin.**
+  `sessionFromRequest` requires both an access-token-shaped cookie and `source === 'sso'`, and a
+  mutation run showed the second half could be deleted with the suite still green — our own tokens
+  are dotless base64url and can never match `a1.<22>.<43>`, so nothing could reach it. The test now
+  builds that row by hand. It becomes load-bearing the moment session tokens change shape, which is a
+  one-line change somebody will make without reading that file.
+
+**Security audit — what was checked, and what it found.**
+
+- `npm audit --omit=dev`: **0 vulnerabilities**. All 9 advisories in the full tree are dev-only
+  (vitest/tinypool, esbuild, vite, drizzle-kit) and the runtime stage installs with `--omit=dev`, so
+  none of them is in the published image. The two critical tinypool advisories are in vitest's worker
+  pool and would need a breaking major to clear; they never ship.
+- The Stripe SDK is imported by exactly one file (§16). No `innerHTML`, `dangerouslySetInnerHTML`,
+  `eval`, `new Function` or `child_process` anywhere in either workspace — every textual hit is a
+  comment forbidding it. No string-built SQL.
+- The **medical wall** holds: `medicalNotes`, `allergies` and `medicalConsent` appear in four server
+  files and reach no alert, no WhatsApp template, no Fabric response, no log and no parent-facing
+  route. All three are `readableBy: ADMIN_ONLY` and `onByDefault: false`.
+- All **28 admissions procedures are `adminProcedure`** — a finance session gets `FORBIDDEN`, not a
+  filtered view (§18).
+- The 11 unauthenticated tRPC procedures are the expected auth doors, each rate-limited per §14.
+- The migration journal is intact: 46 entries, `when` strictly increasing, every file present and
+  every file listed.
+- Every i18n key used in code exists in `en.json` (1,602 keys, 1,251 distinct literal lookups), and
+  the existing orphan guard still reports none dead.
+
+**Dead code.** `inquiryForStudent` in `admissions/convert.ts` — a provenance query whose own docblock
+said it was "read by the student's own record", referenced by nothing in src, tests or docs — and the
+import it was the last user of. The ~19 other symbols the scan flagged are exported-but-internal
+rather than dead; churning `export` off them would be noise, so they were left alone and are recorded
+here instead.
+
 ## [0.52.0]
 
 <!-- The line opened when 0.51.0 shipped. Headlines first, then `### Also in this release` and
