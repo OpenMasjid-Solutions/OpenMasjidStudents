@@ -43,7 +43,7 @@ services:
     #   ghcr.io/openmasjid-solutions/openmasjidstudents:0.52.0@sha256:3441c246…
     # Restoring that pin is a step OF the merge-to-main release (CLAUDE.md "Branching policy" + §19); CI
     # refuses to publish a v* tag whose compose is not digest-pinned.
-    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.52.0@sha256:3441c246c4c757d8dfa63eff40e43ced53bb0ec5473f8ff1c245d1caa6ccea61
+    image: ghcr.io/openmasjid-solutions/openmasjidstudents:0.53.0@sha256:9dc1ee81a280a0f5a652810b054ac7ec8d08267eb2e9be28f31d728cf7d03213
     restart: unless-stopped
     environment:
       PORT: "8080"
