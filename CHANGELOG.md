@@ -115,6 +115,8 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
 
 ### Also in this release
 
+- **Students now runs on Node.js 22.23.4,** the release that fixes ten security problems in
+  Node.js published on 21 October, one of them serious. If Stripe emailed you about your Node.js version, this is the update it means. Nothing changes on screen.
 - **Security updates to the parts Students is built on.** The web server underneath the app, the piece
   that serves its pages, the one that talks to its database and a small part of the card-payments
   library are updated past published security problems — among them a way a carefully malformed web
