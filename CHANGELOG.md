@@ -27,6 +27,359 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
      manifest reads `X.Y.Z-dev.N`, and the version test checks the CHANGELOG for the base `X.Y.Z`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
 
+## [0.52.0]
+
+<!-- The line opened when 0.51.0 shipped. Headlines first, then `### Also in this release` and
+     everything else below it (see the two-audiences note at the top of this file). -->
+
+- **Students now runs on Node.js 22.23.4,** the release that fixes ten security problems in
+  Node.js published on 21 October, one of them serious. If Stripe emailed you about your Node.js
+  version, this is the update it means. Nothing changes on screen and there is nothing else to do.
+- **A student is a record now, not just a name and a bill.** You can keep when a child was admitted,
+  when they left and why, their address, where they studied before and how far they had memorized on
+  arrival, the languages they speak and their nationality (those three are kept once, on the
+  household, so brothers and sisters share them) — and, if your madrasah needs them, medical
+  notes, allergies and emergency medical consent. Open a child's **Record** from their row on the
+  household screen.
+
+  **You choose what your madrasah keeps.** Every one of those fields can be switched off under
+  Settings → Students, and anything switched off disappears from every screen rather than sitting
+  there as an empty box. Switching one off hides what is in it; it never deletes it.
+- **The medical fields are treated differently, on purpose.** Only an admin can see or edit them —
+  the finance manager never can, on any screen — and they never appear on anything a parent reads, in
+  an alert, in a log or in a payment record. They are off until you turn them on.
+- **Office notes are signed and dated.** A note now records who wrote it and when, and sits on the
+  child's record where it can be read back. A note cannot be edited — if something was written in
+  error, add another saying so — but an admin can delete one, and the trail keeps who wrote it and
+  when without keeping what it said. Anything in the old notes box has been kept and appears as the
+  first note on that child.
+- **Families can ask about a place from your website.** A new **Admissions** screen holds every
+  inquiry, where each conversation has got to, and a waiting list you order by hand. Put the form on
+  your own site with one line of HTML, or share the link. It is **off until you turn it on** under
+  Settings → Admissions, and you can close intake when the year is full — the page then says so
+  rather than quietly swallowing what somebody writes. There are three things to do with an inquiry —
+  put them on the **waiting list**, **decline** them, or **start their admission** — and an inquiry
+  nobody has touched carries no label at all. A decline can be **reopened** if it was a mis-click or
+  the family rings back, and anything that is not a real family — a test entry, a duplicate, spam off
+  your website — can be **deleted for good**, after the screen asks you by name. Nothing here is a
+  student yet: a child joins your roster, and gets their Student ID, only when you **admit** them —
+  one press that creates the household, the child, their Student ID and their fee plan, and raises
+  your enrollment fee if the year has one. If the family already has a child with you, the screen
+  says so before you press it, so a younger brother or sister joins the household they belong to
+  instead of starting a second one.
+
+  Asking the families you **already** have now lives where you actually do it: **Structure → Start a
+  new year**, the same button that rolls your classes forward. It gained two steps — what it costs
+  to join this year, carried over from last year so you change it or leave it, and a tick to put
+  every returning child on the list. Withdrawn children are never asked, and you can untick it if
+  you are only planning ahead.
+
+  **If you run more than one school, admissions now follow it.** An inquiry can be handed to the
+  school that will deal with it, and staff limited to that school see their own inquiries and no
+  others — including the counts. An inquiry nobody has handed over yet stays with whoever can see
+  every school, since routing it is their job, and assigning one tells the office it has arrived. Each family gets a one-time link showing what you hold for them, already filled in;
+  they correct what has changed and say yes or no. You see **exactly what they changed, before and
+  after**, and approve it field by field — nothing they send is written until you have looked at it.
+  The screen says who has answered and who has not, which during re-enrollment fortnight is the job.
+- **A real admission form, filled in by the family.** Once you have spoken to a family and decided
+  to take their child, press **Send the admission form** on their inquiry. They get a one-time link
+  they can open on a phone — already filled in with what they told you on the inquiry, so nobody is
+  asked their own name twice — and what comes back sits on the inquiry as a **proposal**. You read
+  it, tick anything you would rather type yourself, and press Admit; only then does a child, a
+  household and a Student ID exist. **The admission date is stamped for you** — the day you admit
+  them. Which questions the form asks is the same list you control under Settings → Students, and
+  Settings → Admissions is where you say which of them a family must answer. **If you keep medical
+  notes, allergies or consent, the form asks for those too** — they are the one thing a family is
+  ever asked about that nobody outside the office can read, and the form only ever asks: it never
+  shows a family anything your office has written.
+
+  The same form can stand open on a **tablet in the office**, the way a doctor's waiting room does
+  it — turn on tablet mode under Settings → Admissions, sign a tablet in, and a family taps their
+  child's name from the list and fills it in there. They cannot reach anything else in the app,
+  because the tablet holds a one-off pass rather than your login, and you can end it whenever you
+  like. **It works on the masjid's own network only** unless you say otherwise, since a form left
+  open on a shared device is safest when being in the building is what unlocks it.
+
+  And the form on **your own website now looks like your website** — it is built into the page
+  instead of sitting in a box on it, so it takes on your site's fonts, colours and spacing. Copy the
+  two lines from Settings → Admissions and paste them where you want it. You can also say which
+  questions a family must answer before the form will send.
+- **Admins can work in Students from anywhere — by opening it from the OpenMasjidOS dashboard.** Away
+  from the masjid, press **Open** on Students in your OpenMasjidOS dashboard and you are signed in as an
+  admin, with every screen working. It rides on the dashboard's own two-step sign-in, and it ends the moment
+  you sign out of the dashboard there. An admin **password** still only works on the masjid network, and an
+  admin password can no longer be reset by emailed link — open the app from the dashboard, or ask another
+  admin to reset it under Staff. Finance and parents sign in from anywhere exactly as before.
+- **Fill in your whole roster from a spreadsheet.** Download your students **with everything the app
+  already knows already in the file**, add the missing details in Excel, and upload it back. A row
+  with a Student ID fills in that child rather than adding a new one, an empty cell leaves what is
+  there alone, and the preview lists every field it would change — from what, to what — before a
+  single row is written. Fee plans, guardians and Student IDs are never changed by an import. The
+  template now downloads as a real **Excel file** as well as a CSV — a CSV opened in Excel and saved
+  back is where a date column quietly changes meaning, and a workbook skips that step.
+
+### Also in this release
+
+- **Settings is in tabs** — School, Students, Admissions, Documents, Messages, Payments — instead of
+  one very long page.
+- **Address, languages and nationality belong to the household, not to each child.** Type an address
+  once and every child on the record has it — including a sibling linked in later. They are kept on
+  the household record, and only there: a child's record shows which household they are in, and the
+  household's own details are one screen away rather than repeated on each child.
+- **Security updates to the parts Students is built on.** The web server underneath the app, the piece
+  that serves its pages, the one that talks to its database and a small part of the card-payments
+  library are updated past published security problems — among them a way a carefully malformed web
+  address could get past a check. Nothing changes on screen and there is nothing to do.
+- **Finance's empty fee-plan note no longer says plans are set up "on the masjid network"** — an admin
+  sets them up, wherever they are working from.
+- **The tools used to build and test Students are updated too**, for the same reason. They never run on
+  your server; the test runner is the one left behind, because its fix needs a larger upgrade of its own.
+- **Opening Students from outside no longer shows a blank page.** If Students was not shared online, opening
+  it from the dashboard away from the masjid loaded a white screen: the page looked for its own files at
+  the dashboard's address. It now finds them under its own, whatever address OpenMasjidOS gives it — and so
+  do the forms, the printed sheets' QR codes and the links you copy for a parent.
+- **Signing in from outside keeps your session to Students.** The sign-in is only ever sent back to this
+  app's own address on the shared internet address, never to the other apps beside it, and signing out
+  clears any older one as well.
+- **Leaving a medical consent question blank no longer records a "no".** The admission form offers
+  "—", Yes and No, and leaving it on "—" was being stored as though the family had refused. It is now
+  left unanswered, which is what it meant.
+- **"2 per-term fees" said "2 per-term fee".** The plural wording existed but was written in a form
+  the app's translation library stopped using, so it was never picked.
+- **Dead wording removed, and a check so it stops accumulating.** Four strings whose screens no longer
+  exist were still in the app's wording file — still being read as evidence a feature existed, still
+  waiting to be translated into Arabic and Urdu for buttons nobody can press. The build now fails if a
+  string becomes unreachable.
+- **A test that was wrong about once in three.** The year-view check voided one sibling's invoice and
+  then asserted the other's, so it depended on which row the database happened to return first.
+
+- **Buttons are readable whichever colour your dashboard is set to.** If your OpenMasjidOS accent is
+  anything but the default, and you use the light theme, the writing on every blue button in this app
+  was white on a bright colour — pale enough to be hard to read, and well under the accessibility
+  standard the rest of the platform meets. The colour of the writing now changes with the button.
+- **The same was true of every delete button, in dark mode.** White on the warning red is too faint to
+  read comfortably; it is now dark text on that red. This affected erasing a student, deleting an
+  inquiry and refunding a payment — the three places you most want to be sure what you are pressing.
+
+- **Fixed: inquiries could not be added at all on some installs.** Two faults from the previous dev
+  build, which together stopped both the website form and adding one by hand. Marking a question
+  required on the **website** form was also being applied to the office typing an inquiry in — and
+  the office's own form does not have all those boxes, so it refused every attempt and blamed a
+  missing name that had been filled in. Separately, a staff account limited to one school added an
+  inquiry and watched it vanish: it saved correctly with no school attached, and an account limited
+  to a school does not see unattached ones. An inquiry now takes the school of whoever added it, and
+  a masjid with only one school attaches it automatically — so nothing lands where nobody can see it.
+- **The website form now tells a family which box they missed**, instead of thanking them and
+  quietly dropping it. That silence is deliberate on everything else the form refuses — it is what
+  stops the form being used to test whether a child is already known — but a family who left out a
+  question you marked required should simply be told.
+
+- **The forms work on a tablet held sideways.** Everything was laid out for a phone held upright, so
+  a tablet in landscape got one narrow column down the middle with the Send button below the fold.
+  Wide screens now put the questions side by side.
+- **Every form says Jazakumullahu khairan** rather than "Thank you", and carries a small line saying
+  it is managed with OpenMasjid Students.
+- **Signing a tablet in gives the address on your own network**, not the public one — it only works
+  on your network, so the public address was a link guaranteed not to open.
+- **"Saved" now looks like an answer.** The green confirmation style used by seven screens — the
+  admissions settings, admitting a child, re-admissions, a household's details, a student's record,
+  a family's record and the parent portal's payment screen — had no styling behind it at all, so
+  every confirmation in the app rendered as plain text beside the form it belonged to. It has looked
+  like that since the style was first used.
+
+- **The admissions form reads properly on a dark phone.** Its stylesheet set the dark colors *above*
+  the rules they were meant to replace, and a browser takes the later rule — so a phone in dark mode
+  got a white card with pale grey labels on it, which is close to unreadable. Every color on that page
+  is now a single named value with one dark override, and two tests hold it there. The page also
+  stopped shipping a paragraph of our own notes to everybody who opens it.
+- **Panels stopped overlapping their own contents.** An inquiry's parent and contact details were
+  drawn with the styling used for the list that drops down under a search box — which floats above the
+  page by design — so it covered the school and year boxes underneath it. The same borrowed styling
+  was on the settings origin list and a student's office notes. There is now a separate style for a
+  list that sits *in* the page, and a test that fails the build if the floating one is used for a list
+  again.
+- **The wording on the public form is shorter.** "Nothing here is a commitment — it starts a
+  conversation" and the rest of it are gone; the form says what it is for and stops. Every one of
+  those sentences is still yours to rewrite under Settings → Admissions.
+
+- **The academic layer is specified.** The v0.35.0 decision to narrow this app to fees and money is
+  reversed: a real student record, admissions, a daily register, a gradebook and report cards are
+  being built back, in six phases that each ship on their own. **No feature code yet** — this is the
+  specification, written before the code the way the payments and WhatsApp doctrines were.
+  `CLAUDE.md` §4a is the scope and carries the status per phase; `docs/ADMISSIONS.md`,
+  `docs/ATTENDANCE.md` and `docs/ACADEMICS.md` are the specs; `docs/DATA_MODEL.md` lists the
+  eighteen planned tables; the README says plainly which of it exists.
+- **Two invariants were amended rather than quietly worked around.** §14's "no medical fields"
+  becomes an amendment with conditions — admin-only through a role-keyed column allow-list, off
+  until an office turns them on, never parent-facing, never in a log, alert, export or Fabric
+  response — because the default without that mechanism is that finance sees them with no code
+  change at all. And §14 now carries the **attachment rules** §4 had been citing since before they
+  existed, which is the same dangling-citation defect §14 recorded about itself in 0.51.0-dev.17.
+  **Photos, documents and uploads of every kind stay out**, so nothing needs them yet.
+- **Three things the spec records as costs rather than discovering later.** Class history cannot be
+  reconstructed — every class-change audit row holds the new value and never the old one — so
+  `enrollments` comes back and roster history starts the day it ships. `charges` has no unique index
+  and `chargeAdd` does not check for an existing row, so re-approving a re-admission would charge a
+  family twice; a natural key lands before admissions does. And a migration whose hand-typed `when`
+  is not strictly increasing applies on a fresh database and is skipped forever on a live one, so a
+  journal guard test lands first.
+- **Admissions, first half: the door and the desk** (§4a Phase 2, `docs/ADMISSIONS.md`). Four tables
+  and two fee columns on the school year, in one migration verified against a live database holding
+  students, invoices, payments and charges. The hardest rule in the phase is what the shape enforces:
+  **an inquiry is not a student and not a household.** It never mints a Student ID, never reaches the
+  directory, is never billable, and the one column linking it to a child points forward and is null
+  until conversion — so nothing on the payment path can reach back into an unconfirmed, publicly
+  submitted record. Its state is **stored truth**, never inferred from whether some other row exists,
+  which is how a half-failed conversion would otherwise read back as a success; and `admitted` is
+  unreachable from the office's own transition by TYPE, so nothing can claim a student nobody created.
+  Every move writes two rows from one function — the audit row §14 requires, and the trail row the
+  office actually reads, because nothing in this app reads the audit log (§5, §9).
+- **The public form is the only unauthenticated write surface in this project, and every control on
+  it is written out rather than inherited** — there are no Fastify hooks in this repo, so nothing is
+  applied to a plain route by default. It answers `{"ok":true}` and nothing else, byte for byte,
+  whether the submission was stored, recognized as a repeat, missing a field, caught by the honeypot,
+  filled in faster than a person types, over one source's hourly cap, over the install's ceiling for
+  the day, or sent after intake closed — because any difference answers "is this child already known
+  to you?" for anybody who asks, on a surface with no lockout behind it. The minimum time-to-submit
+  is **signed**, since an unsigned timestamp is a number a bot edits, and the key is stored rather
+  than held in memory: a restart between opening the form and sending it would otherwise discard a
+  real family's inquiry silently, and the identical response means nobody would ever find out.
+  `frame-ancestors` comes from an origin allowlist re-validated on read, never `*`; nothing submitted
+  reaches a log line or an audit detail, the body being attacker-controlled and therefore also an
+  injection sink; and the new `admissions-inquiry` alert names the child only in the mail going to
+  addresses an office typed — the platform channel and the webhook get "1 new admission inquiry" and
+  no name, the per-event naming exception staying granted to `payment-received` alone.
+- **What an adversarial review of the phase found, and what it cost to fix** (0.52.0-dev.10). Seven
+  real defects, every one of them the same shape: **something new was added without revisiting the
+  code that already depended on there being less of it.** Three new `ON DELETE restrict` foreign keys
+  landed while the two delete procedures kept refusing on their old hand-written lists — so a masjid
+  that assigned one inquiry to a second school could never delete that school, and saw "Something
+  went wrong at our end" with nothing on any screen naming the one record in the way. Those lists now
+  live in `structure/blockers.ts`, together, with the rule stated once, because Phase 3 adds three
+  more references to the same two tables. The screen's warning is built from the same function the
+  refusal uses, so they cannot name different things.
+  Alongside it: clearing a guardian's name on a re-admission form no longer silently discards the
+  phone number changed in the same submission (a rule about ONE field was deciding the fate of two
+  others); a reorder list that names the same waitlist row twice can no longer leave a hole in the
+  queue; opening re-admission for a year no longer reaches the other school's children, since a year
+  belongs to one school and "everyone" did not; and clearing the daily-ceiling box to retype it no
+  longer reads as a ceiling of zero and quietly closes the form.
+- **Two things that were shipped as switches and did nothing, now do it.** The year's **enrollment
+  fee** had columns, a procedure and a charge path, and no screen anywhere that could set one — it is
+  now on the school-year form, where blank means no fee, which is what most madāris charge. And the
+  **acknowledgement email** had a switch and an editable message with no sender behind them; it sends
+  now, holding the master parent-mail pause first, the office's own switch second, and carrying
+  nothing the sender wrote — quoting a stranger's message back to an address the same stranger typed
+  is how a form becomes a way to deliver text to somebody else over the madrasah's name.
+- **Re-admission — the children who are already here** (§5 of the spec). Opening a year for a cohort
+  goes through the SAME `structure/audience.ts` that mass fee apply and the onboarding send use, which
+  is also what enforces "withdrawn students are excluded" — that resolver returns active students
+  only, so it is enforced in one place rather than remembered in three. **What comes back is a diff,
+  not a blind overwrite:** the form is pre-filled, so most of what a family sends is what was already
+  there, and only what actually moved is written — `updated_at` still means something after three
+  hundred families re-enroll. An absent field means the form never carried it; an empty one means
+  somebody cleared a box on purpose, and conflating the two would either wipe untouched fields or
+  refuse to honor a deliberate clear. The office can refuse one field and accept the rest. **Preview
+  and commit agree because they call the same function**, which a test asserts over the same input.
+  Everything is idempotent — opening, approving, and the re-enrollment fee, keyed
+  `readmission:<student>:<year>` — because the normal mode of use is three hundred families and every
+  button pressed twice. `lapsed` is a button, never an inference from silence: deriving it at read
+  time would make the screen disagree with itself between two refreshes.
+- **One-time link tokens now live in `auth/tokens.ts`**, and invites and password resets were
+  repointed at it in the same commit. There were three copies of "CSPRNG, then SHA-256, then an
+  expiry" and a fourth was about to be written — three places to get single-use or hashing wrong, on
+  surfaces reachable from the internet. The family's re-admission link is minted there, stored only
+  as a hash, single-use, and is **email or print only** — a token link is auth-critical and never
+  travels by WhatsApp, where a number can be banned overnight.
+- **The re-admission link says which failure it is** — expired, already used, already dealt with —
+  unlike the inquiry form, which answers identically whatever happens. Not an inconsistency: the
+  inquiry form's key is a child's name, so any variation is an enumeration oracle, while a 256-bit
+  token is unguessable and telling its holder "you already sent this" reveals nothing to anybody who
+  did not already have it. A family staring at "not found" is a phone call to the office.
+- **Conversion — an inquiry becomes a student** (`admissions/convert.ts`, §4 of the spec). One
+  transaction: the household, the child, their guardians, their fee plan, their class and the move to
+  `admitted`. **Idempotent by construction rather than by a guard bolted on** — a double-clicked
+  Admit, a retried request and a double-submitted form all find the inquiry already admitted and get
+  the existing child back, because the state is stored truth written in the same transaction as the
+  student it is true about. Not "does a student with this name exist", which is a question a madrasah
+  with two children called Muhammad Ali cannot answer. The **enrollment fee** goes through the charge
+  machinery that already existed, keyed `admission:<inquiryId>` in the UNIQUE `charges.source_key`
+  Phase 0 added for exactly this — so a family cannot be charged twice for enrolling once, and a
+  waiver or a per-family override is honored without touching what the year charges everybody else.
+  It is raised AFTER the transaction commits, deliberately: a failure there leaves an admitted child
+  with no enrollment charge, which an office can see and fix, rather than rolling back a conversion
+  that had already succeeded.
+- **`createStudentRow` moved out of the router into `people/create.ts`**, unchanged. It was
+  module-private inside `trpc/people.ts`, and an inquiry has to become a student through the existing
+  write path because that is what mints the Student ID (§16) — so the choice was to lift it or to
+  write a second thing that mints an ID its own way. Every path that creates a child now goes through
+  one file, which is also the only place a Student ID can come from.
+- **A sibling is offered, never assumed — in either direction.** `siblingHints` reuses `identityKeys`
+  from `people/household.ts` rather than adding a third matcher, and reports WHY a household matched
+  (an email match outranks a name). It is a hint and nothing else: silently joining a matched
+  household is the same mistake as silently duplicating one, and worse, because it attaches a child
+  to an address and a set of guardians nobody confirmed.
+- **`admitted` is reachable from every live state, which the spec's diagram does not draw.** Written
+  down as a deviation rather than slipped in: a family admitted the same morning they walked in would
+  otherwise need four actions for one conversation, two of them recording an offer nobody made. The
+  invariant is untouched — `admitted` still means a student exists, and only conversion can apply it.
+- **Forty new tests, nine guards proven by mutation**, and one of those mutations found a real bug
+  rather than confirming a fix: the hardened limiter's eviction never ran at all, because the map
+  refuses new keys AT its ceiling and so can never exceed it — which would have left a limiter that
+  filled with expired entries and then refused every new key forever, on a surface that fails closed.
+  Reclaiming dead entries now has its own test.
+- **The rate limiters stopped forgiving themselves under a flood**, which they had been doing since
+  they were written, and two live surfaces were bypassable through it with no secret needed. Both
+  limiter maps were bounded by evicting the oldest entry, and the repo's own test asserted the
+  consequence out loud: flood fifty thousand junk keys and a key that was at its cap is allowed
+  again. The per-Student-ID lockout — the only thing standing behind an ID with no PIN — is keyed on
+  the code the caller supplies, so an attacker sweeping codes generated that flood for free and
+  unlocked the ones they had already locked. Eviction is now ordered and a live block is never
+  dropped; a map that fills with live blocks stops admitting new keys instead of growing, failing
+  closed on public surfaces and open on the login path, where locking every parent out of their own
+  portal is the worse of the two. Alongside it, an IPv6 address is now folded to its **/64** before it
+  is used as a limiter key, in the one place a request becomes a key: the smallest block anybody is
+  assigned is a /64, so one ordinary household held 18 quintillion free buckets and every per-IP
+  limit in the app counted to one. The old test asserting the forgiving behavior is inverted, and
+  there is no raw client-IP helper left for a future limiter to key on by mistake.
+- **The import update path, and the five rules that make it safe.** The Student ID column is the
+  identity and a name is never matched on; an ID matching nothing is an error rather than a silent
+  create; an empty cell leaves the field alone (`(clear)` empties one on purpose); only what changed is
+  written, so a row matching the record produces no write at all; and repeating an exported fee plan,
+  amount or guardian is silent while trying to change one is refused. Twenty-four tests, including a
+  full export → re-import round trip asserting that nothing at all is written. Two proven by mutation:
+  making empty mean "clear", and letting an unknown ID fall through to a create, each turn the right
+  tests red.
+- **Address, languages and nationality moved from the student to the household** (migration 0043),
+  one release after they shipped and before any stable release carried them. `people/fields.ts` gained
+  a `scope` per field, `familyColumnsFor` projects the household through the same allow-list the child
+  goes through, and a field submitted to the wrong procedure is refused rather than written into the
+  wrong table. Verified against a live database: the first NON-EMPTY value per household is carried
+  across, whitespace is not a value, and the student columns are dropped in place.
+- **Under it all: `people/fields.ts`, and it matters more than the fields.** `familyGet` was an
+  admin-or-finance procedure selecting the whole student row, and the finance shell renders the same
+  household component the admin shell does — its read-only flag only ever wrapped buttons. So a medical
+  column would have reached finance through an ALTER TABLE and no code change at all. One file now
+  answers all three questions about a field (does it exist, did the office switch it off, may this role
+  see it) and a role's query fetches only the columns it may have, so what a role cannot see is never
+  read out of the database. Proven by mutation: widening the allow-list to finance turns three tests
+  red. Migration 0042 was verified against a live database holding students with notes.
+- **`lib/xlsxWrite.ts` — writing a workbook with no spreadsheet library**, the other half of the reader
+  added in 0.48.0. STORE-only ZIP, inline strings so there is no string table, ISO date TEXT so there
+  is no style table and no handing the value back to Excel's locale. Every test round-trips through the
+  real reader, which is the assertion that matters: a file we hand an office is one this app reads back.
+- **Phase 0 is built — three foundations, none of them visible to a masjid.** A guard test on the
+  migration journal, because since 0032 the timestamps that decide whether a migration runs have been
+  typed by hand, and one that is not strictly greater than the last applies fine on a fresh database
+  and is skipped **forever** on a live one — the app boots, reports success, and fails later on a
+  missing table. A `source_key` natural key on `charges` with one writer, so software raising the same
+  fee twice creates one charge and reports that it did; the database enforces it rather than a
+  check-then-insert, and the upgrade was verified against a database that already held charges. And
+  the CSV formula guard now round-trips: `+44…` phone numbers and negative amounts came back with a
+  `'` welded to the front once a template is exported pre-filled and re-imported. The guard itself is
+  untouched — it is reversed on the way IN, and only when a formula character follows, so `'Abd Allah`
+  is not quietly renamed.
+
 ## [0.51.0]
 
 - **Parents can now cover the card processing fee, if you want them to.** Every card payment costs the

@@ -39,6 +39,10 @@ interface WindowsApi {
   windows: WindowState[];
   open: (opts: OpenWindowOptions) => number;
   close: (id: number) => void;
+  /** Close whatever window is showing this record, without the caller having to have kept its numeric
+   *  id. What a window's content needs to say is "the thing I am showing is gone" — it opened itself
+   *  by `dedupeKey` and that is the only handle it has. */
+  closeByKey: (dedupeKey: string) => void;
   minimize: (id: number) => void;
   restore: (id: number) => void;
   focus: (id: number) => void;
@@ -50,6 +54,7 @@ const WindowsCtx = createContext<WindowsApi>({
   windows: [],
   open: () => -1,
   close: noop,
+  closeByKey: noop,
   minimize: noop,
   restore: noop,
   focus: noop,
@@ -114,6 +119,10 @@ export function WindowsProvider({ children }: { children: ReactNode }) {
   );
 
   const close = useCallback((id: number) => setWins((list) => list.filter((w) => w.id !== id)), [setWins]);
+  const closeByKey = useCallback(
+    (dedupeKey: string) => setWins((list) => list.filter((w) => w.dedupeKey !== dedupeKey)),
+    [setWins],
+  );
   const minimize = useCallback(
     (id: number) => setWins((list) => list.map((w) => (w.id === id ? { ...w, minimized: true } : w))),
     [setWins],
@@ -126,8 +135,8 @@ export function WindowsProvider({ children }: { children: ReactNode }) {
   // Stable context value: the callbacks are useCallback-stable, so this only
   // changes when the window list does — consumers don't re-render every render.
   const value = useMemo(
-    () => ({ windows, open, close, minimize, restore: focus, focus, toggleFullscreen }),
-    [windows, open, close, minimize, focus, toggleFullscreen],
+    () => ({ windows, open, close, closeByKey, minimize, restore: focus, focus, toggleFullscreen }),
+    [windows, open, close, closeByKey, minimize, focus, toggleFullscreen],
   );
 
   return <WindowsCtx.Provider value={value}>{children}</WindowsCtx.Provider>;

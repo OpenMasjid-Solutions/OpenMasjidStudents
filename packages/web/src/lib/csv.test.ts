@@ -8,7 +8,7 @@
  * a UTF-8 BOM, and ragged rows.
  */
 import { describe, it, expect } from 'vitest';
-import { parseCsv, autoMatchColumns, toCsv } from './csv';
+import { parseCsv, autoMatchColumns, toCsv, unescapeCell } from './csv';
 
 describe('parseCsv', () => {
   it('parses a plain file with CRLF', () => {
@@ -122,5 +122,45 @@ describe('toCsv keeps the export safe to open', () => {
   it('RFC-4180 quotes commas, quotes and newlines', () => {
     expect(toCsv(['A'], [['x,y']])).toContain('"x,y"');
     expect(toCsv(['A'], [['he "said"']])).toContain('"he ""said"""');
+  });
+});
+
+describe('the formula guard round-trips (0.52.0)', () => {
+  /**
+   * The guard is a §14 control and it stays. What changed is that a template exported PRE-FILLED with
+   * the office's own data (§4a Phase 1) is meant to be edited and uploaded back — and until now a
+   * `+44…` phone and a negative amount came back with a `'` welded to the front and were stored that
+   * way. The fix reverses it in the READER, where the file is known to be ours.
+   */
+  it('gives back exactly what went in, for every character the guard fires on', () => {
+    const originals = ['=SUM(A1:A9)', '+44 7700 900123', '-25.00', '@handle'];
+    const back = parseCsv(toCsv(['Value'], originals.map((v) => [v])));
+    expect(back.rows.map((r) => r[0])).toEqual(originals);
+  });
+
+  it('DOES NOT strip an apostrophe that is part of the name', () => {
+    // The whole care in this fix. An unconditional strip would rename children in this app's own
+    // audience: a leading apostrophe is an ordinary way to write the ayn.
+    for (const name of ["'Abd Allah", "'Uthman", "'Aisha"]) {
+      expect(unescapeCell(name)).toBe(name);
+      expect(parseCsv(toCsv(['Name'], [[name]])).rows[0][0]).toBe(name);
+    }
+  });
+
+  it("resolves the one ambiguous cell toward the common case, and that is a deliberate loss", () => {
+    // A literal apostrophe followed by a formula character is indistinguishable from an escaped one:
+    // escapeCell tests the FIRST character, and for "'+1" that is the apostrophe, which is not a
+    // formula lead — so it exports unchanged and reads back exactly like an escaped "+1".
+    //
+    // Pinned here rather than left to be discovered. One side of this is a phone number the office
+    // exported and re-imported; the other is somebody typing an apostrophe in front of a plus sign.
+    expect(toCsv(['A'], [["'+1"]])).toContain("'+1");
+    expect(unescapeCell("'+1")).toBe('+1');
+  });
+
+  it('leaves an ordinary cell alone', () => {
+    expect(unescapeCell('Yusuf Ismail')).toBe('Yusuf Ismail');
+    expect(unescapeCell('')).toBe('');
+    expect(unescapeCell("'")).toBe("'");
   });
 });

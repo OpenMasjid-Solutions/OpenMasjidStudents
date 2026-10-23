@@ -1,0 +1,674 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 OpenMasjid-Solutions
+/**
+ * THE PUBLIC ADMISSIONS INQUIRY FORM, OVER REAL HTTP (0.52.0, CLAUDE.md §4a Phase 2 / §14).
+ *
+ * This is the only unauthenticated write surface in the project, so it gets the treatment
+ * `statementRoute.test.ts` gives the printable documents: a real Fastify instance and `inject`,
+ * rather than a tRPC caller. That is not a style choice. `createCaller` bypasses the error formatter,
+ * the body cap and the real request — and every property this surface has to hold is a property of
+ * what the INTERNET sees: the same bytes back whatever happened, the headers, the CSP, whether being
+ * refused is distinguishable from being stored.
+ *
+ * The assertions below are the list in docs/ADMISSIONS.md §8, and the one they all rest on is the
+ * first: **one response, always**. Any difference in body, status or shape answers "is this child,
+ * this email, this family already known to you?" for anybody who asks — on a surface that, unlike
+ * `lookup`, has no per-identifier lockout behind it.
+ *
+ * Two things this file is careful about, both learned from scars in this repo:
+ *  - the rate limiters are module-level singletons that are never reset between tests, so every test
+ *    here uses its OWN peer address and the ceiling test sets the cap rather than exhausting it;
+ *  - every negative assertion has a positive control in the same test. "Nothing was stored" passes
+ *    beautifully against a route that stores nothing at all.
+ */
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { eq } from 'drizzle-orm';
+import { freshApp } from './harness';
+import { inquiries, inquiryEvents, settings, auditLog } from '../src/db/schema';
+
+let app: Awaited<ReturnType<typeof freshApp>>;
+let http: FastifyInstance;
+let settingsMod: typeof import('../src/settings');
+let routes: typeof import('../src/admissions/publicRoutes');
+
+/** Every call the (stubbed) platform received, so the alert can be asserted on. */
+let calls: { url: string; body: Record<string, unknown> }[] = [];
+const realFetch = globalThis.fetch;
+
+/** Fire-and-forget sends log and post two microtask hops after the handler returns. */
+const settle = async () => {
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+};
+
+beforeAll(async () => {
+  // fabric: true — without a base URL and secret there is no transport at all, and an assertion that
+  // the alert went would pass for the wrong reason (or fail for one).
+  app = await freshApp({ fabric: true });
+  settingsMod = await import('../src/settings');
+  routes = await import('../src/admissions/publicRoutes');
+  http = Fastify();
+  // A bare instance, like fabric.test.ts. It deliberately does NOT carry index.ts's 1 MiB body cap —
+  // the route declares its own, which is the thing being tested.
+  routes.registerPublicInquiryRoutes(http);
+  await http.ready();
+});
+
+afterAll(() => {
+  globalThis.fetch = realFetch;
+});
+
+beforeEach(() => {
+  const { db } = app.dbmod;
+  for (const t of [inquiryEvents, inquiries, auditLog]) db.delete(t).run();
+  // Clear THIS feature's settings rows by key. Wiping the whole table would drop rows other seeds
+  // rely on, and leaving them lets one test's policy leak into the next.
+  for (const key of ['admissions', 'admissions_text', 'school_name', 'school_logo', 'parent_mail_paused']) {
+    db.delete(settings).where(eq(settings.key, key)).run();
+  }
+  calls = [];
+  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) => {
+    const i = (init ?? {}) as { body?: string };
+    calls.push({ url: String(input), body: i.body ? (JSON.parse(i.body) as Record<string, unknown>) : {} });
+    return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+  }) as unknown as typeof fetch;
+});
+
+/** The form, switched on and open, unless a test says otherwise. */
+function openForm(patch: Partial<import('../src/settings').AdmissionsConfig> = {}): void {
+  settingsMod.setAdmissions({ publicForm: true, open: true, dailyMax: 1_000, minSeconds: 3, ...patch });
+}
+
+/** A token that says the form was rendered long enough ago to have been filled in by a person. */
+const goodToken = () => routes.mintFormToken(Date.now() - 30_000);
+
+let peerN = 0;
+/** Each test gets its own source address — the limiters are process-wide singletons. */
+const freshPeer = () => `10.77.${Math.floor(peerN / 250)}.${(peerN++ % 250) + 1}`;
+
+function post(body: Record<string, unknown>, opts: { peer?: string; tunnel?: boolean; origin?: string } = {}) {
+  return http.inject({
+    method: 'POST',
+    url: '/public/inquiry',
+    remoteAddress: opts.peer ?? freshPeer(),
+    headers: {
+      'content-type': 'application/json',
+      ...(opts.tunnel ? { 'cf-ray': 'test-ray' } : {}),
+      ...(opts.origin ? { origin: opts.origin } : {}),
+    },
+    payload: JSON.stringify(body),
+  });
+}
+
+/** A complete, honest submission. */
+const submission = (over: Record<string, unknown> = {}) => ({
+  childName: 'Yusuf Ismail',
+  parentName: 'Ibrahim Ismail',
+  email: 'ibrahim@example.org',
+  phone: '07700 900123',
+  message: 'We would like to ask about a place for September.',
+  t: goodToken(),
+  ...over,
+});
+
+const rows = () => app.dbmod.db.select().from(inquiries).all();
+
+describe('the door itself', () => {
+  it('does not exist until an office opens it', async () => {
+    // publicForm is false on every install: this is the only unauthenticated write surface in the
+    // app, and it is not something a masjid should discover they had.
+    expect(settingsMod.getAdmissions().publicForm).toBe(false);
+    expect((await http.inject({ method: 'GET', url: '/public/inquiry' })).statusCode).toBe(404);
+    expect((await http.inject({ method: 'GET', url: '/public/inquiry/embed' })).statusCode).toBe(404);
+    expect((await http.inject({ method: 'GET', url: '/public/inquiry.js' })).statusCode).toBe(404);
+    expect((await post(submission())).statusCode).toBe(404);
+    expect(rows()).toHaveLength(0);
+  });
+
+  it('serves the form from BOTH origins once it is on — that is the point of it', async () => {
+    openForm();
+    // `cf-ray` is what origin.ts reads as a genuine Cloudflare tunnel. A family fills this in from
+    // home; an office reads it back on the LAN, through an adminProcedure, which is the wall.
+    const lan = await http.inject({ method: 'GET', url: '/public/inquiry' });
+    const tunnel = await http.inject({ method: 'GET', url: '/public/inquiry', headers: { 'cf-ray': 'test-ray' } });
+    expect(lan.statusCode).toBe(200);
+    expect(tunnel.statusCode).toBe(200);
+    expect(tunnel.body).toContain('<form');
+
+    const posted = await post(submission(), { tunnel: true });
+    expect(posted.statusCode).toBe(200);
+    expect(rows()).toHaveLength(1);
+  });
+});
+
+describe('one response, whatever happened', () => {
+  /**
+   * THE LOAD-BEARING TEST OF THIS WHOLE SURFACE.
+   *
+   * Seven outcomes, one of which stores a row. If any of them can be told apart from the outside,
+   * submitting becomes a way to ask whether a child, an email or a household is already known — the
+   * no-enumeration rule `lookup` follows (§11.2), applied where there is no lockout to fall back on.
+   */
+  it('answers with identical bytes for stored, duplicate, incomplete, honeypot, too-fast, closed and over-ceiling', async () => {
+    openForm();
+    const seen: { label: string; status: number; body: string }[] = [];
+
+    const record = async (label: string, res: Awaited<ReturnType<typeof post>>) => {
+      seen.push({ label, status: res.statusCode, body: res.body });
+    };
+
+    await record('stored', await post(submission({ childName: 'Aisha Khan' })));
+    await record('duplicate', await post(submission({ childName: 'Aisha Khan' })));
+    await record('incomplete', await post({ t: goodToken() }));
+    await record('honeypot', await post(submission({ childName: 'Bilal Khan', website: 'http://spam.example' })));
+    await record('too-fast', await post(submission({ childName: 'Maryam Khan', t: routes.mintFormToken(Date.now()) })));
+    await record('forged-token', await post(submission({ childName: 'Hanif Khan', t: `${Date.now() - 30_000}.not-a-signature` })));
+
+    settingsMod.setAdmissions({ open: false });
+    await record('closed', await post(submission({ childName: 'Zainab Khan' })));
+
+    settingsMod.setAdmissions({ open: true, dailyMax: 0 });
+    await record('over-ceiling', await post(submission({ childName: 'Idris Khan' })));
+
+    // Every one of them, byte for byte.
+    expect(seen).toHaveLength(8);
+    for (const s of seen) {
+      expect(s.status, `${s.label} answered ${s.status}`).toBe(200);
+      expect(s.body, `${s.label} answered a different body`).toBe('{"ok":true}');
+    }
+
+    // ...and the positive control, without which the above passes against a route that stores nothing:
+    // exactly ONE of the eight is on the record, and it is the right one.
+    const stored = rows();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].childName).toBe('Aisha Khan');
+  });
+
+  it('a duplicate inside the window is one row, and a different child is not a duplicate', async () => {
+    openForm();
+    const peer = freshPeer();
+    await post(submission(), { peer });
+    await post(submission(), { peer });
+    expect(rows()).toHaveLength(1);
+    // The vacuity guard: the dedupe must be recognizing THIS family, not refusing everything after
+    // the first submission from one source.
+    await post(submission({ childName: 'Maryam Ismail' }), { peer });
+    expect(rows()).toHaveLength(2);
+  });
+
+  it('caps one source per hour, and the cap is not the whole install', async () => {
+    openForm();
+    const peer = freshPeer();
+    for (let i = 0; i < 10; i++) await post(submission({ childName: `Child ${i} Test` }), { peer });
+    expect(rows()).toHaveLength(10);
+    const over = await post(submission({ childName: 'Child 10 Test' }), { peer });
+    expect(over.statusCode).toBe(200);
+    expect(over.body).toBe('{"ok":true}');
+    expect(rows()).toHaveLength(10); // refused, silently
+
+    // Somebody else is unaffected — a per-source limit that locked out the world would be a way to
+    // close a masjid's admissions from one laptop.
+    await post(submission({ childName: 'Someone Else' }), { peer: freshPeer() });
+    expect(rows()).toHaveLength(11);
+  });
+
+  it('the install-wide ceiling refuses, and the same submission is accepted when it is raised', async () => {
+    openForm({ dailyMax: 0 });
+    await post(submission());
+    expect(rows()).toHaveLength(0);
+    // The control: the row was refused BY THE CEILING and not by anything else about it.
+    settingsMod.setAdmissions({ dailyMax: 1_000 });
+    await post(submission());
+    expect(rows()).toHaveLength(1);
+  });
+});
+
+describe('what it says out loud, and what it does not', () => {
+  it('says intake is closed rather than silently discarding', async () => {
+    // The madrasah's OWN closed text, not the shipped default. Pinning a test to default prose is
+    // what broke this one when the wording was rewritten in 0.52.0-dev.11 — and it was testing the
+    // registry's copy rather than the behavior, which is that a closed form renders the closed text
+    // and no form at all.
+    settingsMod.setAdmissionsText({ closed: 'Intake reopens after Ramadan.' });
+    openForm({ open: false });
+    const page = await http.inject({ method: 'GET', url: '/public/inquiry' });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).not.toContain('<form');
+    expect(page.body).toContain('Intake reopens after Ramadan.');
+  });
+
+  it('carries the document headers every served page in this app carries', async () => {
+    openForm();
+    const res = await http.inject({ method: 'GET', url: '/public/inquiry' });
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    const csp = String(res.headers['content-security-policy']);
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("form-action 'none'");
+    // The hosted page is a link, not an embed: nobody frames it.
+    expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  it('frames only the origins the office listed, and never “*”', async () => {
+    openForm({ embedOrigins: ['https://masjid.example', 'https://www.masjid.example'] });
+    const embed = await http.inject({ method: 'GET', url: '/public/inquiry/embed' });
+    const csp = String(embed.headers['content-security-policy']);
+    expect(csp).toContain('frame-ancestors https://masjid.example https://www.masjid.example');
+    expect(csp).not.toContain('*');
+  });
+
+  it('an allowlist with nobody on it means nobody — embedding has no separate switch to drift from', async () => {
+    openForm({ embedOrigins: [] });
+    const embed = await http.inject({ method: 'GET', url: '/public/inquiry/embed' });
+    expect(String(embed.headers['content-security-policy'])).toContain("frame-ancestors 'none'");
+  });
+
+  it('a hand-edited settings row cannot widen frame-ancestors', async () => {
+    // The row is re-validated on READ (`getAdmissions`), the way `getAccentColor` is, because these
+    // strings are interpolated into a response header. Delete the `isEmbedOrigin` filter and this
+    // goes red — with `*` and a javascript: source reaching a CSP the browser then honors.
+    settingsMod.setSetting(
+      'admissions',
+      JSON.stringify({ publicForm: true, open: true, dailyMax: 100, minSeconds: 3, embedOrigins: ['*', "'none'; script-src *", 'https://ok.example', 'javascript:alert(1)'] }),
+    );
+    const embed = await http.inject({ method: 'GET', url: '/public/inquiry/embed' });
+    const csp = String(embed.headers['content-security-policy']);
+    expect(csp).toContain('frame-ancestors https://ok.example');
+    expect(csp).not.toContain('*');
+    expect(csp).not.toContain('javascript:');
+    expect(csp).toContain("script-src 'unsafe-inline';"); // …and the real directive is intact
+  });
+
+  it('a truncated policy row reads back CLOSED, not open', async () => {
+    settingsMod.setSetting('admissions', '{"publicForm":"yes","open"'); // unparseable
+    expect(settingsMod.getAdmissions().publicForm).toBe(false);
+    expect((await http.inject({ method: 'GET', url: '/public/inquiry' })).statusCode).toBe(404);
+  });
+
+  it('a row that parses but says “1” does not open the form either', async () => {
+    // This is the case the truncated-row test above does NOT reach — that one is caught by the
+    // try/catch, not by the coercion. Every switch here is `=== true` and not `!== false`, because
+    // the safe value of all of them is OFF: a hand-edited row written by somebody who assumed the
+    // '1'/'0' convention the scalar settings use must not be what opens a form to the internet.
+    // Change the coercion and this goes red while the truncated-row test stays green.
+    settingsMod.setSetting('admissions', JSON.stringify({ publicForm: '1', open: 1, dailyMax: 100, minSeconds: 3, embedOrigins: [] }));
+    const cfg = settingsMod.getAdmissions();
+    expect(cfg.publicForm).toBe(false);
+    expect(cfg.open).toBe(false);
+    expect((await http.inject({ method: 'GET', url: '/public/inquiry' })).statusCode).toBe(404);
+    // The control: a row that says `true` properly does open it, so the above is not passing because
+    // nothing can ever open this form.
+    settingsMod.setSetting('admissions', JSON.stringify({ publicForm: true, open: true, dailyMax: 100, minSeconds: 3, embedOrigins: [] }));
+    expect((await http.inject({ method: 'GET', url: '/public/inquiry' })).statusCode).toBe(200);
+  });
+
+  it('renders what a stranger typed as text, never as markup', async () => {
+    // The whole page is assembled server-side from values somebody else controls — the school's name,
+    // the office's own wording — and served to a browser. Same discipline as the printed statement,
+    // with a sharper reason.
+    settingsMod.setSetting('school_name', '<script>alert(1)</script>Masjid');
+    openForm();
+    settingsMod.setAdmissionsText({ intro: 'Welcome to <img src=x onerror=alert(2)> our school' });
+    const page = await http.inject({ method: 'GET', url: '/public/inquiry' });
+    expect(page.body).not.toContain('<script>alert(1)</script>');
+    expect(page.body).not.toContain('<img src=x onerror=alert(2)>');
+    expect(page.body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(page.body).toContain('&lt;img src=x onerror=alert(2)&gt;');
+  });
+});
+
+describe('the page reads in both themes', () => {
+  /**
+   * THE DARK BRANCH MAY ONLY REDEFINE TOKENS — and this is not a style preference, it is the bug.
+   *
+   * The first version put `@media (prefers-color-scheme: dark)` ABOVE the rules it overrode, and a
+   * media query adds no specificity: `.box { background: #fff }` on the next line won, while `body`'s
+   * color stayed the dark theme's near-white because nothing later re-declared it. On a dark phone
+   * that is a white card with pale grey labels — unreadable, on the one page in this app served to
+   * the open internet, embedded in somebody's website.
+   *
+   * Asserting "the dark block declares nothing but custom properties" is the rule itself rather than
+   * a symptom: any RULE in there can lose to a later one on source order, and a variable cannot.
+   *
+   * Both assertions below are brace-matched rather than sliced at the first `}`. The first version of
+   * this test used index arithmetic, and the mutation check caught it passing vacuously — it skipped
+   * any fragment containing `{`, which is precisely what an injected rule looks like.
+   */
+  /**
+   * The served stylesheet, with CSS comments stripped.
+   *
+   * Stripping is not tidiness: a comment explaining this very rule USED to sit in the stylesheet, its
+   * prose contained a literal `@media (prefers-color-scheme: dark)` and a `{ background: #fff }`, and
+   * the brace matcher below found those first. The comment has since moved to the TS docblock where
+   * it belongs — and the third test in this block is what keeps it there — but a parser that can be
+   * fooled by prose is a parser that will be.
+   */
+  const style = (body: string) =>
+    body.slice(body.indexOf('<style'), body.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /** The body of the block opening at or after `from`, brace-matched — nested blocks and all. */
+  function block(css: string, from: number): { body: string; end: number } {
+    const open = css.indexOf('{', from);
+    let depth = 0;
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === '{') depth++;
+      else if (css[i] === '}' && --depth === 0) return { body: css.slice(open + 1, i), end: i };
+    }
+    throw new Error('unbalanced css');
+  }
+
+  /** Every `:root { … }` block removed, so what is left is whatever ELSE the block declares. */
+  function withoutRootBlocks(css: string): string {
+    let out = css;
+    for (;;) {
+      const at = out.indexOf(':root');
+      if (at === -1) return out;
+      const { end } = block(out, at);
+      out = out.slice(0, at) + out.slice(end + 1);
+    }
+  }
+
+  it('declares nothing but custom properties inside the dark-scheme block', async () => {
+    openForm();
+    const css = style((await http.inject({ method: 'GET', url: '/public/inquiry' })).body);
+    const dark = block(css, css.indexOf('@media (prefers-color-scheme: dark)')).body;
+    expect(dark).toContain('--ink');
+    // Strip the `:root { … }` that is supposed to be the whole of it. Anything left with a brace in
+    // it is a real rule, and a real rule is one source-order edit away from being ignored.
+    expect(withoutRootBlocks(dark)).not.toContain('{');
+  });
+
+  it('ships no commentary to the open internet', async () => {
+    openForm();
+    const page = await http.inject({ method: 'GET', url: '/public/inquiry' });
+    const css = page.body.slice(page.body.indexOf('<style'), page.body.indexOf('</style>'));
+    // This constant is served in full to strangers, often inside somebody else's website. A paragraph
+    // of English explaining a bug we once had is bytes on every request and internal reasoning
+    // published to people who did not ask for it — so the reasoning lives in the TS docblock above
+    // PAGE_STYLE, and the CSS carries only what a reader editing that line needs.
+    expect(css).not.toContain('/*');
+  });
+
+  it('names no theme color as a literal — every one of them is a token', async () => {
+    openForm();
+    const css = style((await http.inject({ method: 'GET', url: '/public/inquiry' })).body);
+    // LINE-BASED ON PURPOSE. The first version of this walked the stylesheet with brace matching and
+    // set arithmetic, and the mutation check caught it passing while `.box { background: #ffffff }`
+    // sat in the served page — a guard clever enough to be wrong in a way nobody reads. Every line
+    // carrying a color literal must be a token DEFINITION, and there is exactly one exception.
+    const offenders = css
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => /#[0-9a-fA-F]{3,8}/.test(l))
+      .filter((l) => !/^--[\w-]+:\s*#[0-9a-fA-F]{3,8};$/.test(l))
+      // The button's foreground sits on the accent in both themes, so it is not a theme color and
+      // flipping it with the scheme would be the bug rather than the fix.
+      .filter((l) => !l.startsWith('button {'));
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('the signed render time', () => {
+  it('refuses a form filled in faster than a person can type', async () => {
+    openForm({ minSeconds: 3 });
+    await post(submission({ t: routes.mintFormToken(Date.now()) }));
+    expect(rows()).toHaveLength(0);
+    await post(submission({ t: routes.mintFormToken(Date.now() - 5_000) }));
+    expect(rows()).toHaveLength(1);
+  });
+
+  it('refuses a timestamp the caller made up — an unsigned one would be a number a bot edits', async () => {
+    openForm();
+    const old = Date.now() - 60_000;
+    await post(submission({ t: String(old) }));
+    await post(submission({ t: `${old}.` }));
+    await post(submission({ t: `${old}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA` }));
+    expect(rows()).toHaveLength(0);
+    await post(submission({ t: routes.mintFormToken(old) }));
+    expect(rows()).toHaveLength(1);
+  });
+
+  it('a token minted before a restart still works — the secret is stored, not per process', async () => {
+    // Deliberate: a per-process secret would turn a real family's inquiry into a silently discarded
+    // one whenever the container restarted between opening the form and sending it, and — because the
+    // response cannot differ — nobody would ever find out.
+    openForm();
+    const token = routes.mintFormToken(Date.now() - 30_000);
+    const secret = settingsMod.getSetting('admissions_form_secret');
+    expect(secret).toBeTruthy();
+    expect(settingsMod.getSetting('admissions_form_secret')).toBe(secret); // minting again reuses it
+    await post(submission({ t: token }));
+    expect(rows()).toHaveLength(1);
+  });
+});
+
+describe('what is written, and what is told', () => {
+  it('stores the submission with a trail row, and mints no Student ID', async () => {
+    openForm();
+    await post(submission());
+    const [row] = rows();
+    expect(row.state).toBe('new');
+    expect(row.source).toBe('public');
+    expect(row.studentId).toBeNull();
+    expect(row.familyId).toBeNull();
+    // An inquiry is not a student: nothing in the students table, and no code minted anywhere.
+    expect(app.dbmod.db.select().from(inquiryEvents).all()).toHaveLength(1);
+    expect(JSON.stringify(row)).not.toMatch(/[A-Z]{3}\d{4}/);
+  });
+
+  it('never lets what a stranger typed reach a log line', async () => {
+    openForm();
+    const seen: string[] = [];
+    const cap = (...args: unknown[]) => {
+      seen.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+    };
+    await settle(); // anything still in flight from an earlier test lands before the spies go on
+    const spies = [vi.spyOn(console, 'log').mockImplementation(cap), vi.spyOn(console, 'warn').mockImplementation(cap), vi.spyOn(console, 'error').mockImplementation(cap)];
+    try {
+      await post(
+        submission({
+          childName: 'Ruqayyah Secretname',
+          parentName: 'Parent Secretname',
+          email: 'private@example.org',
+          message: 'A sentence nobody else should ever read.',
+        }),
+      );
+      await settle();
+    } finally {
+      for (const s of spies) s.mockRestore();
+    }
+    const log = seen.join('\n');
+    // The positive control FIRST: without it this passes against a route that logs nothing at all,
+    // and would keep passing after somebody removed the logging and added a `console.log(body)`.
+    expect(log).toContain('inquiry');
+    expect(log).toContain('stored');
+    for (const secret of ['Secretname', 'private@example.org', 'nobody else should ever read', '07700 900123']) {
+      expect(log, `“${secret}” reached a log line`).not.toContain(secret);
+    }
+  });
+
+  it('keeps the body out of the audit trail too — it is attacker-controlled, so it is also an injection sink', async () => {
+    openForm();
+    await post(submission({ childName: 'Khadija Secretname', message: 'A sentence nobody else should ever read.' }));
+    const trail = JSON.stringify(app.dbmod.db.select().from(auditLog).all());
+    expect(trail).toContain('inquiry.received'); // the control: a row was written
+    expect(trail).toContain('public');
+    expect(trail).not.toContain('Secretname');
+    expect(trail).not.toContain('nobody else should ever read');
+  });
+
+  it('does not email the family unless the office asked for it', async () => {
+    // OFF by default, and that is the design rather than caution: the address was typed by somebody
+    // nobody at the madrasah has met, so switching this on makes the public form into something that
+    // can send mail to an inbox that never asked for any.
+    openForm({ ackEmail: false });
+    await post(submission({ childName: 'Unacknowledged Child' }));
+    await settle();
+    expect(calls.filter((c) => c.url.endsWith('/api/fabric/email'))).toHaveLength(0);
+    expect(rows()).toHaveLength(1); // the control: it WAS stored, so the silence is the switch
+  });
+
+  it('sends the acknowledgement when it is on, carrying nothing the sender wrote', async () => {
+    openForm({ ackEmail: true });
+    await post(
+      submission({
+        childName: 'Ruqayyah Secretname',
+        message: 'A sentence nobody else should ever read.',
+        email: 'family@example.org',
+      }),
+    );
+    await settle();
+    const mail = calls.filter((c) => c.url.endsWith('/api/fabric/email'));
+    expect(mail).toHaveLength(1);
+    const sent = JSON.stringify(mail[0].body);
+    expect(sent).toContain('family@example.org'); // it went to them
+    // ...and it quotes NOTHING back. Repeating a stranger's input to an address the same stranger
+    // supplied is how a form becomes a way to deliver text to a third party over the madrasah's name.
+    expect(sent).not.toContain('Secretname');
+    expect(sent).not.toContain('nobody else should ever read');
+  });
+
+  it('holds the acknowledgement behind the master parent-mail pause', async () => {
+    // An install that has stopped all outbound family mail has stopped it. A new surface is not the
+    // place to make an exception to that switch.
+    openForm({ ackEmail: true });
+    settingsMod.setParentMailPaused(true);
+    try {
+      await post(submission({ childName: 'Paused Child', email: 'paused@example.org' }));
+      await settle();
+      expect(calls.filter((c) => c.url.endsWith('/api/fabric/email'))).toHaveLength(0);
+      expect(rows()).toHaveLength(1);
+    } finally {
+      settingsMod.setParentMailPaused(false);
+    }
+  });
+
+  it('tells the office, and tells the sinks it cannot see nothing at all', async () => {
+    openForm();
+    await post(submission({ childName: 'Sumayyah Ismail' }));
+    await settle();
+    const alerts = calls.filter((c) => c.url.endsWith('/api/fabric/alert'));
+    expect(alerts).toHaveLength(1);
+    // `raiseAlert` posts publicText unconditionally, and the platform alert channel is a third-party
+    // sink (§14). The per-event webhook-naming exception is granted to `payment-received` ALONE and
+    // is deliberately not extended here: consent to being told a payment landed is not consent to
+    // publishing the name of a child whose family only asked a question.
+    const text = JSON.stringify(alerts[0].body);
+    expect(text).toContain('1 new admission inquiry');
+    expect(text).not.toContain('Sumayyah');
+    expect(text).not.toContain('Ismail');
+  });
+});
+
+describe('required fields on the public form', () => {
+  it('drops a submission missing one — SILENTLY, and identically', async () => {
+    openForm({ requiredInquiryFields: ['childDob'] });
+    const withIt = await post(submission({ childDob: '2015-03-02' }));
+    const without = await post(submission({ childName: 'Maryam Khan', email: 'm@example.org' }));
+
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]!.childName).toBe('Yusuf Ismail');
+    // The uncomfortable half, and the reason the form marks required boxes and checks them in the
+    // browser: the server cannot tell them, because telling them would be the enumeration oracle.
+    expect(without.statusCode).toBe(withIt.statusCode);
+    expect(without.body).toBe(withIt.body);
+  });
+
+  it('cannot be configured into refusing everything — the two structural ones are separate', async () => {
+    // A hand-edited settings row naming a field that is not on the form must not silently close the
+    // door: `isSubmittable` reads the value off the normalized row, and an unknown key has none.
+    openForm({ requiredInquiryFields: ['notAField'] });
+    const res = await post(submission());
+    expect(res.statusCode).toBe(200);
+    // …and it IS refused, because an unknown key can never be satisfied. That is the safe direction
+    // for a settings row nobody can have meant, and it is worth knowing rather than assuming.
+    expect(rows()).toHaveLength(0);
+  });
+});
+
+describe('the embeddable widget', () => {
+  it('builds the form IN the page — no iframe, and it posts back to us', async () => {
+    openForm({ embedOrigins: ['https://masjid.example'] });
+    const js = await http.inject({ method: 'GET', url: '/public/inquiry.js?divId=enquiry-form', headers: { host: 'students.masjid.example' } });
+    expect(js.statusCode).toBe(200);
+    expect(js.headers['content-type']).toContain('javascript');
+    // The old version injected an iframe, which is why it never blended with a masjid's own site.
+    expect(js.body).not.toContain('createElement(\'iframe\')');
+    expect(js.body).toContain('enquiry-form');
+    expect(js.body).toContain('students.masjid.example/public/inquiry');
+  });
+
+  it('never builds markup from a string — this code runs in somebody else\u2019s document', async () => {
+    openForm();
+    const js = await http.inject({ method: 'GET', url: '/public/inquiry.js' });
+    // `innerHTML` here would make one escaping mistake an XSS on the MASJID's website rather than on
+    // ours, and would break on any host CSP without unsafe-inline. Nodes + textContent cannot inject
+    // markup at all, which is a stronger claim than "we escaped it".
+    for (const banned of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write']) {
+      expect(js.body).not.toContain(banned);
+    }
+  });
+
+  it('carries the office\u2019s own wording and the field list, so all three renderings agree', async () => {
+    settingsMod.setAdmissionsText({ intro: 'Ask us about a place.' });
+    openForm({ requiredInquiryFields: ['childDob'] });
+    const js = await http.inject({ method: 'GET', url: '/public/inquiry.js' });
+    expect(js.body).toContain('Ask us about a place.');
+    // A box the office marked required must be marked required in the WIDGET too — the hosted page
+    // and the widget dropping different submissions is invisible, because both answer identically.
+    expect(js.body).toContain('"name":"childDob"');
+    expect(js.body).toMatch(/"name":"childDob"[^}]*"required":true/);
+  });
+
+  it('says the form is closed rather than rendering one', async () => {
+    settingsMod.setAdmissionsText({ closed: 'Intake reopens after Ramadan.' });
+    openForm({ open: false });
+    const js = await http.inject({ method: 'GET', url: '/public/inquiry.js' });
+    expect(js.body).toContain('Intake reopens after Ramadan.');
+    expect(js.body).toContain('oms-closed');
+  });
+});
+
+describe('cross-origin permission for the widget', () => {
+  const OURS = 'https://masjid.example';
+
+  it('allows a site the office listed, and nobody else', async () => {
+    openForm({ embedOrigins: [OURS] });
+    const ok = await post(submission(), { origin: OURS });
+    const no = await post(submission({ childName: 'Other Child' }), { origin: 'https://evil.example' });
+    expect(ok.headers['access-control-allow-origin']).toBe(OURS);
+    // Not `*`, and not echoed for a site nobody named: `*` would let any page on the internet post
+    // from a visitor's browser.
+    expect(no.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('never allows credentials, and varies on Origin', async () => {
+    openForm({ embedOrigins: [OURS] });
+    const res = await post(submission(), { origin: OURS });
+    // Absent, so the request is anonymous whatever cookies a visitor holds.
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+    // Without Vary a shared cache can hand one site's allow header to another.
+    expect(String(res.headers['vary'] ?? '')).toContain('Origin');
+  });
+
+  it('answers the preflight for an allowlisted site', async () => {
+    openForm({ embedOrigins: [OURS] });
+    const pre = await http.inject({ method: 'OPTIONS', url: '/public/inquiry', headers: { origin: OURS } });
+    expect(pre.statusCode).toBe(204);
+    expect(pre.headers['access-control-allow-origin']).toBe(OURS);
+    expect(String(pre.headers['access-control-allow-headers'] ?? '')).toContain('content-type');
+  });
+
+  it('is written before the gates, so a dropped submission and a stored one still look identical', async () => {
+    openForm({ embedOrigins: [OURS] });
+    const stored = await post(submission(), { origin: OURS });
+    // A honeypot hit stores nothing. If the CORS header were written after the gate, the presence of
+    // the header would be the difference the body carefully is not (§14).
+    const dropped = await post(submission({ website: 'bot', childName: 'Bot Child' }), { origin: OURS });
+    expect(dropped.statusCode).toBe(stored.statusCode);
+    expect(dropped.body).toBe(stored.body);
+    expect(dropped.headers['access-control-allow-origin']).toBe(stored.headers['access-control-allow-origin']);
+  });
+});

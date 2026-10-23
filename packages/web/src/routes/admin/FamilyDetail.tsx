@@ -10,7 +10,7 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { Pencil, Printer, Send, Trash2, Wallet } from 'lucide-react';
+import { IdCard, Pencil, Printer, Send, Trash2, Wallet } from 'lucide-react';
 import { trpc } from '../../lib/trpc';
 import { withBase } from '../../lib/base';
 import { formatUsPhone, telHref } from '../../lib/phone';
@@ -18,6 +18,9 @@ import { formatMoney, parseCents } from '../../lib/money';
 import { StudentPicker } from '../../components/StudentPicker';
 import { OnboardingSend } from '../../components/OnboardingSend';
 import { FamilyBilling } from '../../components/FamilyBilling';
+import { StudentRecord } from '../../components/StudentRecord';
+import { HouseholdFields } from '../../components/HouseholdFields';
+import type { FieldSpec } from '../../components/RecordFields';
 import { useWindows } from '../../components/Windows';
 
 /** What a guardian is to the child. Four choices rather than an open box: an office typing "Dad",
@@ -80,6 +83,25 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
       dedupeKey: `billing:${familyId}`,
       icon: <Wallet size={15} />,
       node: <FamilyBilling familyId={familyId} currency={display.data?.currency ?? 'usd'} focusStudentId={studentId} />,
+    });
+
+  /**
+   * THIS CHILD'S RECORD (0.52.0, §4a Phase 1) — what a madrasah keeps about them, as opposed to what
+   * they owe.
+   *
+   * Per student and keyed per student, unlike billing: a record is about one child, so two open at
+   * once is a reasonable thing to want and deduping them onto one window would be wrong.
+   *
+   * NOT gated on `readOnly`. Finance may read the ordinary record — an address, when a child joined —
+   * and the server hands them a different set of fields and no notes at all (`people/fields.ts`), so
+   * this opens read-only for them rather than being hidden.
+   */
+  const openRecord = (studentId: string, name: string) =>
+    open({
+      title: name,
+      dedupeKey: `record:${studentId}`,
+      icon: <IdCard size={15} />,
+      node: <StudentRecord studentId={studentId} readOnly={readOnly} />,
     });
 
   /**
@@ -276,7 +298,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     try {
       const r = await invite.mutateAsync({ guardianId });
       // Always show the link: it works whether or not the email went out (CLAUDE.md §12).
-      const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${r.url}`;
+      const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${withBase(r.url)}`;
       setInviteLinks((m) => ({ ...m, [guardianId]: full }));
       setMailNote((m) => ({ ...m, [guardianId]: explainSkip(r.mailSkipped, r.emailed) }));
     } catch (err) {
@@ -407,7 +429,7 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
     setInviteErr((e) => ({ ...e, [guardianId]: '' }));
     try {
       const r = await guardianReset.mutateAsync({ guardianId });
-      const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${r.url}`;
+      const full = r.url.startsWith('http') ? r.url : `${window.location.origin}${withBase(r.url)}`;
       setInviteLinks((m) => ({ ...m, [guardianId]: full }));
       setMailNote((m) => ({ ...m, [guardianId]: explainSkip(r.mailSkipped, r.emailed) }));
     } catch (err) {
@@ -472,6 +494,11 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
                           press — see `openBilling`. */}
                       <button type="button" className="btn btn--ghost btn--sm" onClick={() => openBilling(s.id, s.fullName)}>
                         <Wallet size={13} /> {t('directory.billing')}
+                      </button>
+                      {/* Their record — the fields a madrasah keeps about a child, and the office's own
+                          notes. Beside Billing because the two are the pair an office moves between. */}
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => openRecord(s.id, s.fullName)}>
+                        <IdCard size={13} /> {t('directory.record')}
                       </button>
                       {!readOnly && (
                         <>
@@ -626,6 +653,18 @@ export function FamilyDetail({ familyId, readOnly = false }: { familyId: string;
         )}
         {showStudent && <p className="hint">{t('directory.idHint')}</p>}
       </section>
+
+      {/* The household's own details — address, languages, nationality (0.52.0-dev.4). Between the
+          children and the adults, which is where they belong: they are facts about the home rather
+          than about either. Same component the child's record screen renders, so editing from either
+          window is the same write. */}
+      <HouseholdFields
+        familyId={familyId}
+        family={q.data.family as unknown as Record<string, unknown>}
+        fields={q.data.householdFields as FieldSpec[]}
+        readOnly={readOnly}
+        onSaved={refresh}
+      />
 
       {/* Guardians */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>

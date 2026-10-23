@@ -4,11 +4,40 @@
  *  tab/CR) is prefixed with a quote so spreadsheets don't execute it; commas/quotes/newlines are
  *  RFC-4180 quoted. Used by the Report Creator (and any CSV export). */
 
+/** The characters that make a spreadsheet treat a cell as a formula rather than text. */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
 function escapeCell(v: unknown): string {
   let s = v == null ? '' : String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; // neutralize a leading formula trigger
+  if (FORMULA_LEAD.test(s)) s = `'${s}`; // neutralize a leading formula trigger
   if (/[",\n\r]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
   return s;
+}
+
+/**
+ * Undo `escapeCell`'s formula guard when reading a file back (0.52.0).
+ *
+ * The guard is a §14 security control and it stays: a guardian named `=cmd|…` or a memo pasted by a
+ * parent must not execute when the office opens the export. But the moment a template is exported
+ * PRE-FILLED with real data for the office to edit and upload back (§4a Phase 1), the guard becomes a
+ * round-trip bug — a `+44…` phone number and a negative amount both come back with a `'` welded to the
+ * front, and get stored that way.
+ *
+ * **The fix belongs in the reader, not the writer.** Dropping the prefix on the way out would remove the
+ * control; this reverses it on the way in, which is the only place that knows the file is ours to undo.
+ *
+ * It strips a leading `'` **only when a formula character follows it**, which is precisely what
+ * `escapeCell` can produce. That condition is the whole care in this function: `'Abd Allah` and
+ * `'Uthmān` are ordinary ways to write a name in this app's own audience, and an unconditional strip
+ * would quietly rename children.
+ *
+ * One cell stays ambiguous and always will: a value that genuinely IS `'+1` is indistinguishable from
+ * an escaped `+1`, because `escapeCell` tests the first character and for `'+1` that is the apostrophe,
+ * which is not a formula lead — so it exports unchanged. Resolved toward the common case (a phone
+ * number the office exported and re-imported), and pinned by a test rather than left to be found.
+ */
+export function unescapeCell(s: string): string {
+  return s.startsWith("'") && FORMULA_LEAD.test(s.slice(1)) ? s.slice(1) : s;
 }
 
 export function toCsv(headers: string[], rows: unknown[][]): string {
@@ -30,13 +59,18 @@ export interface Grid {
  *
  * Fully blank rows are dropped (a spreadsheet is full of them, and a trailing one is not a student);
  * the first row with anything in it is the header.
+ *
+ * It is also where the formula guard is undone (`unescapeCell`), for the same reason it is where the
+ * shape is decided: both readers land here, so a file exported by this app round-trips identically
+ * whether it comes back as .csv or .xlsx.
  */
 export function shapeGrid(cells: string[][]): Grid {
+  const clean = (v: string | undefined) => unescapeCell((v ?? '').trim());
   const nonEmpty = cells.filter((r) => r.some((v) => (v ?? '').trim() !== ''));
   if (nonEmpty.length === 0) return { headers: [], rows: [] };
-  const headers = nonEmpty[0].map((h) => (h ?? '').trim());
+  const headers = nonEmpty[0].map(clean);
   const width = headers.length;
-  const rows = nonEmpty.slice(1).map((r) => Array.from({ length: width }, (_, i) => (r[i] ?? '').trim()));
+  const rows = nonEmpty.slice(1).map((r) => Array.from({ length: width }, (_, i) => clean(r[i])));
   return { headers, rows };
 }
 

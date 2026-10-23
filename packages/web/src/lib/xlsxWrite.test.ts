@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 OpenMasjid-Solutions
+/**
+ * The .xlsx WRITER (0.52.0, §4a Phase 1).
+ *
+ * The assertion that matters is the round trip: a workbook this app hands an office must be one this
+ * app can read back, because that is the whole workflow — download the template pre-filled, edit it in
+ * Excel, upload it again. So almost every test below writes a file and parses it with the real
+ * `parseXlsx`, rather than inspecting the bytes we just produced against our own idea of the format.
+ *
+ * (Testing a writer against its own author's assumptions is the classic way to ship a file only you can
+ * open. `parseXlsx` was written first, separately, against real Excel and LibreOffice output.)
+ */
+import { describe, it, expect } from 'vitest';
+import { parseXlsx } from './xlsx';
+import { columnName, toXlsx, xmlText } from './xlsxWrite';
+
+const back = async (headers: string[], rows: string[][]) => parseXlsx(toXlsx(headers, rows).buffer as ArrayBuffer);
+
+describe('columnName', () => {
+  it('is base-26 with no zero', () => {
+    expect(columnName(0)).toBe('A');
+    expect(columnName(25)).toBe('Z');
+    expect(columnName(26)).toBe('AA');
+    expect(columnName(27)).toBe('AB');
+    expect(columnName(51)).toBe('AZ');
+    expect(columnName(52)).toBe('BA');
+    expect(columnName(701)).toBe('ZZ');
+    expect(columnName(702)).toBe('AAA');
+  });
+});
+
+describe('xmlText', () => {
+  it('escapes what XML needs escaped', () => {
+    expect(xmlText('Ali & Sons <notes>')).toBe('Ali &amp; Sons &lt;notes&gt;');
+  });
+
+  it('DROPS the control characters XML cannot carry at all', () => {
+    // Not tidiness: one stray byte makes the whole part unparseable, so the office would get a file
+    // neither Excel nor this app could open, with no way to tell which row did it.
+    expect(xmlText('Yusuf\u0000\u0007 Ismail')).toBe('Yusuf Ismail');
+    // …while keeping the whitespace that is legal and meaningful.
+    expect(xmlText('a\tb\nc')).toBe('a\tb\nc');
+  });
+});
+
+describe('a workbook this app can read back', () => {
+  it('round-trips a plain roster', async () => {
+    const g = await back(['Full name', 'Date of birth', 'Class'], [
+      ['Yusuf Ismail', '2015-04-03', 'Hifz 1'],
+      ['Maryam Ismail', '2017-11-20', 'Nazrah 2'],
+    ]);
+    expect(g.headers).toEqual(['Full name', 'Date of birth', 'Class']);
+    expect(g.rows).toEqual([
+      ['Yusuf Ismail', '2015-04-03', 'Hifz 1'],
+      ['Maryam Ismail', '2017-11-20', 'Nazrah 2'],
+    ]);
+  });
+
+  it('keeps a date as the ISO TEXT it was given', async () => {
+    // The whole reason there is no styles.xml. A real date cell would hand the value back to Excel's
+    // locale, which is where 03/04 becomes the wrong day (§9).
+    const g = await back(['Date of birth'], [['2015-04-03']]);
+    expect(g.rows[0][0]).toBe('2015-04-03');
+  });
+
+  it('survives the characters a madrasah roster actually contains', async () => {
+    const names = ['ʿAbd Allāh', 'Muḥammad & Sons', 'يوسف إسماعيل', 'O’Brien <check>', 'Ali "Junior" Khan'];
+    const g = await back(['Full name'], names.map((n) => [n]));
+    expect(g.rows.map((r) => r[0])).toEqual(names);
+  });
+
+  it('keeps leading and trailing spaces out of the way but the middle intact', async () => {
+    // `xml:space="preserve"` is on the cell, so the writer does not eat spacing; `shapeGrid` trims the
+    // edges on the way back in, which is its job and not the writer's.
+    const g = await back(['A'], [['  two  words  ']]);
+    expect(g.rows[0][0]).toBe('two  words');
+  });
+
+  it('handles an empty cell in the middle of a row without shifting the ones after it', async () => {
+    // The import dialog maps columns BY INDEX, so a dropped empty cell would silently move every
+    // field after it into the wrong column — the one failure mode that produces plausible rubbish.
+    const g = await back(['A', 'B', 'C'], [['x', '', 'z']]);
+    expect(g.rows[0]).toEqual(['x', '', 'z']);
+  });
+
+  it('goes past column Z', async () => {
+    const headers = Array.from({ length: 30 }, (_, i) => `H${i}`);
+    const row = Array.from({ length: 30 }, (_, i) => `v${i}`);
+    const g = await back(headers, [row]);
+    expect(g.headers).toEqual(headers);
+    expect(g.rows[0]).toEqual(row);
+  });
+
+  it('writes a real ZIP — the local header magic is the first thing in the file', () => {
+    const bytes = toXlsx(['A'], [['x']]);
+    expect([...bytes.slice(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+  });
+
+  it('writes a header-only template happily — which the READER then reports as having no rows', async () => {
+    // Pinned rather than "fixed". `parseXlsx` returns an empty grid for a sheet with a header and no
+    // data, deliberately: its rule is "the first sheet WITH ROWS wins", so a stray empty tab in front
+    // of the data does not make it tell somebody their populated workbook is empty.
+    //
+    // That is the right trade and it costs nothing here. A madrasah with no students yet downloads a
+    // header-only template, types rows into it, and uploads a file that has rows. The empty round trip
+    // is not a workflow.
+    const bytes = toXlsx(['Full name', 'Class'], []);
+    expect(bytes.length).toBeGreaterThan(0);
+    const g = await parseXlsx(bytes.buffer as ArrayBuffer);
+    expect(g).toEqual({ headers: [], rows: [] });
+
+    // One row is all it takes for the same file to read back.
+    const withOne = await back(['Full name', 'Class'], [['Yusuf Ismail', 'Hifz 1']]);
+    expect(withOne.headers).toEqual(['Full name', 'Class']);
+  });
+});

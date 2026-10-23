@@ -11,6 +11,8 @@ import { formatUsPhone, telHref } from '../../lib/phone';
 import { formatMoney } from '../../lib/money';
 import { trpc, type RouterOutputs } from '../../lib/trpc';
 import { WhatsAppSettings } from '../../components/WhatsAppSettings';
+import { StudentFieldsSettings } from '../../components/StudentFieldsSettings';
+import { AdmissionsSettings } from '../../components/AdmissionsSettings';
 
 /** The alert catalog comes from the server (alerts/index.ts owns it), so the UI never hard-codes the
  *  event list — adding an event there makes a new checkbox appear here with no change on this side. */
@@ -21,9 +23,27 @@ type SheetTextKey = RouterOutputs['settings']['sheetTextGet']['keys'][number];
 /** Same for the onboarding message's boxes — people/onboarding.ts owns the list. */
 type OnboardingKey = RouterOutputs['settings']['onboardingTextGet']['keys'][number];
 
+/**
+ * SETTINGS IS TABBED (0.52.0) — seven stacked panels plus an 826-line WhatsApp one was a page nobody
+ * could find anything on, and §4a Phase 1 adds another.
+ *
+ * The same SHAPE as OpenMasjidOS's tabbed settings, and deliberately not the same code: that one uses
+ * `NavLink` + `/settings/:section`, and this app has no react-router at all (`AdminApp` is a
+ * `useState<Section>`). A tab here is local state, like every other navigation in this shell.
+ *
+ * Order is by how often an office comes back to it, not by how the file happens to be arranged —
+ * School first because it holds "can we actually reach a parent", which silently blocks invites and
+ * resets and is the panel every "the email never arrived" report resolves to.
+ */
+// `admissions` sits after `students` because that is the order an office meets them — a child is an
+// inquiry before they are a record — and because the two screens are worked in the same sitting.
+const TABS = ['school', 'students', 'admissions', 'documents', 'messages', 'payments'] as const;
+type Tab = (typeof TABS)[number];
+
 export function Settings() {
   const { t } = useTranslation();
   const utils = trpc.useUtils();
+  const [tab, setTab] = useState<Tab>('school');
 
   // Can this install actually reach a parent? Shown first, because every "the invite never arrived"
   // report resolves to one of these three and all three used to fail silently.
@@ -316,6 +336,23 @@ export function Settings() {
         <h1 className="page-title" style={{ fontSize: '1.5rem' }}>{t('settings.title')}</h1>
       </div>
 
+      {/* The tabs. A row of buttons rather than links, because there is no router to link to — the
+          selected one carries `aria-current` so it is announced, not only colored. */}
+      <nav className="tabs" aria-label={t('settings.title')} style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBlockEnd: '1rem' }}>
+        {TABS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={`btn btn--sm ${tab === k ? 'btn--primary' : 'btn--ghost'}`}
+            aria-current={tab === k ? 'page' : undefined}
+            onClick={() => setTab(k)}
+          >
+            {t(`settings.tab.${k}`)}
+          </button>
+        ))}
+      </nav>
+
+      {tab === 'school' && (<>
       {/* Reaching parents — shown first because it silently blocks invites and resets. */}
       {link.data && (
         <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
@@ -515,6 +552,21 @@ export function Settings() {
         </section>
       )}
 
+      </>)}
+
+      {tab === 'students' && (
+        <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
+          <div className="section-head"><h2>{t('settings.fields')}</h2></div>
+          <StudentFieldsSettings />
+        </section>
+      )}
+
+      {/* Several sections of its own, so it renders them itself rather than being wrapped here —
+          the WhatsAppSettings convention. It switches on the only unauthenticated write surface in
+          this app, which is why the copy in it says so out loud (§14). */}
+      {tab === 'admissions' && <AdmissionsSettings />}
+
+      {tab === 'documents' && (<>
       {/* ── The wording on the printed family sheet (0.48.0) ─────────────────────
           How a school asks a family to pay is the school's own voice, and the details differ per
           install in ways no default can guess — "madrasah" or "school", whether a receipt is emailed
@@ -648,6 +700,9 @@ export function Settings() {
         )}
       </section>
 
+      </>)}
+
+      {tab === 'messages' && (<>
       {/* No mail PROVIDER settings here on purpose — OpenMasjidOS owns the provider and the From
           address, so there is nothing for a masjid to configure twice. What is ours to decide is who
           gets told what, which is the section below. */}
@@ -912,6 +967,9 @@ export function Settings() {
           decisions, a preview and a log, and it is the panel where a mistake messages everybody. */}
       <WhatsAppSettings />
 
+      </>)}
+
+      {tab === 'payments' && (<>
       {/* Payments — choose which OpenMasjidOS Stripe account tuition (portal, donations, kiosk) uses. */}
       <section className="section glass" style={{ padding: '1rem 1.1rem' }}>
         <div className="section-head"><h2>{t('settings.payments')}</h2></div>
@@ -1025,6 +1083,7 @@ export function Settings() {
           </>
         )}
       </section>
+      </>)}
     </motion.div>
   );
 }

@@ -15,6 +15,7 @@ import { billingRouter } from './billing';
 import { portalRouter } from './portal';
 import { structureRouter } from './structure';
 import { whatsappRouter } from './whatsapp';
+import { admissionsRouter } from './admissions';
 import { config, fabricConfigured } from '../config';
 
 export const appRouter = router({
@@ -36,6 +37,10 @@ export const appRouter = router({
   structure: structureRouter,
   /** WhatsApp through OpenMasjidOS (0.50.0) — the masjid's policy, not the gateway. */
   whatsapp: whatsappRouter,
+  /** The admissions desk (0.52.0, §4a Phase 2). ADMIN ONLY, and therefore LAN-only: finance reaches
+   *  no admissions record at all. The PUBLIC half of admissions is not here — it is plain Fastify
+   *  routes in `admissions/publicRoutes.ts`, outside this middleware by design (§12.4). */
+  admissions: admissionsRouter,
 });
 
 export type AppRouter = typeof appRouter;

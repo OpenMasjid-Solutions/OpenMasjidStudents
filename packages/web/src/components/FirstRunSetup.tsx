@@ -56,6 +56,7 @@ import {
 import { fadeRise } from '../lib/motion';
 import { trpc } from '../lib/trpc';
 import { toCsv, downloadCsv } from '../lib/csv';
+import { downloadXlsx, toXlsx } from '../lib/xlsxWrite';
 import { formatMoney, parseCents } from '../lib/money';
 import { MONTH_NAMES, schoolYearSpan } from '../lib/months';
 import { generateTempPassword } from '../lib/password';
@@ -346,9 +347,13 @@ export function FirstRunSetup() {
     }
   }
 
-  function downloadTemplate() {
+  /** A workbook by default and a CSV on request — see the note in ImportStudents.tsx: an office that
+   *  opens a CSV in Excel and saves it back is where a date column silently changes meaning. */
+  function downloadTemplate(as: 'xlsx' | 'csv' = 'xlsx') {
     if (!template.data) return;
-    downloadCsv('students-template.csv', toCsv(template.data.fields.map((f) => f.label), template.data.example));
+    const headers = template.data.fields.map((f) => f.label);
+    if (as === 'csv') downloadCsv('students-template.csv', toCsv(headers, template.data.example));
+    else downloadXlsx('students-template.xlsx', toXlsx(headers, template.data.example.map((r) => r.map((c) => c ?? '')), 'Students'));
   }
 
   /** The roster importer, in its own window — the same one the Students tab opens, not a second copy. */
@@ -734,8 +739,8 @@ export function FirstRunSetup() {
             <button type="button" className="btn btn--primary" onClick={openImport}>
               <Upload size={15} /> {t('students.import')}
             </button>
-            <button type="button" className="btn btn--ghost" onClick={downloadTemplate} disabled={!template.data}>
-              <Download size={15} /> {t('import.downloadTemplate')}
+            <button type="button" className="btn btn--ghost" onClick={() => downloadTemplate('xlsx')} disabled={!template.data}>
+              <Download size={15} /> {t('import.downloadTemplateXlsx')}
             </button>
           </div>
           <p className="hint" style={{ marginBlockStart: '0.6rem' }}>{t('import.templateHint')}</p>

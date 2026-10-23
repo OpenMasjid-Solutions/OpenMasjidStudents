@@ -648,7 +648,15 @@ export async function sendPlatformWhatsApp(to: string, text: string): Promise<Wh
 // ── Admin alerts (manifest `alerts:`) ────────────────────────────────────────
 /** The alert ids we declare in manifest.yaml. Declaring one IS the authorization — the platform
  *  refuses any id an app didn't declare — and the admin picks email/webhook/off per alert. */
-export type AlertId = 'autopay-disabled' | 'lookup-lockout' | 'reconcile-recovered' | 'payment-short' | 'past-due' | 'payment-refunded' | 'test';
+export type AlertId =
+  | 'autopay-disabled'
+  | 'lookup-lockout'
+  | 'reconcile-recovered'
+  | 'payment-short'
+  | 'past-due'
+  | 'payment-refunded'
+  | 'admissions-inquiry'
+  | 'test';
 
 /** The platform's alert severities. Note these are NOT `notifyPlatform`'s levels — that endpoint
  *  takes `warn`, this one takes `warning`, and sending the wrong word silently downgrades to the

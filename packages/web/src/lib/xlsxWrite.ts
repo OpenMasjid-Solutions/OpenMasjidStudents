@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 OpenMasjid-Solutions
+/**
+ * WRITING a .xlsx in the browser, with no spreadsheet library (0.52.0, CLAUDE.md §4a Phase 1, §7).
+ *
+ * `xlsx.ts` reads one; this is the other half. §4a's import work hands the office a template
+ * **pre-filled with their current data**, and a madrasah's office works in Excel — offering only a CSV
+ * means the first thing they do is open it in Excel and the second is save it back, which is exactly
+ * where a date column gets reformatted by hand and 03/04 quietly becomes the wrong day.
+ *
+ * ── Why no library ─────────────────────────────────────────────────────────
+ *
+ * §7 says "no spreadsheet dependency… Keep it Pi-friendly. Ask before adding heavy dependencies", and
+ * the reader already proved the shape works. A minimal writer is small because almost everything in the
+ * format is optional:
+ *
+ *   - **STORE, no compression.** Our own reader accepts it and so does Excel, so there is no deflate
+ *     and no `CompressionStream` dependency. A roster is a few hundred kilobytes of text.
+ *   - **`t="inlineStr"`, so no `sharedStrings.xml`.** The string table exists to save space in a file
+ *     with millions of repeated cells; a template has none.
+ *   - **No `styles.xml`.** Dates are written as ISO TEXT, which is what `parseDateInput` wants back and
+ *     what the storage format is anyway (§9). A real date cell would need a number format, a serial
+ *     number and an epoch decision — and would hand the file back to Excel's locale, which is the whole
+ *     problem this avoids.
+ *
+ * Everything here round-trips through `parseXlsx` in the tests, which is the assertion that matters:
+ * the file we hand an office is one this app can read back.
+ */
+
+// ── CRC-32, as the ZIP format requires ─────────────────────────────────────────
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * `parts` → a ZIP archive, STORED (method 0).
+ *
+ * Deliberately the plainest possible writer: no zip64, no data descriptors, no extra fields. A roster
+ * is nowhere near the 4 GiB the classic format tops out at, and every absent feature is one the reader
+ * on the other side does not have to handle.
+ */
+function zipStore(parts: Array<{ name: string; data: Uint8Array }>): Uint8Array {
+  const enc = new TextEncoder();
+  const locals: Uint8Array[] = [];
+  const centrals: Uint8Array[] = [];
+  let offset = 0;
+
+  for (const { name, data } of parts) {
+    const nameBytes = enc.encode(name);
+    const crc = crc32(data);
+
+    const local = new Uint8Array(30 + nameBytes.length + data.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); // local file header
+    lv.setUint16(4, 20, true); // version needed
+    lv.setUint16(8, 0, true); // method: stored
+    lv.setUint32(14, crc, true);
+    lv.setUint32(18, data.length, true); // compressed
+    lv.setUint32(22, data.length, true); // uncompressed
+    lv.setUint16(26, nameBytes.length, true);
+    local.set(nameBytes, 30);
+    local.set(data, 30 + nameBytes.length);
+    locals.push(local);
+
+    const central = new Uint8Array(46 + nameBytes.length);
+    const cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true); // central directory header
+    cv.setUint16(4, 20, true); // version made by
+    cv.setUint16(6, 20, true); // version needed
+    cv.setUint16(10, 0, true); // method: stored
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint32(42, offset, true);
+    central.set(nameBytes, 46);
+    centrals.push(central);
+
+    offset += local.length;
+  }
+
+  const dirSize = centrals.reduce((n, c) => n + c.length, 0);
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, centrals.length, true);
+  ev.setUint16(10, centrals.length, true);
+  ev.setUint32(12, dirSize, true);
+  ev.setUint32(16, offset, true);
+
+  const all = [...locals, ...centrals, eocd];
+  const out = new Uint8Array(all.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of all) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
+// ── XML ────────────────────────────────────────────────────────────────────────
+
+/**
+ * Escape a cell's text for XML, and drop what XML 1.0 cannot carry at all.
+ *
+ * The strip is not tidiness: a control character from a pasted cell makes the whole part unparseable,
+ * so a single stray byte somewhere in a roster would produce a file neither Excel nor this app's own
+ * reader could open — and the office would have no way to tell which row did it.
+ */
+export function xmlText(s: string): string {
+  return s
+    // eslint-disable-next-line no-control-regex -- deliberately matching the characters XML forbids
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** 0 → A, 25 → Z, 26 → AA. Spreadsheet column names are base-26 with no zero. */
+export function columnName(index: number): string {
+  let n = index;
+  let out = '';
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return out;
+}
+
+/** A sheet name Excel will accept: 31 characters, and none of `[ ] : * ? / \`. */
+function safeSheetName(name: string): string {
+  const cleaned = name.replace(/[[\]:*?/\\]/g, ' ').trim();
+  return (cleaned || 'Sheet1').slice(0, 31);
+}
+
+function sheetXml(rows: string[][]): string {
+  const body = rows
+    .map((cells, r) => {
+      const cs = cells
+        .map((v, c) => (v === '' ? '' : `<c r="${columnName(c)}${r + 1}" t="inlineStr"><is><t xml:space="preserve">${xmlText(v)}</t></is></c>`))
+        .join('');
+      return `<row r="${r + 1}">${cs}</row>`;
+    })
+    .join('');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`;
+}
+
+/**
+ * A header row plus data rows → a .xlsx as bytes.
+ *
+ * Every value is written as text. That is the point rather than a shortcut: the office edits this file
+ * and sends it back, and a date that stayed text is a date Excel did not reinterpret on the way.
+ */
+export function toXlsx(headers: string[], rows: string[][], sheetName = 'Students'): Uint8Array {
+  const enc = new TextEncoder();
+  const name = safeSheetName(sheetName);
+  const parts: Array<{ name: string; data: Uint8Array }> = [
+    {
+      name: '[Content_Types].xml',
+      data: enc.encode(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+          '<Default Extension="xml" ContentType="application/xml"/>' +
+          '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+          '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+          '</Types>',
+      ),
+    },
+    {
+      name: '_rels/.rels',
+      data: enc.encode(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+          '</Relationships>',
+      ),
+    },
+    {
+      name: 'xl/workbook.xml',
+      data: enc.encode(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+          `<sheets><sheet name="${xmlText(name)}" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+      ),
+    },
+    {
+      name: 'xl/_rels/workbook.xml.rels',
+      data: enc.encode(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+          '</Relationships>',
+      ),
+    },
+    { name: 'xl/worksheets/sheet1.xml', data: enc.encode(sheetXml([headers, ...rows])) },
+  ];
+  return zipStore(parts);
+}
+
+/** Trigger a client-side download of a workbook. Mirrors `downloadCsv` in csv.ts. */
+export function downloadXlsx(filename: string, bytes: Uint8Array): void {
+  const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

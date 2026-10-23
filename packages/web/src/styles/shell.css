@@ -231,3 +231,22 @@ html[data-scrolling] .scene::before,
 html[data-scrolling] .status-dot::after {
   animation-play-state: paused;
 }
+
+/* ── THE DELETE BUTTON'S INK (0.52.0-dev.18) ──────────────────────────────────
+ *
+ * `app.css` paints `.btn--danger` with a hardcoded `color: #fff`. In the DARK theme that is white on
+ * `#F87171` — **2.77:1**, under AA, on every destructive button in the app: erase a student, delete an
+ * inquiry, refund a payment. The platform's spec names this exact failure and says it already cost
+ * them a bug once.
+ *
+ * The override lives HERE rather than in `app.css` because that file is a verbatim port kept
+ * re-syncable with OpenMasjidOS (§15) — a fix written into it would be lost the next time it is
+ * pulled, silently, and nothing about the result looks wrong on a dark screen. `--color-on-danger`
+ * is the platform's own token and now exists in `tokens.css` for both themes: dark ink on dark's
+ * light red (6.84:1), white on light's deep red (4.83:1).
+ *
+ * `styles/inkContrast.test.ts` fails the build if either half goes missing.
+ */
+.btn--danger {
+  color: var(--color-on-danger);
+}

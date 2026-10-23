@@ -21,7 +21,7 @@
  * receipts off by email did not thereby ask for them by WhatsApp, or the reverse. Nothing
  * auth-critical (invites, resets, verification) goes to WhatsApp at all — see whatsapp/index.ts.
  */
-import { getSchoolName, getSchoolLogo, getParentEmails, getParentMailPaused, getPastDue, getSchoolContact } from '../settings';
+import { getAdmissions, getSchoolName, getSchoolLogo, getParentEmails, getParentMailPaused, getPastDue, getSchoolContact } from '../settings';
 import { guardianEmailsForFamily } from './recipients';
 import {
   inviteEmail,
@@ -36,6 +36,7 @@ import {
   testEmail,
   onboardingEmail,
   alertEmail,
+  admissionsAckEmail,
   setEmailLogoUrl,
   setEmailContactLine,
 } from './templates';
@@ -43,6 +44,7 @@ import { portalBase } from '../auth/invites';
 import { sendPlatformEmail } from '../fabric/platform';
 import { familyRecipients, familyVars, notifyFamily, notifyGuardian } from '../whatsapp';
 import { onboardingWhatsApp, renderOnboarding } from '../people/onboarding';
+import { admissionsTextPlain } from '../admissions/text';
 import { pausedFor } from '../settings/testStudent';
 import { fabricConfigured } from '../config';
 
@@ -53,7 +55,7 @@ function portalHome(): string {
 
 /** Why a send didn't happen, so a caller can tell the admin something actionable instead of failing
  *  silently — which is how invites and resets used to disappear. */
-export type MailSkip = 'no_transport' | 'no_public_url' | 'no_recipient' | 'parents_paused';
+export type MailSkip = 'no_transport' | 'no_public_url' | 'no_recipient' | 'parents_paused' | 'switched_off';
 
 export interface MailOutcome {
   sent: boolean;
@@ -387,6 +389,35 @@ function listNames(names: string[]): string {
  * Note there is no `getParentEmails` gate here — this is not a parent email. Its off switch is the
  * recipient list itself: an address that should hear nothing is removed.
  */
+/**
+ * Acknowledge an admissions inquiry to the family who sent it (0.52.0-dev.10, docs/ADMISSIONS.md §6).
+ *
+ * OFF unless an office switches it on, and that default is the design rather than caution: the
+ * address was typed by somebody nobody at the madrasah has met, so turning this on makes the public
+ * form into something that can send mail to an inbox that never asked for any. The page's own
+ * thank-you is what a family actually sees, and it is always there.
+ *
+ * FOUR GATES, in the order an admin can act on them. The master parent-mail pause comes first even
+ * though an inquirer is not yet a parent — an install that has stopped all outbound family mail has
+ * stopped it, and a new surface is not the place to make an exception. Then the office's own switch,
+ * then the transport.
+ *
+ * It carries NOTHING the sender wrote. Not their child's name, not their message, not a confirmation
+ * of the details "for their records" — quoting a stranger's input back to an address the same
+ * stranger supplied is how a form becomes a way to deliver text to a third party over the madrasah's
+ * good name. It says the message arrived and stops.
+ */
+export async function sendInquiryAck(to: string): Promise<MailOutcome> {
+  if (getParentMailPaused()) return { sent: false, skipped: 'parents_paused' };
+  if (!getAdmissions().ackEmail) return { sent: false, skipped: 'switched_off' };
+  if (!mailAvailable()) return { sent: false, skipped: 'no_transport' };
+  const address = (to ?? '').trim();
+  if (!address || !address.includes('@')) return { sent: false, skipped: 'no_recipient' };
+  refreshEmailLogo();
+  const m = admissionsAckEmail(getSchoolName(), admissionsTextPlain('ackEmail'));
+  return { sent: await deliver(address, m.subject, m.text, m.html) };
+}
+
 export async function sendAlert(to: string, title: string, body: string): Promise<boolean> {
   if (!mailAvailable()) return false;
   refreshEmailLogo();

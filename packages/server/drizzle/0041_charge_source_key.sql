@@ -1,0 +1,25 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (C) 2026 OpenMasjid-Solutions
+--
+-- A natural key on `charges`, so raising the same fee twice cannot charge a family twice (0.52.0).
+--
+-- `charges` shipped with two indexes and neither of them unique, and `chargeAdd` inserts with a fresh
+-- id and no existence check — while bulk FEE-PLAN assignment, a few hundred lines away in the same
+-- router, does check first. That asymmetry is fine while a human raises every charge by hand: pressing
+-- the button twice is a thing a person can see and void.
+--
+-- It stops being fine the moment something raises a charge on a family's behalf. CLAUDE.md §4a Phase 2
+-- (admissions) raises an enrollment fee at conversion and a re-admission fee at approval, from bulk
+-- buttons, for a whole school in one fortnight — where "approve the returning cohort" is pressed twice
+-- because the first press looked slow. So the key lands here, ahead of its caller, and it belongs to
+-- `charges` rather than to admissions because the next thing that raises money on a schedule will want
+-- it too (CLAUDE.md §9).
+--
+--  * NULLABLE, and null for everything a human raises by hand. SQLite allows many NULLs in a UNIQUE
+--    column — the same property `students.student_code` relies on for its gradual backfill — so an
+--    office raising the same book fee twice on purpose is unaffected.
+--  * UNIQUE, so the DATABASE is what enforces this and not a check-then-insert that two concurrent
+--    requests both pass. billing/charges.ts `raiseChargeOnce` catches the constraint and re-reads.
+--  * Keys are deterministic and namespaced: `admission:<inquiryId>`, `readmission:<studentId>:<yearId>`.
+ALTER TABLE `charges` ADD `source_key` text;--> statement-breakpoint
+CREATE UNIQUE INDEX `charges_source_key_uq` ON `charges` (`source_key`);

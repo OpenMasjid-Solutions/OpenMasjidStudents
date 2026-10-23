@@ -33,7 +33,7 @@ describe('SSO fast-path', () => {
     expect(cookies).toHaveLength(1); // a local session cookie is minted
   });
 
-  it('does NOT do SSO over the tunnel (admin is LAN-only)', async () => {
+  it('does NOT do SSO over the tunnel without the platform’s access token (remoteAdmin.test.ts has the rest)', async () => {
     mockPlatform({ authenticated: true, username: 'Br. Yusuf' });
     const { c, cookies } = caller({ origin: 'tunnel' });
     const s = await c.auth.session();

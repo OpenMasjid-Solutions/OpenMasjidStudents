@@ -6,12 +6,11 @@
  * (never logged/stored — only its SHA-256 hash is persisted, like a session cookie); single-use,
  * 7-day expiry. Kept free of tRPC ctx so both callers can reuse it.
  */
-import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { guardians, guardianUsers, invites } from '../db/schema';
 import { rid } from '../db/ids';
-import { hashToken } from './sessions';
+import { mintToken } from './tokens';
 import { usernameTaken } from './usernames';
 import { config } from '../config';
 import { cachedPublicUrl } from '../fabric/platform';
@@ -53,8 +52,10 @@ export function mintInvite(guardianId: string, createdByUserId: string | null): 
   // same login as this guardian's `office@masjid.org`, and minting an invite for it would build a
   // second account that could never be signed into.
   if (usernameTaken(db, email)) return { ok: false, reason: 'email_taken' };
-  const token = randomBytes(32).toString('base64url');
+  // Minted through `auth/tokens.ts`, which is the one place a link token is made and hashed — three
+  // copies of "randomBytes then sha256 then an expiry" is three places to get single-use wrong (§16).
+  const { token, tokenHash } = mintToken();
   const ts = new Date();
-  db.insert(invites).values({ id: rid('inv'), tokenHash: hashToken(token), guardianId: g.id, createdByUserId, createdAt: ts, expiresAt: new Date(ts.getTime() + INVITE_TTL_MS) }).run();
+  db.insert(invites).values({ id: rid('inv'), tokenHash, guardianId: g.id, createdByUserId, createdAt: ts, expiresAt: new Date(ts.getTime() + INVITE_TTL_MS) }).run();
   return { ok: true, token, url: `${portalBase()}/family/invite?token=${token}`, email, guardianName: g.name };
 }

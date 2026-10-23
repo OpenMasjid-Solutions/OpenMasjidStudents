@@ -51,6 +51,7 @@ export const ALERT_EVENTS = [
   'past-due',
   'payment-refunded',
   'login-blocked',
+  'admissions-inquiry',
 ] as const;
 export type AlertEvent = (typeof ALERT_EVENTS)[number];
 
@@ -116,6 +117,23 @@ const SPEC: Record<AlertEvent, EventSpec> = {
    * is the right home for it. `defaultOn`, because a password being ground is exactly what nobody notices.
    */
   'login-blocked': { platform: null, webhook: false, webhookMayName: false, level: 'warning', defaultOn: true },
+  /**
+   * A family asked about a place (0.52.0, §4a Phase 2).
+   *
+   * `defaultOn`, because the whole point of a public inquiry form is that somebody finds out it was
+   * used — an admissions screen nobody thinks to open is the same as no form at all.
+   *
+   * `webhook: false` and `webhookMayName: false`, and the second is the one worth stating. §9 grants
+   * the office's naming exception to `payment-received` ALONE, per event and never as one global
+   * switch, precisely so that approving "tell our staff channel when a payment lands" cannot quietly
+   * extend to whatever is added next. Consent to being told a payment arrived is not consent to
+   * publishing the name of a child whose family only asked a question — and this one arrives from an
+   * unauthenticated form, so the name is not even something the madrasah has confirmed yet.
+   *
+   * `publicText` therefore names nobody, and `text` — which goes only to addresses an admin typed —
+   * carries the child's name and nothing else the stranger wrote.
+   */
+  'admissions-inquiry': { platform: 'admissions-inquiry', webhook: false, webhookMayName: false, level: 'info', defaultOn: true },
 };
 
 /** The events a newly-added recipient starts with. */

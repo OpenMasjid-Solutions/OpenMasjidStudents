@@ -1,6 +1,6 @@
 {
   "name": "@openmasjid/students-server",
-  "version": "0.51.0",
+  "version": "0.52.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "commonjs",
@@ -16,13 +16,13 @@
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
-    "@fastify/static": "^8.0.4",
+    "@fastify/static": "^10.1.4",
     "@node-rs/argon2": "^2.0.2",
     "@trpc/server": "^11.0.0",
     "better-sqlite3": "^12.11.1",
     "croner": "^9.0.0",
-    "drizzle-orm": "^0.38.3",
-    "fastify": "^5.2.1",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.12.5",
     "qrcode": "^1.5.4",
     "stripe": "^17.5.0",
     "zod": "^3.24.1"

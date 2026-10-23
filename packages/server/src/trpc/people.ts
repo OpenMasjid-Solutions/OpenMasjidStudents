@@ -9,9 +9,10 @@
  * except the explicit `studentDelete` path below. Every create/update/withdraw is audited.
  */
 import { z } from 'zod';
+import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { TRPCError } from '@trpc/server';
-import { and, eq, inArray, ne } from 'drizzle-orm';
-import { router, adminProcedure, adminOrFinanceProcedure, auditActor } from './trpc';
+import { and, eq, inArray, isNotNull, ne } from 'drizzle-orm';
+import { router, adminProcedure, adminOrFinanceProcedure, auditActor, recordingActor } from './trpc';
 import { db } from '../db';
 import {
   families,
@@ -27,24 +28,31 @@ import {
   paymentAllocations,
   charges,
   classes,
+  courses,
   guardianUsers,
   users,
   paymentMethods,
   autopayEnrollments,
   autopayRuns,
+  studentNotes,
 } from '../db/schema';
 import { rid } from '../db/ids';
 import { generateUniqueStudentCode } from '../billing/studentCodes';
 import { displayName } from '../people/names';
 import { familyLabel, mergeDuplicateGuardians, mergeDuplicateContacts } from '../people/household';
+import { MEDICAL_FIELD_KEYS, STUDENT_FIELDS, enabledFieldKeys, familyColumnsFor, importFieldsFor, setEnabledFieldKeys, studentColumnsFor, studentField, visibleFields, type StudentFieldKey } from '../people/fields';
+import { NOTE_MAX, addStudentNote, studentNotesFor } from '../people/notes';
+import { createStudentRow } from '../people/create';
+import { studentNotes as studentNotesTable } from '../db/schema';
 import { suggestSiblingGroups } from '../people/siblingSuggest';
 import { AUDIENCE, householdsFor, resolveAudience } from '../structure/audience';
 import { familyRecipients } from '../whatsapp';
 import { mailAvailable, sendOnboarding } from '../mail/notify';
 import { getParentMailPaused, getWhatsApp } from '../settings';
+import { isIsoDay } from '../settings/dates';
 import type { Tx } from '../billing/ledger';
 import { audit } from '../audit';
-import { IMPORT_FIELDS, IMPORT_EXAMPLE_ROWS, validateRows, commitRows, type ImportRow } from '../people/import';
+import { IMPORT_FIELDS, IMPORT_EXAMPLE_ROWS, CLEAR_SENTINEL, validateRows, commitRows, type ImportRow } from '../people/import';
 import { defaultSchoolId, resolveSchoolScope, schoolIdForClass } from '../schools';
 import { billStudentFrom } from '../billing/joinMidYear';
 
@@ -89,6 +97,8 @@ const blankToNull = (v: string | undefined): string | null => (v && v.trim() !==
  *  opaque zod failure the admin can't act on. */
 const CELL = z.string().max(300).optional();
 const IMPORT_ROW = z.object({
+  /** The identity column (0.52.0-dev.4). Present → the row is about a child who already exists. */
+  studentCode: CELL,
   fullName: CELL,
   dob: CELL,
   className: CELL,
@@ -100,6 +110,8 @@ const IMPORT_ROW = z.object({
   guardianPhone: CELL,
   guardianEmail: CELL,
   note: CELL,
+  /** The extended record fields, keyed by registry key. Bounded: the keys come off the wire. */
+  fields: z.record(z.string().max(40), CELL).refine((r) => Object.keys(r).length <= 40, 'Too many fields.').optional(),
 });
 
 /** The office's answer to "is a Relative a guardian or an emergency contact?", once per distinct
@@ -110,6 +122,53 @@ const now = () => new Date();
 
 /** A month period key, for the "bill them from" dropdown. */
 const PERIOD_KEY = z.string().trim().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
+
+/**
+ * The extended student-record fields, as a map rather than eleven named inputs (0.52.0, §4a Phase 1).
+ *
+ * Keyed so `people/fields.ts` stays the ONE place that knows what a field is: adding one there needs no
+ * change here, and — more to the point — nothing here can accept a field the registry has not heard of.
+ * Bounded because the keys come off the wire.
+ */
+const FIELD_MAP = z
+  .record(z.string().max(40), z.union([z.string().max(4000), z.boolean(), z.null()]))
+  .refine((r) => Object.keys(r).length <= 40, 'Too many fields.');
+
+/**
+ * Turn one submitted field into the column value to store, or refuse it.
+ *
+ * Three refusals, and each is a different mistake: an UNKNOWN key is a stale or hand-built client; a
+ * DISABLED key is a field this office switched off, and writing it would put data behind a screen
+ * nobody can see; a bad VALUE is the ordinary kind of wrong. A date is checked with `isIsoDay` and not
+ * a regex, because `2026-13-45` has the right shape and is not a day (§9).
+ */
+function fieldPatch(key: string, raw: string | boolean | null, scope?: 'student' | 'household'): { column: string; value: string | boolean | null } {
+  const spec = studentField(key);
+  if (!spec) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Unknown field.' });
+  if (!enabledFieldKeys().includes(spec.key)) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'That field is switched off for this madrasah.' });
+  }
+  // A household field submitted to the student procedure (or the reverse) is a stale client, not a
+  // value to quietly write into the wrong table — which would be a silent no-op on screen.
+  if (scope && spec.scope !== scope) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: spec.scope === 'household' ? 'That detail belongs to the household, not one child.' : 'That detail belongs to the child, not the household.',
+    });
+  }
+  if (spec.kind === 'flag') {
+    if (raw === null || typeof raw === 'boolean') return { column: spec.column, value: raw };
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'That field takes yes or no.' });
+  }
+  if (typeof raw === 'boolean') throw new TRPCError({ code: 'BAD_REQUEST', message: 'That field takes text.' });
+  const s = (raw ?? '').trim();
+  if (s === '') return { column: spec.column, value: null };
+  if (spec.kind === 'date') {
+    if (!isIsoDay(s)) throw new TRPCError({ code: 'BAD_REQUEST', message: 'That date is not a real day.' });
+    return { column: spec.column, value: s };
+  }
+  return { column: spec.column, value: s.slice(0, spec.kind === 'longtext' ? 4000 : 300) };
+}
 
 /**
  * BILL_FROM — a student who joins part-way through the year (0.48.0).
@@ -137,81 +196,6 @@ function billFrom(studentId: string, fromPeriod: string | undefined, actor: Retu
     });
   }
   return { billed: r };
-}
-
-interface NewStudent {
-  familyId: string;
-  fullName: string;
-  dob?: string;
-  notes?: string;
-  feePlanId: string;
-  overrideAmountCents?: number;
-  feeNote?: string;
-  classId?: string;
-  /** Which school to file them under (0.47.0). Ignored when `classId` is set — the class decides. */
-  schoolId?: string;
-}
-
-/**
- * THE one implementation of "create a student" — both `studentCreate` (into a known family) and
- * `studentAdd` (student-first, creating or joining one) go through here, so the invariants below hold
- * on every path rather than in whichever copy was remembered.
- *
- * A FEE PLAN IS REQUIRED: a student who exists but is on no plan is invisible to invoice generation,
- * which is how a child silently stops being billed. The student and their fee are written in ONE
- * transaction, with an optional per-student override so an unusual amount does not need a parallel
- * plan. `classId` is optional — a student may be unplaced.
- */
-function createStudentRow(input: NewStudent, actor: ReturnType<typeof auditActor>, outer?: Tx): { id: string; studentCode: string } {
-  const run = (tx: Tx) => {
-    if (!tx.select({ id: families.id }).from(families).where(eq(families.id, input.familyId)).get()) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'Family not found.' });
-    }
-    const plan = tx.select({ id: feePlans.id }).from(feePlans).where(and(eq(feePlans.id, input.feePlanId), eq(feePlans.status, 'active'))).get();
-    if (!plan) throw new TRPCError({ code: 'NOT_FOUND', message: 'Fee plan not found.' });
-    if (input.classId) {
-      const k = tx.select({ id: classes.id, status: classes.status }).from(classes).where(eq(classes.id, input.classId)).get();
-      if (!k) throw new TRPCError({ code: 'NOT_FOUND', message: 'Class not found.' });
-      if (k.status !== 'active') throw new TRPCError({ code: 'CONFLICT', message: 'That class is archived.' });
-    }
-    const id = rid('stu');
-    const ts = now();
-    // Which school this child attends (0.47.0). The class decides it when there is one — a class
-    // belongs to exactly one school, so anything else would file the child away from their own class
-    // — otherwise the caller's chosen school, otherwise the only/first school there is. A sibling's
-    // school is deliberately NOT inherited: two children in one household can attend different
-    // schools, which is the case this whole feature exists for.
-    const schoolId = (input.classId ? schoolIdForClass(input.classId) : null) ?? input.schoolId ?? defaultSchoolId();
-    // The typed ID a parent uses at the kiosk. Derived from the given name, so it is generated here
-    // rather than accepted from the caller — never importable, never chosen (§14).
-    const studentCode = generateUniqueStudentCode(input.fullName);
-    tx.insert(students)
-      .values({
-        id,
-        familyId: input.familyId,
-        fullName: displayName(input.fullName),
-        dob: blankToNull(input.dob),
-        status: 'active',
-        notes: blankToNull(input.notes),
-        schoolId,
-        classId: input.classId ?? null,
-        studentCode,
-        createdAt: ts,
-        updatedAt: ts,
-      })
-      .run();
-    tx.insert(studentFees)
-      .values({ id: rid('stf'), studentId: id, feePlanId: input.feePlanId, overrideAmountCents: input.overrideAmountCents ?? null, note: input.feeNote || null, createdAt: ts, updatedAt: ts })
-      .run();
-    // The household label is derived from its children, so adding one can change it.
-    tx.update(families).set({ name: familyLabel(input.familyId, tx), updatedAt: ts }).where(eq(families.id, input.familyId)).run();
-    return { id, studentCode };
-  };
-  // Reuse the caller's transaction when there is one (studentAdd wraps the family insert with this),
-  // so a validation failure rolls back BOTH writes rather than orphaning a household.
-  const res = outer ? run(outer) : db.transaction(run);
-  audit(actor, 'student.create', { entity: 'student', entityId: res.id, detail: { familyId: input.familyId, feePlanId: input.feePlanId, classId: input.classId ?? null } });
-  return res;
 }
 
 function requireFamily(id: string) {
@@ -293,10 +277,24 @@ export const peopleRouter = router({
     }));
   }),
 
-  /** One family with everything on the record — students, guardians, emergency contacts. */
-  familyGet: adminOrFinanceProcedure.input(z.object({ id: ID })).query(({ input }) => {
+  /**
+   * One family with everything on the record — students, guardians, emergency contacts.
+   *
+   * **The student columns are chosen by ROLE, not selected wholesale** (0.52.0). This was
+   * `db.select().from(students)`, and that bare select is exactly why `people/fields.ts` exists: this
+   * procedure is `adminOrFinance` and the finance shell renders the same `FamilyDetail` component the
+   * admin shell does, so every column added to the table shipped to finance automatically — a medical
+   * note would have crossed §5's wall through an ALTER TABLE and no code change. `studentColumnsFor`
+   * means the columns a role may not see are never read out of the database at all.
+   */
+  familyGet: adminOrFinanceProcedure.input(z.object({ id: ID })).query(({ ctx, input }) => {
+    const role = ctx.session!.role;
     const fam = requireFamily(input.id);
-    const studs = db.select().from(students).where(eq(students.familyId, fam.id)).all();
+    // The household's own details go through the same allow-list as the child's (0.52.0-dev.4) —
+    // address, languages and nationality live here now, and finance sees them only because the
+    // registry says so rather than because the row was selected whole.
+    const famRow = db.select(familyColumnsFor(role)).from(families).where(eq(families.id, fam.id)).get()!;
+    const studs = db.select(studentColumnsFor(role)).from(students).where(eq(students.familyId, fam.id)).all();
     const links = db
       .select({
         guardianId: guardians.id,
@@ -336,7 +334,14 @@ export const peopleRouter = router({
       };
     });
     const contacts = db.select().from(emergencyContacts).where(eq(emergencyContacts.familyId, fam.id)).all();
-    return { family: fam, students: studs, guardians: withAccounts, emergencyContacts: contacts };
+    return {
+      family: famRow,
+      students: studs,
+      guardians: withAccounts,
+      emergencyContacts: contacts,
+      /** What this role may see and edit on the HOUSEHOLD, so the screen holds no copy of the registry. */
+      householdFields: visibleFields(role, 'household').map((f) => ({ key: f.key, kind: f.kind, sensitivity: f.sensitivity })),
+    };
   }),
 
   // ── Families (admin write) ─────────────────────────────────────────────────
@@ -357,12 +362,20 @@ export const peopleRouter = router({
    *  (`familyLabel`) and refreshed whenever they change, so accepting one here would just be silently
    *  overwritten the next time a student was added. */
   familyUpdate: adminProcedure
-    .input(z.object({ id: ID, notes: NOTES, status: z.enum(['active', 'archived']).optional() }))
+    .input(z.object({ id: ID, notes: NOTES, status: z.enum(['active', 'archived']).optional(), fields: FIELD_MAP.optional() }))
     .mutation(({ ctx, input }) => {
       const fam = requireFamily(input.id);
       const patch: Partial<typeof families.$inferInsert> = { updatedAt: now() };
       if (input.notes !== undefined) patch.notes = blankToNull(input.notes);
       if (input.status !== undefined) patch.status = input.status;
+      // The household's own details (0.52.0-dev.4) — address, languages, nationality. Scoped, so a
+      // child's field submitted here is refused rather than written into the wrong table.
+      if (input.fields) {
+        for (const [key, raw] of Object.entries(input.fields)) {
+          const { column, value } = fieldPatch(key, raw, 'household');
+          (patch as Record<string, unknown>)[column] = value;
+        }
+      }
       db.update(families).set(patch).where(eq(families.id, fam.id)).run();
       audit(auditActor(ctx), 'family.update', { entity: 'family', entityId: fam.id, detail: { fields: Object.keys(patch).filter((k) => k !== 'updatedAt') } });
       return { ok: true as const };
@@ -391,7 +404,7 @@ export const peopleRouter = router({
       }),
     )
     .mutation(({ ctx, input }) => {
-      const r = createStudentRow(input, auditActor(ctx));
+      const r = createStudentRow({ ...input, noteBy: recordingActor(ctx) }, auditActor(ctx));
       return { ...r, ...billFrom(r.id, input.billFromPeriod, auditActor(ctx), input.firstMonthCents) };
     }),
 
@@ -442,7 +455,7 @@ export const peopleRouter = router({
           // label from the child once they exist. Nobody ever types a household name.
           tx.insert(families).values({ id: fid, name: 'Family', status: 'active', createdAt: ts, updatedAt: ts }).run();
         }
-        return { familyId: fid, r: createStudentRow({ ...input, familyId: fid }, auditActor(ctx), tx) };
+        return { familyId: fid, r: createStudentRow({ ...input, familyId: fid, noteBy: recordingActor(ctx) }, auditActor(ctx), tx) };
       });
       if (!linked) audit(auditActor(ctx), 'family.create', { entity: 'family', entityId: familyId, detail: { via: 'studentAdd' } });
       // Outside the transaction above, deliberately: the child existing is not conditional on the
@@ -472,15 +485,157 @@ export const peopleRouter = router({
       .all(),
   ),
 
+  /**
+   * Edit a child's record (admin only, §5).
+   *
+   * `fields` is the extended student record (§4a Phase 1) and goes through `people/fields.ts` — it
+   * refuses an unknown key, a key this office has switched off, and a date that is not a real day.
+   *
+   * `notes` is gone from here on purpose: an office note is now authored, timestamped and append-only
+   * (`studentNoteAdd`), so patching one would be rewriting somebody else's record of what they were
+   * told. The audit detail lists field NAMES and never values — a medical note must not reach the
+   * trail any more than it reaches a log (§14).
+   */
+  /**
+   * ONE child's whole record — the screen that did not exist (0.52.0, §4a Phase 1).
+   *
+   * Until now `studentUpdate` had exactly one call site in the entire web app (the withdraw toggle) and
+   * `students.notes` was written by two paths and rendered by none. A record with no read surface is
+   * what twelve more columns would have become, so the screen is the work and this is what feeds it.
+   *
+   * Admin OR finance, and the two get different records: `studentColumnsFor` gives finance the ordinary
+   * extended fields and never a medical one, and `fields` describes only what this caller can actually
+   * see, so the screen renders from the server's answer rather than deciding for itself. **Notes are
+   * admin-only** — they are the office's own record (§5) — and finance simply gets an empty list.
+   */
+  studentGet: adminOrFinanceProcedure.input(z.object({ id: ID })).query(({ ctx, input }) => {
+    const role = ctx.session!.role;
+    const student = db.select(studentColumnsFor(role)).from(students).where(eq(students.id, input.id)).get();
+    if (!student) throw new TRPCError({ code: 'NOT_FOUND', message: 'Student not found.' });
+    // `studentColumnsFor` returns a role-dependent column map, so the row's type is only known at
+    // runtime; `familyId` is in the core set and is always there.
+    const familyId = (student as unknown as { familyId: string }).familyId;
+    /**
+     * THE HOUSEHOLD'S ID AND LABEL, AND NOTHING ELSE (0.52.0-dev.5).
+     *
+     * This briefly returned the household's own details — address, languages, nationality — and
+     * rendered them on the child's record as well as on the household's. Hasan's correction: a
+     * household field belongs on the household record and nowhere else. Showing it on the child put
+     * the same value on three screens for a family of three, which is the shape of the problem that
+     * moved these columns off the student in the first place.
+     *
+     * So the name is all that comes back, for the one line that says whose child this is — and the
+     * rule "don't send what you don't render" does the rest.
+     */
+    const fam = db.select({ id: families.id, name: families.name }).from(families).where(eq(families.id, familyId)).get() ?? null;
+    return {
+      student,
+      family: fam,
+      /** What this role may see of the CHILD, in catalog order, so the screen needs no copy of the registry. */
+      fields: visibleFields(role, 'student').map((f) => ({ key: f.key, kind: f.kind, sensitivity: f.sensitivity })),
+      notes: role === 'admin' ? studentNotesFor(input.id) : [],
+    };
+  }),
+
+  /**
+   * Append an office note. There is no edit and no delete, deliberately — see `people/notes.ts`.
+   *
+   * The audit row carries the note's LENGTH and never its body: a note can say anything about a child,
+   * and the trail is not the place for it (§14).
+   */
+  studentNoteAdd: adminProcedure
+    .input(z.object({ studentId: ID, body: z.string().trim().min(1).max(NOTE_MAX) }))
+    .mutation(({ ctx, input }) => {
+      const s = requireStudent(input.studentId);
+      const id = addStudentNote(s.id, input.body, recordingActor(ctx));
+      audit(auditActor(ctx), 'student.note', { entity: 'student', entityId: s.id, detail: { noteId: id, length: input.body.trim().length } });
+      return { id };
+    }),
+
+  /**
+   * Delete one note (0.52.0-dev.4, admin only).
+   *
+   * Notes are still APPEND-ONLY in the sense that matters — there is no edit, so a note cannot be
+   * quietly rewritten into something its author did not write, and a correction is still another note.
+   * What this adds is the way out of a mistake, which the first cut did not have: a note typed onto the
+   * wrong child, or one carrying something that should never have been written down, could otherwise
+   * only ever be added to. Hasan asked for it after reading exactly that trade.
+   *
+   * **The audit row records the author and the length, never the body** (§14) — a trail that copies the
+   * note on the way out would make deletion pointless, which is the whole shape of this feature.
+   */
+  studentNoteDelete: adminProcedure.input(z.object({ id: ID })).mutation(({ ctx, input }) => {
+    const n = db.select().from(studentNotesTable).where(eq(studentNotesTable.id, input.id)).get();
+    if (!n) throw new TRPCError({ code: 'NOT_FOUND', message: 'Note not found.' });
+    db.delete(studentNotesTable).where(eq(studentNotesTable.id, n.id)).run();
+    audit(auditActor(ctx), 'student.noteDelete', {
+      entity: 'student',
+      entityId: n.studentId,
+      detail: { noteId: n.id, length: n.body.length, writtenBy: n.authorName, writtenAt: n.createdAt.toISOString() },
+    });
+    return { ok: true as const };
+  }),
+
+  /**
+   * Which extended fields this madrasah keeps, for the Settings panel.
+   *
+   * Admin-only to read as well as to write, unlike the year-view columns: the catalog names the medical
+   * fields, and whether an install records a child's allergies is not finance's business either way.
+   * `holdsData` is what makes switching one OFF an informed decision — hiding a field does not erase
+   * what is in it, and an office deserves to be told which of those two it is getting.
+   */
+  studentFieldsGet: adminProcedure.query(() => {
+    const on = new Set(enabledFieldKeys());
+    const holds = new Set<string>();
+    for (const f of STUDENT_FIELDS) {
+      // Existence only — never a value, and never a count that would say how many children have an
+      // allergy recorded. The question is "is there anything here to lose?", nothing more.
+      //
+      // Which TABLE depends on the field's scope (0.52.0-dev.4): the household's details live on
+      // `families`, the child's on `students`.
+      const any =
+        f.scope === 'household'
+          ? db.select({ id: families.id }).from(families).where(isNotNull((families as unknown as Record<string, SQLiteColumn>)[f.column])).limit(1).get()
+          : db.select({ id: students.id }).from(students).where(isNotNull((students as unknown as Record<string, SQLiteColumn>)[f.column])).limit(1).get();
+      if (any) holds.add(f.key);
+    }
+    return {
+      fields: STUDENT_FIELDS.map((f) => ({
+        key: f.key,
+        kind: f.kind,
+        sensitivity: f.sensitivity,
+        enabled: on.has(f.key),
+        holdsData: holds.has(f.key),
+        /** Who may READ it. Writing is admin-only for every field, so there is nothing to report. */
+        readableBy: [...f.readableBy],
+      })),
+      medicalKeys: [...MEDICAL_FIELD_KEYS],
+    };
+  }),
+
+  studentFieldsSet: adminProcedure
+    .input(z.object({ keys: z.array(z.string().max(40)).max(STUDENT_FIELDS.length) }))
+    .mutation(({ ctx, input }) => {
+      const before = enabledFieldKeys();
+      setEnabledFieldKeys(input.keys.filter((k): k is StudentFieldKey => !!studentField(k)));
+      const after = enabledFieldKeys();
+      // Names only — the trail records which fields an office turned on, never anything in them.
+      audit(auditActor(ctx), 'settings.studentFields', {
+        entity: 'settings',
+        detail: { on: after, turnedOff: before.filter((k) => !after.includes(k)) },
+      });
+      return { ok: true as const };
+    }),
+
   studentUpdate: adminProcedure
     .input(
       z.object({
         id: ID,
         fullName: OPT_NAME,
         dob: z.union([DOB, z.literal('')]).optional(),
-        notes: NOTES,
         status: z.enum(['active', 'withdrawn']).optional(),
         classId: z.union([ID, z.literal('')]).optional(),
+        fields: FIELD_MAP.optional(),
       }),
     )
     .mutation(({ ctx, input }) => {
@@ -488,8 +643,13 @@ export const peopleRouter = router({
       const patch: Partial<typeof students.$inferInsert> = { updatedAt: now() };
       if (input.fullName !== undefined) patch.fullName = displayName(input.fullName);
       if (input.dob !== undefined) patch.dob = blankToNull(input.dob);
-      if (input.notes !== undefined) patch.notes = blankToNull(input.notes);
       if (input.status !== undefined) patch.status = input.status;
+      if (input.fields) {
+        for (const [key, raw] of Object.entries(input.fields)) {
+          const { column, value } = fieldPatch(key, raw, 'student');
+          (patch as Record<string, unknown>)[column] = value;
+        }
+      }
       if (input.classId !== undefined) {
         const cid = blankToNull(input.classId);
         if (cid) {
@@ -689,25 +849,128 @@ export const peopleRouter = router({
    * validator refuses a row that is still an untouched example, and it compares against the same
    * constant. A copy in the browser is how that guard would quietly stop matching.
    */
-  importTemplate: adminProcedure.query(() => ({
-    fields: IMPORT_FIELDS.map((f) => ({ key: f.key, label: f.label, required: f.required, aliases: [...f.aliases] })),
-    /** Rows of cells in `fields` order. */
-    example: IMPORT_EXAMPLE_ROWS.map((r) => [...r]),
+  /**
+   * The template's columns and example rows.
+   *
+   * From 0.52.0-dev.4 it carries the STUDENT ID first and the extended record fields after the core
+   * ones. The ID column is what makes a re-upload an update rather than a duplicate — see
+   * `importExport` below, which fills the same shape with the install's own data.
+   *
+   * `source` tells the dialog which columns are core (fixed keys on the row) and which are registry
+   * fields (they go into `row.fields`), so it needs no copy of the registry to build a row.
+   */
+  importTemplate: adminProcedure.query(({ ctx }) => ({
+    fields: [
+      { key: 'studentCode', label: 'Student ID', required: false, aliases: ['student id', 'studentid', 'id', 'code', 'student code'], source: 'core' as const },
+      ...IMPORT_FIELDS.map((f) => ({ key: f.key, label: f.label, required: f.required, aliases: [...f.aliases], source: 'core' as const })),
+      ...importFieldsFor(ctx.session!.role).map((f) => ({ key: f.key, label: f.label, required: f.required, aliases: f.aliases, source: 'field' as const })),
+    ],
+    /** Rows of cells in `fields` order — core columns only; the registry ones are left blank. */
+    example: IMPORT_EXAMPLE_ROWS.map((r) => ['', ...r]),
+    /** What an office types to empty a value on an update, since blank means "leave it alone". */
+    clearWith: CLEAR_SENTINEL,
   })),
+
+  /**
+   * THE ROSTER, WITH ITS DATA IN IT (0.52.0-dev.4) — export, fill in the blanks, upload it back.
+   *
+   * The whole reason the update path exists. An office asked to record eleven new things about three
+   * hundred children is not going to open three hundred screens; they want the spreadsheet they
+   * already live in, with what the app already knows already filled in, and the gaps to type into.
+   *
+   * One row per student, with the Student ID first — that column is the identity, and it is what
+   * makes the re-upload a set of changes rather than three hundred duplicate children.
+   *
+   * **The first guardian only, and it is read-only on the way back.** Emitting every adult would
+   * imply the import updates them, which it does not (people/import.ts `resolveUpdate` says why). It
+   * is here so the sheet is recognizable as the office's own roster, not as a field to edit.
+   */
+  importExport: adminProcedure.query(({ ctx }) => {
+    const role = ctx.session!.role;
+    const specs = importFieldsFor(role);
+    const columns = [
+      { key: 'studentCode', label: 'Student ID' },
+      ...IMPORT_FIELDS.map((f) => ({ key: f.key as string, label: f.label })),
+      ...specs.map((f) => ({ key: f.key as string, label: f.label })),
+    ];
+
+    const studs = db.select(studentColumnsFor(role)).from(students).orderBy(students.fullName).all() as unknown as Record<string, unknown>[];
+    const fams = new Map<string, Record<string, unknown>>();
+    for (const f of db.select(familyColumnsFor(role)).from(families).all() as unknown as Record<string, unknown>[]) fams.set(String(f.id), f);
+    const classNames = new Map(db.select({ id: classes.id, name: classes.name, courseId: classes.courseId }).from(classes).all().map((c) => [c.id, c]));
+    const courseNames = new Map(db.select({ id: courses.id, name: courses.name }).from(courses).all().map((c) => [c.id, c.name]));
+    const planByStudent = new Map(
+      db
+        .select({ studentId: studentFees.studentId, planName: feePlans.name, override: studentFees.overrideAmountCents })
+        .from(studentFees)
+        .innerJoin(feePlans, eq(feePlans.id, studentFees.feePlanId))
+        .all()
+        .map((r) => [r.studentId, r]),
+    );
+    const guardianByFamily = new Map<string, { name: string; relation: string | null; phone: string | null; email: string | null }>();
+    for (const g of db
+      .select({ familyId: guardianFamilies.familyId, name: guardians.name, relation: guardianFamilies.relation, phone: guardians.phone, email: guardians.email })
+      .from(guardianFamilies)
+      .innerJoin(guardians, eq(guardians.id, guardianFamilies.guardianId))
+      .all()) {
+      if (!guardianByFamily.has(g.familyId)) guardianByFamily.set(g.familyId, g);
+    }
+
+    const money = (cents: number | null | undefined) => (cents === null || cents === undefined ? '' : (cents / 100).toFixed(2));
+    const rows = studs.map((s) => {
+      const fam = fams.get(String(s.familyId)) ?? {};
+      const cls = s.classId ? classNames.get(String(s.classId)) : undefined;
+      const plan = planByStudent.get(String(s.id));
+      const g = guardianByFamily.get(String(s.familyId));
+      const core: Record<string, string> = {
+        studentCode: String(s.studentCode ?? ''),
+        fullName: String(s.fullName ?? ''),
+        dob: String(s.dob ?? ''),
+        className: cls?.name ?? '',
+        courseName: cls ? (courseNames.get(cls.courseId) ?? '') : '',
+        feePlanName: plan?.planName ?? '',
+        amount: money(plan?.override),
+        guardianName: g?.name ?? '',
+        guardianRelation: g?.relation ?? '',
+        guardianPhone: g?.phone ?? '',
+        guardianEmail: g?.email ?? '',
+        // The Note column APPENDS on an update, so it is exported EMPTY on purpose: round-tripping a
+        // note would add a second copy of it every single time the sheet came back.
+        note: '',
+      };
+      return columns.map((c) => {
+        if (c.key in core) return core[c.key];
+        const spec = specs.find((f) => f.key === c.key);
+        if (!spec) return '';
+        const v = (spec.scope === 'household' ? fam : s)[spec.key];
+        if (v === null || v === undefined) return '';
+        if (spec.kind === 'flag') return v === true ? 'Yes' : 'No';
+        return String(v);
+      });
+    });
+
+    return { columns, rows, clearWith: CLEAR_SENTINEL };
+  }),
 
   /** Dry run. Resolves families / classes / fee plans and reports per-row problems so the dialog
    *  can show them before anything is written. A mutation, not a query, because the rows go in the
    *  request BODY — a few hundred rows would not survive a query string. */
   importPreview: adminProcedure
-    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional(), placements: PLACEMENTS.optional() }))
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional(), placements: PLACEMENTS.optional(), updateExisting: z.boolean().optional() }))
     .mutation(({ ctx, input }) =>
-      validateRows(input.rows as ImportRow[], { defaultFeePlanId: input.defaultFeePlanId ?? null, schoolId: importSchool(ctx, input.schoolId), placements: input.placements }),
+      validateRows(input.rows as ImportRow[], {
+        defaultFeePlanId: input.defaultFeePlanId ?? null,
+        schoolId: importSchool(ctx, input.schoolId),
+        placements: input.placements,
+        updateExisting: input.updateExisting,
+        fieldSpecs: importFieldsFor(ctx.session!.role),
+      }),
     ),
 
   /** Commit. Re-validates and writes everything in ONE transaction — all rows land or none do.
    *  Returns each new student's ID so the admin can print them (never logged, never audited). */
   importCommit: adminProcedure
-    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional(), placements: PLACEMENTS.optional() }))
+    .input(z.object({ rows: z.array(IMPORT_ROW).min(1).max(2000), defaultFeePlanId: ID.optional(), schoolId: ID.optional(), placements: PLACEMENTS.optional(), updateExisting: z.boolean().optional() }))
     .mutation(({ ctx, input }) => {
       let res;
       try {
@@ -715,6 +978,9 @@ export const peopleRouter = router({
           defaultFeePlanId: input.defaultFeePlanId ?? null,
           schoolId: importSchool(ctx, input.schoolId),
           placements: input.placements,
+          noteBy: recordingActor(ctx),
+          updateExisting: input.updateExisting,
+          fieldSpecs: importFieldsFor(ctx.session!.role),
         });
       } catch (e) {
         if ((e as Error).message === 'invalid_rows') {

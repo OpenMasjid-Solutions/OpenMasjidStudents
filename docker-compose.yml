@@ -8,8 +8,11 @@
 # no Docker socket.
 #
 # (This header described teachers, a public admissions form and a Stripe webhook
-# until 0.48.0. None of the three exist: the academics went in v0.35.0 and there
-# has never been a webhook — payments are pulled, see CLAUDE.md §13.4.)
+# until 0.48.0, when none of the three existed. Two still do not: there are no
+# teachers, and there has never been a webhook — payments are pulled, see
+# CLAUDE.md §13.4. The public admissions form came BACK in 0.52.0-dev.7 with the
+# academic layer, and is served from this same container at /public/inquiry —
+# off until an office switches it on, §4a Phase 2.)
 #
 # Nothing to configure at install time beyond the settings below — install it, open
 # it, create the admin account, and set up the rest inside the app (saved to /data).
@@ -55,8 +58,9 @@ services:
       # host:container. OpenMasjidOS offers "Open" on the lowest published host port
       # and picks a different free host port automatically if 8360 is already taken.
       # Defence in depth: on an internet-exposed host (e.g. a VPS), firewall this port so
-      # it's reachable only on the masjid LAN. The app already denies admin to any non-local
-      # client (origin policy, §12.4), but keeping the port off the public internet is wise.
+      # it's reachable only on the masjid LAN. The app already refuses an admin password from any
+      # non-local client and admits an admin from outside only on an OpenMasjidOS access token
+      # (origin policy, §12.4), but keeping the port off the public internet is wise.
       - "8360:8080"
     volumes:
       - data:/data

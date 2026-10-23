@@ -27,6 +27,10 @@ export default defineConfig({
       '/statements': { target: 'http://localhost:8080', changeOrigin: true },
       '/sheets': { target: 'http://localhost:8080', changeOrigin: true },
       '/invoices': { target: 'http://localhost:8080', changeOrigin: true },
+      // The public admissions inquiry form (0.52.0, §4a Phase 2). Same trap as the three above: it is
+      // served by the API and not by the SPA, so without this it opens the app shell in `npm run dev`
+      // — the one environment where it is being built.
+      '/public': { target: 'http://localhost:8080', changeOrigin: true },
     },
   },
   build: {
