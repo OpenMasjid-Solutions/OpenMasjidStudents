@@ -1013,7 +1013,9 @@ OpenMasjidStudents/
 │   │       │   ├── trpc.ts               # context + role/origin middleware + audit/recording actors
 │   │       │   ├── auth.ts               # login, sessions, invites, resets, self-registration, SSO
 │   │       │   ├── staff.ts              # staff accounts, roles, school limits
-│   │       │   ├── people.ts             # students, households, guardians, contacts, import
+│   │       │   ├── people.ts             # students, households, guardians, contacts, import, the record
+│   │       │   ├── admissions.ts         # the office's desk: inquiries, the pipeline, conversion,
+│   │       │   │                         #   re-admission, admission links, tablet mode (all admin-only)
 │   │       │   ├── structure.ts          # schools, years, terms, courses, classes, rollover
 │   │       │   ├── billing.ts            # fee plans, charges, invoices, ledger, payments, refunds, mid-year
 │   │       │   ├── portal.ts             # parent-scoped reads + pay-now + saved methods + autopay
@@ -1029,15 +1031,22 @@ OpenMasjidStudents/
 │   │       ├── fabric/                   # provider.ts (/fabric/billing/*) · commands.ts (/fabric/commands/run) ·
 │   │       │                             # platform.ts (calls to the OS)
 │   │       ├── people/                   # names · household · relations · import · siblingSuggest ·
-│   │       │                             # onboardingSheet · idSheet · sheetText · onboarding
-│   │       ├── schools/ structure/       # school scope · year rollover · audience (who a bulk action names)
+│   │       │                             # onboardingSheet · idSheet · sheetText · onboarding ·
+│   │       │                             # fields.ts (the field registry + role allow-list, §5/§9) ·
+│   │       │                             # create.ts (the ONLY place a Student ID is minted) · notes
+│   │       ├── admissions/               # §4a Phase 2 — transition.ts (the one writer of a state) ·
+│   │       │                             # inquiry · publicRoutes (the one unauthenticated write) ·
+│   │       │                             # admissionForm · convert · fees · readmission · text
+│   │       ├── schools/ structure/       # school scope · year rollover · audience (who a bulk action
+│   │       │                             # names) · blockers (what refuses a school/year delete)
 │   │       ├── settings/                 # settings store · dates (the one date edge) · testStudent
 │   │       ├── alerts/ mail/ audit/      # who hears about it · templates + senders · append-only trail
 │   │       ├── whatsapp/                 # index.ts (every gate) · numbers · templates · suspect
 │   │       ├── security/                 # origin.ts (§12.4) · rateLimit.ts
-│   │       ├── auth/                     # passwords · sessions · invites · usernames · firstRun
+│   │       ├── auth/                     # passwords · sessions · invites · usernames · firstRun ·
+│   │       │                             # tokens.ts (the one one-time-link token minter, §16)
 │   │       └── http/                     # basePath · manifest (the PWA manifest builder)
-│   │   └── test/                         # vitest: 1,100+ tests, incl. the security matrix
+│   │   └── test/                         # vitest: 92 files, 1,380+ tests, incl. the security matrix
 │   └── web/
 │       ├── src/
 │       │   ├── routes/  Login/Invite/Reset/Register/Setup (flat) · admin/ · finance/ · family/
@@ -1058,10 +1067,10 @@ OpenMasjidStudents/
     └── audit/                           # security audits: findings, remediation, what is still open
 ```
 
-> The three academic specs are **written before the code**, the way `PAYMENTS.md` and `WHATSAPP.md` were,
-> and each says at the top that it describes a plan. The server directories they call for
-> (`admissions/`, `attendance/`, `academics/`, and `people/fields.ts`, `structure/enrollment.ts`,
-> `structure/calendar.ts`) do not exist yet; they appear in this tree as each phase lands.
+> The three academic specs were **written before the code**, the way `PAYMENTS.md` and `WHATSAPP.md`
+> were, and each says at the top which of it exists. `admissions/` and `people/fields.ts` **landed with
+> Phases 1–2 (0.52.0)** and are in the tree above; `attendance/`, `academics/`, `structure/enrollment.ts`
+> and `structure/calendar.ts` do not exist yet and appear here as each remaining phase lands.
 
 ---
 
@@ -1072,8 +1081,12 @@ The tables, as they actually exist: `settings`, `users`, `sessions`, `invites`, 
 `guardians`, `guardian_families`, `guardian_users`, `emergency_contacts`, `fee_plans`, `student_fees`,
 `invoices`, `invoice_items`, `charge_items`, `charges`, `payments`, `payment_allocations`, `carry_ins`,
 `past_due_reminders`, `payment_methods`, `autopay_enrollments`, `autopay_runs`, `standing_payments`,
-`alert_recipients`, `whatsapp_log`, `audit_log`, and — from 0.52.0-dev.7, §4a Phase 2 — `inquiries`,
-`inquiry_events`, `admission_links`, `readmissions`. Student IDs live on `students` (`student_code`, UNIQUE) — retrievable by design (they are
+`alert_recipients`, `whatsapp_log`, `audit_log`, `student_notes` (§4a Phase 1's authored, append-only
+office notes), and — from 0.52.0-dev.7, §4a Phase 2 — `inquiries`,
+`inquiry_events`, `admission_links`, `readmissions`. **That is 39 tables**, and
+`docs/DATA_MODEL.md` carries the same list with each one's shape — a count in both places so a table
+added to one and not the other is visible rather than inferred. Student IDs live on `students`
+(`student_code`, UNIQUE) — retrievable by design (they are
 printed on statements). That list is the whole schema: `stripe_events` was dropped in 0.48.0 (migration
 0037) because it deduped webhook deliveries and there is no webhook (§13.4) — a money schema with a table
 nobody writes is an invitation to wire the next thing to it. The DB file holds minors' PII and every
@@ -1403,7 +1416,7 @@ Follows `OpenMasjidOS/docs/APP_MANIFEST_SPEC.md` + `OpenMasjidAPPS/docs/BUILDING
 ```yaml
 id: students
 name: OpenMasjid Students
-version: 0.51.0-dev.N        # X.Y.Z on main — §19
+version: 0.53.0-dev.N        # X.Y.Z on main — §19
 tagline: Tuition & fees for your madrasa — pay online, at the kiosk, or on the donation site
 category: admin
 icon: icon.svg
