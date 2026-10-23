@@ -27,6 +27,16 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
      manifest reads `X.Y.Z-dev.N`, and the version test checks the CHANGELOG for the base `X.Y.Z`,
      so a dev build does not need its own heading — see CLAUDE.md "Branching policy". -->
 
+## [0.54.0]
+
+<!-- The line opened when 0.53.0 shipped. Headlines first, then `### Also in this release` and
+     everything else below it (see the two-audiences note at the top of this file).
+
+     §4a Phase 3 (attendance) is the work this line is heading toward — enrollment history first,
+     because a register taken last term must not be reattributed by next term's rollover. -->
+
+- Nothing yet.
+
 ## [0.53.0]
 
 <!-- The line opened when 0.52.0 shipped. Headlines first, then `### Also in this release` and
