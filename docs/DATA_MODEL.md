@@ -330,7 +330,8 @@ v0.40.0 source, and an adversarial review that found the naive rule exploitable)
 
 **The rule (`packages/server/src/security/origin.ts`):**
 - `tunnel` if `cf-ray` is present (genuine Cloudflare) **OR** the effective client IP is
-  public. `lan` **only** when the effective client IP is **private/loopback/link-local**.
+  public. `lan` **only** when the effective client IP is **private/loopback/link-local**, or a Tailscale address (`100.64.0.0/10`, from 0.54.0-dev.2 — see the
+  comment in `security/origin.ts` for the carrier-grade-NAT trade-off this accepts).
 - Effective client IP trusts `cf-connecting-ip`/`x-forwarded-for` **only when the TCP peer
   is itself local** (an OS proxy / loopback); a direct client's forged forwarding headers
   are ignored (the unspoofable socket peer wins). `x-forwarded-proto` is used ONLY for the

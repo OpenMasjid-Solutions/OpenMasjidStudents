@@ -49,6 +49,19 @@ export function isPrivateIp(ip: string | undefined): boolean {
     const o = Number(m[1]);
     if (o >= 16 && o <= 31) return true;
   }
+  // 100.64.0.0/10 — Tailscale's address space (0.54.0-dev.2, Hasan: "allow for tailscale"). An office
+  // reaching the masjid box over its tailnet IS on the masjid network in every sense this policy cares
+  // about: WireGuard-authenticated, a device the masjid enrolled. Without this, first-run setup and the
+  // admin password were refused to it as "the internet". Tailscale's IPv6 range (fd7a:115c:a1e0::/48)
+  // was already covered by the ULA check above. The trade-off, accepted: this is RFC 6598 shared space,
+  // so a host whose own ISP uses carrier-grade NAT could see a neighbouring CGNAT customer arrive from
+  // it — rare for a box behind a home/office router, and a Cloudflare tunnel request still carries
+  // `cf-ray`, which wins before any address is looked at.
+  const c = s.match(/^100\.(\d{1,3})\./);
+  if (c) {
+    const o = Number(c[1]);
+    if (o >= 64 && o <= 127) return true;
+  }
   return false;
 }
 

@@ -1667,7 +1667,8 @@ skipped. The push paths are optimizations; **money is never lost**, only delayed
     `x-forwarded-proto: https` means tunnel", and that is unusable for an `https: true` app — the OS's own LAN
     TLS proxy sets `x-forwarded-proto` too, and *absence* of `cf-ray` is not proof of a trusted LAN (a request
     straight off the internet to an unfirewalled port has no `cf-ray` either). So `lan` is granted only on a
-    POSITIVE signal: **the effective client IP is private/loopback/link-local**, and `cf-ray` still forces
+    POSITIVE signal: **the effective client IP is private/loopback/link-local — or a Tailscale address (`100.64.0.0/10`,
+    0.54.0-dev.2)** — and `cf-ray` still forces
     `tunnel`. Forwarded headers are trusted only when the TCP peer is itself local. The full reconciliation is
     in `docs/DATA_MODEL.md`. Note the safe failure direction: spoofing toward `tunnel` only ever **removes**
     privileges.

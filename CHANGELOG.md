@@ -35,7 +35,20 @@ follows [Keep a Changelog](https://keepachangelog.com/), and the project uses
      §4a Phase 3 (attendance) is the work this line is heading toward — enrollment history first,
      because a register taken last term must not be reattributed by next term's rollover. -->
 
-- Nothing yet.
+- **Reaching the app over Tailscale now counts as being at the masjid.** An office connecting to the
+  masjid's box through Tailscale was treated as coming from the internet, so the first admin account
+  could not be created and the admin password was refused. A Tailscale device is now treated exactly
+  like one on the masjid's own Wi-Fi.
+
+### Also in this release
+
+- `security/origin.ts` `isPrivateIp` now accepts `100.64.0.0/10`, Tailscale's IPv4 range; its IPv6 range
+  (`fd7a:115c:a1e0::/48`) was already inside the ULA check. That one predicate decides both whether a
+  request is `lan` and whether a TCP peer's forwarded headers are trusted, so the LAN TLS proxy
+  forwarding a Tailscale client now classifies correctly too. `cf-ray` still wins before any address is
+  examined. Accepted trade-off, written beside the code: `100.64.0.0/10` is RFC 6598 shared space, so a
+  host whose own ISP does carrier-grade NAT could in principle see a neighbouring CGNAT customer arrive
+  from it — rare for a box behind a router.
 
 ## [0.53.0]
 

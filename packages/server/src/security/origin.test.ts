@@ -13,6 +13,20 @@ describe('isPrivateIp', () => {
       expect(isPrivateIp(ip)).toBe(true);
     }
   });
+  it('treats a Tailscale address as on the masjid network (100.64.0.0/10 and fd7a:115c:a1e0::/48)', () => {
+    for (const ip of ['100.64.0.1', '100.115.183.79', '100.127.255.254', '::ffff:100.100.1.1', 'fd7a:115c:a1e0::1']) {
+      expect(isPrivateIp(ip)).toBe(true);
+    }
+    // The edges of the /10 — the 100.x range outside it is ordinary public space.
+    for (const ip of ['100.63.255.255', '100.128.0.1', '100.1.2.3']) {
+      expect(isPrivateIp(ip)).toBe(false);
+    }
+  });
+  it('a request from a Tailscale device through the LAN TLS proxy is lan; cf-ray still wins', () => {
+    expect(classifyOriginParts({ 'x-forwarded-for': '100.115.183.79', 'x-forwarded-proto': 'https' }, '172.18.0.1')).toBe('lan');
+    expect(classifyOriginParts({}, '100.115.183.79')).toBe('lan');
+    expect(classifyOriginParts({ 'cf-ray': 'abc' }, '100.115.183.79')).toBe('tunnel');
+  });
   it('recognizes public addresses', () => {
     for (const ip of ['203.0.113.5', '8.8.8.8', '172.32.0.1', '172.15.0.1', '2606:4700::1', undefined]) {
       expect(isPrivateIp(ip)).toBe(false);
